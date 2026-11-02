@@ -33,6 +33,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "../tests/annotations";
+import { OWNERSHIP_RULES } from "./ownership-rules";
 
 const ROOT = join(import.meta.dir, "..");
 const ERRORS_DIR = join(ROOT, "tests", "errors");
@@ -178,6 +179,7 @@ function render(reqs: Requirement[]): string {
   L.push("|---|---|---|---|");
   L.push(`| rejection | ${rejects.length} | \`MILO-E-\` | \`tests/run.test.ts\` — *errors (type checker rejects)* |`);
   L.push(`| behavioural | ${behaviours.length} | \`MILO-B-\` | \`tests/run.test.ts\` — *fixtures (compile + run)* |`);
+  L.push(`| ownership | ${OWNERSHIP_RULES.length} | \`MILO-O-\` | the \`MILO-B-\` programs each rule cites |`);
   L.push("");
   L.push("Every identifier below cites the program that states it and the suite that discharges it. A");
   L.push("requirement with no verification cannot appear here: the generator reads the annotations the test");
@@ -204,6 +206,23 @@ function render(reqs: Requirement[]): string {
       L.push("");
     }
   };
+
+  // Ownership rules: stated as rules, each discharged by the behavioural programs it cites
+  // (tests/spec.test.ts refuses a rule whose programs state no behaviour).
+  L.push("## Ownership rules");
+  L.push("");
+  L.push("When a value is moved, cloned, lent or dropped, and in what order. Each rule is a general " +
+    "statement, discharged by the behavioural programs it cites: their expected output (a user Drop " +
+    "prints when it runs) is what makes the order observable.");
+  L.push("");
+  for (const r of OWNERSHIP_RULES) {
+    L.push(`### ${r.id}`);
+    L.push("");
+    L.push(r.rule);
+    L.push("");
+    L.push(`*Pinned by:* ${r.fixtures.map(x => `[\`MILO-B-${x}\`](#milo-b-${x.toLowerCase()})`).join(", ")}`);
+    L.push("");
+  }
 
   section("Rejection requirements", rejects,
     "Programs a conforming implementation shall refuse to compile. The pinned text is a **substring** of " +

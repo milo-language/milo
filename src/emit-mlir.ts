@@ -582,7 +582,7 @@ class FnEmitter {
     // A result that lives in memory (Repr) leaves as one SSA value, as a function's does.
     const ret = e.retType.tag === "void" ? null : this.place$(e.retType, "closure result");
     this.retTy = ret;
-    // A sortByKey extractor may hand back a field of its borrowed element (checker
+    // A sortByKey extractor may hand back a field of its borrowed element (checker [MILO-O-keyExtractor]
     // keyExtractorClosures): the sort only reads the key and forgets it, so the view's bits
     // are the result, as legacy returns them.
     if (e.keyExtractor) this.retView = ret;
@@ -727,7 +727,7 @@ class FnEmitter {
     }
     if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
     if (e.kind === "MemReplace") {
-      // Legacy genMemReplace's big path: the old value's bits move to `dst` (the result),
+      // Legacy genMemReplace's big path: the old value's bits move to `dst` (the result), [MILO-O-replaceSwap]
       // then `v` is built over the place with nothing dropped. Until then both hold the
       // same bits, so no jump may come between (a held pending).
       const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
@@ -871,7 +871,7 @@ class FnEmitter {
       // So here: the value parks in a slot that owns nothing, slots 0..n-2 get structural
       // clones of it (copyOut, legacy's emitDeepCloneFromPtr), the last gets the value.
       if (e.count === 0) {
-        // No slot takes it: dropped right here, as legacy's emitDropValue of it.
+        // No slot takes it: dropped right here, as legacy's emitDropValue of it. [MILO-O-arrayRepeat]
         this.owned.push([]);
         const start = this.body.length;
         this.emit(`milo.store ${v.ref}, ${this.ownedSlot("repeat.none", ety, e.value.type)} : !milo.ref<${ety}>`);
@@ -911,7 +911,7 @@ class FnEmitter {
    * `o.map(f)` and the other closure-taking Option/Result ops: legacy's genOptionOp (the
    * tag test, the conditional call, the result enum) in a helper, the receiver lent by its
    * place and the closure passed as its value. The checker consumes a receiver exactly
-   * when the op forwards a payload that owns something (consumeForwardedPayload; context
+   * when the op forwards a payload that owns something (consumeForwardedPayload; context [MILO-O-combinatorReceiver]
    * always): such a receiver moves into the helper and the op there takes it (`isMove`).
    * A named one it did not consume is lent; a temporary one goes in by value unmoved, so
    * the helper drops it after the op, as legacy drops a temporary receiver.
@@ -1330,7 +1330,7 @@ class FnEmitter {
    * to free it), and of exactly the position's type `ty`, or the function stays legacy.
    */
   private take(v: Val, ty: string, what: string, leak = false): Val {
-    // A borrowed `move` closure given to a plain `(T) => R` param is lent, not given (spec,
+    // A borrowed `move` closure given to a plain `(T) => R` param is lent, not given (spec, [MILO-O-lentClosure]
     // moveClosureLentToPlainParam): the param is a plain alias, the caller keeps it.
     if (what === "argument" && v.own === "view" && ty.startsWith("!milo.fn<") && v.ty === ty.replace(/^!milo\.fn</, "!milo.fn<owning "))
       return this.def(`milo.fn.cast ${v.ref} : ${v.ty} -> ${ty}`, ty);
@@ -1422,7 +1422,7 @@ class FnEmitter {
         }
         const slice = s.type.tag === "array" && s.type.size === null;
         if ((s.type.tag === "ref" || slice) && s.mutable) {
-          // `var view = s[0..5]`: a slot of views (legacy's local of the header), never an owner.
+          // `var view = s[0..5]`: a slot of views (legacy's local of the header), never an owner. [MILO-O-viewVar]
           const inner = s.type.tag === "ref" ? s.type.inner : s.type;
           const want = inner.tag === "array" && inner.size === null ? `!milo.vecval<${this.lent(inner, "let").slice(10, -1)}>` : this.value(inner, "let");
           const v = this.scoped(() => this.expr(s.value));
@@ -1563,15 +1563,15 @@ class FnEmitter {
         }
         // A place-only result returned by value (an array, a struct holding one, under 128
         // bytes so not sret): loaded whole from its place at the return, legacy's ABI.
-        // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
-        // nothing, so its environment has no owner and leaks, as legacy leaks it (the env
-        // drop header is docs/backlog.md #23). fnAs's `leak` casts it.
         if (this.retView) {
           const v = this.expr(s.value);
           if (v.ty !== this.retView || v.own === "owned") throw new MlirUnsupported("returned view that is an owned value or of another type");
           this.ret(`milo.return ${v.ref} : ${v.ty}`);
           return true;
         }
+        // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
+        // nothing, so its environment has no owner and leaks, as legacy leaks it (the env
+        // drop header is docs/backlog.md #23). fnAs's `leak` casts it. [MILO-O-returnedPlainClosure]
         const plainFn = this.retTy!.startsWith("!milo.fn<") && !this.retTy!.startsWith("!milo.fn<owning ");
         const v = plainFn ? this.take(this.expr(s.value), this.retTy!, "return", true) : this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
         this.ret(`milo.return ${v.ref} : ${v.ty}`);
@@ -1783,7 +1783,7 @@ class FnEmitter {
   }
 
   /**
-   * `for x in makeVec()`: the loop owns the Vec (legacy genConsumedIterable). It lives in a
+   * `for x in makeVec()`: the loop owns the Vec (legacy genConsumedIterable). It lives in a [MILO-O-consumedForIn]
    * vectail slot of a block around the loop, and each iteration moves its element out into
    * the binding (an owned slot of the body when it has drop glue) and moves the cursor past
    * it, so whichever way control leaves, the slot's drop frees exactly the elements no
@@ -2370,7 +2370,7 @@ class FnEmitter {
           ([x, y]) => ({ ...e, left: x, right: y }), ty, false);
       }
       case "MemSwap": {
-        // `swap(a, b)`, as legacy genMemSwap: both read before either is written (they may
+        // `swap(a, b)`, as legacy genMemSwap: both read before either is written (they may [MILO-O-replaceSwap]
         // be the same element, `swap(v[i], v[j])`), nothing dropped. A 128+ byte one goes
         // through a scratch slot; copying a place onto itself is a no-op.
         const ty = this.place$(stripRefs(e.a.type), "swapped value");
@@ -2394,7 +2394,7 @@ class FnEmitter {
         return { ref: "", ty: "" };
       }
       case "MemReplace": {
-        // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the
+        // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the [MILO-O-replaceSwap]
         // result's now), then `v` stored over it with nothing dropped.
         const ty = this.value(e.type, "replaced value");
         // A place behind a raw pointer (`replace((*r).items, v)`) is read and written
@@ -2613,7 +2613,7 @@ class FnEmitter {
         if (!own) return this.peek(e.object, get);
         const ov = this.expr(e.object);
         if (ov.own === "owned" && !this.bitCopies.has(ov.ref) && !this.runsUserDrop(ty) && this.hasDrop(ov.ty)) {
-          // An owning field of a temporary, as legacy reads it: the field cloned out, the
+          // An owning field of a temporary, as legacy reads it: the field cloned out, the [MILO-O-tempFieldRead]
           // temporary dropped right after the read (`mk().name`), so a user Drop runs
           // before the statement goes on. A field that runs its own Drop is not cloned.
           this.owned.push([]);
@@ -2821,7 +2821,7 @@ class FnEmitter {
     if (e.isMove) throw new MlirUnsupported("move closure");
     const ty = this.value(e.type, "closure");
     // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
-    // global's closure is ever called, so its env is static (milo.closure `static`), as
+    // global's closure is ever called, so its env is static (milo.closure `static`), as [MILO-O-globalClosureEnv]
     // legacy's staticEnv. A closure inside another closure's body keeps a frame env.
     const staticEnv = e.captures.length > 0 && !e.heapEnv && this.fn.name.startsWith("__milo.") && !this.inClosureBody;
     const caps = e.captures.map(c => {
@@ -3136,7 +3136,7 @@ class FnEmitter {
     const mark = this.pending.length;
     for (const f of e.fields) given.set(f.name, this.pend(this.fieldValue(f.value, layout.fields.find(lf => lf.name === f.name)?.typeKind), f.value.type));
     this.pending.length = mark;
-    // The base is consumed (legacy genStructUpdateBase): it gives up its unlisted fields and
+    // The base is consumed (legacy genStructUpdateBase): it gives up its unlisted fields and [MILO-O-structUpdate]
     // its listed ones are dropped here, in field order, so each field ends with one owner.
     const base = e.base ? this.consume(this.expr(e.base), "struct update base") : null;
     if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
@@ -3168,7 +3168,7 @@ class FnEmitter {
    * then the value of the last one to yield, or true when the block jumps instead.
    */
   /**
-   * A user fork's ownership, as legacy's blockValueOwnsResult: owned when some arm yields
+   * A user fork's ownership, as legacy's blockValueOwnsResult: owned when some arm yields [MILO-O-forkOwnership]
    * an owned value (the checker clones a place arm there), else a view (only views and
    * literals, or a view of a user-Drop type, which no clone may copy). Null: owns nothing.
    */
@@ -3664,7 +3664,7 @@ class FnEmitter {
     const okName = `prop$ok${n}`, errName = `prop$err${n}`;
     let errVal: HIRExpr | null = err.fields.length ? { kind: "Ident", name: errName, type: err.fields[0], isMove: true } : null;
     if (e.boxConversion) {
-      // `?` into a `Result<T, Heap<I>>` fn (legacy emitBoxAsIface): the error, wrapped in
+      // `?` into a `Result<T, Heap<I>>` fn (legacy emitBoxAsIface): the error, wrapped in [MILO-O-propagate]
       // its one-field message struct first when `viaMessage` (a string as ErrorMessage),
       // boxed and coerced to the interface, as `Heap(e)` coerced to `Heap<I>`.
       const box = e.boxConversion;
@@ -3680,7 +3680,7 @@ class FnEmitter {
       errVal = { kind: "InterfaceCoerce", value: { kind: "HeapCreate", value: inner, type: heap }, fromType: box.fromType, ifaceName: box.ifaceName,
         type: { tag: "heap", inner: { tag: "interface", name: box.ifaceName } } } as HIRExpr;
     } else if (e.messageFn) {
-      // `?` into a `Result<T, string>` fn (legacy genPropagate): the error's message() is
+      // `?` into a `Result<T, string>` fn (legacy genPropagate): the error's message() is [MILO-O-propagate]
       // the string; the typed error stays the arm's binding, so its scope drops it.
       if (!errVal) throw new MlirUnsupported("`?` message of a payload-less error");
       errVal = { kind: "Call", func: e.messageFn.fn, type: { tag: "string" }, variadic: false,
@@ -4482,7 +4482,7 @@ class FnEmitter {
   }
 
   /**
-   * A field that runs a user Drop, moved out of a local (legacy's field-move flags): a
+   * A field that runs a user Drop, moved out of a local (legacy's field-move flags): a [MILO-O-fieldMove]
    * zeroed one is not empty, so it is emptied by milo.move instead, and
    * milo-elaborate-drops drops the local field by field without it. Those drops call the
    * glue of every field of each struct on the way down.
@@ -4590,7 +4590,7 @@ class FnEmitter {
         const own = this.expr(a.expr);
         if (own.own === "owned" && own.ty === pt.replace(/^!milo\.fn</, "!milo.fn<owning ")) {
           provenance.push(null);
-          // A `move` closure given to a plain fn param (legacy genCall, spec "who frees the
+          // A `move` closure given to a plain fn param (legacy genCall, spec "who frees the [MILO-O-lentClosure]
           // heap environment"): the param never owns it, so the caller frees it right after
           // the call (a slot of the call's frame) and passes a plain alias; when the callee
           // may keep the param (closureParamEscapes, failing closed) nobody frees it.

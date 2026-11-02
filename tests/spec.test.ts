@@ -64,3 +64,19 @@ test("the document states its own limits", () => {
     expect(spec).toContain(claim);
   }
 });
+
+test("every ownership rule is pinned by behavioural programs that exist", () => {
+  const { OWNERSHIP_RULES } = require("../scripts/ownership-rules") as typeof import("../scripts/ownership-rules");
+  const behaviours = new Set(requirements().filter(r => r.kind === "behaviour").map(r => r.id));
+  // A count guard, as above: an empty list would pass every check below.
+  expect(OWNERSHIP_RULES.length).toBeGreaterThan(10);
+  const ids = new Set<string>();
+  for (const r of OWNERSHIP_RULES) {
+    expect(r.id).toMatch(/^MILO-O-[A-Za-z]+$/);
+    expect(ids.has(r.id)).toBe(false);
+    ids.add(r.id);
+    expect(r.fixtures.length).toBeGreaterThan(0);
+    // A rule whose program states no output pins nothing.
+    for (const f of r.fixtures) expect(behaviours.has(`MILO-B-${f}`)).toBe(true);
+  }
+});

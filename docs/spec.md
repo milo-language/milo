@@ -41,10 +41,105 @@ The key words **shall** and **conforming implementation** are used in their norm
 |---|---|---|---|
 | rejection | 744 | `MILO-E-` | `tests/run.test.ts` — *errors (type checker rejects)* |
 | behavioural | 1048 | `MILO-B-` | `tests/run.test.ts` — *fixtures (compile + run)* |
+| ownership | 15 | `MILO-O-` | the `MILO-B-` programs each rule cites |
 
 Every identifier below cites the program that states it and the suite that discharges it. A
 requirement with no verification cannot appear here: the generator reads the annotations the test
 driver reads, so an unverifiable claim has nowhere to come from.
+
+## Ownership rules
+
+When a value is moved, cloned, lent or dropped, and in what order. Each rule is a general statement, discharged by the behavioural programs it cites: their expected output (a user Drop prints when it runs) is what makes the order observable.
+
+### MILO-O-tempStatement
+
+A temporary that owns something lives until the end of the statement that made it, and is dropped there.
+
+*Pinned by:* [`MILO-B-blockValueOwnership`](#milo-b-blockvalueownership), [`MILO-B-coalesceUnboundTempDrop`](#milo-b-coalesceunboundtempdrop)
+
+### MILO-O-tempFieldRead
+
+An owning field read out of a temporary (a call result, a fork, a box nobody owns) is cloned, and the temporary is dropped right after the read, before the rest of the statement runs.
+
+*Pinned by:* [`MILO-B-tempFieldReadDrop`](#milo-b-tempfieldreaddrop), [`MILO-B-forkTempReceiver`](#milo-b-forktempreceiver), [`MILO-B-heapTempBoxRead`](#milo-b-heaptempboxread)
+
+### MILO-O-forkOwnership
+
+An if or match expression owns its result exactly when some arm yields an owned value; a place arm of such a fork is cloned (a type with a user Drop is consumed instead). A fork whose arms are only places and literals is a view and drops nothing.
+
+*Pinned by:* [`MILO-B-blockValueOwnership`](#milo-b-blockvalueownership), [`MILO-B-forkTempReceiver`](#milo-b-forktempreceiver), [`MILO-B-tempFieldReadDrop`](#milo-b-tempfieldreaddrop)
+
+### MILO-O-combinatorReceiver
+
+An Option or Result combinator consumes its receiver exactly when it forwards a payload that owns something (`context` always consumes). A receiver it does not consume keeps its payload; a temporary one is dropped after the call.
+
+*Pinned by:* [`MILO-B-combinatorRefCallbackDrop`](#milo-b-combinatorrefcallbackdrop), [`MILO-B-errorContext`](#milo-b-errorcontext)
+
+### MILO-O-lentClosure
+
+A `move` closure passed to a plain `(T) => R` parameter is lent: the caller keeps it and drops its environment once. A temporary one is dropped right after the call, unless the callee may keep the parameter, in which case nothing drops it.
+
+*Pinned by:* [`MILO-B-moveClosureLentToPlainParam`](#milo-b-moveclosurelenttoplainparam), [`MILO-B-closureArgEnvOwnership`](#milo-b-closureargenvownership), [`MILO-B-closureArgThroughFnValue`](#milo-b-closureargthroughfnvalue)
+
+### MILO-O-returnedPlainClosure
+
+A `move` closure returned as a plain `(T) => R` is a plain value, which is Copy and owns nothing: its environment is never freed.
+
+*Pinned by:* [`MILO-B-escapingClosures`](#milo-b-escapingclosures)
+
+### MILO-O-fieldMove
+
+A field moved out of a struct is no longer dropped with it: when the field's type runs a user Drop, the struct's remaining fields drop last-first and the moved one is skipped; reassigning the field or the struct makes it owned again.
+
+*Pinned by:* [`MILO-B-fieldMoveDropOnce`](#milo-b-fieldmovedroponce)
+
+### MILO-O-structUpdate
+
+A struct update `S { a: x, ..base }` consumes the base: its listed fields are dropped, its unlisted fields move into the result, so each field the base owned ends with one owner.
+
+*Pinned by:* [`MILO-B-structUpdate`](#milo-b-structupdate)
+
+### MILO-O-consumedForIn
+
+A `for` over a temporary or moved collection owns it: each iteration moves one element into the binding, and whichever way the loop ends drops exactly the elements no iteration took.
+
+*Pinned by:* [`MILO-B-forInConsumeExits`](#milo-b-forinconsumeexits)
+
+### MILO-O-propagate
+
+`?` into a `Result<T, string>` function calls the error's `message()` and drops the error; into a `Result<T, Heap<Error>>` function it boxes the error (a string as `ErrorMessage`).
+
+*Pinned by:* [`MILO-B-propagateErrorMessage`](#milo-b-propagateerrormessage), [`MILO-B-errorBoxing`](#milo-b-errorboxing)
+
+### MILO-O-arrayRepeat
+
+`[v; n]` of an owning value clones it into the first n-1 slots and moves it into the last; `[v; 0]` drops it.
+
+*Pinned by:* [`MILO-B-arrayRepeatDropClone`](#milo-b-arrayrepeatdropclone)
+
+### MILO-O-replaceSwap
+
+`replace(p, v)` moves the old value out as its result and stores v with nothing dropped; `swap(a, b)` exchanges the two with nothing dropped.
+
+*Pinned by:* [`MILO-B-replaceSwap`](#milo-b-replaceswap)
+
+### MILO-O-viewVar
+
+A `var` of a view type (`&string`, `&[T]`) holds a view and owns nothing: assigning it replaces the view and drops nothing.
+
+*Pinned by:* [`MILO-B-stringSliceReassign`](#milo-b-stringslicereassign)
+
+### MILO-O-keyExtractor
+
+A `sortByKey` extractor may return a field of the element it borrows; the sort reads the key and never stores or drops it.
+
+*Pinned by:* [`MILO-B-sortByKeyString`](#milo-b-sortbykeystring)
+
+### MILO-O-globalClosureEnv
+
+A by-reference closure built by a global's initializer has a static environment: the initializer's frame is gone before the global is called.
+
+*Pinned by:* [`MILO-B-globalRuntimeInitScalar`](#milo-b-globalruntimeinitscalar)
 
 ## Rejection requirements
 
@@ -20323,14 +20418,15 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `7`
-- `7`
-- `temps 2`
-- `literal 1`
-- `bound 2`
-- `indexedTemp 2`
+- `drop 1`
+- `n1`
+- `drop 2`
+- `n2`
+- `n4`
+- `drop 5`
+- `drop 4`
 
-**Rationale.** Reading a field off a value nobody owns still has to destroy that value. `makeRes().id` materialises the returned struct into a temporary, reads the field, and used to walk away: the destructor never ran, for the temporary and for a struct literal alike. Bound values were always fine, which is why nothing caught it. It leaks no memory when the struct owns heap, because the field read moves that field out and the moved value is released on its own. So `leaks` and ASan are both clean while a user destructor is silently skipped, and counting Drop runs is the only thing that sees it.
+**Rationale.** An owning field read out of a temporary is cloned, and the temporary is dropped right after the read, before the statement goes on: `print(mk(1).name)` runs mk(1)'s Drop before print does. A fork of named places is a view and drops nothing.
 
 *Program:* [`tests/fixtures/tempFieldReadDrop.milo`](../tests/fixtures/tempFieldReadDrop.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

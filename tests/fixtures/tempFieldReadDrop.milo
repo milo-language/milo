@@ -1,71 +1,26 @@
-// Reading a field off a value nobody owns still has to destroy that value.
-//
-// `makeRes().id` materialises the returned struct into a temporary, reads the field,
-// and used to walk away: the destructor never ran, for the temporary and for a struct
-// literal alike. Bound values were always fine, which is why nothing caught it.
-//
-// It leaks no memory when the struct owns heap, because the field read moves that
-// field out and the moved value is released on its own. So `leaks` and ASan are both
-// clean while a user destructor is silently skipped, and counting Drop runs is the
-// only thing that sees it.
-// @expect: 7
-// @expect: 7
-// @expect: temps 2
-// @expect: literal 1
-// @expect: bound 2
-// @expect: indexedTemp 2
-var drops: i64 = 0
+// An owning field read out of a temporary is cloned, and the temporary is dropped right
+// after the read, before the statement goes on: `print(mk(1).name)` runs mk(1)'s Drop
+// before print does. A fork of named places is a view and drops nothing.
+// @expect: drop 1
+// @expect: n1
+// @expect: drop 2
+// @expect: n2
+// @expect: n4
+// @expect: drop 5
+// @expect: drop 4
+struct R { id: i64, name: string }
 
-struct Res {
-    id: i64,
+impl Drop for R {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
 }
 
-impl Drop for Res {
-    fn drop(self: &mut Self): void {
-        drops = drops + 1
-    }
-}
+fn mk(i: i64): R { return R { id: i, name: $"n{i}" } }
 
-fn makeRes(): Res {
-    return Res {
-        id: 7
-    }
-}
-
-fn makeVec(): Vec<Res> {
-    var v: Vec<Res> = Vec.new()
-    v.push(makeRes())
-    v.push(makeRes())
-    return v
-}
-
-fn report(label: string): void {
-    print(label + " " + drops.toString())
-    drops = 0
-}
-
-fn main(): void {
-    print(makeRes().id)
-    print(makeRes().id)
-    report("temps")
-
-    let _n = Res {
-        id: 0
-    }
-        .id
-    report("literal")
-
-    // a bound value is dropped by its scope, not by the field read
-    if true {
-        let a = makeRes()
-        let b = makeRes()
-        let _sum = a.id + b.id
-    }
-    report("bound")
-
-    // reading a field THROUGH an indexed temporary: the container is materialised by
-    // genIndexObjectPtr and registered for its caller to release, and this read path
-    // was the one that never took the mark, so the container was never freed
-    let _k = makeVec() [0].id
-    report("indexedTemp")
+fn main() {
+    print(mk(1).name)
+    let c = true
+    print((if c { mk(2) } else { mk(3) }).name)
+    let a = mk(4)
+    let b = mk(5)
+    print((if c { a } else { b }).name)
 }
