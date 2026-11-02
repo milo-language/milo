@@ -4118,7 +4118,8 @@ class FnEmitter {
       if (a.passByRef) {
         // C gets the place's address, as legacy passes it; the helper's param is that place.
         const st = stripRefs(t);
-        if (st.tag === "string" || st.tag === "vec" || st.tag === "array") throw new MlirUnsupported(`by-ref ${st.tag} argument of an extern call`);
+        // A fixed array goes as its address, as legacy passes it; a slice or Vec is a header.
+        if (st.tag === "string" || st.tag === "vec" || (st.tag === "array" && st.size === null)) throw new MlirUnsupported(`by-ref ${st.tag} argument of an extern call`);
         const ty = this.lent(st, "extern by-ref operand");
         const r = this.place(a.expr, ty, a.refMut).ref;
         params.push({ name, type: st, isRef: !a.refMut, isRefMut: !!a.refMut });
