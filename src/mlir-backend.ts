@@ -15,6 +15,7 @@ import { spawnSync } from "child_process";
 import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
+import { mapSymbols } from "./cgu";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 
@@ -271,7 +272,11 @@ export class MlirPlan {
     const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText(this.taken)}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
-    const ll = run(optPath, ["--emit-llvmir", MLIR_PIPELINE], text).split("\n");
+    // A per-module extern is one more typed view of a C symbol: legacy codegen renames its
+    // calls to that symbol at the end of generate(), so the MLIR side is renamed the same way.
+    const links = new Map([...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name).map(f => [f.name, f.linkName!]));
+    const llText = run(optPath, ["--emit-llvmir", MLIR_PIPELINE], text);
+    const ll = (links.size ? mapSymbols(llText, n => links.get(n)) : llText).split("\n");
     // The bodies are spliced into the legacy module: a triple or layout the two disagree on
     // would size a struct differently on each side of a call.
     if (!ll.includes(`target triple = "${triple}"`) || !ll.includes(`target datalayout = "${dl}"`)) throw new Error(`mlir: milo-opt did not emit for ${triple}`);

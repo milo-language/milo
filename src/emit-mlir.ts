@@ -3265,8 +3265,8 @@ class FnEmitter {
     if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");
     const sret = this.cx.sretFns.has(e.func);
     if (sret !== (into !== undefined)) throw new MlirUnsupported("sret call as a value");
-    // An extern's call goes to its C symbol; keep those on legacy codegen for now.
-    if (callee.isExtern && callee.linkName && callee.linkName !== callee.name) throw new MlirUnsupported("callee link name");
+    // A per-module extern (`linkName`) is called by its HIR name, as legacy calls it: the
+    // backend maps both modules' symbols to the C one (mlir-backend compile).
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
