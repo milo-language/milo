@@ -1,0 +1,15 @@
+// Differential program for scripts/mlir-same.ts --programs: `fn main(): i32` returns its
+// exit code (here 3, from an early return with an owned string still in scope).
+
+fn count(s: &string): i32 {
+    return s.len() as i32
+}
+
+pub fn main(): i32 {
+    let s = "a string long enough to live on the heap".clone()
+    print(s)
+    if count(s) > 10 {
+        return 3
+    }
+    return 0
+}

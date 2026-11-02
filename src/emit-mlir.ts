@@ -454,7 +454,9 @@ class FnEmitter {
     // splice keeps it. Behind a green-task wrapper main's body is MAIN_BODY, which the
     // wrapper's task calls with nothing and takes its i32 as the exit code.
     const isMain = fn.name === "main";
-    if (isMain && (fn.params.length || fn.retType.tag !== "void")) throw new MlirUnsupported("main");
+    // `fn main(): i32` returns its exit code, as legacy's main does; a void main returns 0.
+    const mainI32 = isMain && fn.retType.tag === "int" && fn.retType.bits === 32 && fn.retType.signed && fn.retType.min === undefined && fn.retType.max === undefined;
+    if (isMain && (fn.params.length || (fn.retType.tag !== "void" && !mainI32))) throw new MlirUnsupported("main");
     const green = isMain && !this.cx.mlirMainOk;
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
