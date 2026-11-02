@@ -3505,7 +3505,6 @@ class FnEmitter {
    */
   private propagate(e: HIRExpr & { kind: "Propagate" }, into?: { dst: string; ty: string }): Val {
     if (e.boxConversion) throw new MlirUnsupported("`?` boxing its error into a Heap");
-    if (e.messageFn) throw new MlirUnsupported("`?` turning its error into a message");
     const src = this.cx.mlirEnumLayout(e.enumName);
     const ret = e.retType.tag === "enum" ? this.cx.mlirEnumLayout(e.retType.name) : null;
     const isErr = (v: { name: string }) => v.name === "Err" || v.name === "None";
@@ -3516,7 +3515,13 @@ class FnEmitter {
     const n = this.n++;
     const okName = `prop$ok${n}`, errName = `prop$err${n}`;
     let errVal: HIRExpr | null = err.fields.length ? { kind: "Ident", name: errName, type: err.fields[0], isMove: true } : null;
-    if (e.fromConversion) {
+    if (e.messageFn) {
+      // `?` into a `Result<T, string>` fn (legacy genPropagate): the error's message() is
+      // the string; the typed error stays the arm's binding, so its scope drops it.
+      if (!errVal) throw new MlirUnsupported("`?` message of a payload-less error");
+      errVal = { kind: "Call", func: e.messageFn.fn, type: { tag: "string" }, variadic: false,
+        args: [{ expr: { kind: "Ident", name: errName, type: err.fields[0], isMove: false }, passByRef: true, refMut: false }] } as HIRExpr;
+    } else if (e.fromConversion) {
       const target = retErr.fields[0];
       if (!errVal || target?.tag !== "enum" || target.name !== e.fromConversion.targetEnumName) throw new MlirUnsupported("`?` conversion layout");
       errVal = { kind: "EnumLit", enumName: target.name, variant: e.fromConversion.wrapVariant, args: [errVal], type: target };
