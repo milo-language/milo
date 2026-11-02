@@ -334,6 +334,7 @@ export class Codegen {
   public dropGlueSeen = new DropGlueSeen();
   private structDropCache = new Map<string, boolean>();
   private generatedJsonEscapeHelper = false;
+  private generatedFloatFmt = false;
   private generatedF64FormatHelper = false;
   private generatedF32FormatHelper = false;
   private needsStrtof = false;
@@ -9164,63 +9165,9 @@ export class Codegen {
       this.needsStrtod = true;
     }
     this.needsSnprintf = true;
-    const fmt = this.addString("%.*g");
-    // A float needs at most 9 significant digits to round-trip, a double 17.
-    const cap = bits === 32 ? 9 : 17;
-    const ty = bits === 32 ? "float" : "double";
-    const parse = bits === 32 ? "@strtof" : "@strtod";
-    // The digit walk and snprintf both want a double; f32 is promoted once.
-    const lines: string[] = [];
-    const b = new LlvmTextBuilder(lines, this);
-    // Fixed local names, as the hand-written helper had them.
-    const R = (name: string, t: Ty) => b.reserveNamed(`%${name}`, t);
-    const blk = (name: string): Block => ({ name });
-    const fty = Ty.of(ty);
-    const dbl = Ty.of("double");
-    // `define private`, not defineFn's `internal`.
-    lines.push(`define private i64 @milo.fmt.f${bits}(${ty} %v, ptr %buf) {`, `entry.bb:`);
-    const v = val("%v", fty);
-    const buf = val("%buf", Ty.ptr);
-    let d: Val;
-    if (bits === 32) {
-      lines.push(`  %d = fpext float %v to double`);
-      d = val("%d", dbl);
-    } else {
-      // `x + -0.0` is the identity for every x; `x + 0.0` turned -0.0 into +0.0, and
-      // print(-0.0) said "0".
-      d = b.binop("fadd", v, val("-0.000000e+00", dbl), R("d", dbl));
-    }
-    const isneg = b.fcmp("olt", d, val("0.000000e+00", dbl), R("isneg", Ty.i1));
-    lines.push(`  %negd = fneg double %d`);
-    const av = b.select(isneg, val("%negd", dbl), d, R("av", dbl));
-    b.br(blk("dloop"));
-    b.position(blk("dloop"));
-    // Back-edge operands are forward references: named before the instruction that defines them.
-    const dig = b.phi(Ty.i32, [[i32c(1), blk("entry.bb")], [val("%dignext", Ty.i32), blk("dnext")]], true, R("dig", Ty.i32));
-    b.phi(dbl, [[val("1.000000e+01", dbl), blk("entry.bb")], [val("%pownext", dbl), blk("dnext")]], true, R("pow", dbl));
-    const room = b.icmp("slt", dig, i32c(cap), R("room", Ty.i1));
-    const over = b.fcmp("oge", av, val("%pow", dbl), R("over", Ty.i1));
-    const grow = b.binop("and", room, over, R("grow", Ty.i1));
-    b.condBr(grow, blk("dnext"), blk("ploop"));
-    b.position(blk("dnext"));
-    b.binop("add", dig, i32c(1), R("dignext", Ty.i32));
-    lines.push(`  %pownext = fmul double %pow, 1.000000e+01`);
-    b.br(blk("dloop"));
-    b.position(blk("ploop"));
-    const p = b.phi(Ty.i32, [[dig, blk("dloop")], [val("%pnext", Ty.i32), blk("again")]], true, R("p", Ty.i32));
-    lines.push(`  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 ${F64_BUF}, ptr ${fmt.label}, i32 %p, double %d)`);
-    const back = b.call(fty, parse, [buf, val("null", Ty.ptr)], R("back", fty));
-    const exact = b.fcmp("oeq", back, v, R("exact", Ty.i1));
-    const last = b.icmp("sge", p, i32c(cap), R("last", Ty.i1));
-    const stop = b.binop("or", exact, last, R("stop", Ty.i1));
-    b.condBr(stop, blk("fin"), blk("again"));
-    b.position(blk("again"));
-    b.binop("add", p, i32c(1), R("pnext", Ty.i32));
-    b.br(blk("ploop"));
-    b.position(blk("fin"));
-    b.ret(b.cast("sext", val("%n", Ty.i32), Ty.i64, R("n64", Ty.i64)));
-    lines.push(`}`, ``);
-    this.dropHelperBodies.push(lines);
+    // The bodies are runtime sections (src/runtime/str.ll), shared with the MLIR path.
+    if (!this.generatedFloatFmt) { this.generatedFloatFmt = true; this.dropHelperBodies.push(runtimeFn("milo.fmt.g")); }
+    this.dropHelperBodies.push(runtimeFn(`milo.fmt.f${bits}`));
   }
 
   // Formats a float into a fresh malloc'd buffer and returns it. Callers own the

@@ -406,3 +406,80 @@ copy:
   store i8 0, ptr %term
   ret void
 }
+
+; @@ milo.fmt.g
+; The "%.*g" format both float formatters hand snprintf.
+@milo.fmt.g = private unnamed_addr constant [5 x i8] c"%.*g\00"
+
+; @@ milo.fmt.f64
+; A double as the shortest %.*g that strtod reads back exactly (at most 17 digits),
+; written to %buf (F64_BUF bytes); returns its length. -0.0 prints as "-0".
+define private i64 @milo.fmt.f64(double %v, ptr %buf) {
+entry.bb:
+  %d = fadd double %v, -0.000000e+00
+  %isneg = fcmp olt double %d, 0.000000e+00
+  %negd = fneg double %d
+  %av = select i1 %isneg, double %negd, double %d
+  br label %dloop
+dloop:
+  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]
+  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]
+  %room = icmp slt i32 %dig, 17
+  %over = fcmp oge double %av, %pow
+  %grow = and i1 %room, %over
+  br i1 %grow, label %dnext, label %ploop
+dnext:
+  %dignext = add i32 %dig, 1
+  %pownext = fmul double %pow, 1.000000e+01
+  br label %dloop
+ploop:
+  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
+  %back = call double @strtod(ptr %buf, ptr null)
+  %exact = fcmp oeq double %back, %v
+  %last = icmp sge i32 %p, 17
+  %stop = or i1 %exact, %last
+  br i1 %stop, label %fin, label %again
+again:
+  %pnext = add i32 %p, 1
+  br label %ploop
+fin:
+  %n64 = sext i32 %n to i64
+  ret i64 %n64
+}
+
+; @@ milo.fmt.f32
+; milo.fmt.f64 for a float: at most 9 digits, read back with strtof.
+define private i64 @milo.fmt.f32(float %v, ptr %buf) {
+entry.bb:
+  %d = fpext float %v to double
+  %isneg = fcmp olt double %d, 0.000000e+00
+  %negd = fneg double %d
+  %av = select i1 %isneg, double %negd, double %d
+  br label %dloop
+dloop:
+  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]
+  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]
+  %room = icmp slt i32 %dig, 9
+  %over = fcmp oge double %av, %pow
+  %grow = and i1 %room, %over
+  br i1 %grow, label %dnext, label %ploop
+dnext:
+  %dignext = add i32 %dig, 1
+  %pownext = fmul double %pow, 1.000000e+01
+  br label %dloop
+ploop:
+  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
+  %back = call float @strtof(ptr %buf, ptr null)
+  %exact = fcmp oeq float %back, %v
+  %last = icmp sge i32 %p, 9
+  %stop = or i1 %exact, %last
+  br i1 %stop, label %fin, label %again
+again:
+  %pnext = add i32 %p, 1
+  br label %ploop
+fin:
+  %n64 = sext i32 %n to i64
+  ret i64 %n64
+}
