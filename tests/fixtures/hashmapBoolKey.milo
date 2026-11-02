@@ -1,0 +1,22 @@
+// @expect: 2
+// @expect: no
+// @expect: yes
+// @expect: 1
+// @expect: 5
+
+// bool keys compare by value; re-inserting a key replaces its value. No iteration order
+// is pinned (it is unspecified), only lookups and len.
+pub fn main(): i32 {
+    var m: HashMap<bool, string> = HashMap.new()
+    m.insert(true, "yes")
+    m.insert(false, "no")
+    print(m.len)
+    print(m.get(false)!)
+    print(m.get(true)!)
+    var n: HashMap<i64, i64> = HashMap.new()
+    n.insert(5, 1)
+    n.insert(5, 5)
+    print(n.len)
+    print(n.get(5)!)
+    return 0
+}

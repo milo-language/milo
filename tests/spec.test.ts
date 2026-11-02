@@ -65,6 +65,20 @@ test("the document states its own limits", () => {
   }
 });
 
+test("every value-semantics rule is pinned by behavioural programs that exist", () => {
+  const { VALUE_RULES } = require("../scripts/value-rules") as typeof import("../scripts/value-rules");
+  const behaviours = new Set(requirements().filter(r => r.kind === "behaviour").map(r => r.id));
+  expect(VALUE_RULES.length).toBeGreaterThanOrEqual(5);
+  const ids = new Set<string>();
+  for (const r of VALUE_RULES) {
+    expect(r.id).toMatch(/^MILO-V-[A-Za-z]+$/);
+    expect(ids.has(r.id)).toBe(false);
+    ids.add(r.id);
+    expect(r.fixtures.length).toBeGreaterThan(0);
+    for (const f of r.fixtures) expect(behaviours.has(`MILO-B-${f}`)).toBe(true);
+  }
+});
+
 test("every ownership rule is pinned by behavioural programs that exist", () => {
   const { OWNERSHIP_RULES } = require("../scripts/ownership-rules") as typeof import("../scripts/ownership-rules");
   const behaviours = new Set(requirements().filter(r => r.kind === "behaviour").map(r => r.id));
