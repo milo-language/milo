@@ -2110,6 +2110,16 @@ class FnEmitter {
           ([x, ...xs]) => ({ ...e, callee: x, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })) }), ret, false);
         return this.valued(r, stmt);
       }
+      case "InterfaceCoerce": {
+        // Heap<T> -> Heap<I>: legacy's fat { box, itable } pair in a helper, the box moved
+        // into it (the same allocation, now owned by the dyn). `&T -> &I` stays legacy.
+        if (e.type.tag !== "heap") throw new MlirUnsupported("coerce of a borrow to an interface");
+        const ty = this.value(e.type, "interface value");
+        const v = this.consume(this.expr(e.value), "coerced box");
+        const r = this.intrinsic(`coerce.${e.fromType}.${e.ifaceName}`, e, [{ name: "h", type: e.value.type, mode: "val", ref: v.ref }],
+          ([x]) => ({ ...e, value: { ...x, isMove: true } as HIRExpr }), ty, false);
+        return { ...r, own: "owned" };
+      }
       case "VecCapacity": case "HeapPtr": return this.builtinOf(e, "object", false);
       case "EnumTryFrom": return this.builtinOf(e, "value", false);
       case "JsonStringify": return this.builtinOf(e, "value", false);
