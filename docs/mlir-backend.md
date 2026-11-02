@@ -834,6 +834,17 @@ Gates: `--owned` same, coverage never drops, and the `MlirUnsupported` count onl
 The self-hosted frontend later prints through the same structure. Open question it answers:
 whether the 128-byte place-only rule or the owning/plain fn split should change in the language.
 
+### Before deleting legacy: harvest the differential
+
+The legacy/MLIR differential is the best correctness oracle we have, and it disappears with
+legacy. Before the deletion: a random-program fuzzer (Csmith style) generates well-typed Milo
+programs, builds each with both backends at -O0 and -O2 under ASan, and compares output and
+live heap blocks; every disagreement becomes a fixture. A second generator emits programs the
+checker must reject (use after move, borrow conflicts, escaping refs) and requires every one to
+be rejected, since the differential cannot see frontend bugs both backends share. Runs after
+batch 10. After legacy is gone the remaining oracles are -O0 vs -O2, passes on vs off, and the
+harvested fixtures.
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
