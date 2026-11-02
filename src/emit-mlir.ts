@@ -569,6 +569,10 @@ class FnEmitter {
     // A result that lives in memory (Repr) leaves as one SSA value, as a function's does.
     const ret = e.retType.tag === "void" ? null : this.place$(e.retType, "closure result");
     this.retTy = ret;
+    // A sortByKey extractor may hand back a field of its borrowed element (checker
+    // keyExtractorClosures): the sort only reads the key and forgets it, so the view's bits
+    // are the result, as legacy returns them.
+    if (e.keyExtractor) this.retView = ret;
     this.retPlaceOnly = ret !== null && !isSsa(this.cx, ret);
     const jumped = this.stmts(e.body);
     this.closeScope(0, jumped, null);
@@ -1506,7 +1510,7 @@ class FnEmitter {
         // drop header is docs/backlog.md #23). fnAs's `leak` casts it.
         if (this.retView) {
           const v = this.expr(s.value);
-          if (v.ty !== this.retView || v.own === "owned") throw new MlirUnsupported("returned view that is not a view of the receiver's type");
+          if (v.ty !== this.retView || v.own === "owned") throw new MlirUnsupported("returned view that is an owned value or of another type");
           this.ret(`milo.return ${v.ref} : ${v.ty}`);
           return true;
         }
@@ -2661,7 +2665,7 @@ class FnEmitter {
    */
   private closure(e: HIRExpr & { kind: "Closure" }): Val {
     if (e.isMove && !e.heapEnv && !e.keyExtractor) return this.moveClosure(e);
-    if (e.isMove || e.keyExtractor) throw new MlirUnsupported(e.isMove ? "move closure" : "key extractor closure");
+    if (e.isMove) throw new MlirUnsupported("move closure");
     const ty = this.value(e.type, "closure");
     // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
     // global's closure is ever called, so legacy gives that env a static slot instead.
