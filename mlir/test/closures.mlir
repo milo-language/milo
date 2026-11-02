@@ -39,3 +39,20 @@ func.func @user(%n: si64) -> si64 {
   milo.closure.call %g() : !milo.fn<() -> ()>
   milo.return %r : si64
 }
+
+// A heap env (a scoped task's literal): malloc'd, at least 16 bytes, its header `free`.
+// CHECK-LABEL: llvm.func @scoped
+// CHECK:   %[[SZ:.*]] = llvm.mlir.constant(16 : i64) : i64
+// CHECK:   %[[HENV:.*]] = llvm.call @malloc(%[[SZ]])
+// CHECK:   %[[FREE:.*]] = llvm.mlir.addressof @free
+// CHECK:   %[[HH:.*]] = llvm.getelementptr %[[HENV]][0, 0]
+// CHECK:   llvm.store %[[FREE]], %[[HH]]
+// CHECK:   %[[HC:.*]] = llvm.getelementptr %[[HENV]][0, 1]
+// CHECK:   llvm.store %{{.*}}, %[[HC]] : !llvm.ptr, !llvm.ptr
+func.func @scoped(%n: si64) -> si64 {
+  %slot = milo.var "n" : !milo.ref<si64>
+  milo.store %n, %slot : !milo.ref<si64>
+  %f = milo.closure @"user$closure0"(%slot : !milo.ref<si64>) heap : !milo.fn<(si64) -> si64>
+  %r = milo.closure.call %f(%n) : !milo.fn<(si64) -> si64>, si64 -> si64
+  milo.return %r : si64
+}

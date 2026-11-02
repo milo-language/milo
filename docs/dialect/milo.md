@@ -313,7 +313,7 @@ _A by-reference closure value_
 Syntax:
 
 ```
-operation ::= `milo.closure` $fn (`(` $captures^ `:` type($captures) `)`)? attr-dict `:` type($result)
+operation ::= `milo.closure` $fn (`(` $captures^ `:` type($captures) `)`)? (`heap` $heap^)? attr-dict `:` type($result)
 ```
 
 A by-reference closure literal: `fn` is its body, a func.func taking `(!milo.ptr env,
@@ -322,6 +322,10 @@ the captures' addresses in order) lends it every capture in place. The checker k
 such a closure from outliving the frame; no captures means a null env. Not Pure: the
 body may write any capture whenever the value is called.
 
+`heap`: the env is malloc'd instead, its drop header `free` (legacy genClosure's
+heapEnv, a scoped task's literal: the creating frame returns before the scope joins
+the task, and the task's reap calls the header). It owns the block and no capture.
+
 Interfaces: `SymbolUserOpInterface`
 
 #### Attributes:
@@ -329,6 +333,7 @@ Interfaces: `SymbolUserOpInterface`
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>fn</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+<tr><td><code>heap</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 </table>
 
 #### Operands:
