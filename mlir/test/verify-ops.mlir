@@ -402,3 +402,11 @@ func.func @saturating_kind(%a: ui8, %b: ui8) {
   %0 = milo.saturating "div", %a, %b : ui8
   milo.return
 }
+
+// -----
+
+func.func @panic_if_four_values(%b: i1, %v: si64) {
+  // expected-error @+1 {{prints at most three values}}
+  milo.panic_if %b, "%lld %lld %lld %lld\n"(%v, %v, %v, %v)
+  milo.return
+}
