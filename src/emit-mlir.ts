@@ -4518,12 +4518,13 @@ class FnEmitter {
     return { ref: "", ty: "" };
   }
 
-  /** Every type inside `t` has display glue (src/mlir-glue.ts): a HashMap does not yet. */
+  /** Every type inside `t` has display glue (src/mlir-glue.ts). */
   private hasDisplayGlue(t: TypeKind, seen: string[] = []): boolean {
     t = stripRefs(t);
     switch (t.tag) {
       case "int": case "float": case "bool": case "ptr": case "string": case "fn": case "heap": case "interface": return true;
       case "vec": case "array": return this.hasDisplayGlue(t.element, seen);
+      case "hashmap": return this.hasDisplayGlue(t.key, seen) && this.hasDisplayGlue(t.value, seen);
       case "struct": case "enum": {
         if (seen.includes(t.name)) return true;
         const inner = [...seen, t.name];

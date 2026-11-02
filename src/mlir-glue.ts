@@ -36,7 +36,7 @@ export class MlirGlue {
     const place = this.placeOf(t);
     const g = new GlueFn(this, this.cx);
     g.body(t, "%p", "%s");
-    this.texts.push([`func.func @${h.quote(name)}(%p: ${place}, %s: ${STR_REF}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.lines, "  milo.return", "}"].join("\n"));
+    this.texts.push([`func.func @${h.quote(name)}(%p: ${place}, %s: ${STR_REF}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
     return name;
   }
 
@@ -63,6 +63,8 @@ export class MlirGlue {
 /** One glue function's body: SSA names of its own, ops appended as text. */
 class GlueFn {
   readonly lines: string[] = [];
+  // Slots, at the top of the function wherever they are used (as FnEmitter hoists them).
+  readonly vars: string[] = [];
   private n = 0;
   constructor(private glue: MlirGlue, private cx: MlirEmitCtx) {}
 
@@ -72,6 +74,12 @@ class GlueFn {
     return r;
   }
   private emit(op: string): void { this.lines.push(`  ${op}`); }
+
+  private slot(name: string, ty: string): Ref {
+    const r = `%g${this.n++}`;
+    this.vars.push(`  ${r} = milo.var ${glueHelpers.quote(name)} : !milo.ref<${ty}>`);
+    return r;
+  }
 
   private call(name: string, args: [Ref, string][], ret: string | null): Ref {
     const ty = `(${args.map(a => a[1]).join(", ")}) -> ${ret ?? "()"}`;
@@ -112,10 +120,8 @@ class GlueFn {
       this.call(`milo.string.push_${scalar}`, [[dst, STR_REF], [v, arg]], PTR);
       return;
     }
-    if (t.tag === "fn" || t.tag === "heap" || t.tag === "interface" || t.tag === "hashmap") {
-      // Shown as legacy codegen shows a part it has no text for. A HashMap's glue is not
-      // written yet: the print that has one stays on legacy's helper (FnEmitter.print).
-      if (t.tag === "hashmap") throw new MlirUnsupported("display of a HashMap");
+    if (t.tag === "fn" || t.tag === "heap" || t.tag === "interface") {
+      // Shown as legacy codegen shows a part it has no text for.
       this.text("<unprintable>", dst);
       return;
     }
@@ -202,7 +208,7 @@ class GlueFn {
         } else {
           const vty = `!milo.vec<${elem}>`;
           const len = this.def(`milo.len ${p} : ${vty}`);
-          const idx = this.def(`milo.var "disp.i" : !milo.ref<si64>`);
+          const idx = this.slot("disp.i", "si64");
           this.emit(`milo.store ${this.def("milo.const 0 : si64")}, ${idx} : !milo.ref<si64>`);
           this.emit("milo.while {");
           this.emit(`milo.condition ${this.def(`milo.cmp lt, ${this.def(`milo.load ${idx} : !milo.ref<si64>`)}, ${len} : si64`)}`);
@@ -221,6 +227,49 @@ class GlueFn {
           this.emit("}");
         }
         this.text("]", dst);
+        return;
+      }
+      case "hashmap": {
+        // `{k: v, k: v}` in slot order, occupied slots only (state 1), as `for k, v in m`
+        // walks them (FnEmitter.mapForEach): a slot is bytes { i8 state, K, V }.
+        const mty = h.placeType(this.cx, t)!;
+        const kt = h.placeType(this.cx, t.key), vt = h.placeType(this.cx, t.value);
+        if (kt === null || vt === null) throw new MlirUnsupported("display of a HashMap entry");
+        const lay = this.cx.mapSlotLayout(t.key, t.value);
+        const head = `!milo.struct<"HashMap", ${PTR}, si64, si64, si64, si64>`;
+        const mp = this.def(`milo.addr ${p} : !milo.ref<${mty}>`);
+        const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${mp}[0] : ${head}`)} : ${PTR}`);
+        const cap = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${mp}[2] : ${head}`)} : si64`);
+        const ks = this.slot("disp.k", kt), vs = this.slot("disp.v", vt), seen = this.slot("disp.seen", "i1");
+        // A bit copy into a slot nothing drops: the glue only reads it.
+        const copy = (src: Ref, dstSlot: Ref, ty: string) => {
+          if (/^!milo\.(struct|enum|array)</.test(ty)) this.emit(`milo.copy ${src}, ${dstSlot} : ${PTR}, !milo.ref<${ty}> of ${ty}`);
+          else this.emit(`milo.store ${this.def(`milo.ptr.load ${src} : ${ty}`)}, ${dstSlot} : !milo.ref<${ty}>`);
+        };
+        const at = (base: Ref, off: number) => off === 0 ? base : this.def(`milo.ptr.elem ${base}[${this.def(`milo.const ${off} : si64`)}] : ui8`);
+        this.emit(`milo.store ${this.def("milo.const false")}, ${seen} : !milo.ref<i1>`);
+        this.text("{", dst);
+        const i = `%g${this.n++}`;
+        this.emit(`milo.for ${this.def("milo.const 0 : si64")} to ${cap} : si64 {`);
+        this.lines.push(`  ^bb0(${i}: si64):`);
+        const slotAt = this.def(`milo.ptr.elem ${data}[${this.def(`milo.mul ${i}, ${this.def(`milo.const ${lay.size} : si64`)} wrapping : si64`)}] : ui8`);
+        const st = this.def(`milo.ptr.load ${slotAt} : si8`);
+        this.emit(`milo.if ${this.def(`milo.cmp eq, ${st}, ${this.def("milo.const 1 : si8")} : si8`)} {`);
+        this.emit(`milo.if ${this.def(`milo.load ${seen} : !milo.ref<i1>`)} {`);
+        this.text(", ", dst);
+        this.emit("milo.yield");
+        this.emit("}");
+        this.emit(`milo.store ${this.def("milo.const true")}, ${seen} : !milo.ref<i1>`);
+        copy(at(slotAt, lay.keyOffset), ks, kt);
+        this.part(t.key, ks, dst, h.stripRefs(t.key).tag === "string");
+        this.text(": ", dst);
+        copy(at(slotAt, lay.valueOffset), vs, vt);
+        this.part(t.value, vs, dst, h.stripRefs(t.value).tag === "string");
+        this.emit("milo.yield");
+        this.emit("}");
+        this.emit("milo.yield");
+        this.emit("}");
+        this.text("}", dst);
         return;
       }
       default:
