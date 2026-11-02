@@ -1,0 +1,70 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `&mut v[i]` of a Vec
+// of scalars lends the element's place (milo.index.ref, bounds-checked), as legacy
+// genLValueForArg does: of a local, of a by-ref Vec param, two elements of one Vec at once
+// (the alias check runs), and a value lent as `&T` from a slot of its own.
+
+fn bump(x: &mut i64, by: i64): void {
+    x = x + by
+}
+
+fn flip(b: &mut bool): void {
+    b = !b
+}
+
+fn halve(f: &mut f64): void {
+    f = f / 2.0
+}
+
+fn swap(a: &mut i64, b: &mut i64): void {
+    let t = a
+    a = b
+    b = t
+}
+
+fn peek(x: &i64): i64 {
+    return x * 10
+}
+
+fn bumpAll(v: &mut Vec<i64>): void {
+    for i in 0..v.len {
+        bump(&mut v[i], i)
+    }
+}
+
+fn exercise() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..4 {
+        v.push(i * 3)
+    }
+    bump(&mut v[2], 100)
+    bumpAll(&mut v)
+    swap(&mut v[0], &mut v[3])
+    print($"{v[0]} {v[1]} {v[2]} {v[3]}")
+    print(peek(v[1]))
+    var bs: Vec<bool> = Vec.new()
+    bs.push(true)
+    bs.push(false)
+    flip(&mut bs[1])
+    print($"{bs[0]} {bs[1]}")
+    var fs: Vec<f64> = Vec.new()
+    fs.push(5.0)
+    halve(&mut fs[0])
+    print(fs[0])
+    var bytes: Vec<u8> = Vec.new()
+    bytes.push(7)
+    let k: i64 = 0
+    swapBytes(&mut bytes, k)
+    print(bytes[0])
+}
+
+fn twice(b: &mut u8): void {
+    b = b * 2
+}
+
+fn swapBytes(bs: &mut Vec<u8>, at: i64): void {
+    twice(&mut bs[at])
+}
+
+fn main() {
+    exercise()
+}
