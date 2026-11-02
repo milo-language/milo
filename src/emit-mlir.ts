@@ -1041,10 +1041,8 @@ class FnEmitter {
             const p = this.fieldPlace(s.target);
             if (!p) throw new MlirUnsupported("assign to a field of a value");
             if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
-            // Legacy never drops what `*h = v` overwrites (its Assign drops only through an
-            // Ident, a field or an element): dropping it here would change the leak count.
-            if (s.target.kind === "HeapDeref" && this.hasDrop(p.ty)) throw new MlirUnsupported("store over an owning boxed value");
-            // milo-scope-drops drops the old value before the store: its glue must exist.
+            // milo-scope-drops drops the old value before the store (a box's `*h` too, as
+            // legacy's Assign does): its glue must exist.
             if (this.hasDrop(p.ty)) this.dropGlue(p.ty, s.target.type);
             this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
             return false;

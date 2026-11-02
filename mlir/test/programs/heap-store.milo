@@ -1,0 +1,40 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `*h = v` drops the
+// value it overwrites, on both sides. Legacy's Assign used to drop only through an Ident,
+// a field or an element, so every store into a box of an owning type leaked the old value
+// (19 live blocks at exit here); `--owned` shows 0 on both.
+
+struct Node { name: string, tags: Vec<string> }
+
+fn mk(i: i64): Node {
+    var v: Vec<string> = Vec.new()
+    v.push("a tag long enough to live on the heap ".clone() + i.toString())
+    return Node { name: "a node name long enough for the heap ".clone() + i.toString(), tags: v }
+}
+
+fn strings() {
+    var h = Heap("first boxed string, long enough for a heap buffer".clone())
+    for i in 0..4 {
+        *h = "replacement boxed string, also on the heap: ".clone() + i.toString()
+    }
+    print(*h)
+}
+
+fn nodes() {
+    var n = Heap(mk(0))
+    for i in 1..4 {
+        *n = mk(i)
+    }
+    print((*n).name)
+}
+
+fn arrays() {
+    var big = Heap([mk(0), mk(1)])
+    * big = [mk(2), mk(3)]
+    print((*big) [1].name)
+}
+
+fn main() {
+    strings()
+    nodes()
+    arrays()
+}

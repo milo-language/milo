@@ -44,7 +44,7 @@ fn run() {
     overwrite()
 }
 
-// Legacy never drops what `*h = v` overwrites, so with an owning payload this stays legacy.
+// `*h = v` drops the value it overwrites, on both sides (heap-store.milo).
 fn overwrite() {
     var s = Heap("x" + "y")
     * s = "z" + "w"

@@ -2981,7 +2981,7 @@ export class Codegen {
           lines.push(...tl);
           const isLValueTgt =
             !stmt.isInit &&
-            (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess") &&
+            (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess" || stmt.target.kind === "HeapDeref") &&
             !isRawSlot(stmt.target);
           const cover = isLValueTgt ? this.flagsCovering(stmt.target) : null;
           if (isLValueTgt && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
@@ -2998,12 +2998,12 @@ export class Codegen {
         const [targetLines, targetPtr] = this.genLValue(stmt.target);
         lines.push(...targetLines);
         // Drop the old value at the target slot before overwriting it — for ANY
-        // place (Ident/FieldAccess/IndexAccess), not just idents, or reassigning
-        // a non-Copy field/element leaks its old buffer. Skip identity self-assign
+        // place (Ident/FieldAccess/IndexAccess, a box's `*h`), not just idents, or
+        // reassigning a non-Copy field/element/box payload leaks its old buffer. Skip identity self-assign
         // (`p = p`), where `val` still aliases the slot's live data.
         const isLValueTarget =
           !stmt.isInit &&
-          (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess") &&
+          (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess" || stmt.target.kind === "HeapDeref") &&
           !isRawSlot(stmt.target);
         const cover = isLValueTarget ? this.flagsCovering(stmt.target) : null;
         if (isLValueTarget && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
