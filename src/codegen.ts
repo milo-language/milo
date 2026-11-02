@@ -8619,14 +8619,46 @@ export class Codegen {
   }
   private emittedMlirStringOps = false;
 
+  /**
+   * MLIR path: `milo.out.write(ptr s)` / `milo.err.write`, writing the string's bytes to
+   * stdout (through stdio's buffer, as emitStdoutWrite) or stderr, then freeing its buffer:
+   * the string is print's scratch, held by nobody else. Moves with the module scaffold.
+   */
+  public mlirOutWrite(stderr: boolean): string {
+    const name = stderr ? "milo.err.write" : "milo.out.write";
+    if (this.emittedMlirWrites.has(name)) return name;
+    this.emittedMlirWrites.add(name);
+    this.strRt();
+    const lines: string[] = [];
+    const saved = this.tempCounter;
+    this.tempCounter = 0;
+    lines.push(`define internal void @${name}(ptr nonnull dereferenceable(24) align 8 %s) {`, "entry:");
+    lines.push("  %v = load %String, ptr %s", "  %d = extractvalue %String %v, 0", "  %n = extractvalue %String %v, 1", "  %c = extractvalue %String %v, 2");
+    if (this.target.os === "none") {
+      // Freestanding: one printf sink and no stdio buffer to share; drain it, then write.
+      this.needsFflush = true;
+      lines.push("  call i32 @fflush(ptr null)");
+      this.emitFdWrite(lines, stderr ? 2 : 1, "%d", "%n");
+    } else if (stderr) this.emitStderrWrite(lines, "%d", "%n");
+    else this.emitStdoutWrite(lines, "%d", "%n");
+    lines.push("  %heap = icmp sgt i64 %c, 0", "  br i1 %heap, label %free, label %done", "free:", "  call void @milo.str.free(ptr %d)", "  br label %done", "done:", "  ret void", "}");
+    this.tempCounter = saved;
+    this.helperFnBodies.push(lines);
+    return name;
+  }
+  private emittedMlirWrites = new Set<string>();
+
+  /** MLIR path: a struct's or enum's name as a program shows it (not its mangled symbol). */
+  public mlirDisplayName(name: string): string { return display(this.displayNames, name); }
+
   /** MLIR path: milo.string.push_<kind>, appending one scalar's text in place. */
-  public mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool"): void {
+  public mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void {
     if (this.emittedMlirPush.has(kind)) return;
     this.emittedMlirPush.add(kind);
     this.mlirStringOps();
     if (kind === "i64" || kind === "u64") this.intFmtFns();
     if (kind === "f64" || kind === "f32") this.ensureFloatFormatHelper(kind === "f32" ? 32 : 64);
-    const key = { i64: "milo.string.push_i64", u64: "milo.string.push_u64", f64: "milo.string.push_f64", f32: "milo.string.push_f32", bool: "milo.string.push_bool" }[kind];
+    const key = { i64: "milo.string.push_i64", u64: "milo.string.push_u64", f64: "milo.string.push_f64", f32: "milo.string.push_f32", bool: "milo.string.push_bool", ptr: "milo.string.push_ptr" }[kind];
     this.helperFnBodies.push(runtimeFn(key));
   }
   private emittedMlirPush = new Set<string>();

@@ -10,6 +10,7 @@ import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRPatStep, H
 type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
+import { MlirGlue } from "./mlir-glue";
 
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
@@ -27,7 +28,9 @@ export interface MlirEmitCtx {
   mlirStrViewStep(): string;
   mlirStringOps(): void;
   mlirMapOps(): void;
-  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool"): void;
+  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void;
+  mlirOutWrite(stderr: boolean): string;
+  mlirDisplayName(name: string): string;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -557,7 +560,7 @@ class FnEmitter {
   readonly calls: { name: string; refParams: (number | null)[] }[] = [];
 
   constructor(private fn: HIRFunction, private cx: MlirEmitCtx, private fns: Map<string, HIRFunction>,
-    readonly closures: ClosureState = { next: 0, texts: [], names: [] }) {}
+    readonly closures: ClosureState = { next: 0, texts: [], names: [] }, readonly glue: MlirGlue = new MlirGlue(cx)) {}
 
   private hasDrop(ty: string): boolean { return ownsOf(this.cx, ty).drop; }
   /** `ty` runs a user's Drop when dropped: when that happens is observable. */
@@ -1336,14 +1339,14 @@ class FnEmitter {
    */
   private pushScalar(dst: string, v: Val, span: Span | undefined): void {
     const m = /^([su])i(\d+)$/.exec(v.ty);
-    let kind: "i64" | "u64" | "f64" | "f32" | "bool";
+    let kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr";
     let arg = v;
     if (m) {
       kind = m[1] === "s" ? "i64" : "u64";
       const w = `${m[1]}i64`;
       if (v.ty !== w) arg = this.def(`milo.cast ${v.ref} : ${v.ty} to ${w}`, w);
-    } else if (v.ty === "f64" || v.ty === "f32" || v.ty === "i1") {
-      kind = v.ty === "i1" ? "bool" : v.ty;
+    } else if (v.ty === "f64" || v.ty === "f32" || v.ty === "i1" || v.ty === PTR) {
+      kind = v.ty === "i1" ? "bool" : v.ty === PTR ? "ptr" : v.ty;
     } else throw new MlirUnsupported(`text of a ${v.ty}`);
     this.cx.mlirPushScalar(kind);
     this.allocCheck(this.rtCall(`milo.string.push_${kind}`, [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
@@ -3115,7 +3118,7 @@ class FnEmitter {
       return { name: c.name, place: `!milo.ref<${b.v.ty}>`, ref, b: { kind: "var" as const, ref, ty: b.v.ty } };
     });
     const name = `${this.fn.name}$closure${this.closures.next++}`;
-    const inner = new FnEmitter(this.fn, this.cx, this.fns, this.closures);
+    const inner = new FnEmitter(this.fn, this.cx, this.fns, this.closures, this.glue);
     const text = inner.runClosure(e, name, caps);
     this.closures.texts.push(text);
     this.closures.names.push(name);
@@ -4475,6 +4478,7 @@ class FnEmitter {
       parts = [];
     };
     const strip = (t: TypeKind) => { while (t.tag === "ref") t = t.inner; return t; };
+    if (args.every(a => !a.passByRef && this.hasDisplayGlue(a.expr.type))) return this.printText(args, stderr, formatted, !e.noNewline);
     // A part milo.print cannot carry (a fixed array, a HashMap): the whole print is one
     // call of legacy's print helper, which takes scalars by value and the rest by reference.
     if (!formatted && args.some(a => { const t = strip(a.expr.type); return t.tag === "array" || t.tag === "hashmap"; })) {
@@ -4511,6 +4515,66 @@ class FnEmitter {
       if (!formatted && t.tag === "string" && i < args.length - 1) flush(true);
     });
     flush(false);
+    return { ref: "", ty: "" };
+  }
+
+  /** Every type inside `t` has display glue (src/mlir-glue.ts): a HashMap does not yet. */
+  private hasDisplayGlue(t: TypeKind, seen: string[] = []): boolean {
+    t = stripRefs(t);
+    switch (t.tag) {
+      case "int": case "float": case "bool": case "ptr": case "string": case "fn": case "heap": case "interface": return true;
+      case "vec": case "array": return this.hasDisplayGlue(t.element, seen);
+      case "struct": case "enum": {
+        if (seen.includes(t.name)) return true;
+        const inner = [...seen, t.name];
+        if (t.tag === "struct") {
+          const l = this.cx.structLayouts.get(t.name);
+          return !!l && l.fields.every(f => this.hasDisplayGlue(f.typeKind, inner));
+        }
+        const l = this.cx.mlirEnumLayout(t.name);
+        return !!l && l.variants.every(v => v.fields.every(f => this.hasDisplayGlue(f, inner)));
+      }
+      default: return false;
+    }
+  }
+
+  /**
+   * print / eprint: each part's text appended to a scratch string (a top-level string as
+   * its bytes, anything else through its display glue), then the string written at once,
+   * to stdout through stdio's buffer or to stderr, and freed. Unless the parts are one
+   * format(), a string part ends a chunk: legacy writes it as soon as it is evaluated, so
+   * output from evaluating a later part comes after it.
+   */
+  private printText(args: (HIRExpr & { kind: "Call" })["args"], stderr: boolean, formatted: boolean, newline: boolean): Val {
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "print" : !milo.ref<${STR}>`);
+    const empty = () => this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+    const write = this.cx.mlirOutWrite(stderr);
+    const flush = () => { this.rtCall(write, [{ ref: slot, ty: `!milo.ref<${STR}>` }], null); empty(); };
+    empty();
+    args.forEach((a, i) => {
+      const t = stripRefs(a.expr.type);
+      if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr") {
+        const v = this.expr(a.expr);
+        if (valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+        this.pushScalar(slot, v, a.expr.span);
+      } else if (t.tag === "string") {
+        const v = this.borrow(this.expr(a.expr), t);
+        if (v.ty !== STR) throw new MlirUnsupported("print part string type");
+        this.stringHelpers();
+        this.emit(`milo.string.append ${slot}, ${v.ref} : !milo.ref<${STR}>`);
+        if (!formatted && i < args.length - 1) flush();
+      } else {
+        const lt = this.glue.placeOf(t);
+        const p = this.place(a.expr, lt, false).ref;
+        this.rtCall(this.glue.display(t), [{ ref: p, ty: lt }, { ref: slot, ty: `!milo.ref<${STR}>` }], null);
+      }
+    });
+    if (newline) {
+      this.stringHelpers();
+      this.emit(`milo.string.append ${slot}, ${this.def('milo.string.lit "\\0A"', STR).ref} : !milo.ref<${STR}>`);
+    }
+    flush();
     return { ref: "", ty: "" };
   }
 
@@ -4944,6 +5008,9 @@ class FnEmitter {
   }
 }
 
+/** What src/mlir-glue.ts spells types and symbols with, shared so both spell them alike. */
+export const glueHelpers = { stripRefs, typeKey, quote, placeType, refOf };
+
 export interface MlirFunction {
   name: string;
   text: string;
@@ -4955,8 +5022,8 @@ export interface MlirFunction {
 }
 
 /** `fn` in the dialect, or the reason it stays on legacy codegen. */
-export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): MlirFunction | string {
-  const em = new FnEmitter(fn, cx, fns);
+export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>, glue?: MlirGlue): MlirFunction | string {
+  const em = new FnEmitter(fn, cx, fns, undefined, glue);
   try {
     const text = em.run();
     if (em.probed.length) return [...new Set(em.probed)].join("\n");

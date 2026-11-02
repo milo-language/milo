@@ -69,6 +69,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/mangle.ts` | Per-package name mangling. |
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
 | `src/mlir-backend.ts` | MLIR driver (default build path; MILO_LEGACY=1 turns it off) (docs/mlir-backend.md): the functions the milo dialect covers go HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), a… |
+| `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/own-ledger.ts` | Ownership ledger verifier: checks codegen's drop bookkeeping against itself on the textual IR (MILO_OWN_LEDGER=1). |

@@ -18,6 +18,7 @@ import type { HIRFunction, HIRModule } from "./hir";
 import { mapSymbols } from "./cgu";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
+import { MlirGlue } from "./mlir-glue";
 
 // On unless MILO_LEGACY=1 (temporary escape hatch for critical deploys; docs/mlir-backend.md).
 // MILO_MLIR=0 is the old opt-out spelling, accepted for one release; MILO_MLIR=1 is a no-op.
@@ -199,8 +200,12 @@ export class MlirPlan {
   private takenNames = new Set<string>();
   private log: string[] = [];
   private readonly fns = new Map<string, HIRFunction>();
+  // Type-directed glue (display, ...) every taken function shares: emitted once, appended
+  // to the module as closure bodies are.
+  private readonly glue: MlirGlue;
 
   constructor(hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
+    this.glue = new MlirGlue(cx);
     for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
   }
 
@@ -217,7 +222,7 @@ export class MlirPlan {
     if (fn.isExtern) return null;
     // Bisecting a miscompile: only functions whose name matches go through MLIR.
     if (ONLY && !ONLY.test(fn.name)) return null;
-    const r = emitMlirFunction(fn, this.cx, this.fns);
+    const r = emitMlirFunction(fn, this.cx, this.fns, this.glue);
     if (typeof r === "string") {
       const [first, ...more] = r.split("\n");
       this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
@@ -276,7 +281,9 @@ export class MlirPlan {
     // lowering sizes types with the data layout.
     const triple = this.target.triple;
     const dl = targetDataLayout(triple);
-    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText(this.taken)}}\n`;
+    const glue = this.glue.module();
+    const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
+    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText([...this.taken, ...glueFn])}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
     // A per-module extern is one more typed view of a C symbol: legacy codegen renames its
@@ -385,7 +392,7 @@ export class MlirPlan {
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
     // Closure bodies are functions legacy never defined (it made its own, now dead, for
     // the bodies it generated): appended whole, MLIR's `define internal` line and all.
-    for (const name of this.taken.flatMap(f => f.closures)) {
+    for (const name of [...this.taken, ...glueFn].flatMap(f => f.closures)) {
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
       for (const b of got.body) if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);

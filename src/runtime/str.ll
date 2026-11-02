@@ -739,3 +739,60 @@ copy:
 fail:
   ret ptr null
 }
+
+; @@ milo.string.push_ptr
+; Appends a pointer as `0x` and lowercase hex digits (`0x0` for null), the same text on
+; every target.
+define internal ptr @milo.string.push_ptr(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr %p) {
+entry:
+  %v = ptrtoint ptr %p to i64
+  %tmp = alloca [18 x i8], align 1
+  br label %count
+count:
+  %i = phi i64 [ 0, %entry ], [ %inext, %count ]
+  %sh = shl i64 %i, 2
+  %rest = lshr i64 %v, %sh
+  %inext = add i64 %i, 1
+  %more = icmp ugt i64 %rest, 15
+  br i1 %more, label %count, label %digits
+digits:
+  %nd = add i64 %i, 1
+  %n = add i64 %nd, 2
+  store i8 48, ptr %tmp
+  %x = getelementptr i8, ptr %tmp, i64 1
+  store i8 120, ptr %x
+  br label %emit
+emit:
+  %k = phi i64 [ 0, %digits ], [ %knext, %emit ]
+  %pos = sub i64 %i, %k
+  %psh = shl i64 %pos, 2
+  %pv = lshr i64 %v, %psh
+  %nib = and i64 %pv, 15
+  %big = icmp ugt i64 %nib, 9
+  %lo = add i64 %nib, 48
+  %hi = add i64 %nib, 87
+  %ch = select i1 %big, i64 %hi, i64 %lo
+  %c8 = trunc i64 %ch to i8
+  %at = add i64 %k, 2
+  %dst = getelementptr i8, ptr %tmp, i64 %at
+  store i8 %c8, ptr %dst
+  %knext = add i64 %k, 1
+  %done = icmp ugt i64 %knext, %i
+  br i1 %done, label %append, label %emit
+append:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %out = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %out, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
