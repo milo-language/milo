@@ -113,40 +113,72 @@ const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
 const spelling = new WeakMap<MlirEmitCtx, { keys: string[]; outer: number }>();
 
 /**
+ * Every dialect type the emitter spells, interned once per context (an id per type text),
+ * with the per-type decisions below packed into one flag word per id, decided when the
+ * type is spelled from a checker type. Data, not a cache: no use recomputes them.
+ */
+const F_DROP = 1, F_USER_DROP = 2, F_SLOT = 4, F_MEMORY = 8, F_SPELLED = 16, F_SIZED = 32, F_SHARED = 64;
+interface TypeTable { ids: Map<string, number>; flags: number[]; from: TypeKind[] }
+const tables = new WeakMap<MlirEmitCtx, TypeTable>();
+
+function typeTable(cx: MlirEmitCtx): TypeTable {
+  let t = tables.get(cx);
+  if (!t) tables.set(cx, t = { ids: new Map(), flags: [], from: [] });
+  return t;
+}
+
+/** The flags of dialect type `ty`: 0 for one no checker type spelled (a place, a vectail). */
+function typeFlags(cx: MlirEmitCtx, ty: string): number {
+  const t = typeTable(cx), id = t.ids.get(ty);
+  return id === undefined ? 0 : t.flags[id];
+}
+
+/**
  * How a value travels, decided here and nowhere else (Clang CodeGen's evaluation kinds,
- * Rust MIR's operand/place split), keyed by its dialect type:
- * - `slot`: a binding of it lives in a slot (a `let`, a param, a match subject read in
+ * Rust MIR's operand/place split), as two flags of its type:
+ * - F_SLOT: a binding of it lives in a slot (a `let`, a param, a match subject read in
  *   place), as legacy keeps an isBigAgg value behind its address;
- * - `ssa`: it may be an SSA operand between positions. One that may not (128+ bytes, or
- *   holding a fixed array: SROA splits a whole-aggregate load into one op per element, so
- *   a struct holding a big array takes -O2 forever) is built in its place (`into`), copied
+ * - F_MEMORY: it may not be an SSA operand between positions (128+ bytes, or holding a
+ *   fixed array: SROA splits a whole-aggregate load into one op per element, so a struct
+ *   holding a big array takes -O2 forever). It is built in its place (`into`), copied
  *   place to place (milo.copy), and is an SSA value only at an ABI boundary, loaded whole
  *   there: a by-value param or result, as legacy's ABI passes it.
- * A 128..512 byte enum is `slot` but `ssa`: legacy passes and returns one by value (only
- * structs get sret); a larger one is a place, the size at which SROA's split starts to cost.
- * Every type placeType spells has an entry; anything else (a place, a vectail) is a value.
+ * A 128..512 byte enum is F_SLOT but not F_MEMORY: legacy passes and returns one by value
+ * (only structs get sret); a larger one is a place, the size at which SROA's split starts
+ * to cost. A type no checker type spelled is a value.
  */
-interface Repr { slot: boolean; ssa: boolean }
-const reprs = new WeakMap<MlirEmitCtx, Map<string, Repr>>();
 const BIG_ENUM_VALUE_LIMIT = 512;
 
-function recordRepr(cx: MlirEmitCtx, ty: string, t: TypeKind): void {
-  let m = reprs.get(cx);
-  if (!m) reprs.set(cx, m = new Map());
+/**
+ * Records checker type `t`'s decisions on the id of its spelling `ty`: what it owns, from
+ * the checker's type and never from the text (a type met again inside itself is spelled by
+ * name alone, which hides its fields), and how it travels. milo-opt decides what to drop
+ * from the dialect type (Milo.cpp needsDrop), so F_DROP must agree with the glue it calls.
+ * Two checker types that share a spelling but not an answer mark it F_SHARED: legacy.
+ */
+function recordType(cx: MlirEmitCtx, ty: string, t: TypeKind): void {
+  const tt = typeTable(cx);
+  let id = tt.ids.get(ty);
+  if (id === undefined) { id = tt.flags.length; tt.ids.set(ty, id); tt.flags.push(0); }
+  let f = tt.flags[id];
+  if ((f & F_SPELLED) && tt.from[id] === t) return;
+  const own = (ownsStructurally(cx, t, []) ? F_DROP : 0) | (runsUserDropT(cx, t, []) ? F_USER_DROP : 0);
+  if (!(f & F_SPELLED)) { f |= F_SPELLED | own; tt.from[id] = t; }
+  else if ((f & (F_DROP | F_USER_DROP)) !== own) f |= F_SHARED;
   // A type met inside its own fields is spelled by name alone, which says nothing of its size.
-  if (m.has(ty) || ((t.tag === "struct" || t.tag === "enum") && ty === `!milo.${t.tag}<${quote(t.name)}>`)) return;
-  const big = t.tag === "array" || ((t.tag === "struct" || t.tag === "enum") && (cx.typeSizeOf(t) >= 128 || ty.includes("!milo.array<")));
-  m.set(ty, { slot: big, ssa: !big || (t.tag === "enum" && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT) });
+  const nameOnly = (t.tag === "struct" || t.tag === "enum") && ty === `!milo.${t.tag}<${quote(t.name)}>`;
+  if (!(f & F_SIZED) && !nameOnly) {
+    const big = t.tag === "array" || ((t.tag === "struct" || t.tag === "enum") && (cx.typeSizeOf(t) >= 128 || ty.includes("!milo.array<")));
+    const memory = big && !(t.tag === "enum" && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT);
+    f |= F_SIZED | (big ? F_SLOT : 0) | (memory ? F_MEMORY : 0);
+  }
+  tt.flags[id] = f;
 }
 
-function reprOf(cx: MlirEmitCtx, ty: string): Repr {
-  return reprs.get(cx)?.get(ty) ?? { slot: false, ssa: true };
-}
-
-/** A binding of `ty` lives in a slot (Repr.slot). */
-const inSlot = (cx: MlirEmitCtx, ty: string) => reprOf(cx, ty).slot;
-/** A `ty` may be an SSA operand away from an ABI boundary (Repr.ssa). */
-const isSsa = (cx: MlirEmitCtx, ty: string) => reprOf(cx, ty).ssa;
+/** A binding of `ty` lives in a slot (F_SLOT). */
+const inSlot = (cx: MlirEmitCtx, ty: string) => (typeFlags(cx, ty) & F_SLOT) !== 0;
+/** A `ty` may be an SSA operand away from an ABI boundary (not F_MEMORY). */
+const isSsa = (cx: MlirEmitCtx, ty: string) => (typeFlags(cx, ty) & F_MEMORY) === 0;
 
 /** The dialect's type for an SSA operand of `t`: placeType, unless that lives only in places. */
 function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
@@ -154,23 +186,7 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   return r !== null && isSsa(cx, r) ? r : null;
 }
 
-// What a spelled type owns, decided from the checker's type it was spelled from, never
-// from its text: a type met again inside itself is spelled by name alone, which hides
-// its fields. A string instead of an answer is why the type stays legacy.
 interface Owns { drop: boolean; userDrop: boolean }
-const owners = new WeakMap<MlirEmitCtx, Map<string, Owns | string>>();
-
-function recordOwns(cx: MlirEmitCtx, text: string, t: TypeKind): void {
-  let m = owners.get(cx);
-  if (!m) owners.set(cx, m = new Map());
-  // milo-opt decides what to drop from the dialect type (Milo.cpp needsDrop), so this
-  // must agree with the drop glue it calls, legacy's needsDropCg.
-  const o: Owns = { drop: ownsStructurally(cx, t, []), userDrop: runsUserDropT(cx, t, []) };
-  const had = m.get(text);
-  if (had === undefined) m.set(text, o);
-  else if (typeof had !== "string" && (had.drop !== o.drop || had.userDrop !== o.userDrop))
-    m.set(text, "a type whose dialect spelling two checker types share");
-}
 
 /** Milo.cpp needsDrop, over the checker's type. */
 function ownsStructurally(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
@@ -215,9 +231,9 @@ function runsUserDropT(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
  * placeType, or is a place (a ref, a Vec header: a borrow) or a consumed Vec's tail.
  */
 function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
-  const o = owners.get(cx)?.get(ty);
-  if (typeof o === "string") throw new MlirUnsupported(o);
-  if (o) return o;
+  const f = typeFlags(cx, ty);
+  if (f & F_SHARED) throw new MlirUnsupported("a type whose dialect spelling two checker types share");
+  if (f & F_SPELLED) return { drop: (f & F_DROP) !== 0, userDrop: (f & F_USER_DROP) !== 0 };
   if (ty.startsWith("!milo.ref<") || ty.startsWith("!milo.vec<")) return { drop: false, userDrop: false };
   if (ty.startsWith("!milo.vectail<")) return { drop: true, userDrop: ownsOf(cx, `!milo.vecval<${ty.slice(14, -1)}>`).userDrop };
   throw new MlirUnsupported("ownership of a type not spelled from a checker type");
@@ -230,7 +246,7 @@ function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
  */
 function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = spellPlace(cx, t);
-  if (r !== null) { recordOwns(cx, r, t); recordRepr(cx, r, t); }
+  if (r !== null) recordType(cx, r, t);
   return r;
 }
 
