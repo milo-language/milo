@@ -34,6 +34,8 @@ export interface MlirEmitCtx {
   needsDropCg(t: TypeKind): boolean;
   dropImpls: Set<string>;
   typeSizeOf(t: TypeKind): number;
+  // A HashMap slot { i8 state, K, V } as legacy lays it out (hashMapEntryType).
+  mapSlotLayout(k: TypeKind, v: TypeKind): { size: number; keyOffset: number; valueOffset: number };
   mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null;
   // libc calls that keep a pointer argument past the call (codegen RETAINING_LIBC).
   readonly retainingLibc: ReadonlySet<string>;
@@ -1447,6 +1449,7 @@ class FnEmitter {
         const it = stripRefs(s.iterable.type);
         const slice = s.iterableKind === "array" && it.tag === "array" && it.size === null;
         if (s.iterableKind === "array" && !slice) return this.arrayForEach(s);
+        if (s.iterableKind === "hashmap" && !s.consume) return this.mapForEach(s);
         if ((s.iterableKind !== "vec" && s.iterableKind !== "string" && !slice) || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
@@ -1611,6 +1614,76 @@ class FnEmitter {
     if (v.own === "owned") throw new MlirUnsupported("cast of an owning fn temporary");
     return this.intrinsic("fnaddr", e, [{ name: "f", type: op.type, mode: "val", ref: v.ref }],
       ([f]) => ({ ...e, operand: f }), PTR, false);
+  }
+
+  /**
+   * `for k, v in m` over a HashMap place, as legacy genForEach: data and cap read once from
+   * the header ({ ptr data, i64 len, i64 cap, i64 seed, i64 tombs }), then every slot
+   * ({ i8 state, K, V }) whose state is 1 (occupied). Legacy binds k and v to the slot's
+   * places; here each is a bit copy in a slot of its own that owns nothing (a view): the
+   * checker lets nothing write the map while the loop borrows it, so the copy reads the
+   * same, and a place behind a pointer is never a milo.ref (see ptr.elem).
+   */
+  private mapForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
+    const mt = stripRefs(s.iterable.type);
+    if (mt.tag !== "hashmap") throw new MlirUnsupported("for over a hashmap of another type");
+    if ((s.varType.tag === "ref" && s.varType.mutable) || (s.varType2?.tag === "ref" && s.varType2.mutable)) throw new MlirUnsupported("for over &mut map entries");
+    const mty = this.place$(mt, "for map");
+    const kt = this.place$(mt.key, "map key"), vt = this.place$(mt.value, "map value");
+    const scopeStart = this.body.length;
+    this.scopes.push(new Map());
+    this.blocks.push(this.owned.length);
+    this.owned.push([]);
+    try {
+      const p = this.fieldPlace(s.iterable);
+      if (!p || p.ty !== mty) throw new MlirUnsupported("for over a hashmap that is not a place");
+      // Legacy's own %HashMap names the header; a slot is addressed by bytes (it is a
+      // literal struct in legacy, which no !milo.struct name could spell).
+      const head = `!milo.struct<"HashMap", ${PTR}, si64, si64, si64, si64>`;
+      const lay = this.cx.mapSlotLayout(mt.key, mt.value);
+      const byte = (base: string, off: number) => off === 0 ? base : this.def(`milo.ptr.elem ${base}[${this.def(`milo.const ${off} : si64`, "si64").ref}] : ui8`, PTR).ref;
+      const mp = this.def(`milo.addr ${p.ref} : !milo.ref<${mty}>`, PTR).ref;
+      const field = (base: string, i: number, rec: string) => this.def(`milo.ptr.field ${base}[${i}] : ${rec}`, PTR).ref;
+      const data = this.def(`milo.ptr.load ${field(mp, 0, head)} : ${PTR}`, PTR).ref;
+      const cap = this.def(`milo.ptr.load ${field(mp, 2, head)} : si64`, "si64").ref;
+      const view = (name: string, ty: string) => {
+        const r = this.fresh();
+        this.vars.push(`  ${r} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+        return r;
+      };
+      // milo.copy moves aggregates; any other value is one ptr.load.
+      const copyTo = (src: string, dst: string, ty: string) => {
+        if (/^!milo\.(struct|enum|array)</.test(ty)) this.emit(`milo.copy ${src}, ${dst} : ${PTR}, !milo.ref<${ty}> of ${ty}`);
+        else this.emit(`milo.store ${this.def(`milo.ptr.load ${src} : ${ty}`, ty).ref}, ${dst} : !milo.ref<${ty}>`);
+      };
+      const ks = view(s.varName, kt), vs = s.varName2 ? view(s.varName2, vt) : null;
+      const iv = this.fresh();
+      this.loops++;
+      this.region(`milo.for ${this.def("milo.const 0 : si64", "si64").ref} to ${cap} : si64 {`, () => {
+        this.emit(`^bb0(${iv}: si64):`);
+        const at = this.def(`milo.mul ${iv}, ${this.def(`milo.const ${lay.size} : si64`, "si64").ref} wrapping : si64`, "si64").ref;
+        const slot = this.def(`milo.ptr.elem ${data}[${at}] : ui8`, PTR).ref;
+        const st = this.def(`milo.ptr.load ${slot} : si8`, "si8").ref;
+        const occupied = this.def(`milo.cmp eq, ${st}, ${this.def("milo.const 1 : si8", "si8").ref} : si8`, "i1").ref;
+        let jumped = false;
+        this.region(`milo.if ${occupied} {`, () => {
+          copyTo(byte(slot, lay.keyOffset), ks, kt);
+          this.bind(s.varName, { kind: "var", ref: ks, ty: kt });
+          if (vs) {
+            copyTo(byte(slot, lay.valueOffset), vs, vt);
+            this.bind(s.varName2!, { kind: "var", ref: vs, ty: vt });
+          }
+          jumped = this.stmts(s.body);
+          return jumped;
+        });
+        this.emit("}");
+        return false;
+      });
+      this.emit("}");
+      this.loops--;
+      this.closeScope(scopeStart, false, null);
+      return false;
+    } finally { this.scopes.pop(); this.blocks.pop(); }
   }
 
   private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {

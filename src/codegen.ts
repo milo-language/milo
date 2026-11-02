@@ -1072,6 +1072,16 @@ export class Codegen {
     return this.typeSize(this.llvmType(t));
   }
 
+  public mapSlotLayout(k: TypeKind, v: TypeKind): { size: number; keyOffset: number; valueOffset: number } {
+    const kt = this.llvmType(k), vt = this.llvmType(v);
+    const ka = this.typeAlign(kt), va = this.typeAlign(vt);
+    const up = (n: number, a: number) => Math.ceil(n / a) * a;
+    const keyOffset = up(1, ka), valueOffset = up(keyOffset + this.typeSize(kt), va);
+    // The offsets of the literal struct legacy's for-in GEPs through, by the same rules
+    // (structPayloadSize) every legacy struct size comes from.
+    return { size: this.structPayloadSize(["i8", kt, vt]), keyOffset, valueOffset };
+  }
+
   // Zero `ptr` as type `ty`. For large aggregates, emit llvm.memset instead of a
   // first-class `store [N x i8] zeroinitializer` — clang's InstCombine is
   // superlinear on big aggregate zero-stores (a 64KB stack buffer alone pushed
