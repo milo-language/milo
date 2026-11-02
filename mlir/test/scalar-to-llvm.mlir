@@ -248,7 +248,7 @@ func.func @replay_engine() {
 // CHECK:   llvm.call @__milo_bounds_fail(%arg0, %arg1, %{{.*}}, %[[LINE]])
 // CHECK-NEXT:   llvm.unreachable
 func.func @bounds(%i: i64, %l: i64) {
-  milo.bounds_check %i, %l loc("t.milo":9:4)
+  milo.bounds_check %i, %l : i64, i64 loc("t.milo":9:4)
   milo.return
 }
 

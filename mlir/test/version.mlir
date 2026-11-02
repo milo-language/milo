@@ -14,7 +14,7 @@ func.func @negative_offset(%v: !milo.vec<f64>, %n: i64) {
   scf.for %i = %c0 to %n step %c1 : i64 {
     %j = arith.addi %i, %cm1 : i64
     %l = milo.vec.len %v : !milo.vec<f64>
-    milo.bounds_check %j, %l loc("kernels.milo":1:5)
+    milo.bounds_check %j, %l : i64, i64 loc("kernels.milo":1:5)
     %x = milo.vec.load %v[%j] : !milo.vec<f64> -> f64
   }
   return
@@ -33,7 +33,7 @@ func.func @opaque_call(%v: !milo.vec<f64>, %n: i64) {
   scf.for %i = %c0 to %n step %c1 : i64 {
     func.call @mayGrow() : () -> ()
     %l = milo.vec.len %v : !milo.vec<f64>
-    milo.bounds_check %i, %l loc("kernels.milo":1:5)
+    milo.bounds_check %i, %l : i64, i64 loc("kernels.milo":1:5)
   }
   return
 }
