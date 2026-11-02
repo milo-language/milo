@@ -44,6 +44,9 @@ export interface MlirEmitCtx {
 // What codegen names main's body behind the green-task wrapper (Codegen.MAIN_BODY_FN).
 export const MAIN_BODY = "__milo_main_body";
 
+const PROBE = !!process.env.MILO_MLIR_PROBE;
+const PROBE_SKIPPED = "(skipped by probe)";
+
 export class MlirUnsupported extends Error {
   constructor(readonly reason: string) { super(`mlir: unsupported ${reason}`); }
 }
@@ -1258,7 +1261,27 @@ class FnEmitter {
     return false;
   }
 
+  // MILO_MLIR_PROBE (census only): a refused statement is noted and skipped, so one run
+  // lists every blocker of a function, not just its first. The function never ships.
+  readonly probed: string[] = [];
   private stmt(s: HIRStmt): boolean {
+    if (!PROBE) return this.stmtProbed(s);
+    const at = { body: this.body.length, owned: this.owned.length, scopes: this.scopes.length, depth: this.depth,
+      pending: this.pending.length, loops: this.loops, loopBase: this.loopBase.length, blocks: this.blocks.length };
+    try {
+      return this.stmtProbed(s);
+    } catch (err) {
+      if (!(err instanceof MlirUnsupported)) throw err;
+      if (!err.reason.includes(PROBE_SKIPPED)) this.probed.push(err.reason);
+      this.body.length = at.body; this.owned.length = at.owned; this.scopes.length = at.scopes; this.depth = at.depth;
+      this.pending.length = at.pending; this.loops = at.loops; this.loopBase.length = at.loopBase; this.blocks.length = at.blocks;
+      // A later use of what the skipped statement bound refuses as a follow-on, not a blocker.
+      if (s.kind === "Let") this.bind(s.name, { kind: "opaque", what: PROBE_SKIPPED });
+      return false;
+    }
+  }
+
+  private stmtProbed(s: HIRStmt): boolean {
     if (s.kind !== "Assign" && s.kind !== "ExprStmt" && s.kind !== "Match") return this.stmtIn(s);
     // Its temporaries die at its end, as legacy drops them (tempSlot): a block's end may never come
     // (an exit() later in it), and the live-block count at exit would see them.
@@ -4100,9 +4123,11 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
   const em = new FnEmitter(fn, cx, fns);
   try {
     const text = em.run();
+    if (em.probed.length) return [...new Set(em.probed)].join("\n");
     return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: [text, ...em.closures.texts].join("\n"), callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
-    if (err instanceof MlirUnsupported) return err.reason;
+    if (err instanceof MlirUnsupported) return [...new Set([...em.probed, err.reason])].filter(r => !r.includes(PROBE_SKIPPED)).join("\n") || err.reason;
+    if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");
     throw err;
   }
 }

@@ -7,8 +7,11 @@
 // It runs whatever src/ holds as each file compiles, so run it from a worktree of a commit
 // (MILO_OPT pointing at a built milo-opt) when src/ may change meanwhile.
 //
-// Usage: bun scripts/mlir-census.ts [--top N] [--where reason-substring]
+// Usage: bun scripts/mlir-census.ts [--top N] [--where reason-substring] [--probe]
 //   --where prints the files whose log carries a matching reason, with counts.
+//   --probe (MILO_MLIR_PROBE) skips each refused statement and keeps going, so the ranking
+//   counts every blocker of every function, not only its first: the burn-down list. Its
+//   total is the number of (function, reason) pairs left.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir, tmpdir, availableParallelism } from "node:os";
@@ -17,6 +20,7 @@ const REPO = resolve(import.meta.dir, "..");
 const args = process.argv.slice(2);
 const topN = Number(args[args.indexOf("--top") + 1]) || (args.includes("--top") ? 25 : 25);
 const where = args.includes("--where") ? args[args.indexOf("--where") + 1] : undefined;
+const probe = args.includes("--probe");
 
 function walk(dir: string, out: string[] = []): string[] {
   if (!existsSync(dir)) return out;
@@ -37,7 +41,7 @@ const files = [
 
 const tmp = mkdtempSync(join(tmpdir(), "mlir-census-"));
 const MAIN = join(REPO, "src/main.ts");
-let ok = 0, all = 0, failed = 0;
+let ok = 0, all = 0, failed = 0, blockers = 0;
 const failures: string[] = [];
 const reasons = new Map<string, number>();
 const byFile = new Map<string, number>();
@@ -45,7 +49,7 @@ const byFile = new Map<string, number>();
 async function one(file: string, i: number) {
   const log = join(tmp, `${i}.log`);
   const proc = Bun.spawn(["bun", "run", MAIN, "emit-ir", file], {
-    env: { ...process.env, MILO_MLIR_LOG: log }, stdout: "ignore", stderr: "ignore",
+    env: { ...process.env, MILO_MLIR_LOG: log, ...(probe ? { MILO_MLIR_PROBE: "1" } : {}) }, stdout: "ignore", stderr: "ignore",
     cwd: resolve(file, ".."),
   });
   // A big example (games/flight) takes minutes; one that hangs must not hold the census.
@@ -55,9 +59,10 @@ async function one(file: string, i: number) {
   if (!existsSync(log)) return;
   for (const line of readFileSync(log, "utf-8").split("\n")) {
     if (!line) continue;
-    const reason = line.split("\t")[1] ?? "?";
-    all++;
+    const [, reason = "?", more] = line.split("\t");
+    if (!more) all++;
     if (reason === "ok") { ok++; continue; }
+    blockers++;
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
     if (where && reason.includes(where)) byFile.set(file, (byFile.get(file) ?? 0) + 1);
   }
@@ -68,7 +73,7 @@ await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) 
   for (let item; (item = queue.shift()); ) await one(item[0], item[1]);
 }));
 
-console.log(`census: ${ok} of ${all} (${(100 * ok / Math.max(all, 1)).toFixed(2)}%), ${all - ok} on legacy, ${files.length} files, ${failed} emit failures`);
+console.log(`census: ${ok} of ${all} (${(100 * ok / Math.max(all, 1)).toFixed(2)}%), ${all - ok} on legacy, ${files.length} files, ${failed} emit failures${probe ? `, ${blockers} blockers` : ""}`);
 for (const [r, n] of [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN)) console.log(`${String(n).padStart(6)}  ${r}`);
 for (const f of failures) console.log(`emit failure: ${f}`);
 if (where) for (const [f, n] of [...byFile.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`  ${n}\t${f}`);

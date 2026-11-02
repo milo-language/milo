@@ -218,7 +218,11 @@ export class MlirPlan {
     // Bisecting a miscompile: only functions whose name matches go through MLIR.
     if (ONLY && !ONLY.test(fn.name)) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns);
-    if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
+    if (typeof r === "string") {
+      const [first, ...more] = r.split("\n");
+      this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
+      return null;
+    }
     // A lazy global's init function is codegen's own, not in the HIR module.
     if (!this.fns.has(r.name)) this.fns.set(r.name, fn);
     // Mutable globals the body names are what the analysis reads as `touches`, and their
