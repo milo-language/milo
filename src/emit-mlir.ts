@@ -370,6 +370,21 @@ function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }
   return `!milo.enum<${quote(t.name)}${drop}, ${shape}, [${variants.join(", ")}]>`;
 }
 
+/**
+ * A returned view (`&string`, `&[T]`: a method's view of its own receiver, which the
+ * checker keeps frozen while the view lives): legacy returns the header by value, so the
+ * function's result is that header, a view nobody drops. Null for any other type.
+ */
+function viewResult(cx: MlirEmitCtx, t: TypeKind): string | null {
+  if (t.tag !== "ref" || t.mutable) return null;
+  if (t.inner.tag === "string") return STR;
+  if (t.inner.tag === "array" && t.inner.size === null) {
+    const e = vecElem(cx, { tag: "vec", element: t.inner.element } as TypeKind);
+    return e === null ? null : `!milo.vecval<${e}>`;
+  }
+  return null;
+}
+
 function stripRefs(t: TypeKind): TypeKind {
   while (t.tag === "ref") t = t.inner;
   return t;
@@ -617,7 +632,8 @@ class FnEmitter {
       this.sretOut = { ref: "%out", ty: this.place$(fn.retType, "sret result") };
       params.unshift(`%out: !milo.ref<${this.sretOut.ty}>`);
     }
-    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.place$(fn.retType, "return");
+    this.retView = isMain ? null : viewResult(this.cx, fn.retType);
+    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.retView ?? this.place$(fn.retType, "return");
     this.retPlaceOnly = ret !== null && !isMain && valueType(this.cx, fn.retType) === null;
     this.isMain = isMain;
     this.retTy = ret;
@@ -1025,6 +1041,7 @@ class FnEmitter {
 
   private isMain = false;
   private retTy: string | null = null;
+  private retView: string | null = null;
   private retPlaceOnly = false;
   // Set by into() for the call it is about to emit: its place-only result may be an SSA
   // value, the ABI's, stored straight into the destination.
@@ -1481,6 +1498,12 @@ class FnEmitter {
         // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
         // nothing, so its environment has no owner and leaks, as legacy leaks it (the env
         // drop header is docs/backlog.md #23). fnAs's `leak` casts it.
+        if (this.retView) {
+          const v = this.expr(s.value);
+          if (v.ty !== this.retView || v.own === "owned") throw new MlirUnsupported("returned view that is not a view of the receiver's type");
+          this.ret(`milo.return ${v.ref} : ${v.ty}`);
+          return true;
+        }
         const plainFn = this.retTy!.startsWith("!milo.fn<") && !this.retTy!.startsWith("!milo.fn<owning ");
         const v = plainFn ? this.take(this.expr(s.value), this.retTy!, "return", true) : this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
         this.ret(`milo.return ${v.ref} : ${v.ty}`);
@@ -4213,7 +4236,8 @@ class FnEmitter {
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return ty;
     });
-    const ret = callee.retType.tag === "void" || sret ? null : abi ? this.place$(callee.retType, "call result") : this.value(callee.retType, "call result");
+    const view = viewResult(this.cx, callee.retType);
+    const ret = callee.retType.tag === "void" || sret ? null : view ?? (abi ? this.place$(callee.retType, "call result") : this.value(callee.retType, "call result"));
     if (sret) paramTys.unshift(`!milo.ref<${this.place$(callee.retType, "sret result")}>`);
     else if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     const refs: { ref: string; mut: boolean; ty: string }[] = [];
@@ -4259,7 +4283,7 @@ class FnEmitter {
     if (into !== undefined) args.unshift(into);
     const call = `func.call @${quote(e.func)}(${args.join(", ")}) : ${fnTy}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
-    return { ...this.def(call, ret), own: this.hasDrop(ret) ? "owned" : undefined };
+    return { ...this.def(call, ret), own: view ? "view" : this.hasDrop(ret) ? "owned" : undefined };
   }
 }
 
