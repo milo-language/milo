@@ -2249,7 +2249,7 @@ class FnEmitter {
   }
 
   /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */
-  private closureCall(e: HIRExpr & { kind: "ClosureCall" }, stmt: boolean): Val {
+  private closureCall(e: HIRExpr & { kind: "ClosureCall" }, _stmt: boolean): Val {
     // For this call only, as call() takes it: a result that lives in memory is the ABI's value.
     const abi = this.abiResult;
     this.abiResult = false;
@@ -2363,7 +2363,7 @@ class FnEmitter {
    * of the open frame (tempSlot), or null for anything else. One whose drop runs a user
    * Drop stays legacy: legacy drops it right after the read, the frame later.
    */
-  private memTemp(e: HIRExpr): { ref: string; ty: string } | null {
+  private memTemp(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
     if (e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" || e.kind === "HeapDeref" || e.kind === "PtrDeref") return null;
     const pt = placeType(this.cx, e.type);
     if (!this.isSretCall(e) && (pt === null || isSsa(this.cx, pt))) return null;
@@ -3022,7 +3022,7 @@ class FnEmitter {
     if (v.own === "owned" && !this.bitCopies.has(v.ref) && this.hasDrop(v.ty)) slot = this.tempSlot("arg", v.ty, e.type, v);
     else {
       slot = this.fresh();
-      this.vars.push(`  ${slot} = milo.var ${quote(b ? e.name : v.own === "view" && v.ty.startsWith("!milo.vecval<") ? "slice" : "arg")} : !milo.ref<${v.ty}>`);
+      this.vars.push(`  ${slot} = milo.var ${quote(b && e.kind === "Ident" ? e.name : v.own === "view" && v.ty.startsWith("!milo.vecval<") ? "slice" : "arg")} : !milo.ref<${v.ty}>`);
     }
     this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
     return this.lendAs(slot, `!milo.ref<${v.ty}>`, refTy);
@@ -3097,7 +3097,7 @@ class FnEmitter {
    * its buffer, as legacy's emitCStrUniquePlace does before C may write through it.
    * Scalars and pointers go by value, an array as its address.
    */
-  private ffiCall(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+  private ffiCall(e: HIRExpr & { kind: "Call" }, _stmt: boolean): Val {
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];
@@ -3165,7 +3165,7 @@ class FnEmitter {
    * legacy function per builtin, operand shape and call site. A by-ref operand goes as
    * its place; the others are scalars or pointers by value. A string result is owned.
    */
-  private builtinCall(e: HIRExpr & { kind: "Call" }, stmt: boolean, lendStrings = false): Val {
+  private builtinCall(e: HIRExpr & { kind: "Call" }, _stmt: boolean, lendStrings = false): Val {
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];
@@ -3283,6 +3283,11 @@ class FnEmitter {
     // A per-module extern (`linkName`) is called by its HIR name, as legacy calls it: the
     // backend maps both modules' symbols to the C one (mlir-backend compile).
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
+    // A struct passed to or returned from C by value goes through the platform ABI's
+    // register coercion (src/abi.ts), which only legacy's genCall applies: an MLIR call
+    // would pass the LLVM struct as-is and C would read the wrong registers.
+    if (callee.isExtern && [callee.retType, ...callee.params.filter(p => !p.isRef && !p.isRefMut).map(p => p.type)].some(t => t.tag === "struct" || t.tag === "array"))
+      throw new MlirUnsupported("extern struct by value");
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
