@@ -4648,9 +4648,10 @@ class FnEmitter {
    * output from evaluating a later part comes after it.
    */
   private printText(args: (HIRExpr & { kind: "Call" })["args"], stderr: boolean, formatted: boolean, newline: boolean): Val {
-    const slot = this.fresh();
-    this.vars.push(`  ${slot} = milo.var "print" : !milo.ref<${STR}>`);
-    const empty = () => this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+    // Owned: a part that leaves early (`?` inside it) drops what was appended so far. The
+    // write frees the buffer, so the slot is emptied after it without a drop (init).
+    const slot = this.ownedSlot("print", STR, { tag: "string" });
+    const empty = () => this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} init : !milo.ref<${STR}>`);
     const write = this.cx.mlirOutWrite(stderr);
     const flush = () => { this.rtCall(write, [{ ref: slot, ty: `!milo.ref<${STR}>` }], null); empty(); };
     empty();
@@ -4738,11 +4739,11 @@ class FnEmitter {
   /** `format(a, b, ...)`: a fresh string with each part's text appended, as print shows it. */
   private formatText(args: (HIRExpr & { kind: "Call" })["args"]): Val {
     if (args.some(a => a.passByRef)) throw new MlirUnsupported("by-ref format part");
-    const slot = this.fresh();
-    this.vars.push(`  ${slot} = milo.var "format" : !milo.ref<${STR}>`);
-    this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+    // Owned until the end, so a part that leaves early (`?` inside it) drops the text so far.
+    const slot = this.ownedSlot("format", STR, { tag: "string" });
+    this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} init : !milo.ref<${STR}>`);
     this.appendText(slot, args, null);
-    return { ...this.def(`milo.load ${slot} : !milo.ref<${STR}>`, STR), own: "owned" };
+    return { ...this.def(`milo.move ${slot} : !milo.ref<${STR}>`, STR), own: "owned" };
   }
 
   /**
