@@ -206,12 +206,8 @@ export class Codegen {
   // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
-  // Legacy functions MLIR bodies call (mlirHelper), by symbol, and the
-  // drop glue they call (mlirDropHelper), by symbol and type.
+  // Legacy functions MLIR bodies call (mlirHelper), by symbol.
   private mlirHelpers = new Map<string, HIRFunction>();
-  private mlirDropHelpers = new Map<string, TypeKind>();
-  // The same for what is left of a Vec a consuming for-in takes apart (mlirVecTailDropHelper).
-  private mlirVecTailDropHelpers = new Map<string, TypeKind>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1986,8 +1982,6 @@ export class Codegen {
       const take = this.mlirTake;
       this.mlirTake = null;
       for (const fn of this.mlirHelpers.values()) fnBodies.push(this.genFunction(fn));
-      for (const [name, t] of this.mlirDropHelpers) this.emitMlirDropFn(name, t);
-      for (const [name, t] of this.mlirVecTailDropHelpers) this.emitMlirVecTailDropFn(name, t);
       this.mlirTake = take;
       this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
@@ -3321,47 +3315,6 @@ export class Codegen {
   public mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string {
     if (!this.mlirHelpers.has(name)) this.mlirHelpers.set(name, { name, isExtern: false, isVariadic: false, ...make() });
     return name;
-  }
-
-  /** `milo.drop.<key>(ptr)`: legacy's drop glue for `t`, run on the value at the pointer. */
-  // `structural`: `milo.sdrop.<key>`, the drop of a structural clone (no user Drop runs), as
-  // structuralDropTypes marks one.
-  public mlirDropHelper(key: string, t: TypeKind, structural = false): void {
-    if (!structural) { this.mlirDropHelpers.set(`milo.drop.${key}`, t); return; }
-    const s = { ...t };
-    this.structuralDropTypes.add(s);
-    this.mlirDropHelpers.set(`milo.sdrop.${key}`, s);
-  }
-
-  /**
-   * `milo.drop.vectail.<key>(ptr)`: the drop of a `{ %Vec, i64 cursor }` (Milo.td VecTailType),
-   * legacy's consumed for-in tail drop: the elements from the cursor on, then the buffer.
-   */
-  public mlirVecTailDropHelper(key: string, vec: TypeKind): void {
-    this.mlirVecTailDropHelpers.set(`milo.drop.${vec.tag === "array" ? "arraytail" : "vectail"}.${key}`, vec);
-  }
-
-  private emitMlirVecTailDropFn(name: string, vec: TypeKind): void {
-    this.emitHelperFn(2, body => {
-      const b = new LlvmTextBuilder(body, this);
-      b.defineFn({ name, ret: Ty.void, params: [{ name: "p", ty: Ty.ptr }], internal: true });
-      // A vectail is `{ %Vec, i64 }`, an arraytail `{ [N x T], i64 }`: the cursor follows the storage.
-      const cursor = b.gep(Ty.of(`{ ${vec.tag === "array" ? this.llvmType(vec) : "%Vec"}, i64 }`), val("%p", Ty.ptr), [i32c(0), i32c(1)]);
-      // Its loop counter's alloca goes into the body, which emitHelperFn hoists.
-      this.emitConsumedTailDrop(body, "%p", vec, cursor.ref, body);
-      b.ret();
-      b.endFn();
-    });
-  }
-
-  private emitMlirDropFn(name: string, t: TypeKind): void {
-    this.emitHelperFn(2, body => {
-      const b = new LlvmTextBuilder(body, this);
-      b.defineFn({ name, ret: Ty.void, params: [{ name: "p", ty: Ty.ptr }], internal: true });
-      this.emitDropValue(body, "%p", t);
-      b.ret();
-      b.endFn();
-    });
   }
 
   private mlirPanicFn(): string[] {
@@ -8681,6 +8634,19 @@ export class Codegen {
     this.helperFnBodies.push(runtimeFn("milo.map.alloc"), runtimeFn("milo.hash.byte"), runtimeFn("milo.hash.u64"), runtimeFn("milo.hash.bytes"));
     this.mlirCloneOps();
   }
+
+  /** MLIR path: the drops of a string, an owning closure and a Heap<Interface> (runtime sections). */
+  public mlirDropOps(): void {
+    if (this.emittedMlirDropOps) return;
+    this.emittedMlirDropOps = true;
+    this.strRt();
+    this.needsFree = true;
+    this.helperFnBodies.push(runtimeFn("milo.string.drop"), runtimeFn("milo.closure.drop"), runtimeFn("milo.iface.drop"));
+  }
+  private emittedMlirDropOps = false;
+
+  /** MLIR path: how many methods interface `name`'s itables hold before the drop slot. */
+  public mlirIfaceMethodCount(name: string): number | null { return this.ifaceMethodCounts.get(name) ?? null; }
 
   /** MLIR path: milo.buf.clone, the buffer copy every Vec, HashMap and Heap clone starts from. */
   public mlirCloneOps(): void {

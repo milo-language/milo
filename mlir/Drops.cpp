@@ -539,30 +539,43 @@ LLVM::LLVMFuncOp runtimeFn(ConversionPatternRewriter &rw, Operation *op, StringR
   return failed(fn) ? LLVM::LLVMFuncOp() : *fn;
 }
 
-// A drop is a call of the legacy module's drop glue for the type, `milo.drop.<key>(ptr)`
-// (codegen mlirDropHelper), or `milo.sdrop.<key>` for a structural slot; with a flag, only
-// when the flag is set.
+// A void call of `name(args)`. The module's own drop glue (src/mlir-glue.ts) is a func.func
+// not converted yet, so it is called by symbol; anything else is declared as an llvm.func.
+static LogicalResult callVoid(ConversionPatternRewriter &rw, Operation *op, StringRef name, ValueRange args) {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (isa_and_nonnull<func::FuncOp>(module.lookupSymbol(name))) {
+    LLVM::CallOp::create(rw, op->getLoc(), TypeRange{}, name, args);
+    return success();
+  }
+  SmallVector<Type> tys(args.getTypes());
+  auto fn = runtimeFn(rw, op, name, tys, LLVM::LLVMVoidType::get(rw.getContext()));
+  if (!fn)
+    return failure();
+  LLVM::CallOp::create(rw, op->getLoc(), fn, args);
+  return success();
+}
+
+// A drop is a call of the type's drop glue, `milo.drop.<key>(ptr)` (src/mlir-glue.ts), or
+// `milo.sdrop.<key>` for a structural slot; with a flag, only when the flag is set.
 struct DropLowering : ConvertOpToLLVMPattern<DropOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(DropOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
     Location loc = op.getLoc();
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     auto var = op.getRef().getDefiningOp<VarOp>();
-    auto fn = runtimeFn(rw, op, (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee()),
-                       {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
-    if (!fn)
-      return failure();
+    std::string name = (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee());
     if (!a.getFlag()) {
-      LLVM::CallOp::create(rw, loc, fn, ValueRange{a.getRef()});
+      if (failed(callVoid(rw, op, name, ValueRange{a.getRef()})))
+        return failure();
       rw.eraseOp(op);
       return success();
     }
     Block *cur = rw.getInsertionBlock();
     Block *cont = rw.splitBlock(cur, rw.getInsertionPoint());
     Block *drop = rw.createBlock(cont);
-    LLVM::CallOp::create(rw, loc, fn, ValueRange{a.getRef()});
+    if (failed(callVoid(rw, op, name, ValueRange{a.getRef()})))
+      return failure();
     LLVM::BrOp::create(rw, loc, ValueRange{}, cont);
     rw.setInsertionPointToEnd(cur);
     LLVM::CondBrOp::create(rw, loc, a.getFlag(), drop, cont);

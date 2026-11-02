@@ -18,6 +18,13 @@
 // (a string shares its buffer by count, a Vec, HashMap or Heap gets a buffer of its own
 // whose owning elements are cloned in turn). Nothing at dst is dropped: it is written as
 // if it held nothing.
+// drop: `milo.drop.<key>(ptr p)` (`milo.sdrop.<key>` for a structural copy, which runs no
+// user Drop anywhere inside) drops the T at p, the names milo-elaborate-drops calls: a
+// struct runs its user Drop first, then drops its fields last to first; a Vec its len
+// elements then its buffer; a HashMap its occupied slots' keys and values then its buffer;
+// a Heap its contents then the box; an enum the payload of the variant it holds.
+// `milo.drop.vectail.<key>` / `arraytail`: what a consuming for-in left, elements from
+// its cursor on.
 // hash: `milo.hash.<key>(ref K, si64 h) -> si64`, FNV-1a folded over the key (map.ll): a
 // bool's one byte, an int's 8 bytes widened by its signedness, a string's bytes, a
 // struct's fields in order.
@@ -91,6 +98,41 @@ export class MlirGlue {
       `  func.call @${h.quote(inner)}(%s, %d) : (${PTR}, ${PTR}) -> ()`,
       "  milo.return", "}"].join("\n"));
     this.callees.set(inner, `(${PTR}, ${PTR}) -> ()`);
+    return name;
+  }
+
+  /** The symbol of T's drop (structural: no user Drop runs), generated on first use. */
+  drop(t: TypeKind, structural = false): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    const name = `milo.${structural ? "sdrop" : "drop"}.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    try {
+      const g = new GlueFn(this, this.cx);
+      g.dropAt(t, "%p", structural, true);
+      this.texts.push([`func.func @${h.quote(name)}(%p: ${PTR}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    } catch (err) {
+      this.names.delete(name);
+      throw err;
+    }
+    return name;
+  }
+
+  /** What a consuming for-in over `seq` (a Vec or an array) leaves: `{ storage, i64 cursor }`. */
+  tailDrop(seq: TypeKind): string {
+    const h = glueHelpers;
+    const name = seq.tag === "array" ? `milo.drop.arraytail.${h.typeKey(seq)}` : `milo.drop.vectail.${h.typeKey((seq as TypeKind & { tag: "vec" }).element)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    try {
+      const g = new GlueFn(this, this.cx);
+      g.tailDropAt(seq, "%p");
+      this.texts.push([`func.func @${h.quote(name)}(%p: ${PTR}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    } catch (err) {
+      this.names.delete(name);
+      throw err;
+    }
     return name;
   }
 
@@ -369,6 +411,187 @@ class GlueFn {
     t = glueHelpers.stripRefs(t);
     if (t.tag === "struct" || t.tag === "enum" || t.tag === "vec" || t.tag === "hashmap") this.call(this.glue.clone(t), [[s, PTR], [d, PTR]], null);
     else this.cloneParts(t, s, d);
+  }
+
+  private isNull(p: Ref): Ref {
+    return this.def(`milo.cmp eq, ${p}, ${this.def(`milo.zero : ${PTR}`)} : ${PTR}`);
+  }
+
+  /** `body` unless `p` is null. */
+  private unlessNull(p: Ref, body: () => void): void {
+    this.emit(`milo.if ${this.isNull(p)} {`);
+    this.emit("milo.yield");
+    this.emit("} else {");
+    body();
+    this.emit("milo.yield");
+    this.emit("}");
+  }
+
+  /**
+   * Drops the T at raw pointer `p`. `top`: this is T's own glue function, so a struct or
+   * enum is dropped here rather than by a call of its glue.
+   */
+  dropAt(t: TypeKind, p: Ref, structural: boolean, top = false): void {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    if (!this.cx.needsDropCg(t)) return;
+    if (!top && (t.tag === "struct" || t.tag === "enum")) {
+      this.call(this.glue.drop(t, structural), [[p, PTR]], null);
+      return;
+    }
+    const size = (x: TypeKind) => this.cx.typeSizeOf(x);
+    switch (t.tag) {
+      case "string": this.cx.mlirDropOps(); this.call("milo.string.drop", [[p, PTR]], null); return;
+      case "fn": this.cx.mlirDropOps(); this.call("milo.closure.drop", [[p, PTR]], null); return;
+      case "vec": {
+        const vh = `!milo.struct<"Vec", ${PTR}, si64, si64>`;
+        const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[0] : ${vh}`)} : ${PTR}`);
+        this.unlessNull(data, () => {
+          if (this.cx.needsDropCg(t.element)) {
+            const len = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[1] : ${vh}`)} : si64`);
+            const es = size(t.element);
+            this.forUpTo(len, i => this.dropAt(t.element, this.at(data, this.def(`milo.mul ${i}, ${this.def(`milo.const ${es} : si64`)} wrapping : si64`)), structural));
+          }
+          this.call("free", [[data, PTR]], null);
+        });
+        return;
+      }
+      case "heap": {
+        if (t.inner.tag === "interface") {
+          const n = this.cx.mlirIfaceMethodCount(t.inner.name);
+          this.cx.mlirDropOps();
+          if (n === null) {
+            // No itable has this interface: no box can be live with a destructor to run.
+            const data = this.def(`milo.ptr.load ${p} : ${PTR}`);
+            this.unlessNull(data, () => this.call("free", [[data, PTR]], null));
+            return;
+          }
+          this.call("milo.iface.drop", [[p, PTR], [this.def(`milo.const ${n} : si64`), "si64"]], null);
+          return;
+        }
+        const box = this.def(`milo.ptr.load ${p} : ${PTR}`);
+        this.unlessNull(box, () => {
+          this.dropAt(t.inner, box, structural);
+          this.call("free", [[box, PTR]], null);
+        });
+        return;
+      }
+      case "hashmap": {
+        const head = `!milo.struct<"HashMap", ${PTR}, si64, si64, si64, si64>`;
+        const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[0] : ${head}`)} : ${PTR}`);
+        this.unlessNull(data, () => {
+          const kOwn = this.cx.needsDropCg(t.key), vOwn = this.cx.needsDropCg(t.value);
+          if (kOwn || vOwn) {
+            const cap = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[2] : ${head}`)} : si64`);
+            const lay = this.cx.mapSlotLayout(t.key, t.value);
+            this.forUpTo(cap, i => {
+              const slot = this.at(data, this.def(`milo.mul ${i}, ${this.def(`milo.const ${lay.size} : si64`)} wrapping : si64`));
+              const st = this.def(`milo.ptr.load ${slot} : si8`);
+              this.emit(`milo.if ${this.def(`milo.cmp eq, ${st}, ${this.def("milo.const 1 : si8")} : si8`)} {`);
+              if (kOwn) this.dropAt(t.key, this.at(slot, lay.keyOffset), structural);
+              if (vOwn) this.dropAt(t.value, this.at(slot, lay.valueOffset), structural);
+              this.emit("milo.yield");
+              this.emit("}");
+            });
+          }
+          this.call("free", [[data, PTR]], null);
+        });
+        return;
+      }
+      case "array": {
+        if (t.size === null) return;
+        const es = size(t.element);
+        for (let i = 0; i < t.size; i++) this.dropAt(t.element, this.at(p, i * es), structural);
+        return;
+      }
+      case "enum": {
+        const layout = this.cx.mlirEnumLayout(t.name);
+        if (!layout) throw new MlirUnsupported(`drop of enum ${t.name}`);
+        const ety = this.placeTy(t);
+        const owning = layout.variants.filter(v => v.fields.some(f => this.cx.needsDropCg(f)));
+        if (owning.length === 0) return;
+        const tag = this.def(`milo.enum.tag ${this.def(`milo.ptr.load ${p} : ${ety}`)} : ${ety}`);
+        for (const v of owning) {
+          this.emit(`milo.if ${this.def(`milo.cmp eq, ${tag}, ${this.def(`milo.const ${v.tag} : si32`)} : si32`)} {`);
+          v.fields.forEach((f, j) => this.dropAt(f, this.at(p, v.offsets[j]), structural));
+          this.emit("milo.yield");
+          this.emit("}");
+        }
+        return;
+      }
+      case "struct": {
+        const layout = this.cx.structLayouts.get(t.name);
+        if (!layout) throw new MlirUnsupported(`drop of struct ${t.name}`);
+        const sty = this.placeTy(t);
+        if (this.cx.dropImpls.has(t.name) && !structural) this.userDrop(t.name, layout.fields, p, sty);
+        for (let i = layout.fields.length - 1; i >= 0; i--) {
+          const f = layout.fields[i];
+          if (this.cx.needsDropCg(f.typeKind)) this.dropAt(f.typeKind, this.def(`milo.ptr.field ${p}[${i}] : ${sty}`), structural);
+        }
+        return;
+      }
+      default:
+        throw new MlirUnsupported(`drop of ${t.tag}`);
+    }
+  }
+
+  /**
+   * The user's `Drop.drop` on the struct at `p`, as legacy ensureStructDropHelper runs it:
+   * skipped when every heap field (and then every int or bool) is zero, the shape a
+   * moved-out struct is left in. A live struct of that shape is skipped too: a known hole
+   * (docs/plans/core-hir.md), kept until drops stop visiting moved-out places.
+   */
+  private userDrop(name: string, fields: { name: string; typeKind: TypeKind }[], p: Ref, sty: string): void {
+    const heap = fields.flatMap((f, i) => ["string", "vec", "hashmap", "heap"].includes(f.typeKind.tag) ? [i] : []);
+    const scalars = heap.length ? fields.flatMap((f, i) => f.typeKind.tag === "int" || f.typeKind.tag === "bool" ? [i] : []) : [];
+    const fnTy = `(!milo.ref<${sty}>) -> ()`;
+    const fn = `${name}$Drop$drop`;
+    this.glue.callees.set(fn, fnTy);
+    const call = () => this.emit(`func.call @${glueHelpers.quote(fn)}(${this.def(`milo.ptr.lend ${p} -> !milo.ref<${sty}>`)}) : ${fnTy}`);
+    if (heap.length === 0) { call(); return; }
+    let alive: Ref | null = null;
+    for (const i of [...heap, ...scalars]) {
+      const fp = this.def(`milo.ptr.field ${p}[${i}] : ${sty}`);
+      const ft = fields[i].typeKind;
+      // A heap field's first word is its pointer (a string's or Vec's data, a box).
+      const v = this.def(`milo.ptr.load ${fp} : ${heap.includes(i) ? PTR : glueHelpers.placeType(this.cx, ft)}`);
+      const ty = heap.includes(i) ? PTR : glueHelpers.placeType(this.cx, ft)!;
+      const zero = ty === PTR ? this.def(`milo.zero : ${PTR}`) : this.def(ty === "i1" ? "milo.const false" : `milo.const 0 : ${ty}`);
+      const nz = this.def(`milo.cmp ne, ${v}, ${zero} : ${ty}`);
+      alive = alive === null ? nz : this.def(`milo.or ${alive}, ${nz} : i1`);
+    }
+    this.emit(`milo.if ${alive} {`);
+    call();
+    this.emit("milo.yield");
+    this.emit("}");
+  }
+
+  /** The elements of the tail at `p` from its cursor on, then a Vec's buffer. */
+  tailDropAt(seq: TypeKind, p: Ref): void {
+    if (seq.tag !== "vec" && seq.tag !== "array") throw new MlirUnsupported(`tail drop of ${seq.tag}`);
+    // `{ storage, i64 cursor }`: the cursor follows the storage, aligned to 8.
+    const cursorAt = Math.ceil(this.cx.typeSizeOf(seq) / 8) * 8;
+    const cursor = this.def(`milo.ptr.load ${this.at(p, cursorAt)} : si64`);
+    const es = this.cx.typeSizeOf(seq.element);
+    const each = (base: Ref, len: Ref) => {
+      if (!this.cx.needsDropCg(seq.element)) return;
+      const n = this.def(`milo.sub ${len}, ${cursor} wrapping : si64`);
+      this.forUpTo(n, k => {
+        const i = this.def(`milo.add ${k}, ${cursor} wrapping : si64`);
+        this.dropAt(seq.element, this.at(base, this.def(`milo.mul ${i}, ${this.def(`milo.const ${es} : si64`)} wrapping : si64`)), false);
+      });
+    };
+    if (seq.tag === "array") {
+      if (seq.size === null) throw new MlirUnsupported("tail drop of a slice");
+      each(p, this.def(`milo.const ${seq.size} : si64`));
+      return;
+    }
+    const vh = `!milo.struct<"Vec", ${PTR}, si64, si64>`;
+    const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[0] : ${vh}`)} : ${PTR}`);
+    this.unlessNull(data, () => {
+      each(data, this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[1] : ${vh}`)} : si64`));
+      this.call("free", [[data, PTR]], null);
+    });
   }
 
   /** Whether the keys at places `a` and `b` are equal. */

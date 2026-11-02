@@ -796,3 +796,67 @@ copy:
 fail:
   ret ptr null
 }
+
+; @@ milo.string.drop
+; Drops the string at %s: one handle fewer on a heap buffer (cap > 0); a literal or an
+; empty string holds none.
+define internal void @milo.string.drop(ptr %s) {
+entry:
+  %capp = getelementptr %String, ptr %s, i32 0, i32 2
+  %cap = load i64, ptr %capp
+  %heap = icmp ugt i64 %cap, 0
+  br i1 %heap, label %rel, label %done
+rel:
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %d = load ptr, ptr %datap
+  call void @milo.str.release(ptr %d)
+  br label %done
+done:
+  ret void
+}
+
+; @@ milo.closure.drop
+; Drops the owning closure { fn, env } at %c: an env's first word is its drop function,
+; null for a by-reference closure (its env is a frame's slot); a closure that captured
+; nothing has no env at all.
+define internal void @milo.closure.drop(ptr %c) {
+entry:
+  %envp = getelementptr { ptr, ptr }, ptr %c, i32 0, i32 1
+  %env = load ptr, ptr %envp
+  %has = icmp ne ptr %env, null
+  br i1 %has, label %mid, label %done
+mid:
+  %fn = load ptr, ptr %env
+  %hasfn = icmp ne ptr %fn, null
+  br i1 %hasfn, label %call, label %done
+call:
+  call void %fn(ptr %env)
+  br label %done
+done:
+  ret void
+}
+
+; @@ milo.iface.drop
+; Drops the Heap<Interface> { data, itable } at %h: the concrete type's destructor from the
+; itable's slot %slot (after the methods; null when the type has none), then the box.
+define internal void @milo.iface.drop(ptr %h, i64 %slot) {
+entry:
+  %data = load ptr, ptr %h
+  %live = icmp ne ptr %data, null
+  br i1 %live, label %drop, label %done
+drop:
+  %itp = getelementptr { ptr, ptr }, ptr %h, i32 0, i32 1
+  %it = load ptr, ptr %itp
+  %sp = getelementptr ptr, ptr %it, i64 %slot
+  %fn = load ptr, ptr %sp
+  %hasfn = icmp ne ptr %fn, null
+  br i1 %hasfn, label %call, label %free
+call:
+  call void %fn(ptr %data)
+  br label %free
+free:
+  call void @free(ptr %data)
+  br label %done
+done:
+  ret void
+}

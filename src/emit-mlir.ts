@@ -29,6 +29,8 @@ export interface MlirEmitCtx {
   mlirStringOps(): void;
   mlirMapOps(): void;
   mlirCloneOps(): void;
+  mlirDropOps(): void;
+  mlirIfaceMethodCount(name: string): number | null;
   mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void;
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
@@ -38,8 +40,6 @@ export interface MlirEmitCtx {
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   hasStringType: boolean;
   hasVecType: boolean;
-  mlirDropHelper(key: string, t: TypeKind, structural?: boolean): void;
-  mlirVecTailDropHelper(key: string, vec: TypeKind): void;
   mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string;
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
   mlirEnumLayout(name: string): { size: number; align: number; niche?: { intTy: string; value: string }; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
@@ -1496,7 +1496,7 @@ class FnEmitter {
   }
 
   private dropGlue(_ty: string, t: TypeKind, structural = false): void {
-    this.cx.mlirDropHelper(typeKey(t), stripRefs(t), structural);
+    this.glue.drop(stripRefs(t), structural);
   }
 
   // Owned operands evaluated and not yet handed to their op (`tok()` in
@@ -2217,7 +2217,7 @@ class FnEmitter {
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var "for.arr" owned : !milo.ref<${tailTy}>`);
     this.owned[this.owned.length - 1].push({ ref: slot, ty: tailTy });
-    this.cx.mlirVecTailDropHelper(typeKey(at), at);
+    this.glue.tailDrop(at);
     const arr = this.def(`milo.arraytail.array ${slot} : !milo.ref<${tailTy}> -> !milo.ref<${aty}>`, `!milo.ref<${aty}>`).ref;
     this.into(s.iterable, arr, aty);
     this.emit(`milo.arraytail.start ${slot} : !milo.ref<${tailTy}>`);
@@ -2310,7 +2310,7 @@ class FnEmitter {
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var "for.vec" owned : !milo.ref<${tailTy}>`);
     this.owned[this.owned.length - 1].push({ ref: slot, ty: tailTy });
-    this.cx.mlirVecTailDropHelper(typeKey(vt.element), vt);
+    this.glue.tailDrop(vt);
     this.emit(`milo.vectail.init ${v.ref}, ${slot} : ${vecTy}, !milo.ref<${tailTy}>`);
     this.emit(`milo.filled ${slot} : !milo.ref<${tailTy}>`);
     const hdr = this.def(`milo.vectail.vec ${slot} : !milo.ref<${tailTy}> -> !milo.vec<${elem}>`, `!milo.vec<${elem}>`).ref;
