@@ -3876,7 +3876,10 @@ class FnEmitter {
     if (ot.tag === "array" && ot.size !== null) {
       // A fixed-size array's element, of any type, through the array's place.
       const at = this.place$(ot, "indexed array");
-      const p = this.fieldPlace(e.object);
+      const k = e.object.kind;
+      // A temporary array (`fixed()[2]`) is built in a slot of the statement, which drops
+      // it at the statement's end, as legacy's temporary; its element is read from there.
+      const p = this.fieldPlace(e.object) ?? (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" ? { ...this.bigSlot("index.of", e.object, true), param: undefined as number | undefined } : null);
       if (!p || p.ty !== at) throw new MlirUnsupported("index into an array that is not a place");
       const index = this.index(e.index);
       const ty = this.place$(ot.element, "array element");
