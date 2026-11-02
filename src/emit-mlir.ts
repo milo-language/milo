@@ -3552,8 +3552,18 @@ class FnEmitter {
    * struct's own drop later finds an empty one there and frees nothing twice.
    */
   private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {
-    if (!this.fieldOfOwnedLocal(e)) throw new MlirUnsupported("move out of a field");
-    const p = this.fieldPlace(e)!;
+    let p: { ref: string; ty: string };
+    const o = e.object, k = o.kind;
+    if (this.fieldOfOwnedLocal(e)) p = this.fieldPlace(e)!;
+    else if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && k !== "HeapDeref" && k !== "PtrDeref"
+      && o.type.tag === "struct" && !this.runsUserDrop(this.place$(o.type, "struct"))) {
+      // Out of a temporary (`make().name`): it goes to a slot that dies with the
+      // statement, so the fields left behind are dropped there (legacy
+      // dropStructFieldsExcept), the moved one zeroed first.
+      const sl = this.bigSlot("tmp", o, true);
+      const { index, ty } = this.field(e);
+      p = { ref: this.def(`milo.field_ref ${sl.ref}[${index}] : !milo.ref<${sl.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref, ty };
+    } else throw new MlirUnsupported("move out of a field");
     const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
     this.emit(`milo.store ${this.def(`milo.zero : ${p.ty}`, p.ty).ref}, ${p.ref} init : !milo.ref<${p.ty}>`);
     return { ...v, own: "owned" };

@@ -1,0 +1,34 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): an owning
+// field moved out of a temporary (`make().name`): the field is the caller's, the fields
+// left behind die with the statement (legacy dropStructFieldsExcept).
+
+struct Pair {
+    name: string,
+    tags: Vec<string>,
+    n: i64,
+}
+
+fn make(s: string, n: i64): Pair {
+    var tags: Vec<string> = Vec.new()
+    for i in 0..n { tags.push(s + i.toString()) }
+    return Pair { name: s, tags: tags, n: n }
+}
+
+fn firstTags(n: i64): Vec<string> {
+    return make("t", n).tags
+}
+
+fn main() {
+    let name = make("alpha", 3).name
+    print(name)
+    let tags = firstTags(4)
+    print(tags.len())
+    print(tags[3])
+    var total: i64 = 0
+    for i in 0..5 {
+        let s = make("x", i).name
+        total = total + s.len() + i
+    }
+    print(total)
+    print(make("beta", 2).n)
+}
