@@ -1,0 +1,43 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `let p = b else` on a
+// `?&T` / `?&mut T` (a nullable pointer, no tag): the else block on null, then p is the
+// pointee behind the pointer, read, written, copied whole and lent on to a call.
+
+extern struct Pt {
+    x: i32,
+    y: i32,
+}
+
+fn bumpBy(q: &mut Pt, by: i32) { q.x = q.x + by }
+
+@externalLinkage
+pub fn readY(b: ?&Pt): i32 {
+    let p = b else {
+        return -100
+    }
+    return p.y
+}
+
+@externalLinkage
+pub fn work(b: ?&mut Pt): i32 {
+    let p = b else {
+        print("null")
+        return -1
+    }
+    p.x = p.x + 1
+    bumpBy(&mut p, 10)
+    let c = p
+    p.y = 0
+    return c.x * 100 + c.y
+}
+
+fn main(): i32 {
+    var a = Pt { x: 1, y: 2 }
+    unsafe {
+        print(work(a.addrOf()))
+        print(readY(a.addrOf()))
+        print(work(0 as *Pt))
+        print(readY(0 as *Pt))
+    }
+    print(a.x, " ", a.y)
+    return 0
+}

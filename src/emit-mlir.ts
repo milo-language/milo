@@ -501,7 +501,11 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 // `zeroOnMove`: an owned element of a consumed array, whose slot drops every element after
 // the loop: a move takes it and leaves the zero value (legacy zeroes a moved element too).
 type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean }
-  | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string };
+  | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string }
+  // A `&T` reached through a raw pointer (`let p = b else` on a `?&mut T`): the dialect
+  // has no milo.ref behind a pointer, so it is read and written through the pointer
+  // (ptrPlace) and lent only to a call (milo.ptr.lend); any other use keeps it legacy.
+  | { kind: "ptr"; ptr: string; ty: string };
 
 // How one match arm makes its bindings (FnEmitter.armBinder). `view`: the binding reads
 // the subject's memory (a payload place, or a copy of a payload with drop glue).
@@ -1094,10 +1098,11 @@ class FnEmitter {
   private fresh(): string { return `%v${this.n++}`; }
   private bind(name: string, b: Binding): void { this.scopes[this.scopes.length - 1].set(name, b); }
 
-  private lookup(name: string): Exclude<Binding, { kind: "opaque" }> {
+  private lookup(name: string): Exclude<Binding, { kind: "opaque" | "ptr" }> {
     for (let i = this.scopes.length - 1; i >= 0; i--) {
       const b = this.scopes[i].get(name);
       if (b?.kind === "opaque") throw new MlirUnsupported(`use of a by-ref param of type ${b.what}`);
+      if (b?.kind === "ptr") throw new MlirUnsupported("use of a binding behind a pointer");
       if (b) return b;
     }
     const g = this.cx.mlirGlobal(name);
@@ -1706,8 +1711,21 @@ class FnEmitter {
         } finally { this.scopes.pop(); this.blocks.pop(); }
       }
       case "ForIterator": return this.forIterator(s);
+      case "NullRefUnwrap": {
+        // `let p = b else { ... }` on a `?&T`/`?&mut T`, as legacy genNullRefUnwrap: a null
+        // test, the else block (which the checker makes diverge) on null, then p is the
+        // pointee behind the pointer.
+        const p = this.expr(s.ptr);
+        if (p.ty !== PTR) throw new MlirUnsupported("nullable ref of another type");
+        const isNull = this.def(`milo.cmp eq, ${p.ref}, ${this.def(`milo.zero : ${PTR}`, PTR).ref} : ${PTR}`, "i1");
+        const jumped = this.region(`milo.if ${isNull.ref} {`, () => this.stmts(s.elseBody));
+        this.emit("}");
+        if (!jumped) throw new MlirUnsupported("nullable ref else block that falls through");
+        this.bind(s.name, { kind: "ptr", ptr: p.ref, ty: this.place$(s.inner, "nullable ref pointee") });
+        return false;
+      }
       default:
-        throw new MlirUnsupported(`stmt ${s.kind}`);
+        throw new MlirUnsupported(`stmt ${(s as HIRStmt).kind}`);
     }
   }
 
@@ -2079,6 +2097,13 @@ class FnEmitter {
         return this.def(`milo.const ${floatLit(e.value, ty)} : ${ty}`, ty);
       }
       case "Ident": {
+        const pb = this.ptrBinding(e);
+        if (pb) {
+          // A read of the pointee: a bit copy, a view when it owns (as ptrRead).
+          if (inSlot(this.cx, pb.ty)) throw new MlirUnsupported("a 128+ byte pointee as a value");
+          const v = this.def(`milo.ptr.load ${pb.ptr} : ${pb.ty}`, pb.ty);
+          return { ...v, own: this.hasDrop(pb.ty) ? "view" : undefined };
+        }
         if (e.type.tag === "fn" && this.fns.has(e.name) && !this.scopes.some(m => m.has(e.name)) && !this.cx.mlirGlobal(e.name)) {
           // A named fn as a value: legacy's trampoline (closure convention, null env),
           // made by a legacy helper returning the pair.
@@ -2844,7 +2869,18 @@ class FnEmitter {
    * `p[i].f`) and its element type, or null when `e` is not one. As legacy genLValue
    * does: the pointer, then the index.
    */
+  private ptrBinding(e: HIRExpr): { ptr: string; ty: string } | null {
+    if (e.kind !== "Ident") return null;
+    for (let i = this.scopes.length - 1; i >= 0; i--) {
+      const b = this.scopes[i].get(e.name);
+      if (b) return b.kind === "ptr" ? { ptr: b.ptr, ty: b.ty } : null;
+    }
+    return null;
+  }
+
   private ptrPlace(e: HIRExpr): { ptr: string; ty: string } | null {
+    const pb = this.ptrBinding(e);
+    if (pb) return pb;
     if (e.kind === "PtrDeref") {
       // `*p`: what p points at, of any type; an owning one is a bit copy, as ptrRead says.
       const p = this.expr(e.operand);
@@ -3841,6 +3877,12 @@ class FnEmitter {
    * outlives the call). `&mut` of a value would hand the callee a copy to write.
    */
   private place(e: HIRExpr, refTy: string, mut: boolean): { ref: string; param?: number } {
+    const pb = this.ptrBinding(e);
+    if (pb) {
+      // Lent to a call where it is, as legacy passes the pointer.
+      if (refTy !== `!milo.ref<${pb.ty}>`) throw new MlirUnsupported("by-ref arg of another type");
+      return { ref: this.def(`milo.ptr.lend ${pb.ptr} -> ${refTy}`, refTy).ref };
+    }
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return this.lendAs(b.ref, `!milo.vec<${b.elem}>`, refTy, b.param);
     const p = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param }
