@@ -2060,6 +2060,10 @@ class FnEmitter {
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
       }
+      case "VecCapacity": case "HeapPtr": return this.builtinOf(e, "object", false);
+      case "EnumTryFrom": return this.builtinOf(e, "value", false);
+      case "JsonStringify": return this.builtinOf(e, "value", false);
+      case "BitIntrinsic": return this.builtinOf(e, "value", true);
       case "Adopt": {
         // adoptHeap(p) / adoptVec(p, len): legacy's genAdopt (no conversion, only the type,
         // whose drop glue now frees the block) in a helper. The result is owned.
@@ -3225,6 +3229,34 @@ class FnEmitter {
   }
 
   /**
+   * A builtin whose operands are `e[field]` (and BitIntrinsic's `amount`) as legacy's own
+   * codegen of it, in a helper: a scalar operand by value, any other lent by its place
+   * (a named one only: legacy would drop a temporary receiver after the read). The result
+   * is a value of `e.type`, owned when it has drop glue (JsonStringify's string).
+   */
+  private builtinOf(e: HIRExpr, field: "object" | "value", panics: boolean): Val {
+    const rec = e as unknown as Record<string, HIRExpr | undefined>;
+    const names = [field, ...(e.kind === "BitIntrinsic" && rec.amount ? ["amount"] : [])];
+    const ops = names.map((n, k) => {
+      const x = rec[n]!;
+      const t = stripRefs(x.type);
+      const vt = valueType(this.cx, t);
+      if (vt !== null && isScalarTy(vt)) {
+        const v = this.expr(x);
+        if (v.ty !== vt) throw new MlirUnsupported(`${e.kind} operand type`);
+        return { name: `a${k}`, type: t, mode: "val" as const, ref: v.ref };
+      }
+      if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "IndexAccess") throw new MlirUnsupported(`${e.kind} of a temporary`);
+      return { name: `a${k}`, type: t, mode: "ref" as const, ref: this.place(x, this.lent(t, `${e.kind} operand`), false).ref };
+    });
+    const ty = this.value(e.type, `${e.kind} result`);
+    const key = e.kind === "BitIntrinsic" ? `bit.${(e as { intrinsic: string }).intrinsic}`
+      : e.kind === "EnumTryFrom" ? `tryfrom.${(e as { enumName: string }).enumName}` : e.kind.toLowerCase();
+    const r = this.intrinsic(key, e, ops, xs => ({ ...e, ...Object.fromEntries(names.map((n, k) => [n, xs[k]])) } as HIRExpr), ty, panics);
+    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+  }
+
+  /**
    * `for x in it` over an iterator (legacy genForIterator), as the loop it means:
    * `while true { match next(&mut it) { Some(x) => body, None => break } }`. The binding
    * owns each element, as legacy's does. A temporary iterable is first bound to a `var`
@@ -3658,9 +3690,11 @@ class FnEmitter {
    */
   /**
    * `o!` with a 128+ byte payload, written into `dst`: legacy's genUnwrap (its panic text
-   * and location) in a helper per site that init-assigns `d = o!`, both lent by place. The
-   * enum is moved into the helper: an owned local or a temporary in a slot of its own,
-   * marked moved after the call so its drop sees it empty.
+   * and location) in a helper per site that init-assigns `d = (*o)!`. The
+   * enum goes in as a raw pointer and the helper unwraps `*o`: legacy genUnwrap zeroes the
+   * operand when it is an Ident, through localAddr, which for a by-ref param is the 8-byte
+   * slot holding its address (a 168-byte store there smashed the -O0 frame). The payload
+   * is bit-copied out and the caller marks its slot moved.
    */
   private unwrapInto(e: HIRExpr & { kind: "Unwrap" }, dst: string, ty: string): void {
     const o = e.operand, st = stripRefs(o.type);
@@ -3681,14 +3715,15 @@ class FnEmitter {
     const name = `milo.intr.unwrapinto.${typeKey(st)}.${l.line}.${l.col}.${fnv1a(l.file)}`;
     const t = stripRefs(e.type);
     this.cx.mlirHelper(name, () => ({
-      params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "o", type: st, isRef: false, isRefMut: true }],
+      params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "o", type: { tag: "ptr", inner: st }, isRef: false, isRefMut: false }],
       retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
       body: [{ kind: "Assign", target: { kind: "Ident", name: "d", type: t, isMove: false }, isInit: true,
-        value: { ...e, operand: { kind: "Ident", name: "o", type: st, isMove: true } } }],
+        value: { ...e, operand: { kind: "PtrDeref", type: st, operand: { kind: "Ident", name: "o", type: { tag: "ptr", inner: st }, isMove: false } } } }],
     }));
-    const fnTy = `(!milo.ref<${ty}>, !milo.ref<${src.ty}>) -> ()`;
+    const fnTy = `(!milo.ref<${ty}>, ${PTR}) -> ()`;
     this.callees.set(name, fnTy);
-    this.emit(`func.call @${quote(name)}(${dst}, ${src.ref}) : ${fnTy}`);
+    const at = this.def(`milo.addr ${src.ref} : !milo.ref<${src.ty}>`, PTR);
+    this.emit(`func.call @${quote(name)}(${dst}, ${at.ref}) : ${fnTy}`);
     this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
   }
 
