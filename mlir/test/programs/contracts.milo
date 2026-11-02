@@ -1,0 +1,51 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: requires/ensures and
+// loop invariants checked at run time (a contract-checking build, -O0): requires at entry,
+// ensures at every return with `result` and `old(...)`, a while's invariant with its
+// condition, a for's at the top of each iteration. The last call breaks its ensures.
+// @mlir-same-flags: --contract-checks
+
+fn half(n: i64): i64
+requires n >= 0
+ensures result * 2 <= n
+{
+    return n / 2
+}
+
+fn bump(v: &mut Vec<i64>): i64
+ensures v.len() == old(v.len()) + 1
+{
+    v.push(7)
+    return v.len()
+}
+
+fn sum(n: i64): i64 {
+    var s = 0
+    var i = 0
+    while i < n
+    invariant s >= 0 {
+        s = s + i
+        i = i + 1
+    }
+    for k in 0..n
+    invariant k >= 0 {
+        s = s + k
+    }
+    return s
+}
+
+fn lies(n: i64): i64
+ensures result > n
+{
+    if n > 3 {
+        return n
+    }
+    return n + 1
+}
+
+fn main() {
+    print(half(9), " ", sum(5))
+    var v: Vec<i64> = [1, 2]
+    print(bump(&mut v))
+    print(lies(2))
+    print(lies(5))
+}

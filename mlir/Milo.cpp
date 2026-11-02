@@ -497,6 +497,13 @@ static ArrayTailType arrayTailSlot(Operation *op, Value ref) {
   return t;
 }
 
+LogicalResult ContractCheckOp::verify() {
+  StringRef k = getKind();
+  if (k != "requires" && k != "ensures" && k != "invariant")
+    return emitOpError("checks a requires, ensures or invariant clause, not ") << k;
+  return success();
+}
+
 LogicalResult ArrayTailArrayOp::verify() {
   auto t = arrayTailSlot(*this, getRef());
   if (!t)
