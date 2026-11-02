@@ -1,0 +1,23 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a struct update of a
+// 128+ byte struct, built in place: the listed fields, then the base, whose listed fields
+// drop (in field order) and whose unlisted ones move across. A user Drop prints the order.
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Big { pad: [i64; 16], a: Res, name: string, b: Res }
+
+fn big(i: i64): Big {
+    return Big { pad: [i; 16], a: Res { id: i }, name: $"big{i}", b: Res { id: i * 10 } }
+}
+
+fn main() {
+    let x = Big { a: Res { id: 7 }, ..big(1) }
+    print(x.a.id, " ", x.name, " ", x.b.id, " ", x.pad[3])
+    let y = Big { name: "named" + "", b: Res { id: 8 }, ..x }
+    print(y.a.id, " ", y.name, " ", y.b.id)
+    print("end")
+}

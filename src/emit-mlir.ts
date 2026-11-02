@@ -748,7 +748,7 @@ class FnEmitter {
       return;
     }
     if (e.kind === "Unwrap") { this.unwrapInto(e, dst, ty); return; }
-    if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
+    if (e.kind !== "StructLit") throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
     const given = new Map<string, Val>();
@@ -767,14 +767,33 @@ class FnEmitter {
       given.set(f.name, { ref: "", ty: pty });
     }
     this.pending.length = mark;
+    // A struct update's base (`..base`), after the listed fields, as legacy
+    // genStructUpdateBase: in a slot of the statement, then field by field in layout order,
+    // a listed field's base value dropped, an unlisted one moved across; the base's slot is
+    // then emptied, every field having one owner. [MILO-O-structUpdate]
+    const base = e.base ? this.bigSlot("update.base", e.base, true) : null;
+    if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
+    const fieldRef = (of: string, i: number, fty: string) => this.def(`milo.field_ref ${of}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
     layout.fields.forEach((f, i) => {
       const g = given.get(f.name);
+      if (base) {
+        const fty = this.place$(f.typeKind, "field");
+        const from = fieldRef(base.ref, i, fty);
+        if (g) {
+          if (this.hasDrop(fty)) { this.dropGlue(fty, f.typeKind); this.emit(`milo.drop ${from} : !milo.ref<${fty}>`); }
+        } else {
+          const to = fieldRef(dst, i, fty);
+          if (valueType(this.cx, f.typeKind) === null || inSlot(this.cx, fty)) this.emit(`milo.copy ${from}, ${to} : !milo.ref<${fty}>, !milo.ref<${fty}> of ${fty}`);
+          else this.emit(`milo.store ${this.def(`milo.load ${from} : !milo.ref<${fty}>`, fty).ref}, ${to} init : !milo.ref<${fty}>`);
+          return;
+        }
+      }
       if (g?.ref === "") return;
       const fty = this.value(f.typeKind, "field");
       const v = this.take(g ?? { ref: "", ty: "" }, fty, "struct literal field", true);
-      const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
-      this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
+      this.emit(`milo.store ${v.ref}, ${fieldRef(dst, i, fty)} init : !milo.ref<${fty}>`);
     });
+    if (base?.owned) this.def(`milo.move ${base.ref} : !milo.ref<${ty}>`, ty);
   }
 
   /**
