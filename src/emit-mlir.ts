@@ -289,13 +289,15 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
 function fnType(cx: MlirEmitCtx, t: TypeKind & { tag: "fn" }): string | null {
   const ps = t.params.map(p => closureParamType(cx, p));
   if (ps.some(x => x === null)) return null;
-  const r = t.ret.tag === "void" ? "()" : valueType(cx, t.ret);
+  // A by-value param or result is an ABI boundary: one that lives in memory (Repr) is still
+  // passed as one SSA value, as legacy's closureParamTy (llvmType) passes it.
+  const r = t.ret.tag === "void" ? "()" : placeType(cx, t.ret);
   return r === null ? null : `!milo.fn<${t.owning ? "owning " : ""}(${ps.join(", ")}) -> ${r}>`;
 }
 
 /** A closure param: a `&T` is the place (legacy closureParamTy passes a pointer). */
 function closureParamType(cx: MlirEmitCtx, p: TypeKind): string | null {
-  if (p.tag !== "ref") return valueType(cx, p);
+  if (p.tag !== "ref") return placeType(cx, p);
   if (p.inner.tag === "vec") { const e = vecElem(cx, p.inner); return e && `!milo.vec<${e}>`; }
   // A slice param is the address of a %Vec header that a slice expression makes: not yet.
   if (p.inner.tag === "array") return null;
@@ -435,20 +437,35 @@ class FnEmitter {
       params.push(`%p${i}: ${ty}`);
       if (ty.startsWith("!milo.vec<")) this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem: ty.slice(10, -1) });
       else if (p.type.tag === "ref") this.bind(p.name, { kind: "var", ref: `%p${i}`, ty: ty.slice(10, -1) });
-      else if (this.hasDrop(ty)) {
-        // An owned param is the closure's, as a function's is.
-        const slot = this.ownedSlot(p.name, ty, p.type);
-        this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
-        this.bind(p.name, { kind: "var", ref: slot, ty, owned: true });
-      } else this.bind(p.name, { kind: "ssa", v: { ref: `%p${i}`, ty } });
+      else this.bindParam(p.name, `%p${i}`, ty, p.type);
     });
-    const ret = e.retType.tag === "void" ? null : this.value(e.retType, "closure result");
+    // A result that lives in memory (Repr) leaves as one SSA value, as a function's does.
+    const ret = e.retType.tag === "void" ? null : this.place$(e.retType, "closure result");
     this.retTy = ret;
+    this.retPlaceOnly = ret !== null && !isSsa(this.cx, ret);
     const jumped = this.stmts(e.body);
     this.closeScope(0, jumped, null);
     if (!jumped) this.emit(ret === null ? "milo.return" : "milo.unreachable");
     const head = `func.func @${quote(name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} attributes {llvm.linkage = #llvm.linkage<internal>} {`;
     return [head, ...this.vars, ...this.body, "}"].join("\n");
+  }
+
+  /**
+   * A by-value param `ref` of `t` (`ty`, the ABI's SSA value), bound as legacy's prologue
+   * keeps it: one that owns goes to an owned slot of the body's scope (the callee owns it),
+   * one that lives in memory (Repr) to a slot of its own, and is only a place from there.
+   */
+  private bindParam(name: string, ref: string, ty: string, t: TypeKind): void {
+    if (!this.hasDrop(ty) && !inSlot(this.cx, ty)) { this.bind(name, { kind: "ssa", v: { ref, ty } }); return; }
+    const owned = this.hasDrop(ty);
+    let slot: string;
+    if (owned) slot = this.ownedSlot(name, ty, t);
+    else {
+      slot = this.fresh();
+      this.vars.push(`  ${slot} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+    }
+    this.emit(`milo.store ${ref}, ${slot} : !milo.ref<${ty}>`);
+    this.bind(name, { kind: "var", ref: slot, ty, owned });
   }
 
   run(): string {
@@ -478,28 +495,12 @@ class FnEmitter {
         return `%p${i}: ${PTR}`;
       }
       const pt = placeType(this.cx, p.type);
-      const ty = p.isRef || p.isRefMut || (pt !== null && inSlot(this.cx, pt)) ? pt! : this.value(p.type, "param");
+      const ty = p.isRef || p.isRefMut ? pt! : this.place$(p.type, "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
       }
-      if (inSlot(this.cx, ty) && !this.hasDrop(ty)) {
-        // A 128+ byte param arrives by value (legacy's ABI) and goes straight to a slot, as
-        // legacy spills it; from there it is only a place.
-        const slot = this.fresh();
-        this.vars.push(`  ${slot} = milo.var ${quote(p.name)} : !milo.ref<${ty}>`);
-        this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
-        this.bind(p.name, { kind: "var", ref: slot, ty });
-        return `%p${i}: ${ty}`;
-      }
-      if (this.hasDrop(ty)) {
-        // The callee owns a by-value string or Vec: it lives in a slot of the body's scope.
-        const slot = this.ownedSlot(p.name, ty, p.type);
-        this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
-        this.bind(p.name, { kind: "var", ref: slot, ty, owned: true });
-        return `%p${i}: ${ty}`;
-      }
-      this.bind(p.name, { kind: "ssa", v: { ref: `%p${i}`, ty } });
+      this.bindParam(p.name, `%p${i}`, ty, p.type);
       return `%p${i}: ${ty}`;
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0, as legacy emits it.
@@ -582,9 +583,9 @@ class FnEmitter {
     if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
     // isSretCall narrowed Call away; a call that is not sret returns a place-only value.
     const c = e as HIRExpr;
-    if (c.kind === "Call" && !this.cx.isBuiltinName(c.func)) {
+    if ((c.kind === "Call" && !this.cx.isBuiltinName(c.func)) || c.kind === "ClosureCall") {
       this.abiResult = true;
-      const v = this.callScope(() => this.call(c, false));
+      const v = this.callScope(() => c.kind === "Call" ? this.call(c, false) : this.closureCall(c, false));
       this.abiResult = false;
       if (v.ty !== ty) throw new MlirUnsupported("call result of another type");
       this.emit(`milo.store ${v.ref}, ${dst} init : !milo.ref<${ty}>`);
@@ -1900,7 +1901,7 @@ class FnEmitter {
         return { ref, ty, own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "Closure": return this.closure(e);
-      case "ClosureCall": return this.closureCall(e, stmt);
+      case "ClosureCall": return this.callScope(() => this.closureCall(e, stmt));
       case "MatchExpr": {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
         return this.match(e, this.value(e.type, "match-expression")).v;
@@ -2119,6 +2120,9 @@ class FnEmitter {
 
   /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */
   private closureCall(e: HIRExpr & { kind: "ClosureCall" }, stmt: boolean): Val {
+    // For this call only, as call() takes it: a result that lives in memory is the ABI's value.
+    const abi = this.abiResult;
+    this.abiResult = false;
     const ft = stripRefs(this.fieldType(e.callee));
     if (ft.tag !== "fn") throw new MlirUnsupported("call of a non-fn");
     const f = this.expr(e.callee);
@@ -2135,7 +2139,7 @@ class FnEmitter {
         refs.push({ ref: r, mut: a.refMut, ty: pty });
         return r;
       }
-      const v = this.pend(this.consume(this.expr(a.expr), "argument"));
+      const v = this.pend(inSlot(this.cx, pty) ? this.bigArg(a.expr, pty) : this.consume(this.expr(a.expr), "argument"));
       if (v.ty !== pty) throw new MlirUnsupported("closure call arg type");
       return v.ref;
     });
@@ -2146,7 +2150,7 @@ class FnEmitter {
         this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
       }
     }
-    const ret = ft.ret.tag === "void" ? null : this.value(ft.ret, "closure result");
+    const ret = ft.ret.tag === "void" ? null : abi ? this.place$(ft.ret, "closure result") : this.value(ft.ret, "closure result");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
     const call = `milo.closure.call ${f.ref}(${args.join(", ")}) : ${f.ty}${args.length ? `, ${ptys.join(", ")}` : ""}${ret ? ` -> ${ret}` : ""}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }

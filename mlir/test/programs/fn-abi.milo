@@ -1,0 +1,95 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: fn values whose params
+// and results live in memory (a struct holding an array, a 128+ byte one owning a string, a
+// 128..512 byte enum), passed and returned as one SSA value as legacy's closureParamTy
+// passes them: a fn param, a closure literal's own params and result, a named fn as a
+// value, a call result built into a `let`, an argument and a field.
+
+struct Grid { cells: [i64; 4], n: i64 }
+
+struct Req { head: [i64; 16], path: string }
+
+enum Msg { Text(string), Pad([i64; 20]), Quit }
+
+struct Box2 { g: Grid, tag: i64 }
+
+fn sum(g: Grid): i64 {
+    var t = g.n
+    for i in 0..4 {
+        t += g.cells[i]
+    }
+    return t
+}
+
+fn grow(g: Grid): Grid {
+    var out = g
+    out.n = g.n + 1
+    out.cells[0] = out.cells[0] + 10
+    return out
+}
+
+fn apply(f: (Grid) => Grid, g: Grid): Grid {
+    return f(f(g))
+}
+
+fn describe(handle: (Req) => string, r: Req): string {
+    return handle(r) + "!"
+}
+
+fn route(r: Req): string {
+    return r.path + ":" + r.head[3].toString()
+}
+
+fn kind(m: Msg): i64 {
+    match m {
+        Msg.Text(s) => {
+            return s.len
+        }
+        Msg.Pad(a) => {
+            return a[19]
+        }
+        Msg.Quit => {
+            return -1
+        }
+    }
+}
+
+fn each(ms: (Msg) => i64, k: i64): i64 {
+    var t = 0
+    for i in 0..k {
+        if i == 0 {
+            t += ms(Msg.Text("four"))
+        } else if i == 1 {
+            var a: [i64; 20] = [0; 20]
+            a[19] = 7
+            t += ms(Msg.Pad(a))
+        } else {
+            t += ms(Msg.Quit)
+        }
+    }
+    return t
+}
+
+fn exercise() {
+    let g = Grid { cells: [1, 2, 3, 4], n: 5 }
+    let g2 = apply(grow, g)
+    print(sum(g2))
+    let twice = (x: Grid): Grid => Grid { cells: [x.cells[3], x.cells[2], x.cells[1], x.cells[0]], n: x.n * 2 }
+    let g3 = apply(twice, g2)
+    print(sum(g3))
+    let b = Box2 { g: twice(g3), tag: 9 }
+    print(sum(b.g) + b.tag)
+    print(sum(twice(g)))
+    var head: [i64; 16] = [0; 16]
+    head[3] = 42
+    print(describe(route, Req { head: head, path: "/a" }))
+    let pre = "p"
+    let lam = (r: Req): string => pre + r.path
+    print(describe(lam, Req { head: head, path: "/b" }))
+    print(each(kind, 3))
+    print(each((m: Msg): i64 => kind(m) * 2, 3))
+}
+
+// main itself stays legacy while it names a fn value (mlir-backend), so the body is a function.
+fn main() {
+    exercise()
+}
