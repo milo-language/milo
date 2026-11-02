@@ -1,4 +1,4 @@
-// @runtime-error: negative capacity at tests/runtime-errors/stringWithCapacityNegative.milo:11:9: -3
+// @runtime-error: negative capacity at tests/runtime-errors/stringWithCapacityNegative.milo:12:5: -3
 // String.withCapacity is std/string's strWithCapacity; the negative check rides the argument
 // at the call, so the panic names this line, as the builtin's did. An i32 count is widened (the
 // builtin handed it to clang unwidened, which rejected the IR).
