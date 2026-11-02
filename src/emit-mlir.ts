@@ -3831,9 +3831,10 @@ class FnEmitter {
         return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
       }
     }
-    // A raw slice is a view header over foreign memory: lent from a temporary, as legacy
-    // spills it, writes through it still reach the elements.
-    if (mut && e.kind !== "RawSlice") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
+    // A raw slice or a Vec slice (`&mut v[a..b]`) is a view header over memory it does not
+    // own: lent from a temporary, as legacy spills it, writes through it still reach the
+    // elements.
+    if (mut && e.kind !== "RawSlice" && e.kind !== "VecSlice") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
     if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");
     let slot: string;
