@@ -53,7 +53,9 @@ const STR = "!milo.string";
 
 /** The dialect's type for a Milo scalar (ints carry signedness), or null. */
 export function mlirType(t: TypeKind): string | null {
-  if (t.tag === "int" && t.min === undefined && t.max === undefined) return `${t.signed ? "si" : "ui"}${t.bits}`;
+  // A ranged int is stored as its width (legacy too); every flow into the range is an
+  // explicit RangeCheck, and only legacy attaches !range metadata.
+  if (t.tag === "int") return `${t.signed ? "si" : "ui"}${t.bits}`;
   if (t.tag === "float") return t.bits === 32 ? "f32" : "f64";
   if (t.tag === "bool") return "i1";
   if (t.tag === "ptr") return PTR;
@@ -231,11 +233,12 @@ function runsUserDropT(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
  * placeType, or is a place (a ref, a Vec header: a borrow) or a consumed Vec's tail.
  */
 function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
+  // A scalar owns nothing, whichever checker types spell it (`i64` and `int<0..9>` share
+  // si64) and also when none does (a cast's `mode as u32`).
+  if (isScalarTy(ty) || ty === PTR) return { drop: false, userDrop: false };
   const f = typeFlags(cx, ty);
   if (f & F_SHARED) throw new MlirUnsupported("a type whose dialect spelling two checker types share");
   if (f & F_SPELLED) return { drop: (f & F_DROP) !== 0, userDrop: (f & F_USER_DROP) !== 0 };
-  // A cast can make a scalar that no checker type in the module spelled (`mode as u32`).
-  if (isScalarTy(ty) || ty === PTR) return { drop: false, userDrop: false };
   if (ty.startsWith("!milo.ref<") || ty.startsWith("!milo.vec<")) return { drop: false, userDrop: false };
   if (ty.startsWith("!milo.vectail<")) return { drop: true, userDrop: ownsOf(cx, `!milo.vecval<${ty.slice(14, -1)}>`).userDrop };
   throw new MlirUnsupported("ownership of a type not spelled from a checker type");
@@ -2056,6 +2059,15 @@ class FnEmitter {
           { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
+      }
+      case "RangeCheck": {
+        // A value flowing into a ranged int: legacy's emitRangeCheck (its panic text) in a
+        // helper per site, which returns the value unchanged.
+        const v = this.expr(e.value);
+        const ty = scalar(e.type, "range-checked value");
+        if (v.ty !== ty || !/^[su]i\d+$/.test(ty)) throw new MlirUnsupported("range check operand type");
+        return this.intrinsic(`range.${e.min}.${e.max}`, e, [{ name: "v", type: e.value.type, mode: "val", ref: v.ref }],
+          ([x]) => ({ ...e, value: x }), ty);
       }
       case "VecGetOpt": {
         // `v.get(i)` / first / last: legacy's genVecGetOpt (the bounds test, a deep clone of

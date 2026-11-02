@@ -1,0 +1,26 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): ranged
+// ints are stored as their width, and every flow into a range is checked (legacy's
+// emitRangeCheck text): params, returns, reassignment, a Vec of them, and a computed value
+// that falls outside the range and panics.
+
+fn clamp(p: i32(0..100)): i32(0..100) {
+    return p
+}
+
+fn scale(n: i32): i32(0..100) {
+    return n * 10
+}
+
+fn main() {
+    var p: i32(0..100) = 50
+    print(clamp(p))
+    p = 99
+    print(p)
+    var v: Vec<i32(0..100)> = Vec.new()
+    for i in 0..5 { v.push(scale(i as i32)) }
+    var t: i32 = 0
+    for x in v { t = t + x }
+    print(t)
+    print(scale(10))
+    print(scale(11))
+}
