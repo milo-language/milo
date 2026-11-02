@@ -78,3 +78,20 @@ func.func @assign_through_ref(%r: !milo.ref<!milo.string>) {
   milo.store %a, %r : !milo.ref<!milo.string>
   milo.return
 }
+
+// An array of strings owns them: its owned slot is dropped where the scope ends.
+// CHECK-LABEL: func @owning_array
+// CHECK:     %[[A:.*]] = milo.var "a" owned
+// CHECK:     milo.filled %[[A]]
+// CHECK:     milo.drop %[[A]] :
+// CHECK:     milo.return
+func.func @owning_array() {
+  %a = milo.var "a" owned : !milo.ref<!milo.array<!milo.string, 2>>
+  milo.scope %a : !milo.ref<!milo.array<!milo.string, 2>> {
+    %z = milo.zero : !milo.array<!milo.string, 2>
+    milo.store %z, %a init : !milo.ref<!milo.array<!milo.string, 2>>
+    milo.filled %a : !milo.ref<!milo.array<!milo.string, 2>>
+    milo.yield
+  }
+  milo.return
+}

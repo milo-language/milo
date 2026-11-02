@@ -264,6 +264,8 @@ bool milo::needsDrop(Type t) {
     return true;
   if (auto f = dyn_cast<FnType>(t))
     return f.getOwning();
+  if (auto a = dyn_cast<ArrayType>(t))
+    return needsDrop(a.getElementType());
   if (auto s = dyn_cast<StructType>(t))
     return s.getUserDrop() || llvm::any_of(s.getFields(), needsDrop);
   if (auto e = dyn_cast<EnumType>(t))

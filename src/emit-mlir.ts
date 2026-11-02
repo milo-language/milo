@@ -160,6 +160,7 @@ function ownsStructurally(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean
   switch (t.tag) {
     case "string": case "vec": case "hashmap": case "heap": return true;
     case "fn": return t.owning === true;
+    case "array": return t.size !== null && ownsStructurally(cx, t.element, seen);
     case "struct": case "enum": {
       if (cx.dropImpls.has(t.name)) return true;
       // A type holds itself only through a Vec or a Heap, which owns already.
@@ -237,12 +238,10 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
     return k && v && `!milo.map<${k}, ${v}>`;
   }
   if (t.tag === "array") {
-    // A fixed-size array of elements that own nothing: a place only, at any size (a
-    // slice, size null, is a Vec header that a slice expression makes: not yet).
+    // A fixed-size array: a place only, at any size (a slice, size null, is a Vec header
+    // that a slice expression makes: not yet). What it owns is its element's.
     const e = t.size === null ? null : placeType(cx, t.element);
-    // Asked of the checker's element: inside its own body a type is spelled by name
-    // alone, and that text would say an owning element owns nothing.
-    if (e === null || cx.needsDropCg(t.element)) return null;
+    if (e === null) return null;
     const r = `!milo.array<${e}, ${t.size}>`;
     if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
     bigTypes.get(cx)!.add(r);
@@ -667,21 +666,33 @@ class FnEmitter {
    */
   private arrayInto(e: HIRExpr & { kind: "ArrayLit" | "ArrayRepeat" }, dst: string, ty: string): void {
     const t = e.type as TypeKind & { tag: "array" };
-    const ety = this.value(t.element, "array element");
+    const ety = this.place$(t.element, "array element");
     const at = (i: string) => this.def(`milo.array.index ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`, this.loc(e.span)).ref;
     if (e.kind === "ArrayLit") {
       if (e.elements.length !== t.size) throw new MlirUnsupported("array literal of another size");
+      // A stored owning element is owned by nothing until the array's place is: pending,
+      // as a field of a struct literal built in place.
+      const mark = this.pending;
       e.elements.forEach((x, k) => {
-        const v = this.consume(this.expr(x), "array element");
-        if (v.ty !== ety) throw new MlirUnsupported("array element of another type");
         const r = at(this.def(`milo.const ${k} : si64`, "si64").ref);
-        this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${ety}>`);
+        if (valueType(this.cx, t.element) === null) this.into(x, r, ety);
+        else {
+          const v = this.consume(this.expr(x), "array element");
+          if (v.ty !== ety) throw new MlirUnsupported("array element of another type");
+          this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${ety}>`);
+        }
+        if (this.hasDrop(ety)) this.pending++;
       });
+      this.pending = mark;
       return;
     }
+    if (valueType(this.cx, t.element) === null) throw new MlirUnsupported("array repeat of a place-only value");
     if (e.cloneFn || e.count !== t.size) throw new MlirUnsupported("array repeat of an owning value");
     const v = this.expr(e.value);
     if (v.ty !== ety) throw new MlirUnsupported("array element of another type");
+    // Legacy's genArrayRepeat deep clones an owning value into all slots but the last;
+    // one bit copy per slot would free the value N times.
+    if (this.hasDrop(ety)) throw new MlirUnsupported("array repeat of an owning value");
     const lo = this.def("milo.const 0 : si64", "si64").ref;
     const hi = this.def(`milo.const ${e.count} : si64`, "si64").ref;
     const iv = this.fresh();
@@ -767,6 +778,28 @@ class FnEmitter {
     if (owned) this.emit(`milo.filled ${ref} : !milo.ref<${ty}>`);
     return { ref, ty, owned };
   }
+  /**
+   * A place-only value copied over `dst`, which holds one: legacy's big Assign (the value
+   * already evaluated into `src`, then the old one dropped, then the memcpy). An owned
+   * slot's drop is "if it holds one" (milo-elaborate-drops), and the slot is full after.
+   */
+  private overwriteBig(dst: string, ty: string, t: TypeKind, src: { ref: string; refTy: string; done: () => void }, ownedSlot: boolean): void {
+    if (this.hasDrop(ty)) {
+      this.dropGlue(ty, t);
+      this.emit(`milo.drop ${dst} : !milo.ref<${ty}>`);
+    }
+    this.emit(`milo.copy ${src.ref}, ${dst} : ${src.refTy}, !milo.ref<${ty}> of ${ty}`);
+    src.done();
+    if (ownedSlot && this.hasDrop(ty)) this.emit(`milo.filled ${dst} : !milo.ref<${ty}>`);
+  }
+
+  /** `p = p` (an Ident or a field chain): legacy skips the drop and the store. */
+  private lvalueSame(a: HIRExpr, b: HIRExpr): boolean {
+    if (a.kind === "Ident" && b.kind === "Ident") return a.name === b.name;
+    if (a.kind === "FieldAccess" && b.kind === "FieldAccess") return a.field === b.field && this.lvalueSame(a.object, b.object);
+    return false;
+  }
+
   private isMain = false;
   private retTy: string | null = null;
   private retPlaceOnly = false;
@@ -1023,9 +1056,17 @@ class FnEmitter {
               return { ref: sl.ref, refTy: `!milo.ref<${big}>`, done: () => { if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${big}>`, big); } };
             })();
             const pp = this.ptrPlace(s.target);
-            if (!pp || pp.ty !== big) throw new MlirUnsupported("128+ byte store other than through a pointer");
-            this.emit(`milo.copy ${src.ref}, ${pp.ptr} : ${src.refTy}, ${PTR} of ${big}`);
-            src.done();
+            if (pp) {
+              if (pp.ty !== big) throw new MlirUnsupported("128+ byte store of another type");
+              this.emit(`milo.copy ${src.ref}, ${pp.ptr} : ${src.refTy}, ${PTR} of ${big}`);
+              src.done();
+              return false;
+            }
+            // Over a field or an element of a place, which always holds a value: the old
+            // one dropped, then the new one copied in (legacy's eval, drop, memcpy).
+            const dst = s.target.kind === "IndexAccess" ? this.elemRef(s.target) : s.target.kind === "FieldAccess" ? this.fieldPlace(s.target) : null;
+            if (!dst || dst.ty !== big) throw new MlirUnsupported("128+ byte store other than through a pointer");
+            this.overwriteBig(dst.ref, big, s.target.type, src, false);
             return false;
           }
           // Through a raw pointer: the value is stored as is, nothing is dropped (unsafe).
@@ -1063,6 +1104,18 @@ class FnEmitter {
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
         const b = this.lookup(s.target.name);
         if (b.kind !== "var") throw new MlirUnsupported("assign to an immutable binding");
+        // A lazy global of a place-only type (`let NAMES: [string; 3] = [...]`) is built
+        // in place, as legacy's genStoreInto does for its first fill.
+        if (s.isInit && isBig(this.cx, b.ty)) { this.scoped(() => { this.into(s.value, b.ref, b.ty); return { ref: "", ty: "" }; }); return false; }
+        if (isBig(this.cx, b.ty)) {
+          if (this.lvalueSame(s.value, s.target)) return false;
+          const src = this.bigPlace(s.value, b.ty) ?? (() => {
+            const sl = this.bigSlot("tmp", s.value, true);
+            return { ref: sl.ref, refTy: `!milo.ref<${b.ty}>`, done: () => { if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${b.ty}>`, b.ty); } };
+          })();
+          this.overwriteBig(b.ref, b.ty, s.target.type, src, !!b.owned);
+          return false;
+        }
         // The old value's drop is milo-scope-drops' business: it goes before the store.
         const v = this.consume(this.expr(s.value), "assignment");
         if (v.ty !== b.ty) throw new MlirUnsupported("assign of a different type");
@@ -1325,7 +1378,7 @@ class FnEmitter {
 
   private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
     /**
-     * `for x in arr` over a fixed array of elements that own nothing, as legacy genForEach:
+     * `for x in arr` over a fixed array, as legacy genForEach:
      * a consumed one (`for i in [0, 1, 5]`, a call) evaluated into a slot first, a place
      * borrowed where it is; the binding is the element's place, which nothing writes while
      * the loop runs, so reading it at each use is reading legacy's copy.
@@ -1337,6 +1390,11 @@ class FnEmitter {
     const aty = this.place$(at, "for array");
     const ety = this.place$(at.element, "for element");
     if (placeType(this.cx, stripRefs(elemKind)) !== ety) throw new MlirUnsupported("for element type");
+    // Legacy moves each element of a consumed array into the binding and drops it at the
+    // end of its iteration; here the array's slot drops them all after the loop. Only a
+    // user Drop can tell (the order); moving the binding out is a borrowed value's
+    // consume, which keeps the function legacy.
+    if (s.consume && this.runsUserDrop(ety)) throw new MlirUnsupported("consumed for over an array with a user Drop");
     const scopeStart = this.body.length;
     this.scopes.push(new Map());
     this.owned.push([]);
