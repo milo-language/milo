@@ -407,22 +407,23 @@ Syntax:
 operation ::= `milo.call_ptr` $callee `(` $args `)` attr-dict `:` functional-type($args, $result)
 ```
 
-A C function pointer called (`extern (..) => R` values), or a closure's code pointer
-called with its env (`_callClosureVoid`): an indirect call with the C convention, scalar
-and pointer arguments and result. It may do anything a call does.
+A C function pointer called (`extern (..) => R` values), a closure's code pointer
+called with its env (`_callClosureVoid`), or an interface method from its itable: an
+indirect call, arguments and result as the dialect's types lower. It may do anything a
+call does.
 
 #### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `callee` | a raw pointer, untyped |
-| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped |
+| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 #### Results:
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1268,6 +1269,40 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `ref` | the address of a place: a local slot, a field, an element |
+
+
+
+### `milo.global.addr` (::milo::GlobalAddrOp)
+
+_The address of a module global the dialect does not describe_
+
+Syntax:
+
+```
+operation ::= `milo.global.addr` $name attr-dict
+```
+
+A global the rest of the module defines (an interface's itable `itable.T.I`, the
+process globals), by symbol: declared here, defined there.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | a raw pointer, untyped |
 
 
 

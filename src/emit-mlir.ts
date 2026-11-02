@@ -37,6 +37,7 @@ export interface MlirEmitCtx {
   mlirDisplayName(name: string): string;
   mlirFieldOffset(struct: string, field: string): number;
   mlirAtomic(builtin: string): string | null;
+  mlirItable(from: string, iface: string): string;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -2079,6 +2080,22 @@ class FnEmitter {
     this.pending.length = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "interface call result");
     if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("interface call result type");
+    // Itable dispatch (legacy genInterfaceMethodCall): data and itable from the pair, the
+    // method from itable[i], called with data first and each `&T` as its address. A `&mut`
+    // argument wants legacy's alias guard, so that call keeps the helper.
+    if (!ops.some(o => o.mode === "mut")) {
+      const pa = this.def(`milo.addr ${p.ref} : !milo.ref<${dty}>`, PTR).ref;
+      const data = this.def(`milo.ptr.load ${pa} : ${PTR}`, PTR);
+      const it = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`, PTR);
+      const fn = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${it.ref}[${this.def(`milo.const ${e.methodIndex} : si64`, "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
+      const args = [data, ...ops.slice(1).map(o => o.mode === "ref"
+        ? this.def(`milo.addr ${o.ref} : ${this.lent(o.type, "interface call operand")}`, PTR)
+        : { ref: o.ref, ty: valueType(this.cx, o.type)! })];
+      const call = `milo.call_ptr ${fn.ref}(${args.map(a => a.ref).join(", ")}) : (${args.map(a => a.ty).join(", ")}) -> ${ret ?? "()"}`;
+      if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+      const r = this.def(call, ret);
+      return ret === STR ? { ...r, own: "owned" } : r;
+    }
     const r = this.intrinsic(`dyn${e.methodIndex}`, e, ops, ([o, ...xs]) => ({
       ...e, object: o, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })),
     }), ret, false);
@@ -2869,22 +2886,29 @@ class FnEmitter {
         return this.def(`milo.const ${off} : si64`, "si64");
       }
       case "InterfaceCoerce": {
-        // Heap<T> -> Heap<I>: legacy's fat { box, itable } pair in a helper, the box moved
-        // into it (the same allocation, now owned by the dyn). `&T -> &I`: the pair of T's
-        // place and the itable, borrowing both, made the same way from the lent place.
+        // The fat pair { data, itable } (legacy genInterfaceCoerce), written in a slot. Heap<T>
+        // -> Heap<I>: the box moved into it (the same allocation, now owned by the dyn).
+        // `&T -> &I`: T's place, borrowed, as the data.
+        const itable = this.def(`milo.global.addr ${quote(this.cx.mlirItable(e.fromType, e.ifaceName))}`, PTR);
+        const pair = (ty: string, data: Val) => {
+          const slot = this.fresh();
+          this.vars.push(`  ${slot} = milo.var "dyn" : !milo.ref<${ty}>`);
+          const at = this.def(`milo.addr ${slot} : !milo.ref<${ty}>`, PTR).ref;
+          this.emit(`milo.ptr.store ${data.ref}, ${at} : ${data.ty}`);
+          this.emit(`milo.ptr.store ${itable.ref}, ${this.def(`milo.ptr.elem ${at}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`);
+          return this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty);
+        };
         if (e.type.tag !== "heap") {
           const st = stripRefs(e.value.type);
           const ty = this.place$(stripRefs(e.type), "borrowed interface");
           const mut = e.type.tag === "ref" && e.type.mutable;
-          const p = this.place(e.value, this.lent(st, "coerced value"), mut).ref;
-          return this.intrinsic(`coerceref.${e.fromType}.${e.ifaceName}`, e, [{ name: "x", type: st, mode: mut ? "mut" : "ref", ref: p }],
-            ([x]) => ({ ...e, value: x }), ty, false);
+          const lt = this.lent(st, "coerced value");
+          const p = this.place(e.value, lt, mut).ref;
+          return { ...pair(ty, this.def(`milo.addr ${p} : ${lt}`, PTR)), own: "view" };
         }
         const ty = this.value(e.type, "interface value");
         const v = this.consume(this.expr(e.value), "coerced box");
-        const r = this.intrinsic(`coerce.${e.fromType}.${e.ifaceName}`, e, [{ name: "h", type: e.value.type, mode: "val", ref: v.ref }],
-          ([x]) => ({ ...e, value: { ...x, isMove: true } as HIRExpr }), ty, false);
-        return { ...r, own: "owned" };
+        return { ...pair(ty, v), own: "owned" };
       }
       case "VecCapacity": {
         // The header's third word.

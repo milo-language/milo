@@ -8623,6 +8623,11 @@ export class Codegen {
     return name;
   }
 
+  /** MLIR path: the itable global of type `from` as interface `iface` (genInterfaceCoerce). */
+  public mlirItable(from: string, iface: string): string {
+    return (this.itableLayouts.get(`${from}.${iface}`)?.globalName ?? `@itable.${from}.${iface}`).slice(1);
+  }
+
   /** MLIR path: offsetOf(S, f), the byte offset legacy lays the field at (0 when unknown, as legacy). */
   public mlirFieldOffset(struct: string, field: string): number {
     const layout = this.structLayouts.get(struct);

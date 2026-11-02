@@ -945,13 +945,25 @@ def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]>
 def Milo_CallPtrOp : Milo_Op<"call_ptr"> {
   let summary = "a call through a raw code pointer";
   let description = [{
-    A C function pointer called (`extern (..) => R` values), or a closure's code pointer
-    called with its env (`_callClosureVoid`): an indirect call with the C convention, scalar
-    and pointer arguments and result. It may do anything a call does.
+    A C function pointer called (`extern (..) => R` values), a closure's code pointer
+    called with its env (`_callClosureVoid`), or an interface method from its itable: an
+    indirect call, arguments and result as the dialect's types lower. It may do anything a
+    call does.
   }];
-  let arguments = (ins Milo_PtrType:$callee, Variadic<Milo_Simple>:$args);
-  let results = (outs Optional<Milo_Simple>:$result);
+  let arguments = (ins Milo_PtrType:$callee, Variadic<Milo_Value>:$args);
+  let results = (outs Optional<Milo_Value>:$result);
   let assemblyFormat = "$callee `(` $args `)` attr-dict `:` functional-type($args, $result)";
+}
+
+def Milo_GlobalAddrOp : Milo_Op<"global.addr", [Pure]> {
+  let summary = "the address of a module global the dialect does not describe";
+  let description = [{
+    A global the rest of the module defines (an interface's itable `itable.T.I`, the
+    process globals), by symbol: declared here, defined there.
+  }];
+  let arguments = (ins StrAttr:$name);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$name attr-dict";
 }
 
 def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {

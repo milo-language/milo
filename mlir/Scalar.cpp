@@ -1317,6 +1317,24 @@ struct CallPtrLowering : ConvertOpToLLVMPattern<CallPtrOp> {
   }
 };
 
+// Declared as an external byte when nothing in this module names it yet: the splice keeps
+// the defining module's own global (src/mlir-backend.ts).
+struct GlobalAddrLowering : ConvertOpToLLVMPattern<GlobalAddrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(GlobalAddrOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    auto module = op->getParentOfType<ModuleOp>();
+    StringRef name = op.getName();
+    if (!module.lookupSymbol(name)) {
+      OpBuilder::InsertionGuard g(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      LLVM::GlobalOp::create(rw, op.getLoc(), rw.getI8Type(), /*isConstant=*/false, LLVM::Linkage::External, name, Attribute());
+    }
+    rw.replaceOpWithNewOp<LLVM::AddressOfOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), name);
+    return success();
+  }
+};
+
 struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1839,7 +1857,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, GlobalAddrLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
