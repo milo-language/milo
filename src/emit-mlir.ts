@@ -856,7 +856,7 @@ class FnEmitter {
       }
       if (!b && this.hasDrop(ty)) {
         // Moved out of a local's field: zeroed behind the copy, as moveField does.
-        if (e.kind !== "FieldAccess" || !e.isMove || !this.fieldOfOwnedLocal(e)) throw new MlirUnsupported("move out of a field");
+        if (e.kind !== "FieldAccess" || !e.isMove || !this.fieldOfOwnedLocal(e)) throw new MlirUnsupported(`move out of a field (128+, ${this.moveRoot(e)})`);
         const p = this.fieldPlace(e)!;
         if (p.ty !== ty) return null;
         return { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: () => {
@@ -3870,6 +3870,16 @@ class FnEmitter {
     this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
   }
 
+  /** What a refused field move reads from, for the legacy reason: the root and its binding. */
+  private moveRoot(e: HIRExpr): string {
+    let r = e;
+    while (r.kind === "FieldAccess") r = r.object;
+    if (r.kind !== "Ident") return r.kind;
+    const name = r.name;
+    const b = this.scopes.some(m => m.has(name)) ? this.lookup(name) : null;
+    return b ? (b.kind === "var" ? (b.owned ? "owned var" : b.param !== undefined ? "by-ref param" : "var") : b.kind) : "unbound";
+  }
+
   private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {
     let p: { ref: string; ty: string };
     const o = e.object, k = o.kind;
@@ -3882,7 +3892,7 @@ class FnEmitter {
       const sl = this.bigSlot("tmp", o, true);
       const { index, ty } = this.field(e);
       p = { ref: this.def(`milo.field_ref ${sl.ref}[${index}] : !milo.ref<${sl.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref, ty };
-    } else throw new MlirUnsupported("move out of a field");
+    } else throw new MlirUnsupported(`move out of a field (${this.moveRoot(e)})`);
     const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
     this.emit(`milo.store ${this.def(`milo.zero : ${p.ty}`, p.ty).ref}, ${p.ref} init : !milo.ref<${p.ty}>`);
     return { ...v, own: "owned" };
