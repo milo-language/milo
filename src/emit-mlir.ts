@@ -2598,6 +2598,15 @@ class FnEmitter {
       case "Propagate": return this.propagate(e);
       case "DefaultValue": return this.defaultValue(e);
       case "Unwrap": {
+        if (this.isSretCall(e.operand)) {
+          // A 128+ byte enum (sret) with a payload that is a value: unwrapped from the
+          // call's slot into a scratch slot (unwrapInto), then the payload read out of it.
+          const ty = this.value(e.type, "unwrapped payload");
+          const dst = this.fresh();
+          this.vars.push(`  ${dst} = milo.var "unwrapped" : !milo.ref<${ty}>`);
+          this.unwrapInto(e, dst, ty);
+          return { ...this.def(`milo.load ${dst} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
+        }
         // Legacy's genUnwrap (its panic text and location) in a helper per enum and site,
         // the operand moved into it.
         const st = stripRefs(e.operand.type);

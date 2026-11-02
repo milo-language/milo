@@ -2,6 +2,8 @@
 // payload is 128+ bytes and owns (strings, a Vec), written in place: from a call, from an
 // owned local, as a Result, and a None that panics with legacy's text and location.
 
+from "std/xml" import { Xml }
+
 struct Big {
     name: string,
     tags: Vec<string>,
@@ -31,7 +33,20 @@ fn plain(i: i64): Option<Plain> {
     return Option.Some(Plain { a: [i; 16], b: i * 2 })
 }
 
+// A 128+ byte Result whose Ok payload is a small owned value (a value enum in a user fn).
+struct BigErr { pad: [i64; 16], why: string }
+
+fn small(i: i64): Result<string, BigErr> {
+    if i < 0 { return Result.Err(BigErr { pad: [0; 16], why: "neg" + "" }) }
+    return Result.Ok($"small{i}")
+}
+
 fn main() {
+    // A std fn returning a 128+ byte Result is sret: unwrapped from its slot.
+    let root = Xml.parse("<feed v=\"1\"><t>hi</t></feed>")!
+    print(root.name, " ", root.attr("v") ?? "?", " ", root.childText("t") ?? "")
+    let sm = small(9)!
+    print(sm, " ", small(2)!.len())
     let p = plain(3)
     let q = p!
     let q2 = p!
