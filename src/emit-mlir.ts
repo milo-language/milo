@@ -1044,7 +1044,8 @@ class FnEmitter {
   }
 
   private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
-    if (e.op !== "resultContext") { const m = this.combinatorMatch(e); if (m) return m; }
+    if (e.op === "resultContext") return this.resultContext(e);
+    { const m = this.combinatorMatch(e); if (m) return m; }
     const st = stripRefs(e.value.type);
     const rt = this.place$(st, "option receiver");
     if (!e.default) throw new MlirUnsupported(`option op ${e.op} without a callback`);
@@ -3200,7 +3201,16 @@ class FnEmitter {
         return this.def(`milo.cmp ${e.op === "isSome" ? "eq" : "ne"}, ${tag}, ${zero} : si32`, "i1");
       }
       case "Forget": {
-        // `forget(x)`: x is taken and nothing drops it (an owned SSA value no slot holds).
+        // `forget(x)`: x is taken and nothing drops it (an owned SSA value no slot holds). A
+        // local that lives in a slot is emptied in place: its slot then drops nothing.
+        if (e.value.kind === "Ident") {
+          const b = this.scopes.some(m => m.has((e.value as { name: string }).name)) ? this.lookup(e.value.name) : null;
+          if (b?.kind === "var" && inSlot(this.cx, b.ty)) {
+            // One that owns nothing has nothing to forget.
+            if (b.owned) this.def(`milo.move ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
+            return { ref: "", ty: "" };
+          }
+        }
         const v = this.consume(this.expr(e.value), "forgotten value");
         void v;
         return { ref: "", ty: "" };
@@ -3250,20 +3260,21 @@ class FnEmitter {
         const et = e.type.element;
         const pty = this.place$(et, "Vec literal element");
         const n = e.elements.length, es = this.cx.typeSizeOf(et);
+        // Every element first, then the buffer: a `?` inside a later element leaves before
+        // anything is allocated, and the elements built so far are pending, so dropped.
+        const placeOnly = valueType(this.cx, et) === null;
+        const slots = placeOnly ? e.elements.map(x => this.bigSlot("veclit.elem", x, true)) : [];
+        const ety = placeOnly ? "" : this.value(et, "Vec literal element");
+        const mark = this.pending.length;
+        const vals = placeOnly ? [] : e.elements.map(x => this.pend(this.operand(x, ety, "Vec literal element"), x.type));
+        this.pending.length = mark;
         this.cx.mlirCloneOps();
         const buf = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def(`milo.const ${n} : si64`, "si64"), this.def(`milo.const ${es} : si64`, "si64")], PTR), e.span);
         const at = (k: number) => k === 0 ? buf.ref : this.def(`milo.ptr.elem ${buf.ref}[${this.def(`milo.const ${k} : si64`, "si64").ref}] : ${pty}`, PTR).ref;
-        if (valueType(this.cx, et) === null) {
-          const slots = e.elements.map(x => this.bigSlot("veclit.elem", x, true));
+        if (placeOnly) {
           slots.forEach((sl, k) => this.emit(`milo.copy ${sl.ref}, ${at(k)} : !milo.ref<${pty}>, ${PTR} of ${pty}`));
           for (const sl of slots) if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${pty}>`, pty);
-        } else {
-          const ety = this.value(et, "Vec literal element");
-          const mark = this.pending.length;
-          const vals = e.elements.map(x => this.pend(this.operand(x, ety, "Vec literal element"), x.type));
-          this.pending.length = mark;
-          vals.forEach((v, k) => this.emit(`milo.ptr.store ${v.ref}, ${at(k)} : ${ety}`));
-        }
+        } else vals.forEach((v, k) => this.emit(`milo.ptr.store ${v.ref}, ${at(k)} : ${ety}`));
         if (this.hasDrop(pty)) this.dropGlue(ty, e.type);
         const count = this.def(`milo.const ${n} : si64`, "si64");
         return this.makeView(ty, buf, count, count);
@@ -4220,18 +4231,8 @@ class FnEmitter {
       // `?` into a `Result<T, Heap<I>>` fn (legacy emitBoxAsIface): the error, wrapped in [MILO-O-propagate]
       // its one-field message struct first when `viaMessage` (a string as ErrorMessage),
       // boxed and coerced to the interface, as `Heap(e)` coerced to `Heap<I>`.
-      const box = e.boxConversion;
       if (!errVal) throw new MlirUnsupported("`?` boxing of a payload-less error");
-      let inner: HIRExpr = errVal;
-      const boxed: TypeKind = box.viaMessage ? { tag: "struct", name: box.fromType } : box.errType;
-      if (box.viaMessage) {
-        const f0 = this.cx.structLayouts.get(box.fromType)?.fields[0];
-        if (!f0) throw new MlirUnsupported("`?` boxing layout");
-        inner = { kind: "StructLit", name: box.fromType, fields: [{ name: f0.name, value: errVal }], type: boxed };
-      }
-      const heap: TypeKind = { tag: "heap", inner: boxed };
-      errVal = { kind: "InterfaceCoerce", value: { kind: "HeapCreate", value: inner, type: heap }, fromType: box.fromType, ifaceName: box.ifaceName,
-        type: { tag: "heap", inner: { tag: "interface", name: box.ifaceName } } } as HIRExpr;
+      errVal = this.boxError(errVal, e.boxConversion);
     } else if (e.messageFn) {
       // `?` into a `Result<T, string>` fn (legacy genPropagate): the error's message() is [MILO-O-propagate]
       // the string; the typed error stays the arm's binding, so its scope drops it.
@@ -4255,6 +4256,56 @@ class FnEmitter {
     const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
     this.forks.push({ mode: null, sawView: false });
     try { return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v; } finally { this.forks.pop(); }
+  }
+
+  /** The error `v` boxed as its interface (legacy emitBoxAsIface): a string first wrapped in its message struct. */
+  private boxError(v: HIRExpr, box: NonNullable<(HIRExpr & { kind: "Propagate" })["boxConversion"]>): HIRExpr {
+    let inner: HIRExpr = v;
+    const boxed: TypeKind = box.viaMessage ? { tag: "struct", name: box.fromType } : box.errType;
+    if (box.viaMessage) {
+      const f0 = this.cx.structLayouts.get(box.fromType)?.fields[0];
+      if (!f0) throw new MlirUnsupported("error boxing layout");
+      inner = { kind: "StructLit", name: box.fromType, fields: [{ name: f0.name, value: v }], type: boxed };
+    }
+    return { kind: "InterfaceCoerce", value: { kind: "HeapCreate", value: inner, type: { tag: "heap", inner: boxed } }, fromType: box.fromType, ifaceName: box.ifaceName,
+      type: { tag: "heap", inner: { tag: "interface", name: box.ifaceName } } } as HIRExpr;
+  }
+
+  /**
+   * `r.context(note)` (legacy genResultContext) as the match it means: `Ok(x) => Ok(x)`, and
+   * `Err(e) => Err(Heap(ErrorContext { note, cause }))` as a `Heap<Error>`, the cause e
+   * boxed as an Error first when it is not one. The note is evaluated first, into an owned
+   * slot: the Err arm moves it into the context, the Ok arm leaves it to be dropped.
+   */
+  private resultContext(e: HIRExpr & { kind: "OptionOp" }): Val {
+    const src = this.cx.mlirEnumLayout(e.enumName), res = e.type.tag === "enum" ? this.cx.mlirEnumLayout(e.type.name) : null;
+    const ok = src?.variants.find(v => v.name === "Ok"), err = src?.variants.find(v => v.name === "Err");
+    const rok = res?.variants.find(v => v.name === "Ok"), rerr = res?.variants.find(v => v.name === "Err");
+    const ctx = this.cx.structLayouts.get("ErrorContext");
+    if (!ok || !err || !rok || !rerr || !ctx || ctx.fields.length !== 2 || err.fields.length !== 1 || ok.fields.length > 1 || !e.default) throw new MlirUnsupported("context layout");
+    const n = this.n++;
+    const noteName = `ctx$note${n}`, okName = `ctx$ok${n}`, errName = `ctx$err${n}`;
+    const note = this.consume(this.expr(e.default), "context note");
+    if (note.ty !== STR) throw new MlirUnsupported("context note type");
+    const slot = this.ownedSlot("ctx.note", STR, { tag: "string" });
+    this.emit(`milo.store ${note.ref}, ${slot} init : !milo.ref<${STR}>`);
+    this.bind(noteName, { kind: "var", ref: slot, ty: STR, owned: true });
+    const errVal: HIRExpr = { kind: "Ident", name: errName, type: err.fields[0], isMove: true };
+    const cause = e.boxConversion ? this.boxError(errVal, e.boxConversion) : errVal;
+    const ctxTy: TypeKind = { tag: "struct", name: "ErrorContext" };
+    const boxed = { kind: "InterfaceCoerce", value: { kind: "HeapCreate", value: { kind: "StructLit", name: "ErrorContext", type: ctxTy,
+      fields: [{ name: ctx.fields[0].name, value: { kind: "Ident", name: noteName, type: { tag: "string" }, isMove: true } }, { name: ctx.fields[1].name, value: cause }] },
+      type: { tag: "heap", inner: ctxTy } }, fromType: "ErrorContext", ifaceName: "Error", type: rerr.fields[0] } as HIRExpr;
+    const rname = (e.type as { name: string }).name;
+    const arms = [
+      { pattern: { kind: "EnumPattern" as const, variant: "Ok", tag: ok.tag, bindings: ok.fields.length ? [{ name: okName, type: ok.fields[0] }] : [] },
+        body: [{ kind: "ExprStmt" as const, expr: { kind: "EnumLit" as const, enumName: rname, variant: "Ok", type: e.type,
+          args: ok.fields.length ? [{ kind: "Ident" as const, name: okName, type: ok.fields[0], isMove: true }] : [] } as HIRExpr }] },
+      { pattern: { kind: "EnumPattern" as const, variant: "Err", tag: err.tag, bindings: [{ name: errName, type: err.fields[0] }] },
+        body: [{ kind: "ExprStmt" as const, expr: { kind: "EnumLit" as const, enumName: rname, variant: "Err", args: [boxed], type: e.type } as HIRExpr }] },
+    ];
+    this.forks.push({ mode: null, sawView: false });
+    try { return this.match({ subject: { ...e.value, isMove: true } as HIRExpr, arms }, this.value(e.type, "context result")).v; } finally { this.forks.pop(); }
   }
 
   /**
