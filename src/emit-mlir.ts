@@ -6,7 +6,8 @@
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
 // covers, so the function stays on legacy codegen; `mlirSupports` is that test alone.
 
-import type { HIRExpr, HIRFunction, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt } from "./hir";
+import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
+type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 
@@ -24,6 +25,7 @@ export interface MlirEmitCtx {
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
   mlirStrViewStep(): string;
+  mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
@@ -624,7 +626,6 @@ class FnEmitter {
     const mainI32 = isMain && fn.retType.tag === "int" && fn.retType.bits === 32 && fn.retType.signed && fn.retType.min === undefined && fn.retType.max === undefined;
     if (isMain && (fn.params.length || (fn.retType.tag !== "void" && !mainI32))) throw new MlirUnsupported("main");
     const green = isMain && !this.cx.mlirMainOk;
-    if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     const params = fn.params.map((p, i) => {
       // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
@@ -663,6 +664,14 @@ class FnEmitter {
     // As legacy replayEngineScope, which applies only when std/replay is in the program.
     this.replay = !!fn.replayEngine && this.cx.replayScope;
     if (this.replay) this.emit("milo.replay.enter");
+    // A contract-checking build (legacy genFunction): the old(...) snapshots, then every
+    // requires clause, at entry; the ensures clauses at every return (ret).
+    if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) {
+      this.cx.mlirContractFail();
+      if (fn.oldSnapshots && this.stmts(fn.oldSnapshots)) throw new MlirUnsupported("old() snapshot that jumps");
+      for (const c of fn.contracts ?? []) if (c.kind === "requires") this.contractCheck(c.kind, c.expr, c.span);
+      this.ensures = (fn.contracts ?? []).filter(c => c.kind === "ensures");
+    }
     const jumped = this.stmts(fn.body);
     this.closeScope(0, jumped, null);
     if (!jumped) {
@@ -1150,7 +1159,30 @@ class FnEmitter {
     const z = this.def("milo.const 0 : si32", "si32");
     this.ret(`milo.return ${z.ref} : si32`);
   }
-  private ret(line: string): void {
+  private ensures: HIRContract[] = [];
+  /** A for loop with its invariants checked at the top of every iteration (legacy emitLoopInvariants). */
+  private withInvariants<S extends { body: HIRStmt[]; invariants?: HIRContract[] }>(s: S): S {
+    if (!this.cx.contractChecks || !s.invariants?.length) return s;
+    return { ...s, body: [...s.invariants.map(i => ({ kind: "ContractCheck" as const, clause: i.kind, expr: i.expr, span: i.span })), ...s.body] };
+  }
+  /** One clause checked here: the condition in a scope of its own (its temporaries die before the check). */
+  private contractCheck(clause: HIRContract["kind"], e: HIRExpr, span?: Span): void {
+    const c = this.scoped(() => this.expr(e));
+    if (c.ty !== "i1") throw new MlirUnsupported("contract clause of another type");
+    this.emit(`milo.contract_check ${c.ref} ${JSON.stringify(clause)} ${this.loc(span)}`);
+  }
+  /**
+   * The function's return: its ensures clauses first, `result` bound to the value being
+   * returned (legacy emitEnsuresChecks), then the pending drops.
+   */
+  private ret(line: string, result?: Binding): void {
+    if (this.ensures.length) {
+      this.scopes.push(new Map());
+      try {
+        if (result) this.bind("result", result);
+        for (const c of this.ensures) this.contractCheck("ensures", c.expr, c.span);
+      } finally { this.scopes.pop(); }
+    }
     this.dropPending(0);
     if (this.replay) this.emit("milo.replay.exit");
     this.emit(line);
@@ -1435,6 +1467,12 @@ class FnEmitter {
   }
 
   private stmtIn(s: HIRStmt): boolean {
+    // A for loop's invariants go at the top of its body (withInvariants), before dispatch.
+    if (s.kind === "ForEach" || s.kind === "ForRange" || s.kind === "ForStrView" || s.kind === "ForIterator") return this.stmtCore(this.withInvariants(s));
+    return this.stmtCore(s);
+  }
+
+  private stmtCore(s: HIRStmt): boolean {
     switch (s.kind) {
       case "Let": {
         if (s.viewBind) {
@@ -1580,7 +1618,7 @@ class FnEmitter {
       case "Return": {
         if (this.sretOut && s.value) {
           this.into(s.value, this.sretOut.ref, this.sretOut.ty);
-          this.ret("milo.return");
+          this.ret("milo.return", { kind: "var", ref: this.sretOut.ref, ty: this.sretOut.ty });
           return true;
         }
         if (!s.value && this.isMain) { this.retMain(); return true; }
@@ -1597,7 +1635,7 @@ class FnEmitter {
         if (this.retView) {
           const v = this.expr(s.value);
           if (v.ty !== this.retView || (v.own === "owned" && !this.keyBody)) throw new MlirUnsupported("returned view that is an owned value or of another type");
-          this.ret(`milo.return ${v.ref} : ${v.ty}`);
+          this.ret(`milo.return ${v.ref} : ${v.ty}`, { kind: "ssa", v });
           return true;
         }
         // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
@@ -1605,7 +1643,7 @@ class FnEmitter {
         // drop header is docs/backlog.md #23). fnAs's `leak` casts it. [MILO-O-returnedPlainClosure]
         const plainFn = this.retTy!.startsWith("!milo.fn<") && !this.retTy!.startsWith("!milo.fn<owning ");
         const v = plainFn ? this.take(this.expr(s.value), this.retTy!, "return", true) : this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
-        this.ret(`milo.return ${v.ref} : ${v.ty}`);
+        this.ret(`milo.return ${v.ref} : ${v.ty}`, { kind: "ssa", v: { ...v, own: v.own === "owned" ? "view" : v.own } });
         return true;
       }
       case "ExprStmt": {
@@ -1657,12 +1695,15 @@ class FnEmitter {
         return false;
       }
       case "While": {
-        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+        // A while's invariants are checked with its condition, so they hold on exit too.
+        const invs = this.cx.contractChecks ? s.invariants ?? [] : [];
         this.loops++; this.loopBase.push(this.pending.length);
+        const checkInvs = () => { for (const inv of invs) this.contractCheck("invariant", inv.expr, inv.span); };
         if (s.cond.kind === "BoolLit" && s.cond.value) {
-          this.region("milo.loop {", () => this.stmts(s.body));
+          this.region("milo.loop {", () => { checkInvs(); return this.stmts(s.body); });
         } else {
           this.region("milo.while {", () => {
+            checkInvs();
             // milo.condition ends the region, so temporaries die in a block inside it.
             const c = this.scoped(() => this.expr(s.cond));
             this.emit(`milo.condition ${c.ref}`);
@@ -1681,7 +1722,6 @@ class FnEmitter {
         // where legacy reads it through its address at each use: the same, since the
         // checker lets nothing write the Vec while the loop borrows it. The index moves
         // on before the body, so a `continue` (back to the condition) cannot skip it.
-        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         if (s.consume && s.iterableKind === "vec") return this.consumedForEach(s);
         // A slice is a Vec header: borrowed and walked as a Vec is.
         const it = stripRefs(s.iterable.type);
@@ -1742,7 +1782,6 @@ class FnEmitter {
         return false;
       }
       case "ForRange": {
-        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         const ty = scalar(s.varType, "for var");
         if (ty === "i1" || ty === PTR || ty.startsWith("f")) throw new MlirUnsupported("for over a non-int");
         // Legacy genForRange extends a bound of another width by the loop variable's
@@ -1795,6 +1834,7 @@ class FnEmitter {
         } finally { this.scopes.pop(); this.blocks.pop(); }
       }
       case "ForIterator": return this.forIterator(s);
+      case "ContractCheck": this.contractCheck(s.clause, s.expr, s.span); return false;
       case "NullRefUnwrap": {
         // `let p = b else { ... }` on a `?&T`/`?&mut T`, as legacy genNullRefUnwrap: a null
         // test, the else block (which the checker makes diverge) on null, then p is the
@@ -1963,7 +2003,6 @@ class FnEmitter {
    * `continue` cannot skip it; the enumerate index counts up from -1 at the top of the body.
    */
   private forStrView(s: HIRStmt & { kind: "ForStrView" }): boolean {
-    if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
     const placeOf = (x: HIRExpr, what: string) => {
       if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "StringLit") throw new MlirUnsupported(`${what} of a for over string pieces that is not a place`);
       return this.place(x, refOf(STR), false).ref;
@@ -3030,8 +3069,8 @@ class FnEmitter {
       // The helper's params are its own: every capture is moved into the env.
       body: [
         ...viaPtr.map(p => ({ kind: "Let" as const, name: p.name, type: p.type, mutable: false,
-          value: { kind: "PtrDeref" as const, type: p.type, operand: { kind: "Ident" as const, name: `${p.name}$p`, type: { tag: "ptr", inner: p.type } as TypeKind, isMove: false } } } as HIRStmt)),
-        { kind: "Return", retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } },
+          value: { kind: "PtrDeref" as const, type: p.type, operand: { kind: "Ident" as const, name: `${p.name}$p`, type: { tag: "ptr", inner: p.type } as TypeKind, isMove: false } } } as HIRStmtBase)),
+        { kind: "Return" as const, retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } },
       ],
     }));
     const fnTy = `(${args.map(a => a.ty).join(", ")}) -> ${ty}`;
@@ -4005,7 +4044,6 @@ class FnEmitter {
    * exits, as legacy drops its temp alloca.
    */
   private forIterator(s: HIRStmt & { kind: "ForIterator" }): boolean {
-    if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
     const layout = this.cx.mlirEnumLayout(s.optionEnumName);
     const some = layout?.variants.find(v => v.name === "Some"), none = layout?.variants.find(v => v.name === "None");
     if (!some || !none || some.fields.length !== 1) throw new MlirUnsupported("iterator option layout");
@@ -4030,7 +4068,7 @@ class FnEmitter {
         ],
       }],
     };
-    return this.stmt({ kind: "Block", body: [...pre, loop], span: s.span });
+    return this.stmt({ kind: "Block", body: [...pre, loop] as HIRStmtBase[], span: s.span });
   }
 
   /**

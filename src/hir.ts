@@ -197,6 +197,10 @@ export type HIRPattern =
 
 // Contracts reach codegen so debug builds can assert them at runtime
 // (requires at entry, ensures at returns, invariant at the loop header).
+// A contract clause checked at run time, made by src/emit-mlir.ts only (a loop's
+// invariants at the top of its body); no other pass sees it.
+export type HIRContractCheck = { kind: "ContractCheck"; clause: HIRContract["kind"]; expr: HIRExpr; span?: Span };
+
 export interface HIRContract {
   kind: "requires" | "ensures" | "invariant";
   expr: HIRExpr;

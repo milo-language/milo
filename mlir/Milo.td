@@ -918,6 +918,19 @@ def Milo_VecTailTakePlaceOp : Milo_Op<"vectail.take_place"> {
   let hasVerifier = 1;
 }
 
+def Milo_ContractCheckOp : Milo_Op<"contract_check",
+    [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
+  let summary = "panic unless a contract clause holds";
+  let description = [{
+    A `requires`, `ensures` or `invariant` clause checked at run time (a contract-checking
+    build): unless `cond` holds, the program reports the clause kind and the op's location
+    and aborts (legacy emitContractCheck, through the out-of-line __milo_contract_fail).
+  }];
+  let arguments = (ins I1:$cond, StrAttr:$kind);
+  let assemblyFormat = "$cond $kind attr-dict";
+  let hasVerifier = 1;
+}
+
 def Milo_ArrayTailArrayOp : Milo_Op<"arraytail.array", [Pure]> {
   let summary = "the array place of an arraytail slot";
   let description = [{

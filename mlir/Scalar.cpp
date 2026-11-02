@@ -1190,6 +1190,32 @@ struct UnreachableLowering : ConvertOpToLLVMPattern<UnreachableOp> {
 
 // `idx < len` (unsigned, so a negative index fails too), else legacy's out-of-line
 // `__milo_bounds_fail(idx, len, file, line)`: one cold call on the failing edge.
+struct ContractCheckLowering : ConvertOpToLLVMPattern<ContractCheckOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ContractCheckOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    auto pos = srcPos(op);
+    if (failed(pos))
+      return failure();
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    auto fn = LLVM::lookupOrCreateFn(rw, module, "__milo_contract_fail", {ptrTy, ptrTy, rw.getI32Type()},
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    Value bad = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, a.getCond(), constInt(rw, loc, rw.getI1Type(), 0));
+    branchToPanic(rw, loc, bad, [&] {
+      Value kind = globalString(rw, loc, module, op.getKind().str());
+      Value file = globalString(rw, loc, module, pos->file);
+      Value line = constInt(rw, loc, rw.getI32Type(), pos->line);
+      LLVM::CallOp::create(rw, loc, *fn, ValueRange{kind, file, line});
+    });
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct BoundsCheckLowering : ConvertOpToLLVMPattern<BoundsCheckOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1681,7 +1707,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

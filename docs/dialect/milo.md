@@ -616,6 +616,39 @@ Traits: `Terminator`
 
 
 
+### `milo.contract_check` (::milo::ContractCheckOp)
+
+_Panic unless a contract clause holds_
+
+Syntax:
+
+```
+operation ::= `milo.contract_check` $cond $kind attr-dict
+```
+
+A `requires`, `ensures` or `invariant` clause checked at run time (a contract-checking
+build): unless `cond` holds, the program reports the clause kind and the op's location
+and aborts (legacy emitContractCheck, through the out-of-line __milo_contract_fail).
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::milo::PanicResource}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `cond` | 1-bit signless integer |
+
+
+
 ### `milo.copy` (::milo::CopyOp)
 
 _Copy a struct, enum or array between places_

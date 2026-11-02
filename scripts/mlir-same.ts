@@ -86,11 +86,18 @@ const fnTotal = { ok: 0, all: 0 };
 const reasons = new Map<string, number>();
 const buildMs = { legacy: 0, mlir: 0 };
 
+// A program can ask for build flags both backends get (`// @mlir-same-flags: --contract-checks`),
+// for behaviour a default build leaves out.
+function extraFlags(name: string): string[] {
+  const m = /^\/\/ @mlir-same-flags:(.*)$/m.exec(readFileSync(`${name}.milo`, "utf-8"));
+  return m ? m[1]!.trim().split(/\s+/) : [];
+}
+
 async function build(name: string, mlir: boolean): Promise<{ bin: string; res: RunResult; lowered: number }> {
   const id = `${basename(name)}.${names.indexOf(name)}`;
   const bin = join(tmp, `${id}.${mlir ? "mlir" : "legacy"}`);
   const log = join(tmp, `${id}.log`);
-  const args = ["run", MAIN, "build", `${name}.milo`, "-o", bin];
+  const args = ["run", MAIN, "build", `${name}.milo`, ...extraFlags(name), "-o", bin];
   const companion = `${name}.c`;
   if (existsSync(companion)) args.push(companion);
   const env = buildEnv(mlir, mlir ? { MILO_MLIR_LOG: log } : {});
@@ -148,7 +155,7 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
     // exit()), or agree with a drop erased (a struct's drop of its strings left both equal).
     const fast = async (mlir: boolean) => {
       const bin = `${mlir ? mlirBin : legacyBin}.fast`;
-      const args = ["run", MAIN, "build", `${name}.milo`, "--fast", "-o", bin];
+      const args = ["run", MAIN, "build", `${name}.milo`, "--fast", ...extraFlags(name), "-o", bin];
       if (existsSync(`${name}.c`)) args.push(`${name}.c`);
       const b = await guarded(`build ${name} (${mlir ? "mlir" : "legacy"}, -O0)`, "bun", args, { env: buildEnv(mlir, {}), timeoutMs: 180_000 });
       return b.code === 0 ? await live(bin) : `build failed: ${b.stderr.trim().split("\n")[0]}`;
@@ -157,7 +164,7 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
     if (fm !== fh) return `live blocks at exit at -O0: legacy ${fh}, mlir ${fm} (at -O2: legacy ${lh}, mlir ${lm})`;
   }
   const asanBin = `${mlirBin}.asan`;
-  const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", "-o", asanBin];
+  const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", ...extraFlags(name), "-o", asanBin];
   if (existsSync(`${name}.c`)) args.push(`${name}.c`);
   const b = await guarded(`build ${name} (mlir, asan)`, "bun", args, { env: buildEnv(true, {}), timeoutMs: 180_000 });
   if (b.code !== 0) return `asan build failed: ${b.stderr.trim().split("\n")[0]}`;

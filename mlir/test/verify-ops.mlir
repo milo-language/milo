@@ -354,3 +354,11 @@ func.func @arraytail_take_place_wrong(%i: si64) {
   %p = milo.arraytail.take_place %slot[%i] : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>> -> !milo.ref<si32>
   milo.return
 }
+
+// -----
+
+func.func @contract_kind(%c: i1) {
+  // expected-error @+1 {{checks a requires, ensures or invariant clause, not assert}}
+  milo.contract_check %c "assert"
+  milo.return
+}

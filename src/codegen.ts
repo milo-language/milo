@@ -199,6 +199,7 @@ export class Codegen {
   private needsOverflowCheck = false;
   private needsRangeCheck = false;
   private needsContractCheck = false;
+  private needsContractFail = false;
   // ensures clauses of the function being generated; checked at every return site
   private currentEnsures: HIRContract[] = [];
   public trapOnOverflow = false;
@@ -2244,6 +2245,10 @@ export class Codegen {
       this.emit("");
       for (const line of this.overflowFailHelper()) this.emit(line);
     }
+    if (this.needsContractFail) {
+      this.emit("");
+      for (const line of this.contractFailHelper()) this.emit(line);
+    }
 
     // append drop helper functions
     for (const body of this.dropHelperBodies) {
@@ -3386,6 +3391,21 @@ export class Codegen {
     b.endFn();
     return lines;
   }
+
+  // The out-of-line handler MLIR's milo.contract_check calls: legacy's contract message
+  // (emitContractCheck) and panic tail. Moves with its siblings in the scaffold step.
+  private contractFailHelper(): string[] {
+    const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: "__milo_contract_fail", ret: Ty.void, params: [{ name: "kind", ty: Ty.ptr }, { name: "file", ty: Ty.ptr }, { name: "line", ty: Ty.i32 }], internal: true, attrs: " noreturn cold noinline" });
+    lines.push(`  %fmt = getelementptr [44 x i8], ptr @.contract_err, i32 0, i32 0`);
+    this.emitFdPrintf(lines, 2, "%fmt", `, ptr %kind, ptr %file, i32 %line`);
+    this.panicAbort(lines);
+    lines.push(`  unreachable`);
+    b.endFn();
+    return lines;
+  }
+  public mlirContractFail(): void { this.needsContractCheck = true; this.needsContractFail = true; this.needsPrintf = true; this.needsExit = true; }
 
   private overflowFailHelper(): string[] {
     const lines: string[] = [];
