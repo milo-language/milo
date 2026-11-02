@@ -1269,6 +1269,9 @@ export class Codegen {
   // Fail closed everywhere the answer is not obvious (extern, indirect/interface dispatch,
   // recursion, a builtin higher-order form): "escapes" means nobody frees, which is the
   // leak we have today, while a wrong "does not escape" is a double free.
+  /** MLIR path: closureParamEscapes, for an owning closure handed to a plain fn param. */
+  public mlirClosureParamEscapes(fnName: string, idx: number): boolean { return this.closureParamEscapes(fnName, idx); }
+
   private closureParamEscapes(fnName: string, idx: number, seen: Set<string> = new Set()): boolean {
     const key = `${fnName}#${idx}`;
     const memo = this.closureParamEscapeCache.get(key);

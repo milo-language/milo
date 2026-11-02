@@ -24,6 +24,7 @@ export interface MlirEmitCtx {
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
   mlirStrViewStep(): string;
+  mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
   hasVecType: boolean;
@@ -4329,6 +4330,25 @@ class FnEmitter {
         return ref.ref;
       }
       if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
+      const pt = paramTys[i];
+      if (pt.startsWith("!milo.fn<") && !pt.startsWith("!milo.fn<owning ")) {
+        const own = this.expr(a.expr);
+        if (own.own === "owned" && own.ty === pt.replace(/^!milo\.fn</, "!milo.fn<owning ")) {
+          provenance.push(null);
+          // A `move` closure given to a plain fn param (legacy genCall, spec "who frees the
+          // heap environment"): the param never owns it, so the caller frees it right after
+          // the call (a slot of the call's frame) and passes a plain alias; when the callee
+          // may keep the param (closureParamEscapes, failing closed) nobody frees it.
+          if (this.cx.mlirClosureParamEscapes(e.func, j)) return this.take(own, pt, "argument", true).ref;
+          const slot = this.tempSlot("clarg", own.ty, stripRefs(a.expr.type).tag === "fn" ? { ...(stripRefs(a.expr.type) as TypeKind & { tag: "fn" }), owning: true } : a.expr.type, own);
+          this.emit(`milo.store ${own.ref}, ${slot} : !milo.ref<${own.ty}>`);
+          const view = this.def(`milo.load ${slot} : !milo.ref<${own.ty}>`, own.ty).ref;
+          return this.def(`milo.fn.cast ${view} : ${own.ty} -> ${pt}`, pt).ref;
+        }
+        const v = this.pend(this.take(own, pt, "argument"), a.expr.type);
+        provenance.push(null);
+        return v.ref;
+      }
       const v = this.pend(this.operand(a.expr, paramTys[i], "argument", true), a.expr.type);
       provenance.push(null);
       return v.ref;
