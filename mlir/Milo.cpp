@@ -455,6 +455,13 @@ LogicalResult PtrLendOp::verify() {
   return success();
 }
 
+LogicalResult VecSlotOp::verify() {
+  auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
+  if (!v || v.getElementType() != getVec().getType().getElementType())
+    return emitOpError("gives the slot of a Vec of ") << getVec().getType().getElementType();
+  return success();
+}
+
 LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
   // A Vec of owning closures lent as one of plain closures: the same { fn, env } bits, as

@@ -621,6 +621,15 @@ struct VecPlaceLowering : ConvertOpToLLVMPattern<VecPlaceOp> {
   }
 };
 
+struct VecSlotLowering : ConvertOpToLLVMPattern<VecSlotOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecSlotOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getVec());
+    return success();
+  }
+};
+
 struct VecNewLowering : ConvertOpToLLVMPattern<VecNewOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -864,7 +873,7 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
   });
   patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering, MapLenLowering>(tc);
   patterns.add<ArrayTailArrayLowering, ArrayTailStartLowering, ArrayTailTakeLowering, ArrayTailTakePlaceLowering>(tc);
-  patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
+  patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecSlotLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }
 

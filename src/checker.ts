@@ -1626,6 +1626,8 @@ export class TypeChecker {
       case "vec": case "array": return this.resourceKind(ty.element, seen);
       case "heap": return this.resourceKind(ty.inner, seen);
       case "hashmap": return this.resourceKind(ty.key, seen) ?? this.resourceKind(ty.value, seen);
+      // A copy would share the env, and each copy's drop would free it: one owner only.
+      case "fn": return ty.owning ? { kind: "an owning closure's environment", via: ty } : null;
       default: return null;
     }
   }

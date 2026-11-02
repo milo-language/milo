@@ -1174,6 +1174,12 @@ class FnEmitter {
     if (e.kind === "Ident") {
       const b = this.lookup(e.name);
       if (b.kind !== "var" || b.ty !== ty) throw new MlirUnsupported("128+ byte argument");
+      // A move closure's capture moved out of its env: read whole, its flag cleared.
+      if (b.flag && e.isMove && this.hasDrop(ty)) {
+        const v = this.def(`milo.load ${b.ref} : !milo.ref<${ty}>`, ty);
+        this.emit(`milo.store ${this.def("milo.const false", "i1").ref}, ${b.flag} : !milo.ref<i1>`);
+        return { ...v, own: "owned" };
+      }
       if (this.hasDrop(ty) && !(b.owned && e.isMove)) throw new MlirUnsupported("128+ byte argument that is not a move");
       slot = { ref: b.ref, owned: !!b.owned };
     } else slot = this.bigSlot("arg", e, true);
@@ -2091,14 +2097,22 @@ class FnEmitter {
     const ret = e.type.tag === "void" ? null : this.value(e.type, "interface call result");
     if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("interface call result type");
     // Itable dispatch (legacy genInterfaceMethodCall): data and itable from the pair, the
-    // method from itable[i], called with data first and each `&T` as its address. A `&mut`
-    // argument wants legacy's alias guard, so that call keeps the helper.
-    if (!ops.some(o => o.mode === "mut")) {
+    // method from itable[i], called with data first and each `&T` as its address, after
+    // legacy's alias guard over the by-ref arguments (emitAliasGuards: a `&mut` one must
+    // not alias another).
+    {
+      const refs = ops.slice(1).filter(o => o.mode !== "val").map(o => ({ ref: o.ref, mut: o.mode === "mut", ty: this.lent(o.type, "interface call operand") }));
+      for (let i = 0; i < refs.length; i++) {
+        for (let j = i + 1; j < refs.length; j++) {
+          if ((!refs[i].mut && !refs[j].mut) || refs[i].ref === refs[j].ref) continue;
+          this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
+        }
+      }
       const pa = this.def(`milo.addr ${p.ref} : !milo.ref<${dty}>`, PTR).ref;
       const data = this.def(`milo.ptr.load ${pa} : ${PTR}`, PTR);
       const it = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`, PTR);
       const fn = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${it.ref}[${this.def(`milo.const ${e.methodIndex} : si64`, "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
-      const args = [data, ...ops.slice(1).map(o => o.mode === "ref"
+      const args = [data, ...ops.slice(1).map(o => o.mode !== "val"
         ? this.def(`milo.addr ${o.ref} : ${this.lent(o.type, "interface call operand")}`, PTR)
         : { ref: o.ref, ty: valueType(this.cx, o.type)! })];
       const call = `milo.call_ptr ${fn.ref}(${args.map(a => a.ref).join(", ")}) : (${args.map(a => a.ty).join(", ")}) -> ${ret ?? "()"}`;
@@ -2106,10 +2120,6 @@ class FnEmitter {
       const r = this.def(call, ret);
       return ret === STR ? { ...r, own: "owned" } : r;
     }
-    const r = this.intrinsic(`dyn${e.methodIndex}`, e, ops, ([o, ...xs]) => ({
-      ...e, object: o, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })),
-    }), ret, false);
-    return ret === STR ? { ...r, own: "owned" } : r;
   }
 
   /**
@@ -4601,7 +4611,7 @@ class FnEmitter {
     const pb = this.ptrBinding(e);
     if (pb) {
       // Lent to a call where it is, as legacy passes the pointer.
-      if (refTy !== `!milo.ref<${pb.ty}>`) throw new MlirUnsupported("by-ref arg of another type");
+      if (refTy !== `!milo.ref<${pb.ty}>`) throw new MlirUnsupported(`by-ref arg of another type (pointee ${pb.ty} as ${refTy})`);
       return { ref: this.def(`milo.ptr.lend ${pb.ptr} -> ${refTy}`, refTy).ref };
     }
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
@@ -4634,7 +4644,7 @@ class FnEmitter {
       if (pp) {
         const vm = /^!milo\.vecval<(.*)>$/.exec(pp.ty);
         const lent = vm ? `!milo.vec<${vm[1]}>` : `!milo.ref<${pp.ty}>`;
-        if (lent !== refTy) throw new MlirUnsupported("by-ref arg of another type");
+        if (lent !== refTy) throw new MlirUnsupported(`by-ref arg of another type (${lent} as ${refTy})`);
         return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
       }
     }
@@ -4643,7 +4653,7 @@ class FnEmitter {
     // writes through it still reach that memory.
     if (mut && e.kind !== "RawSlice" && e.kind !== "VecSlice" && e.kind !== "InterfaceCoerce") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
-    if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");
+    if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported(`by-ref arg of another type (value ${v.ty} as ${refTy})`);
     let slot: string;
     if (v.own === "owned" && !this.bitCopies.has(v.ref) && this.hasDrop(v.ty)) slot = this.tempSlot("arg", v.ty, e.type, v);
     else {
@@ -4666,7 +4676,10 @@ class FnEmitter {
   /** The place `ref` (of type `placeTy`) lent as `refTy` (fits). */
   private lendAs(ref: string, placeTy: string, refTy: string, param?: number): { ref: string; param?: number } {
     if (placeTy === refTy) return { ref, param };
-    if (!this.fits(placeTy, refTy)) throw new MlirUnsupported("by-ref arg of another type");
+    // A Vec lent as its header, wanted as its slot (replace/swap of a `&mut Vec` param).
+    if (placeTy.startsWith("!milo.vec<") && refTy === `!milo.ref<!milo.vecval<${placeTy.slice(10, -1)}>>`)
+      return { ref: this.def(`milo.vec.slot ${ref} : ${placeTy} -> ${refTy}`, refTy).ref, param };
+    if (!this.fits(placeTy, refTy)) throw new MlirUnsupported(`by-ref arg of another type (${placeTy} as ${refTy})`);
     return { ref: this.def(`milo.vec.place ${ref} : ${placeTy} -> ${refTy}`, refTy).ref, param };
   }
 

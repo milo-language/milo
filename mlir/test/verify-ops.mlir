@@ -442,3 +442,11 @@ func.func @bits_count_type(%a: ui8) {
   %0 = milo.bits "ctpop", %a : ui8 -> ui8
   milo.return
 }
+
+// -----
+
+func.func @vec_slot_elem(%v: !milo.vec<si64>) {
+  // expected-error @+1 {{gives the slot of a Vec of 'si64'}}
+  %0 = milo.vec.slot %v : !milo.vec<si64> -> !milo.ref<!milo.vecval<f64>>
+  milo.return
+}

@@ -1,0 +1,10 @@
+// @error: 'get' would copy 'move () => i64' out of the Vec: it carries an owning closure's environment
+// A copy of an owning closure would share its env, and both copies' drops would free it.
+pub fn main(): i32 {
+    let s = "abc".clone()
+    var v: Vec<move () => i64> = []
+    v.push(move (): i64 => s.len())
+    let f = v.get(0)!
+    print(f())
+    return 0
+}

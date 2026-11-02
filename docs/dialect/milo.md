@@ -2941,6 +2941,39 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.vec.slot` (::milo::VecSlotOp)
+
+_The slot of the Vec behind a header place_
+
+Syntax:
+
+```
+operation ::= `milo.vec.slot` $vec attr-dict `:` type($vec) `->` type($ref)
+```
+
+The inverse of milo.vec.place: a `&mut Vec` param or field is lent as its header, and
+what writes the whole Vec (`replace(v, w)`, `swap`) wants its slot: the same address.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `vec` | a Vec by reference: the address of its header |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
+
+
+
 ### `milo.vec.store` (::milo::VecStoreOp)
 
 _Unchecked element write_

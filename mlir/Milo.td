@@ -855,6 +855,18 @@ def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Milo_VecSlotOp : Milo_Op<"vec.slot", [Pure]> {
+  let summary = "the slot of the Vec behind a header place";
+  let description = [{
+    The inverse of milo.vec.place: a `&mut Vec` param or field is lent as its header, and
+    what writes the whole Vec (`replace(v, w)`, `swap`) wants its slot: the same address.
+  }];
+  let arguments = (ins Milo_VecType:$vec);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$vec attr-dict `:` type($vec) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
 def Milo_VecTailInitOp : Milo_Op<"vectail.init"> {
   let summary = "move a Vec into a vectail slot";
   let description = [{
