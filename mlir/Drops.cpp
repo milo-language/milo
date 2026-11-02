@@ -532,7 +532,7 @@ struct ElaborateDropsPass
 // Ownership ops -> LLVM
 //===----------------------------------------------------------------------===//
 
-LLVM::LLVMFuncOp legacyFn(ConversionPatternRewriter &rw, Operation *op, StringRef name,
+LLVM::LLVMFuncOp runtimeFn(ConversionPatternRewriter &rw, Operation *op, StringRef name,
                           ArrayRef<Type> args, Type ret) {
   auto module = op->getParentOfType<ModuleOp>();
   auto fn = LLVM::lookupOrCreateFn(rw, module, name, args, ret);
@@ -550,7 +550,7 @@ struct DropLowering : ConvertOpToLLVMPattern<DropOp> {
     Location loc = op.getLoc();
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     auto var = op.getRef().getDefiningOp<VarOp>();
-    auto fn = legacyFn(rw, op, (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee()),
+    auto fn = runtimeFn(rw, op, (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee()),
                        {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
     if (!fn)
       return failure();
@@ -770,18 +770,18 @@ struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   }
 };
 
-// legacy's string share, a function of the legacy module (codegen mlirHelper).
+// The runtime's `@milo.str.share` (src/runtime/str.ll): a new handle to the same buffer.
 struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(StringShareOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Type st = getTypeConverter()->convertType(op.getType());
-    auto fn = legacyFn(rw, op, "milo.share.string", {ptrTy}, st);
+    Value s = LLVM::LoadOp::create(rw, op.getLoc(), st, a.getRef());
+    auto fn = runtimeFn(rw, op, "milo.str.share", {st}, st);
     if (!fn)
       return failure();
-    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{a.getRef()});
+    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{s});
     return success();
   }
 };
@@ -797,7 +797,7 @@ struct StringConcatLowering : ConvertOpToLLVMPattern<StringConcatOp> {
     Value l = entrySlot(rw, op, st), r = entrySlot(rw, op, st);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getLhs(), l);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getRhs(), r);
-    auto fn = legacyFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
+    auto fn = runtimeFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
     if (!fn)
       return failure();
     rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{l, r});
@@ -813,7 +813,7 @@ struct StringAppendLowering : ConvertOpToLLVMPattern<StringAppendOp> {
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Value v = entrySlot(rw, op, a.getValue().getType());
     LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), v);
-    auto fn = legacyFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
+    auto fn = runtimeFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
                        LLVM::LLVMVoidType::get(rw.getContext()));
     if (!fn)
       return failure();

@@ -2310,12 +2310,7 @@ class FnEmitter {
           p = { ref, ty: STR };
         }
         if (p.ty !== STR) throw new MlirUnsupported("string copy of another type");
-        this.cx.mlirHelper("milo.share.string", () => ({
-          params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],
-          retType: { tag: "string" },
-          body: [{ kind: "Return", retType: { tag: "string" }, value: {
-            kind: "StringClone", type: { tag: "string" }, str: { kind: "Ident", name: "s", type: { tag: "string" }, isMove: false } } }],
-        }));
+        this.cx.mlirStringOps();
         return { ...this.def(`milo.string.share ${p.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       }
       case "InterfaceMethodCall": return this.dynCall(e);
@@ -3122,12 +3117,7 @@ class FnEmitter {
       else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported(`capture binding (${b.kind === "var" ? `${b.ty} for ${cty}` : b.kind} ${c.name})`);
       else if (!this.hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
       else if (c.share && cty === STR) {
-        this.cx.mlirHelper("milo.share.string", () => ({
-          params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],
-          retType: { tag: "string" },
-          body: [{ kind: "Return", retType: { tag: "string" }, value: {
-            kind: "StringClone", type: { tag: "string" }, str: { kind: "Ident", name: "s", type: { tag: "string" }, isMove: false } } }],
-        }));
+        this.cx.mlirStringOps();
         v = { ...this.def(`milo.string.share ${b.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       } else if (b.owned && !c.share) v = { ...this.def(`milo.move ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
       else if (!b.owned && !c.share && this.inClosureBody && !this.runsUserDrop(cty)) {
