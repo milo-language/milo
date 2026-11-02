@@ -1313,6 +1313,10 @@ class FnEmitter {
    * to free it), and of exactly the position's type `ty`, or the function stays legacy.
    */
   private take(v: Val, ty: string, what: string, leak = false): Val {
+    // A borrowed `move` closure given to a plain `(T) => R` param is lent, not given (spec,
+    // moveClosureLentToPlainParam): the param is a plain alias, the caller keeps it.
+    if (what === "argument" && v.own === "view" && ty.startsWith("!milo.fn<") && v.ty === ty.replace(/^!milo\.fn</, "!milo.fn<owning "))
+      return this.def(`milo.fn.cast ${v.ref} : ${v.ty} -> ${ty}`, ty);
     const r = this.fnAs(this.consume(v, what), ty, leak);
     if (r.ty !== ty) throw new MlirUnsupported(`${what} of another type`);
     return r;
