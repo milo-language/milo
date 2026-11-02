@@ -3504,7 +3504,6 @@ class FnEmitter {
    * scope drops run before it and a pending owned operand keeps the function legacy.
    */
   private propagate(e: HIRExpr & { kind: "Propagate" }, into?: { dst: string; ty: string }): Val {
-    if (e.boxConversion) throw new MlirUnsupported("`?` boxing its error into a Heap");
     const src = this.cx.mlirEnumLayout(e.enumName);
     const ret = e.retType.tag === "enum" ? this.cx.mlirEnumLayout(e.retType.name) : null;
     const isErr = (v: { name: string }) => v.name === "Err" || v.name === "None";
@@ -3515,7 +3514,23 @@ class FnEmitter {
     const n = this.n++;
     const okName = `prop$ok${n}`, errName = `prop$err${n}`;
     let errVal: HIRExpr | null = err.fields.length ? { kind: "Ident", name: errName, type: err.fields[0], isMove: true } : null;
-    if (e.messageFn) {
+    if (e.boxConversion) {
+      // `?` into a `Result<T, Heap<I>>` fn (legacy emitBoxAsIface): the error, wrapped in
+      // its one-field message struct first when `viaMessage` (a string as ErrorMessage),
+      // boxed and coerced to the interface, as `Heap(e)` coerced to `Heap<I>`.
+      const box = e.boxConversion;
+      if (!errVal) throw new MlirUnsupported("`?` boxing of a payload-less error");
+      let inner: HIRExpr = errVal;
+      const boxed: TypeKind = box.viaMessage ? { tag: "struct", name: box.fromType } : box.errType;
+      if (box.viaMessage) {
+        const f0 = this.cx.structLayouts.get(box.fromType)?.fields[0];
+        if (!f0) throw new MlirUnsupported("`?` boxing layout");
+        inner = { kind: "StructLit", name: box.fromType, fields: [{ name: f0.name, value: errVal }], type: boxed };
+      }
+      const heap: TypeKind = { tag: "heap", inner: boxed };
+      errVal = { kind: "InterfaceCoerce", value: { kind: "HeapCreate", value: inner, type: heap }, fromType: box.fromType, ifaceName: box.ifaceName,
+        type: { tag: "heap", inner: { tag: "interface", name: box.ifaceName } } } as HIRExpr;
+    } else if (e.messageFn) {
       // `?` into a `Result<T, string>` fn (legacy genPropagate): the error's message() is
       // the string; the typed error stays the arm's binding, so its scope drops it.
       if (!errVal) throw new MlirUnsupported("`?` message of a payload-less error");
