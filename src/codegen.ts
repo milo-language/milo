@@ -3314,8 +3314,13 @@ export class Codegen {
   }
 
   /** `milo.drop.<key>(ptr)`: legacy's drop glue for `t`, run on the value at the pointer. */
-  public mlirDropHelper(key: string, t: TypeKind): void {
-    this.mlirDropHelpers.set(`milo.drop.${key}`, t);
+  // `structural`: `milo.sdrop.<key>`, the drop of a structural clone (no user Drop runs), as
+  // structuralDropTypes marks one.
+  public mlirDropHelper(key: string, t: TypeKind, structural = false): void {
+    if (!structural) { this.mlirDropHelpers.set(`milo.drop.${key}`, t); return; }
+    const s = { ...t };
+    this.structuralDropTypes.add(s);
+    this.mlirDropHelpers.set(`milo.sdrop.${key}`, s);
   }
 
   /**

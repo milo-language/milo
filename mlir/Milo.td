@@ -734,10 +734,14 @@ def Milo_VarOp : Milo_Op<"var"> {
     slot is listed by the milo.scope that owns it; from there on the IR says only where the
     value is stored (milo.store), moved out (milo.move) and read in place (milo.load, a view
     that never owns), and milo-scope-drops / milo-elaborate-drops decide where it dies.
+
+    `structural`: an owned slot holding a structural clone (legacy emitDeepCloneFromPtr of a
+    Vec element matched by value), which shares any resource handle with the original: its
+    drop is legacy's structural one (`milo.sdrop.<key>`), which runs no user Drop.
   }];
-  let arguments = (ins StrAttr:$name, UnitAttr:$owned);
+  let arguments = (ins StrAttr:$name, UnitAttr:$owned, UnitAttr:$structural);
   let results = (outs Milo_RefType:$ref);
-  let assemblyFormat = "$name (`owned` $owned^)? attr-dict `:` type($ref)";
+  let assemblyFormat = "$name (`owned` $owned^)? (`structural` $structural^)? attr-dict `:` type($ref)";
   let hasVerifier = 1;
 }
 

@@ -32,3 +32,19 @@ func.func @slot(%a: si64) {
   }
   milo.return
 }
+
+// A structural slot (a `v[i]` match subject's clone) is freed by legacy's structural glue,
+// which runs no user Drop: the clone shares the element's resources.
+// CHECK-LABEL: llvm.func @clone
+// CHECK:     llvm.call @milo.sdrop.SNoisy
+// CHECK-NOT: llvm.call @milo.drop.SNoisy
+// CHECK:     llvm.return
+func.func @clone(%a: si64) {
+  %n = milo.var "subject" owned structural : !milo.ref<!milo.struct<"Noisy" drop, si64>>
+  milo.scope %n : !milo.ref<!milo.struct<"Noisy" drop, si64>> {
+    %x = milo.struct.new %a : si64 -> !milo.struct<"Noisy" drop, si64>
+    milo.store %x, %n : !milo.ref<!milo.struct<"Noisy" drop, si64>>
+    milo.yield
+  }
+  milo.return
+}

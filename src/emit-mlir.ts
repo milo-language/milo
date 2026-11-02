@@ -26,7 +26,7 @@ export interface MlirEmitCtx {
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
   hasVecType: boolean;
-  mlirDropHelper(key: string, t: TypeKind): void;
+  mlirDropHelper(key: string, t: TypeKind, structural?: boolean): void;
   mlirVecTailDropHelper(key: string, vec: TypeKind): void;
   mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string;
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
@@ -924,19 +924,40 @@ class FnEmitter {
   }
 
   /**
-   * A slot for a temporary. A user's Drop on it would run at the end of the block, where
-   * legacy runs it after the call or at the end of the statement: those stay legacy.
+   * The one place a temporary is made: an owned Operand that a position needs as a Place
+   * goes into an owned slot of the innermost open frame (`owned`), which drops it when it
+   * closes. The open frame is the drop point, and it is legacy codegen's per position:
+   *  - an operator that only reads it and keeps nothing (`.len`, a tag test, a string
+   *    byte, a Copy field): right after that operator (legacy dropOwnedTemp), `peek`;
+   *  - a by-ref argument's: right after its call, before the result is used (legacy
+   *    argTempDrops, flushed by the call), the frame `callScope` opens around each call;
+   *  - a match subject's: when the match ends (legacy genTempSubjectMatch), the frame
+   *    `stmt` opens around a match statement, or its `let`'s or call's;
+   *  - a discarded result's, or one read in place by a statement (a print part, a string
+   *    comparison's operand): at the end of its statement, `stmt`. Legacy drops these right
+   *    after their operator, which is the same point: nothing else runs in between;
+   *  - a `let` initializer's: at the end of the `let` (`scoped`); a for-in iterable's after
+   *    the loop, as legacy's registerScopedTemp.
+   * `structural`: the temporary is a structural clone of an element (a `v[i]` match
+   * subject, legacy emitDeepCloneFromPtr), which shares its resources with the element, so
+   * it is freed structurally (milo.var `structural`, legacy's structuralDropTypes) and no
+   * user Drop runs for it. A clone with a user Drop held anywhere else stays legacy.
    */
-  private tempSlot(name: string, ty: string, t: TypeKind, arg = false): string {
-    if (this.runsUserDrop(ty) && !arg) throw new MlirUnsupported("temporary with a user Drop");
-    return this.ownedSlot(name, ty, t);
+  private tempSlot(name: string, ty: string, t: TypeKind, of?: Val, structural = false): string {
+    if (of && this.clones.has(of.ref) && !structural && this.runsUserDrop(ty)) throw new MlirUnsupported("a clone with a user Drop as a temporary");
+    return this.ownedSlot(name, ty, t, structural);
+  }
+  // Results of copyOut: legacy's structural clones of what a place holds.
+  private clones = new Set<string>();
+
+  /** `e` read by `read`, which keeps nothing of it: a temporary `e` dies right after (tempSlot). */
+  private peek(e: HIRExpr, read: (v: Val) => Val): Val {
+    const v = this.expr(e);
+    if (!this.hasDrop(v.ty) || v.own !== "owned" || this.bitCopies.has(v.ref)) return read(this.borrow(v, e.type));
+    return this.scoped(() => read(this.borrow(v, e.type)));
   }
 
-  /**
-   * A direct call in a block of its own: the temporaries its arguments lend from die right
-   * after it, before its result is used, as legacy drops an argument temporary after its
-   * call (argTempDrops). That timing is what lets one with a user Drop be taken.
-   */
+  /** A direct call in a frame of its own: its by-ref arguments' temporaries die right after it (tempSlot). */
   private callScope(fill: () => Val): Val {
     this.owned.push([]);
     const start = this.body.length;
@@ -944,21 +965,17 @@ class FnEmitter {
     return this.closeScope(start, false, v.ty ? v : null) ?? v;
   }
 
-  // Set while place() lends a by-ref argument of the call being emitted: its temporary is
-  // in that call's scope (callScope), so a user Drop on it runs when legacy runs it.
-  private lendingArg = false;
-
   /** A slot owning a `ty` (string, Vec) for the innermost block. */
-  private ownedSlot(name: string, ty: string, t: TypeKind): string {
+  private ownedSlot(name: string, ty: string, t: TypeKind, structural = false): string {
     const ref = this.fresh();
-    this.vars.push(`  ${ref} = milo.var ${quote(name)} owned : !milo.ref<${ty}>`);
+    this.vars.push(`  ${ref} = milo.var ${quote(name)} owned${structural ? " structural" : ""} : !milo.ref<${ty}>`);
     this.owned[this.owned.length - 1].push({ ref, ty });
-    this.dropGlue(ty, t);
+    this.dropGlue(ty, t, structural);
     return ref;
   }
 
-  private dropGlue(_ty: string, t: TypeKind): void {
-    this.cx.mlirDropHelper(typeKey(t), stripRefs(t));
+  private dropGlue(_ty: string, t: TypeKind, structural = false): void {
+    this.cx.mlirDropHelper(typeKey(t), stripRefs(t), structural);
   }
 
   // Owned operands evaluated and not yet handed to their op (`tok()` in
@@ -987,7 +1004,7 @@ class FnEmitter {
   private borrow(v: Val, t: TypeKind): Val {
     if (!this.hasDrop(v.ty) || v.own !== "owned") return v;
     if (this.bitCopies.has(v.ref)) return { ...v, own: "view" };
-    const slot = this.tempSlot("tmp", v.ty, t);
+    const slot = this.tempSlot("tmp", v.ty, t, v);
     this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
     return { ...this.def(`milo.load ${slot} : !milo.ref<${v.ty}>`, v.ty), own: "view" };
   }
@@ -999,8 +1016,8 @@ class FnEmitter {
   }
 
   private stmt(s: HIRStmt): boolean {
-    if (s.kind !== "Assign" && s.kind !== "ExprStmt") return this.stmtIn(s);
-    // Its temporaries die at its end, as legacy drops them: a block's end may never come
+    if (s.kind !== "Assign" && s.kind !== "ExprStmt" && s.kind !== "Match") return this.stmtIn(s);
+    // Its temporaries die at its end, as legacy drops them (tempSlot): a block's end may never come
     // (an exit() later in it), and the live-block count at exit would see them.
     this.owned.push([]);
     const start = this.body.length;
@@ -1171,7 +1188,9 @@ class FnEmitter {
         return false;
       }
       case "If": {
-        const c = this.expr(s.cond);
+        // The condition's temporaries die before either branch runs, as legacy's right after
+        // their operator (tempSlot).
+        const c = this.scoped(() => this.expr(s.cond));
         let thenDone = false;
         let elseDone = false;
         thenDone = this.region(`milo.if ${c.ref} {`, () => this.stmts(s.thenBody));
@@ -1552,11 +1571,10 @@ class FnEmitter {
         ([x, y, z]) => ({ ...e, str: x, start: y, end: z }), STR);
         return { ...r, own: "view" };
       }
-      case "StringLen": {
-        const v = this.borrow(this.expr(e.object), e.object.type);
+      case "StringLen": return this.peek(e.object, v => {
         if (v.ty !== STR) throw new MlirUnsupported("len of a non-string");
         return this.def(`milo.string.len ${v.ref}`, "si64");
-      }
+      });
       case "VecNew": {
         const ty = this.value(e.type, "Vec");
         return { ...this.def(`milo.vec.new : ${ty}`, ty), own: "owned" };
@@ -1612,11 +1630,12 @@ class FnEmitter {
         if (pp) return this.ptrRead(pp);
         if (stripRefs(e.object.type).tag === "string") {
           // A byte, as legacy genStringIndex reads it: object, index, bounds check.
-          const s = this.borrow(this.expr(e.object), e.object.type);
-          const i = this.expr(e.index);
-          if (s.ty !== STR || !/^[su]i\d+$/.test(i.ty) || scalar(e.type, "string byte") !== "ui8") throw new MlirUnsupported("string index types");
-          const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
-          return this.def(`milo.string.byte ${s.ref}[${index}]`, "ui8", this.loc(e.span));
+          return this.peek(e.object, s => {
+            const i = this.expr(e.index);
+            if (s.ty !== STR || !/^[su]i\d+$/.test(i.ty) || scalar(e.type, "string byte") !== "ui8") throw new MlirUnsupported("string index types");
+            const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
+            return this.def(`milo.string.byte ${s.ref}[${index}]`, "ui8", this.loc(e.span));
+          });
         }
         const er = this.elemRef(e);
         if (er) {
@@ -1810,11 +1829,10 @@ class FnEmitter {
         this.bitCopies.add(v.ref);
         return { ...v, own: "view" };
       }
-      case "HashMapLen": {
-        const m = this.borrow(this.expr(e.object), e.object.type);
+      case "HashMapLen": return this.peek(e.object, m => {
         if (!m.ty.startsWith("!milo.map<")) throw new MlirUnsupported("len of a non-map");
         return this.def(`milo.map.len ${m.ref} : ${m.ty}`, "si64");
-      }
+      });
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);
         return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");
@@ -1830,9 +1848,10 @@ class FnEmitter {
         const p = this.fieldPlace(e);
         if (p) return { ...this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own };
         const { index, ty } = this.field(e);
-        // A temporary that owns is kept in a slot while its field is read.
-        const s = this.borrow(this.expr(e.object), e.object.type);
-        return { ...this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty), own };
+        // A temporary that owns is kept in a slot while its field is read: until the end of
+        // the statement when the field is a view into it, else only for the read (tempSlot).
+        const get = (s: Val): Val => ({ ...this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty), own });
+        return own ? get(this.borrow(this.expr(e.object), e.object.type)) : this.peek(e.object, get);
       }
       case "StructLit": return this.structLit(e);
       case "EnumLit": {
@@ -1850,13 +1869,12 @@ class FnEmitter {
         const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
         return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
-      case "IsCheck": {
-        const v = this.expr(e.operand);
+      case "IsCheck": return this.peek(e.operand, v => {
         if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("`is` on a non-enum");
         const tag = this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32");
         const want = this.def(`milo.const ${e.tag} : si32`, "si32");
         return this.def(`milo.cmp eq, ${tag.ref}, ${want.ref} : si32`, "i1");
-      }
+      });
       case "IfExpr": {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("if-expression without a value");
         const ty = this.value(e.type, "if-expression");
@@ -1899,9 +1917,10 @@ class FnEmitter {
           if (!p) throw new MlirUnsupported("tag test of a 128+ byte enum that is not a place");
           tag = this.def(`milo.enum.tag_at ${p.ref} : !milo.ref<${p.ty}>`, "si32").ref;
         } else {
-          const v = this.borrow(this.expr(e.value), e.value.type);
-          if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("tag test of a non-enum");
-          tag = this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32").ref;
+          tag = this.peek(e.value, v => {
+            if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("tag test of a non-enum");
+            return this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32");
+          }).ref;
         }
         const zero = this.def("milo.const 0 : si32", "si32").ref;
         return this.def(`milo.cmp ${e.op === "isSome" ? "eq" : "ne"}, ${tag}, ${zero} : si32`, "i1");
@@ -2008,6 +2027,7 @@ class FnEmitter {
     if (vm && slot) src = this.def(`milo.vec.place ${src} : !milo.ref<${ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref;
     const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
       ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
+    this.clones.add(r.ref);
     return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
@@ -2315,6 +2335,7 @@ class FnEmitter {
     // A `&mut` subject's place: its bindings are the payload's own places
     // (milo.enum.field_ref), so writing one writes the payload.
     let place: { ref: string; ty: string } | null = null;
+    let structural = false;
     let subj: Val;
     if (bigEnum) {
       if (!m.subjectIsRef && !m.subjectIsMut) {
@@ -2345,19 +2366,24 @@ class FnEmitter {
       else {
         const v = this.expr(e);
         if (v.own !== "owned") throw new MlirUnsupported("match moving out of a borrowed enum");
-        // When every arm binds every owning payload field (`f()?`), every path empties the
-        // slot, so when it would drop does not matter: a user Drop in it never runs.
-        const st = stripRefs(e.type);
-        const lay = st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
-        const emptied = !!lay && m.arms.every(a => a.pattern.kind === "EnumPattern" && !a.pattern.tests
-          && (lay.variants.find(x => x.tag === (a.pattern as { tag: number }).tag)?.fields ?? [null]).every((f, k) =>
-            f !== null && (!this.hasDrop(this.place$(f, "payload")) || (a.pattern as { bindings: { name: string }[] }).bindings[k]?.name)));
-        from = this.tempSlot("subject", v.ty, e.type, emptied);
+        // A `v[i]` subject is its element's structural clone (tempSlot): its bindings only
+        // borrow from it, so none takes a payload with a drop of its own.
+        const clone = e.kind === "IndexAccess" && this.clones.has(v.ref);
+        from = this.tempSlot("subject", v.ty, e.type, v, clone);
         this.emit(`milo.store ${v.ref}, ${from} : !milo.ref<${v.ty}>`);
+        if (clone) structural = true;
       }
       const ty = this.value(e.type, "match subject");
       subj = { ...this.def(`milo.load ${from} : !milo.ref<${ty}>`, ty), own: "view" };
-    } else subj = this.borrow(this.expr(m.subject), m.subject.type);
+    } else {
+      // Read in place; a `v[i]` subject is its element's structural clone (tempSlot).
+      const v = this.expr(m.subject);
+      if (m.subject.kind === "IndexAccess" && this.clones.has(v.ref)) {
+        const slot = this.tempSlot("subject", v.ty, m.subject.type, v, true);
+        this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
+        subj = { ...this.def(`milo.load ${slot} : !milo.ref<${v.ty}>`, v.ty), own: "view" };
+      } else subj = this.borrow(v, m.subject.type);
+    }
     const isEnum = bigEnum || subj.ty.startsWith("!milo.enum<");
     if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
       return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy, armBody);
@@ -2397,7 +2423,7 @@ class FnEmitter {
     const head = `${resultTy ? `${ref} = ` : ""}milo.match ${subj.ref} : ${subj.ty}${resultTy ? ` -> ${resultTy}` : ""} [${cases.join(", ")}]${dflt ? " default" : ""} {`;
     let allDone = true;
     arms.forEach(({ arm, args, tag }, i) => {
-      const consumes = from !== null && args.some(a => a.name !== "_" && this.hasDrop(a.ty));
+      const consumes = from !== null && !structural && args.some(a => a.name !== "_" && this.hasDrop(a.ty));
       // Legacy stops dropping the subject once an arm takes a payload, so an owning field
       // the arm leaves unbound would be legacy's leak; not reproduced.
       if (consumes && args.some(a => a.name === "_" && this.hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
@@ -2836,20 +2862,18 @@ class FnEmitter {
     if (e.kind !== "Ident") {
       // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.
       if (mut) throw new MlirUnsupported(`by-ref &mut arg ${e.kind}`);
-      const arg = this.lendingArg;
-      this.lendingArg = false;
       const v = this.expr(e);
       const vm = /^!milo\.vecval<(.*)>$/.exec(v.ty);
       if (vm && refTy === `!milo.vec<${vm[1]}>` && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary Vec lends its header from a slot that drops it.
-        const slot = this.tempSlot("arg", v.ty, e.type);
+        const slot = this.tempSlot("arg", v.ty, e.type, v);
         this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
         return { ref: this.def(`milo.vec.place ${slot} : !milo.ref<${v.ty}> -> ${refTy}`, refTy).ref };
       }
       if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
       if (this.hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary that owns a buffer lends from a slot that drops it.
-        const slot = this.tempSlot("arg", v.ty, e.type, arg);
+        const slot = this.tempSlot("arg", v.ty, e.type, v);
         this.emit(`milo.store ${v.ref}, ${slot} : ${refTy}`);
         return { ref: slot };
       }
@@ -2950,7 +2974,7 @@ class FnEmitter {
           if (this.cx.retainingLibc.has(e.func)) throw new MlirUnsupported("temporary string kept by C");
           const v = this.expr(a.expr);
           if (v.ty !== STR || v.own !== "owned" || this.bitCopies.has(v.ref)) throw new MlirUnsupported("C string of a view");
-          ref = this.tempSlot("cstr", STR, t);
+          ref = this.tempSlot("cstr", STR, t, v);
           this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
         }
         if (local || a.expr.kind !== "StringLit" && a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")
@@ -3131,9 +3155,7 @@ class FnEmitter {
     const args = e.args.map((a, j) => {
       const i = j + k0;
       if (a.passByRef) {
-        this.lendingArg = true;
         const ref = this.place(a.expr, paramTys[i], a.refMut);
-        this.lendingArg = false;
         refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
         provenance.push(ref.param ?? null);
         return ref.ref;

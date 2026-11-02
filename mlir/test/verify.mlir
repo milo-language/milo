@@ -345,3 +345,11 @@ func.func @heap_new_type(%x: si64) {
   %h = milo.heap.new %x : si64 -> !milo.heap<f64>
   milo.return
 }
+
+// -----
+
+func.func @structural_unowned() {
+  // expected-error @+1 {{is structural but owns nothing}}
+  %s = milo.var "s" structural : !milo.ref<!milo.string>
+  milo.return
+}

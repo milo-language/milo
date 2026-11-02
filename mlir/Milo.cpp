@@ -282,6 +282,8 @@ LogicalResult VarOp::verify() {
     return emitOpError("must be in the function's entry block");
   if (getOwned() && !needsDrop(getRef().getType().getPointee()))
     return emitOpError("owns a value with no drop glue");
+  if (getStructural() && !getOwned())
+    return emitOpError("is structural but owns nothing");
   return success();
 }
 

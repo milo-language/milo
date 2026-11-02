@@ -393,7 +393,8 @@ LLVM::LLVMFuncOp legacyFn(ConversionPatternRewriter &rw, Operation *op, StringRe
 }
 
 // A drop is a call of the legacy module's drop glue for the type, `milo.drop.<key>(ptr)`
-// (codegen mlirDropHelper); with a flag, only when the flag is set.
+// (codegen mlirDropHelper), or `milo.sdrop.<key>` for a structural slot; with a flag, only
+// when the flag is set.
 struct DropLowering : ConvertOpToLLVMPattern<DropOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -401,7 +402,8 @@ struct DropLowering : ConvertOpToLLVMPattern<DropOp> {
                   ConversionPatternRewriter &rw) const override {
     Location loc = op.getLoc();
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    auto fn = legacyFn(rw, op, "milo.drop." + typeKey(op.getRef().getType().getPointee()),
+    auto var = op.getRef().getDefiningOp<VarOp>();
+    auto fn = legacyFn(rw, op, (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee()),
                        {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
     if (!fn)
       return failure();
