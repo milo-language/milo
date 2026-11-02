@@ -1,0 +1,8 @@
+// milo.panic_if with three values: a substr range past the end.
+pub fn main(): i32 {
+    let s = "hello".clone()
+    print(s.substr(1, 3))
+    let n = s.len() + 2
+    print(s.substr(2, n))
+    return 0
+}

@@ -374,7 +374,7 @@ func.func @panic_if_stray_conversion(%b: i1) {
 // -----
 
 func.func @panic_if_value_without_conversion(%b: i1, %v: si64) {
-  // expected-error @+1 {{message needs one %lld exactly when a value is given}}
+  // expected-error @+1 {{message needs one %lld per value}}
   milo.panic_if %b, "100%% bad\n"(%v)
   milo.return
 }
@@ -382,7 +382,7 @@ func.func @panic_if_value_without_conversion(%b: i1, %v: si64) {
 // -----
 
 func.func @panic_if_conversion_without_value(%b: i1) {
-  // expected-error @+1 {{message needs one %lld exactly when a value is given}}
+  // expected-error @+1 {{message needs one %lld per value}}
   milo.panic_if %b, "n = %lld\n"
   milo.return
 }

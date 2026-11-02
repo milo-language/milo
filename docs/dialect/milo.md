@@ -1763,13 +1763,13 @@ _Panic with a message when a condition holds_
 Syntax:
 
 ```
-operation ::= `milo.panic_if` $bad `,` $message (`(` $value^ `)`)? attr-dict
+operation ::= `milo.panic_if` $bad `,` $message (`(` $values^ `)`)? attr-dict
 ```
 
 When `bad` holds, prints `message` to stderr as a printf format and aborts through the
 panic hook. `message` is the whole text, site included, as the emitter builds it; its
-only conversion is one `%lld`, for `value` when there is one. Every other `%` is
-written `%%`.
+only conversions are `%lld`, one per value, at most three. Every other `%` is written
+`%%`.
 
 ```mlir
 milo.panic_if %neg, "milo: negative length at a.milo:3:9: %lld\n"(%n)
@@ -1791,7 +1791,7 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::milo::PanicResource}`
 | Operand | Description |
 | :-----: | ----------- |
 | `bad` | 1-bit signless integer |
-| `value` | 64-bit signed integer |
+| `values` | variadic of 64-bit signed integer |
 
 
 

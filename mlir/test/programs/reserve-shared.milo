@@ -1,0 +1,42 @@
+// milo.string.reserve: a push into a string sharing its buffer copies first, so the
+// other handle keeps its bytes, NUL included (strlen reads past its len).
+extern fn strlen(s: *u8): i64
+
+pub fn main(): i32 {
+    var a = "abc".clone()
+    a.pushStr("d")
+    let b = a.clone()
+    a.pushStr("e")
+    a.pushStr(b)
+    print(a, " ", b)
+    var c = "abcdefgh".clone()
+    c.pushStr("i")
+    let d = c.clone()
+    c.truncate(2)
+    let e = c.clone()
+    c.push(90)
+    var n: i64 = 0
+    unsafe {
+        n = clen(e)
+    }
+    print(c, " ", d, " ", e, " ", n)
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("x".clone(), 1)
+    m.insert(a.clone(), 2)
+    print(m.len(), " ", m.get("x")!, " ", s(a))
+    return 0
+}
+
+fn s(x: string): string {
+    let _p = x.cstr()
+    return x
+}
+
+// Borrowed, so cstr does not make it unique first: strlen sees the shared buffer.
+fn clen(x: &string): i64 {
+    var n: i64 = 0
+    unsafe {
+        n = strlen(x.cstr())
+    }
+    return n
+}

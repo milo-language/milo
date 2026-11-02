@@ -962,15 +962,15 @@ def Milo_PanicIfOp : Milo_Op<"panic_if",
   let description = [{
     When `bad` holds, prints `message` to stderr as a printf format and aborts through the
     panic hook. `message` is the whole text, site included, as the emitter builds it; its
-    only conversion is one `%lld`, for `value` when there is one. Every other `%` is
-    written `%%`.
+    only conversions are `%lld`, one per value, at most three. Every other `%` is written
+    `%%`.
 
     ```mlir
     milo.panic_if %neg, "milo: negative length at a.milo:3:9: %lld\n"(%n)
     ```
   }];
-  let arguments = (ins I1:$bad, StrAttr:$message, Optional<SI64>:$value);
-  let assemblyFormat = "$bad `,` $message (`(` $value^ `)`)? attr-dict";
+  let arguments = (ins I1:$bad, StrAttr:$message, Variadic<SI64>:$values);
+  let assemblyFormat = "$bad `,` $message (`(` $values^ `)`)? attr-dict";
   let hasVerifier = 1;
 }
 

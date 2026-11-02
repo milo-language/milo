@@ -534,8 +534,10 @@ LogicalResult PanicIfOp::verify() {
     ++convs;
     i += 3;
   }
-  if (convs != (getValue() ? 1u : 0u))
-    return emitOpError("message needs one %lld exactly when a value is given");
+  if (getValues().size() > 3)
+    return emitOpError("prints at most three values");
+  if (convs != getValues().size())
+    return emitOpError("message needs one %lld per value");
   return success();
 }
 

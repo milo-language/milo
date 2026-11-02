@@ -597,3 +597,31 @@ done:
   %r = phi i32 [ %c, %entry ], [ %l, %bylen ]
   ret i32 %r
 }
+
+; @@ milo.string.reserve
+; `_strReserve(&mut s, extra)`: s's data pointer with room for `extra` more bytes and the
+; NUL, in a buffer s holds alone; null when growing fails. The fast path (room, and a count
+; of 1, which a heap buffer with room implies is safe to write) is small enough to inline;
+; anything else goes through @milo.str.reserve, which copies or grows.
+define internal ptr @milo.string.reserve(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %extra) {
+entry:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %capp = getelementptr %String, ptr %s, i32 0, i32 2
+  %cap = load i64, ptr %capp
+  %need = add i64 %len, %extra
+  %room = icmp ult i64 %need, %cap
+  br i1 %room, label %chk, label %slow
+chk:
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %data = load ptr, ptr %datap
+  %hdr = getelementptr i8, ptr %data, i64 -8
+  %rc = {{rcload}}
+  %only = icmp eq i64 %rc, 1
+  br i1 %only, label %fast, label %slow
+fast:
+  ret ptr %data
+slow:
+  %grown = call ptr @milo.str.reserve(ptr %s, i64 %extra)
+  ret ptr %grown
+}

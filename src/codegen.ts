@@ -3391,10 +3391,10 @@ export class Codegen {
     lines.push(`  unreachable`);
     b.endFn();
     lines.push("");
-    // milo.panic_if with a value: the message's one %lld.
+    // milo.panic_if with values: up to three %lld; printf ignores the slots it does not name.
     const b2 = new LlvmTextBuilder(lines, this);
-    b2.defineFn({ name: "__milo_mlir_panic_i64", ret: Ty.void, params: [{ name: "msg", ty: Ty.ptr }, { name: "v", ty: Ty.i64 }], internal: true, attrs: " noreturn cold noinline" });
-    this.emitFdPrintf(lines, 2, "%msg", ", i64 %v");
+    b2.defineFn({ name: "__milo_mlir_panic_v3", ret: Ty.void, params: [{ name: "msg", ty: Ty.ptr }, { name: "a", ty: Ty.i64 }, { name: "b", ty: Ty.i64 }, { name: "c", ty: Ty.i64 }], internal: true, attrs: " noreturn cold noinline" });
+    this.emitFdPrintf(lines, 2, "%msg", ", i64 %a, i64 %b, i64 %c");
     this.panicAbort(lines);
     lines.push(`  unreachable`);
     b2.endFn();
@@ -8613,10 +8613,23 @@ export class Codegen {
     this.emittedMlirStringOps = true;
     this.strReserveFn();
     this.helperFnBodies.push(runtimeFn("milo.string.concat"), runtimeFn("milo.string.append"),
-      runtimeFn("milo.string.eq"), runtimeFn("milo.string.cmp"));
+      runtimeFn("milo.string.eq"), runtimeFn("milo.string.cmp"),
+      runtimeFn("milo.string.reserve", { rcload: this.target.os === "none" ? "load i64, ptr %hdr, align 8" : "load atomic i64, ptr %hdr acquire, align 8" }));
     this.needsMemcmp = true;
   }
   private emittedMlirStringOps = false;
+
+  /** MLIR path: the map runtime sections (src/runtime/map.ll) and their hash seed. */
+  public mlirMapOps(): void {
+    if (this.emittedMlirMapOps) return;
+    this.emittedMlirMapOps = true;
+    this.needsMalloc = true;
+    this.needsMemset = true;
+    this.needsGetentropy = true;
+    this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
+    this.helperFnBodies.push(runtimeFn("milo.map.alloc"));
+  }
+  private emittedMlirMapOps = false;
 
   public strReserveFn(): string {
     if (!this.emittedStrReserve) {
@@ -9186,7 +9199,7 @@ export class Codegen {
     this.needsSnprintf = true;
     // The bodies are runtime sections (src/runtime/str.ll), shared with the MLIR path.
     if (!this.generatedFloatFmt) { this.generatedFloatFmt = true; this.dropHelperBodies.push(runtimeFn("milo.fmt.g")); }
-    this.dropHelperBodies.push(runtimeFn(`milo.fmt.f${bits}`));
+    this.dropHelperBodies.push(runtimeFn(bits === 32 ? "milo.fmt.f32" : "milo.fmt.f64"));
   }
 
   // Formats a float into a fresh malloc'd buffer and returns it. Callers own the

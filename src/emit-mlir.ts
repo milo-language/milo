@@ -26,6 +26,7 @@ export interface MlirEmitCtx {
   readonly mlirMainOk: boolean;
   mlirStrViewStep(): string;
   mlirStringOps(): void;
+  mlirMapOps(): void;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -1300,13 +1301,31 @@ class FnEmitter {
   }
 
   /**
-   * milo.panic_if: when `bad` holds, print `text` (static, so every `%` in it is escaped) and
-   * abort; with `value`, `text` is split at `%lld`, the one place the value is printed.
+   * milo.panic_if: when `bad` holds, print the text and abort. `text` is static (every `%`
+   * in it escaped), or the static pieces around `values`, each printed as `%lld`.
    */
-  private panicIf(bad: string, text: string | [string, string], value?: string): void {
-    const esc = (s: string) => s.replace(/%/g, "%%");
-    const msg = typeof text === "string" ? esc(text) : `${esc(text[0])}%lld${esc(text[1])}`;
-    this.emit(`milo.panic_if ${bad}, ${quoteBytes(new TextEncoder().encode(msg))}${value ? `(${value})` : ""}`);
+  private panicIf(bad: string, text: string | string[], values: string[] = []): void {
+    const parts = typeof text === "string" ? [text] : text;
+    if (parts.length !== values.length + 1) throw new Error("panicIf: one text piece more than values");
+    const msg = parts.map(p => p.replace(/%/g, "%%")).join("%lld");
+    this.emit(`milo.panic_if ${bad}, ${quoteBytes(new TextEncoder().encode(msg))}${values.length ? `(${values.join(", ")})` : ""}`);
+  }
+
+  /** A call of a runtime section or module routine, by symbol. */
+  private rtCall(name: string, args: Val[], ret: string | null): Val {
+    const fnTy = `(${args.map(a => a.ty).join(", ")}) -> ${ret ?? "()"}`;
+    this.callees.set(name, fnTy);
+    const call = `func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`;
+    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+    return this.def(call, ret);
+  }
+
+  /** A null buffer from an allocating runtime call: legacy's emitAllocNullCheck text. */
+  private allocCheck(p: Val, span: Span | undefined): Val {
+    const isNull = this.def(`milo.cmp eq, ${p.ref}, ${this.def(`milo.zero : ${PTR}`, PTR).ref} : ${PTR}`, "i1");
+    const l = this.site(span);
+    this.panicIf(isNull.ref, `runtime error: integer overflow at ${l.file}:${l.line}\n`);
+    return p;
   }
 
   private constTrue(): string {
@@ -2472,28 +2491,33 @@ class FnEmitter {
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
         const n = this.expr(e.extra);
         if (n.ty !== "si64") throw new MlirUnsupported("string reserve size type");
-        return this.intrinsic("reserve", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }, { name: "n", type: I64, mode: "val", ref: n.ref }],
-          ([a, b]) => ({ kind: "StrReserve", type: e.type, span: e.span, str: a, extra: b }), PTR);
+        this.stringHelpers();
+        return this.allocCheck(this.rtCall("milo.string.reserve", [{ ref: str, ty: `!milo.ref<${STR}>` }, n], PTR), e.span);
       }
       case "StrAlloc": {
         if (scalar(e.type, "string buffer") !== PTR) throw new MlirUnsupported("string alloc type");
         const n = this.expr(e.size);
         if (n.ty !== "si64") throw new MlirUnsupported("string alloc size type");
-        return this.intrinsic("alloc", e, [{ name: "n", type: I64, mode: "val", ref: n.ref }],
-          ([a]) => ({ kind: "StrAlloc", type: e.type, span: e.span, size: a }), PTR);
+        this.stringHelpers();
+        return this.allocCheck(this.rtCall("milo.str.alloc", [n], PTR), e.span);
       }
       case "StrRangeCheck": {
         const str = this.place(e.str, `!milo.ref<${STR}>`, false).ref;
         const a = this.expr(e.start), b = this.expr(e.end);
         if (a.ty !== "si64" || b.ty !== "si64") throw new MlirUnsupported("string range types");
-        return this.intrinsic("range", e, [{ name: "s", type: { tag: "string" }, mode: "ref", ref: str },
-          { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
-          ([x, y, z]) => ({ kind: "StrRangeCheck", type: e.type, span: e.span, str: x, start: y, end: z }), null);
+        // Legacy emitStringRangeCheck: start < 0, end < start or end > len.
+        const len = this.def(`milo.string.len ${this.def(`milo.load ${str} : !milo.ref<${STR}>`, STR).ref}`, "si64");
+        const zero = this.def("milo.const 0 : si64", "si64");
+        const c = (p: string, x: Val, y: Val) => this.def(`milo.cmp ${p}, ${x.ref}, ${y.ref} : si64`, "i1").ref;
+        const bad0 = this.def(`milo.or ${c("lt", a, zero)}, ${c("lt", b, a)} : i1`, "i1");
+        const bad = this.def(`milo.or ${bad0.ref}, ${c("gt", b, len)} : i1`, "i1");
+        this.panicIf(bad.ref, ["milo: substr range out of bounds: ", "..", " (len ", `) at ${this.panicAt(e.span)}\n`], [a.ref, b.ref, len.ref]);
+        return { ref: "", ty: "" };
       }
       case "StrUnique": {
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
-        return this.intrinsic("unique", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
-          ([x]) => ({ kind: "StrUnique", type: e.type, span: e.span, str: x }), null);
+        this.stringHelpers();
+        return this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
       }
       case "MapHash": {
         const kt = stripRefs(e.key.type);
@@ -2514,12 +2538,15 @@ class FnEmitter {
           ([x, y]) => ({ kind, type: e.type, span: e.span, a: x, b: y }), scalar(e.type, "comparison"), false);
       }
       case "MapSeed":
-        return this.intrinsic("mapseed", e, [], () => ({ kind: "MapSeed", type: e.type, span: e.span }), scalar(e.type, "map seed"), false);
+        if (scalar(e.type, "map seed") !== "si64") throw new MlirUnsupported("map seed type");
+        this.cx.mlirMapOps();
+        return this.rtCall("__milo_hash_seed", [], "si64");
       case "MapAlloc": {
         const n = this.expr(e.count), z = this.expr(e.size);
         if (n.ty !== "si64" || z.ty !== "si64") throw new MlirUnsupported("map alloc operand types");
-        return this.intrinsic("mapalloc", e, [{ name: "n", type: I64, mode: "val", ref: n.ref }, { name: "z", type: I64, mode: "val", ref: z.ref }],
-          ([a, b]) => ({ kind: "MapAlloc", type: e.type, span: e.span, count: a, size: b }), scalar(e.type, "map buffer"));
+        if (scalar(e.type, "map buffer") !== PTR) throw new MlirUnsupported("map buffer type");
+        this.cx.mlirMapOps();
+        return this.allocCheck(this.rtCall("milo.map.alloc", [n, z], PTR), e.span);
       }
       case "MapCopyOut": {
         // `_vecCopyOut(place)`: legacy's structural deep copy of what the place holds
@@ -2533,17 +2560,17 @@ class FnEmitter {
         const str = this.place(e.object, `!milo.ref<${STR}>`, false).ref;
         // C may write through the bytes: a string owned outright here is made the only
         // handle to its buffer first, as legacy (the helper sees only a reference).
-        if (this.ownedLocal(e.object))
-          this.intrinsic("unique", { ...e, type: { tag: "void" } }, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
-            ([x]) => ({ kind: "StrUnique", type: { tag: "void" }, span: e.span, str: x }), null);
-        return this.intrinsic("cstr", e, [{ name: "s", type: { tag: "string" }, mode: "ref", ref: str }],
-          ([x]) => ({ kind: "StringCstr", type: e.type, span: e.span, object: x }), PTR, false);
+        if (this.ownedLocal(e.object)) {
+          this.stringHelpers();
+          this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
+        }
+        return this.def(`milo.string.data ${this.def(`milo.load ${str} : !milo.ref<${STR}>`, STR).ref}`, PTR);
       }
       case "NonNegative": {
         const v = this.expr(e.value);
         if (v.ty !== "si64" || scalar(e.type, "checked size") !== "si64") throw new MlirUnsupported("non-negative check type");
         const neg = this.def(`milo.cmp lt, ${v.ref}, ${this.def("milo.const 0 : si64", "si64").ref} : si64`, "i1");
-        this.panicIf(neg.ref, [`milo: negative ${e.what} at ${this.panicAt(e.span)}: `, "\n"], v.ref);
+        this.panicIf(neg.ref, [`milo: negative ${e.what} at ${this.panicAt(e.span)}: `, "\n"], [v.ref]);
         return v;
       }
       case "NumberToString": {
@@ -2967,7 +2994,7 @@ class FnEmitter {
         if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("panic value type");
         let n = this.widenBound(v);
         if (n.ty === "ui64") n = this.def(`milo.cast ${n.ref} : ui64 to si64`, "si64");
-        this.panicIf(this.constTrue(), [e.head, `${e.tail} at ${this.panicAt(e.span)}\n`], n.ref);
+        this.panicIf(this.constTrue(), [e.head, `${e.tail} at ${this.panicAt(e.span)}\n`], [n.ref]);
         return { ref: "", ty: "" };
       }
       case "VecPanic":

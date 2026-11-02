@@ -1297,8 +1297,9 @@ struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
   }
 };
 
-// The message as the format of the module's `__milo_mlir_panic(fmt)`, or with the value
-// `__milo_mlir_panic_i64(fmt, v)`, on the failing edge only.
+// The message as the format of the module's `__milo_mlir_panic(fmt)`, or with values
+// `__milo_mlir_panic_v3(fmt, a, b, c)` (unused slots 0: printf reads only what the
+// format names), on the failing edge only.
 struct PanicIfLowering : ConvertOpToLLVMPattern<PanicIfOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1306,18 +1307,21 @@ struct PanicIfLowering : ConvertOpToLLVMPattern<PanicIfOp> {
     Location loc = op.getLoc();
     auto module = op->getParentOfType<ModuleOp>();
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    bool withValue = static_cast<bool>(a.getValue());
+    bool withValue = !a.getValues().empty();
     SmallVector<Type> params{ptrTy};
     if (withValue)
-      params.push_back(rw.getI64Type());
-    auto fn = LLVM::lookupOrCreateFn(rw, module, withValue ? "__milo_mlir_panic_i64" : kPanic, params,
+      params.append(3, rw.getI64Type());
+    auto fn = LLVM::lookupOrCreateFn(rw, module, withValue ? "__milo_mlir_panic_v3" : kPanic, params,
                                      LLVM::LLVMVoidType::get(rw.getContext()));
     if (failed(fn))
       return failure();
     branchToPanic(rw, loc, a.getBad(), [&] {
       SmallVector<Value> args{globalString(rw, loc, module, op.getMessage())};
-      if (withValue)
-        args.push_back(a.getValue());
+      if (withValue) {
+        args.append(a.getValues().begin(), a.getValues().end());
+        while (args.size() < 4)
+          args.push_back(constInt(rw, loc, rw.getI64Type(), 0));
+      }
       LLVM::CallOp::create(rw, loc, *fn, args);
     });
     rw.eraseOp(op);
