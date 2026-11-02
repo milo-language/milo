@@ -687,6 +687,18 @@ class FnEmitter {
       return;
     }
     if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
+    if (e.kind === "MemReplace") {
+      // Legacy genMemReplace's big path: the old value's bits move to `dst` (the result),
+      // then `v` is built over the place with nothing dropped. Until then both hold the
+      // same bits, so no jump may come between (a held pending).
+      const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
+      this.emit(`milo.copy ${p}, ${dst} : !milo.ref<${ty}>, !milo.ref<${ty}> of ${ty}`);
+      const mark = this.pending.length;
+      if (this.hasDrop(ty)) this.pending.push({ ref: dst, ty, t: e.type, place: true, hold: true });
+      this.into(e.value, p, ty);
+      this.pending.length = mark;
+      return;
+    }
     // isSretCall narrowed Call away; a call that is not sret returns a place-only value.
     const c = e as HIRExpr;
     if ((c.kind === "Call" && !this.cx.isBuiltinName(c.func)) || c.kind === "ClosureCall") {
@@ -1471,7 +1483,8 @@ class FnEmitter {
         return true;
       }
       case "ExprStmt": {
-        if (this.isSretCall(s.expr)) { this.bigSlot("tmp", s.expr, true); return false; }
+        // A discarded 128+ byte replace drops the old value at the statement's end, as legacy.
+        if (this.isSretCall(s.expr) || (s.expr.kind === "MemReplace" && inSlot(this.cx, this.place$(s.expr.type, "replaced value")))) { this.bigSlot("tmp", s.expr, true); return false; }
         // An if or a match whose value nobody takes (void, or never: every arm jumps) is the
         // statement, whose arms may end in a jump.
         const x = s.expr;

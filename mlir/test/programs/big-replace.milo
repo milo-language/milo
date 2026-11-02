@@ -1,0 +1,43 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `replace(p, v)`
+// of a 128+ byte value (legacy genMemReplace's big path): the old value's bits move to the
+// result, the new one is built over the place, nothing dropped; a discarded result drops
+// the old value at the statement's end. Of a local, a field, a Vec element, by a literal
+// and by a call.
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Big { pad: [i64; 16], name: string, r: Res }
+
+struct Holder { b: Big, tag: i64 }
+
+fn big(i: i64): Big {
+    var pad: [i64; 16] = [0; 16]
+    pad[3] = i * 3
+    return Big { pad: pad, name: $"b{i}", r: Res { id: i } }
+}
+
+fn show(label: string, b: &Big) { print(label, " ", b.name, " ", b.r.id, " ", b.pad[3]) }
+
+fn main() {
+    var x = big(1)
+    let old = replace(x, big(2))
+    show("old", old)
+    show("x", x)
+    replace(x, big(3))
+    show("x after discard", x)
+    var h = Holder { b: big(4), tag: 7 }
+    let o2 = replace(h.b, Big { pad: [9; 16], name: "lit", r: Res { id: 5 } })
+    show("o2", o2)
+    show("h.b", h.b)
+    var v: Vec<Big> = Vec.new()
+    v.push(big(6))
+    v.push(big(7))
+    let o3 = replace(v[1], big(8))
+    show("o3", o3)
+    show("v1", v[1])
+    print("end ", h.tag)
+}
