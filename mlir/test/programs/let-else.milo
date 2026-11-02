@@ -1,0 +1,89 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: let-else bindings outlive the arm that makes them. The first leaves
+// through the match's value, the others (all of them for a borrowed subject or a nested
+// pattern) are bound for the enclosing block, which drops the owning ones: once per loop
+// iteration in a loop body, not at all on the else path.
+
+enum Rec { Num(i64), Pair(i64, string), Three(i64, string, Vec<i64>) }
+
+enum Big { Wide(string, [i64; 20]), Narrow(i64) }
+
+fn mk(i: i64): Rec {
+    if i % 3 == 0 { return Rec.Num(i) }
+    if i % 3 == 1 { return Rec.Pair(i, "p".repeat(i)) }
+    return Rec.Three(i, "t".repeat(i), [i, i + 1])
+}
+
+fn pairOf(r: Rec): string {
+    let Rec.Pair(k, s) = r else { return "not a pair" }
+    return k.toString() + ":" + s
+}
+
+fn threeOf(r: Rec): string {
+    let Rec.Three(n, s, v) = r else { return "not three" }
+    return n.toString() + ":" + s + ":" + v.len().toString()
+}
+
+// Borrowed: every binding is a view of the caller's value.
+fn peek(r: &Rec): string {
+    let Rec.Three(n, s, v) = r else { return "not three" }
+    return n.toString() + ":" + s + ":" + v[1].toString()
+}
+
+// Nested: every binding escapes, the string moved out of the owned subject.
+fn inner(o: Option<Result<string, i64>>): string {
+    let Some(Ok(s)) = o else { return "no" }
+    return s + "!"
+}
+
+fn innerRef(o: &Option<Result<string, i64>>): i64 {
+    let Some(Ok(s)) = o else { return -1 }
+    return s.len()
+}
+
+fn wide(b: Big): string {
+    let Big.Wide(s, xs) = b else { return "narrow" }
+    return s + xs[3].toString()
+}
+
+fn wideRef(b: &Big): i64 {
+    let Big.Wide(s, xs) = b else { return -1 }
+    return s.len() + xs[3]
+}
+
+fn bump(r: &mut Option<Result<i64, string>>) {
+    let Some(Ok(n)) = r else { return }
+    n += 10
+}
+
+pub fn main() {
+    var total: i64 = 0
+    for i in 0..9 {
+        let Rec.Pair(k, s) = mk(i) else { continue }
+        total += k + s.len()
+    }
+    print(total)
+    for i in 0..6 {
+        print(pairOf(mk(i)))
+        print(threeOf(mk(i)))
+        let r = mk(i)
+        print(peek(r))
+        print(peek(r))
+    }
+    print(inner(Some(Ok("in".repeat(2)))))
+    print(inner(Some(Err(3))))
+    print(inner(None))
+    let o: Option<Result<string, i64>> = Some(Ok("ref".repeat(3)))
+    print(innerRef(o))
+    print(innerRef(o))
+    var xs: [i64; 20] = [0; 20]
+    xs[3] = 7
+    let b = Big.Wide("w".repeat(4), xs)
+    print(wideRef(b))
+    print(wide(b))
+    print(wide(Big.Narrow(1)))
+    var m: Option<Result<i64, string>> = Some(Ok(5))
+    bump(&mut m)
+    let Some(Ok(got)) = m else { return }
+    print(got)
+}

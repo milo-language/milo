@@ -449,6 +449,15 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean }
   | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string };
 
+// How one match arm makes its bindings (FnEmitter.armBinder). `view`: the binding reads
+// the subject's memory (a payload place, or a copy of a payload with drop glue).
+interface ArmBinder {
+  bind(name: string, b: Binding, view: boolean): void;
+  owned(name: string, ty: string, t: TypeKind): string;
+}
+// The block a match sits in: an escaping binding's scope and owner.
+interface MatchOuter { scope: Map<string, Binding>; frame: number }
+
 // What the closure bodies of one top-level function share: their names and texts.
 interface ClosureState { next: number; texts: string[]; names: string[] }
 
@@ -1046,11 +1055,11 @@ class FnEmitter {
     return this.closeScope(start, false, v.ty ? v : null) ?? v;
   }
 
-  /** A slot owning a `ty` (string, Vec) for the innermost block. */
-  private ownedSlot(name: string, ty: string, t: TypeKind, structural = false, block = false): string {
+  /** A slot owning a `ty` (string, Vec) for the innermost frame, the innermost block's (`block`), or frame `block`. */
+  private ownedSlot(name: string, ty: string, t: TypeKind, structural = false, block: boolean | number = false): string {
     const ref = this.fresh();
     this.vars.push(`  ${ref} = milo.var ${quote(name)} owned${structural ? " structural" : ""} : !milo.ref<${ty}>`);
-    this.owned[block ? this.blocks[this.blocks.length - 1] : this.owned.length - 1].push({ ref, ty });
+    this.owned[typeof block === "number" ? block : block ? this.blocks[this.blocks.length - 1] : this.owned.length - 1].push({ ref, ty });
     this.dropGlue(ty, t, structural);
     return ref;
   }
@@ -2496,6 +2505,10 @@ class FnEmitter {
    */
   private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
     resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
+    const outer = { scope: this.scopes[this.scopes.length - 1], frame: this.blocks[this.blocks.length - 1] };
+    let root = m.subject;
+    while (root.kind === "FieldAccess") root = root.object;
+    const subjLives = root.kind === "Ident";
     // An owning subject matched by value moves its payload into the bindings (legacy
     // bindPayloads zeroes it in the subject); matched by reference, bindings are views.
     const subjPlaceTy = placeType(this.cx, m.subject.type);
@@ -2567,7 +2580,7 @@ class FnEmitter {
     if (!isEnum && !/^([su]i\d+|i1)$/.test(subj.ty)) throw new MlirUnsupported(`match on ${subj.ty}`);
     // Literal arms (none in a checked enum match) and a lone arm stay on the flat path's refusals.
     if (layout && m.arms.length > 1 && m.arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.tests) && m.arms.every(a => a.pattern.kind !== "LiteralPattern"))
-      return this.nestedMatch(m, { subj, from, place, structural, bigEnum, enumName: (st as { name: string }).name }, resultTy, armBody);
+      return this.nestedMatch(m, { subj, from, place, structural, bigEnum, enumName: (st as { name: string }).name }, outer, subjLives, resultTy, armBody);
     const cases: bigint[] = [];
     const arms: { arm: typeof m.arms[0]; args: { name: string; ty: string }[]; tag?: number }[] = [];
     let dflt: typeof m.arms[0] | null = null;
@@ -2583,7 +2596,7 @@ class FnEmitter {
       if (p.kind === "EnumPattern") {
         // A nested arm reaches here only in a match of one arm (nestedMatch takes the rest).
         const v = layout?.variants.find(x => x.tag === p.tag);
-        if (!v || p.tests || p.bindings.length > v.fields.length || p.bindings.some(b => b.escapes)) throw new MlirUnsupported("enum pattern");
+        if (!v || p.tests || p.bindings.length > v.fields.length) throw new MlirUnsupported("enum pattern");
         c = BigInt(p.tag);
         args = v.fields.map((f, k) => ({ name: p.bindings[k]?.name ?? "_", ty: bigEnum ? this.place$(f, "payload") : this.value(f, "payload") }));
       } else {
@@ -2596,10 +2609,20 @@ class FnEmitter {
       arms.push({ arm, args, tag: p.kind === "EnumPattern" ? p.tag : undefined });
     }
     if (dflt) arms.push({ arm: dflt, args: [] });
+    // A payload place an escaping binding names is taken ahead of the match, where what
+    // follows the match can see it (an address only; its variant is tested in the arm).
+    const pre = new Map<string, string>();
+    const fieldRef = (tag: number | undefined, k: number, ty: string) => pre.get(`${tag}.${k}`)
+      ?? this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+    if (place) for (const { arm, args, tag } of arms) {
+      const p = arm.pattern;
+      if (p.kind === "EnumPattern") args.forEach((a, k) => { if (p.bindings[k]?.escapes && a.name !== "_") pre.set(`${tag}.${k}`, fieldRef(tag, k, a.ty)); });
+    }
     const ref = resultTy ? this.fresh() : "";
     const head = `${resultTy ? `${ref} = ` : ""}milo.match ${subj.ref} : ${subj.ty}${resultTy ? ` -> ${resultTy}` : ""} [${cases.join(", ")}]${dflt ? " default" : ""} {`;
     let allDone = true;
     arms.forEach(({ arm, args, tag }, i) => {
+      const bd = this.armBinder(arm.pattern, outer, subjLives);
       const consumes = from !== null && !structural && args.some(a => a.name !== "_" && this.hasDrop(a.ty));
       // Legacy stops dropping the subject once an arm takes a payload, so an owning field
       // the arm leaves unbound would be legacy's leak; not reproduced.
@@ -2621,23 +2644,23 @@ class FnEmitter {
             const v = fields[k];
             if (v === null) return;
             const owns = this.hasDrop(a.ty);
-            const slot = owns ? this.ownedSlot(a.name, a.ty, layout!.variants.find(x => x.tag === tag)!.fields[k]) : this.fresh();
+            const slot = owns ? bd.owned(a.name, a.ty, layout!.variants.find(x => x.tag === tag)!.fields[k]) : this.fresh();
             if (!owns) this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             this.emit(`milo.store ${v}, ${slot} : !milo.ref<${a.ty}>`);
-            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: owns });
+            bd.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: owns }, false);
           });
         } else if (bigEnum) {
           args.forEach((a, k) => {
             if (a.name === "_") return;
-            const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
+            const r = fieldRef(tag, k, a.ty);
             // Through `&mut`, and for a payload with drop glue, the binding is the payload's
             // place (legacy binds a pointer); a Copy payload under `&` is a copy.
-            if (m.subjectIsMut || this.hasDrop(a.ty) || inSlot(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
+            if (m.subjectIsMut || this.hasDrop(a.ty) || inSlot(this.cx, a.ty)) { bd.bind(a.name, { kind: "var", ref: r, ty: a.ty }, true); return; }
             const slot = this.fresh();
             this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             const v = this.def(`milo.load ${r} : !milo.ref<${a.ty}>`, a.ty).ref;
             this.emit(`milo.store ${v}, ${slot} : !milo.ref<${a.ty}>`);
-            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty });
+            bd.bind(a.name, { kind: "var", ref: slot, ty: a.ty }, false);
           });
         } else if (args.length) {
           const refs = args.map(() => this.fresh());
@@ -2645,8 +2668,7 @@ class FnEmitter {
           if (place) {
             args.forEach((a, k) => {
               if (a.name === "_") return;
-              const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
-              this.bind(a.name, { kind: "var", ref: r, ty: a.ty });
+              bd.bind(a.name, { kind: "var", ref: fieldRef(tag, k, a.ty), ty: a.ty }, true);
               a.name = "_";
             });
           }
@@ -2657,9 +2679,9 @@ class FnEmitter {
               refs[k] = this.def(`milo.enum.payload ${moved}[${tag}, ${k}] : ${subj.ty} -> ${a.ty}`, a.ty).ref;
               if (!this.hasDrop(a.ty)) return;
               // The binding owns the payload now, for the arm's scope.
-              const slot = this.ownedSlot(a.name, a.ty, layout!.variants.find(v => v.tag === tag)!.fields[k]);
+              const slot = bd.owned(a.name, a.ty, layout!.variants.find(v => v.tag === tag)!.fields[k]);
               this.emit(`milo.store ${refs[k]}, ${slot} : !milo.ref<${a.ty}>`);
-              this.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: true });
+              bd.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: true }, false);
               a.name = "_";
             });
           }
@@ -2670,7 +2692,7 @@ class FnEmitter {
             const slot = this.fresh();
             this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             this.emit(`milo.store ${refs[k]}, ${slot} : !milo.ref<${a.ty}>`);
-            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty });
+            bd.bind(a.name, { kind: "var", ref: slot, ty: a.ty }, this.hasDrop(a.ty));
           });
         }
         return armBody ? armBody(arm.body) : resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
@@ -2682,6 +2704,25 @@ class FnEmitter {
     // arms that all jump leave nothing after them.
     if (!resultTy && !armBody && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && this.hasDrop(resultTy) ? "owned" : undefined } };
+  }
+
+  /**
+   * How an arm of `p` makes its bindings: in the arm's scope, or, for one that escapes the
+   * arm (let-else's), in the block the match sits in, whose end drops an owning one (legacy
+   * leaves those to the enclosing scope's drops). An escaping view must read a subject
+   * that outlives the match, one rooted at a binding (`subjLives`), never a temporary the
+   * match's statement drops.
+   */
+  private armBinder(p: HIRPattern, outer: MatchOuter, subjLives: boolean): ArmBinder {
+    const esc = new Set(p.kind === "EnumPattern" ? p.bindings.filter(b => b.escapes).map(b => b.name) : []);
+    return {
+      bind: (name, b, view) => {
+        if (!esc.has(name)) { this.bind(name, b); return; }
+        if (view && !subjLives) throw new MlirUnsupported("escaping view of a temporary subject");
+        outer.scope.set(name, b);
+      },
+      owned: (name, ty, t) => this.ownedSlot(name, ty, t, false, esc.has(name) ? outer.frame : false),
+    };
   }
 
   /** An enum's layout, or the function stays legacy (a niche-optimized enum has none here). */
@@ -2707,14 +2748,19 @@ class FnEmitter {
    */
   private nestedMatch(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
     s: { subj: Val; from: string | null; place: { ref: string; ty: string } | null; structural: boolean; bigEnum: boolean; enumName: string },
-    resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
+    outer: MatchOuter, subjLives: boolean, resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
     const { subj, place, bigEnum } = s;
+    const key = (path: HIRPatStep[]) => path.map(st => `${st.variant}.${st.index}`).join("/");
+    // Payload places escaping bindings name, taken ahead of the match (as for a flat arm).
+    const pre = new Map<string, Val>();
     const variantOf = (enumName: string, pick: (v: { name: string; tag: number }) => boolean) => {
       return this.enumLayout(enumName).variants.find(pick)!;
     };
     // The payload `path` names: its place (a field_ref chain) when `inPlace`, else its value.
     const walk = (path: HIRPatStep[], inPlace: boolean, root?: Val): Val => {
-      let at = root ?? (inPlace ? { ref: place!.ref, ty: `!milo.ref<${place!.ty}>` } : subj);
+      const early = inPlace && !root ? pre.get(key(path)) : undefined;
+      if (early) return early;
+      let at = root ??(inPlace ? { ref: place!.ref, ty: `!milo.ref<${place!.ty}>` } : subj);
       for (const st of path) {
         const v = variantOf(st.enumName, x => x.name === st.variant);
         const f = v.fields[st.index];
@@ -2774,6 +2820,10 @@ class FnEmitter {
       this.emit("}");
       return { ref: r, ty: "si32" };
     };
+    const pathOf = (p: HIRPattern & { kind: "EnumPattern" }, k: number) => p.bindings[k].path ?? [{ enumName: s.enumName, variant: p.variant, index: k }];
+    if (place) for (const { pattern: p } of m.arms) {
+      if (p.kind === "EnumPattern") p.bindings.forEach((b, k) => { if (b.escapes && b.name !== "_") pre.set(key(pathOf(p, k)), walk(pathOf(p, k), true)); });
+    }
     const idx = index(0);
     const ref = resultTy ? this.fresh() : "";
     const head = `${resultTy ? `${ref} = ` : ""}milo.match ${idx.ref} : si32${resultTy ? ` -> ${resultTy}` : ""} [${m.arms.slice(1).map((_, i) => i).join(", ")}] default {`;
@@ -2781,7 +2831,7 @@ class FnEmitter {
     m.arms.forEach((arm, i) => {
       const done = this.region(i === 0 ? head : "}, {", () => {
         const p = arm.pattern;
-        if (p.kind === "EnumPattern" && p.bindings.length) this.bindPaths(p, s, walk, fieldType, variantOf, m.subjectIsMut);
+        if (p.kind === "EnumPattern" && p.bindings.length) this.bindPaths(p, s, this.armBinder(p, outer, subjLives), walk, fieldType, variantOf, m.subjectIsMut);
         return armBody ? armBody(arm.body) : resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
       });
       if (!done) allDone = false;
@@ -2800,11 +2850,10 @@ class FnEmitter {
    */
   private bindPaths(p: HIRPattern & { kind: "EnumPattern" },
     s: { subj: Val; from: string | null; place: { ref: string; ty: string } | null; structural: boolean; bigEnum: boolean; enumName: string },
-    walk: (path: HIRPatStep[], inPlace: boolean, root?: Val) => Val, fieldType: (path: HIRPatStep[]) => TypeKind,
+    bd: ArmBinder, walk: (path: HIRPatStep[], inPlace: boolean, root?: Val) => Val, fieldType: (path: HIRPatStep[]) => TypeKind,
     variantOf: (enumName: string, pick: (v: { name: string; tag: number }) => boolean) => { name: string; tag: number; fields: TypeKind[] },
     subjectIsMut?: boolean): void {
     const { subj, from, place, structural, bigEnum } = s;
-    if (p.bindings.some(b => b.escapes)) throw new MlirUnsupported("enum pattern");
     const binds = p.bindings.map((b, k) => {
       const path = b.path ?? [{ enumName: s.enumName, variant: p.variant, index: k }];
       const t = fieldType(path);
@@ -2815,7 +2864,7 @@ class FnEmitter {
       const slot = this.fresh();
       this.vars.push(`  ${slot} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
       this.emit(`milo.store ${v}, ${slot} : !milo.ref<${ty}>`);
-      this.bind(name, { kind: "var", ref: slot, ty });
+      bd.bind(name, { kind: "var", ref: slot, ty }, this.hasDrop(ty));
     };
     if (!consumes) {
       for (const b of binds) {
@@ -2823,7 +2872,7 @@ class FnEmitter {
         const r = walk(b.path, true);
         // Through `&mut`, and for a payload with drop glue, the binding is the payload's
         // place (legacy binds a pointer); a Copy payload under `&` is a copy.
-        if (subjectIsMut || this.hasDrop(b.ty) || inSlot(this.cx, b.ty)) { this.bind(b.name, { kind: "var", ref: r.ref, ty: b.ty }); continue; }
+        if (subjectIsMut || this.hasDrop(b.ty) || inSlot(this.cx, b.ty)) { bd.bind(b.name, { kind: "var", ref: r.ref, ty: b.ty }, true); continue; }
         plain(b.name, b.ty, this.def(`milo.load ${r.ref} : ${r.ty}`, b.ty).ref);
       }
       return;
@@ -2858,9 +2907,9 @@ class FnEmitter {
     parts.forEach((b, k) => {
       if (!this.hasDrop(b.ty)) { plain(b.name, b.ty, vals[k]); return; }
       // The binding owns the payload now, for the arm's scope; a matched string dies with it.
-      const slot = this.ownedSlot(b.name || "lit", b.ty, b.t);
+      const slot = b.name ? bd.owned(b.name, b.ty, b.t) : this.ownedSlot("lit", b.ty, b.t);
       this.emit(`milo.store ${vals[k]}, ${slot} : !milo.ref<${b.ty}>`);
-      if (b.name) this.bind(b.name, { kind: "var", ref: slot, ty: b.ty, owned: true });
+      if (b.name) bd.bind(b.name, { kind: "var", ref: slot, ty: b.ty, owned: true }, false);
     });
   }
 
