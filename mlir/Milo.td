@@ -497,6 +497,8 @@ def Milo_CopyOp : Milo_Op<"copy"> {
     aggregate load per element). Either side is a slot (`!milo.ref<T>`) or a raw pointer to a
     T. It moves no ownership by itself: an owned source that gives its value up is emptied
     right after with an unused milo.move, an owned destination is marked milo.filled.
+    The same place on both sides (`swap(v[i], v[j])` once CSE merges the two element
+    references) copies nothing.
   }];
   let arguments = (ins Arg<AnyTypeOf<[Milo_RefType, Milo_PtrType]>, "", [MemRead]>:$src,
                        Arg<AnyTypeOf<[Milo_RefType, Milo_PtrType]>, "", [MemWrite]>:$dst,

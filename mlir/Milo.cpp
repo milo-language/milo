@@ -437,8 +437,6 @@ LogicalResult CopyOp::verify() {
   for (Value side : {getSrc(), getDst()})
     if (auto r = dyn_cast<RefType>(side.getType()); r && r.getPointee() != getElem())
       return emitOpError("needs places of ") << getElem() << ", not " << side.getType();
-  if (getSrc() == getDst())
-    return emitOpError("copies a place onto itself");
   return success();
 }
 

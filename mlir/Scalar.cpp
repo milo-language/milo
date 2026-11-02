@@ -1055,6 +1055,11 @@ struct CopyLowering : ConvertOpToLLVMPattern<CopyOp> {
   LogicalResult
   matchAndRewrite(CopyOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
+    // llvm.memcpy allows a source equal to its destination, but there is nothing to copy.
+    if (a.getSrc() == a.getDst()) {
+      rw.eraseOp(op);
+      return success();
+    }
     Value size = getSizeInBytes(op.getLoc(), op.getElem(), rw);
     rw.replaceOpWithNewOp<LLVM::MemcpyOp>(op, a.getDst(), a.getSrc(), size, /*isVolatile=*/false);
     return success();

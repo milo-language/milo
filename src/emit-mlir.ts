@@ -2245,6 +2245,30 @@ class FnEmitter {
           [{ name: "l", type: e.left.type, mode: "val", ref: l.ref }, { name: "r", type: e.right.type, mode: "val", ref: r.ref }],
           ([x, y]) => ({ ...e, left: x, right: y }), ty, false);
       }
+      case "MemSwap": {
+        // `swap(a, b)`, as legacy genMemSwap: both read before either is written (they may
+        // be the same element, `swap(v[i], v[j])`), nothing dropped. A 128+ byte one goes
+        // through a scratch slot; copying a place onto itself is a no-op.
+        const ty = this.place$(stripRefs(e.a.type), "swapped value");
+        const pa = this.place(e.a, `!milo.ref<${ty}>`, true).ref;
+        const pb = this.place(e.b, `!milo.ref<${ty}>`, true).ref;
+        const r = `!milo.ref<${ty}>`;
+        // The same place twice (`swap(v[1], v[1])`): nothing moves. Equal addresses at run
+        // time are fine too: llvm.memcpy allows a source equal to its destination.
+        if (pa === pb) return { ref: "", ty: "" };
+        if (inSlot(this.cx, ty)) {
+          const tmp = this.fresh();
+          this.vars.push(`  ${tmp} = milo.var "swap.tmp" : ${r}`);
+          this.emit(`milo.copy ${pa}, ${tmp} : ${r}, ${r} of ${ty}`);
+          this.emit(`milo.copy ${pb}, ${pa} : ${r}, ${r} of ${ty}`);
+          this.emit(`milo.copy ${tmp}, ${pb} : ${r}, ${r} of ${ty}`);
+        } else {
+          const va = this.def(`milo.load ${pa} : ${r}`, ty), vb = this.def(`milo.load ${pb} : ${r}`, ty);
+          this.emit(`milo.store ${vb.ref}, ${pa} init : ${r}`);
+          this.emit(`milo.store ${va.ref}, ${pb} init : ${r}`);
+        }
+        return { ref: "", ty: "" };
+      }
       case "MemReplace": {
         // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the
         // result's now), then `v` stored over it with nothing dropped.
