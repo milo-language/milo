@@ -2506,7 +2506,10 @@ class FnEmitter {
         if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
         const ref = this.fresh();
         this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
-        this.region("} else {", () => this.tail(e.elseBody, ty));
+        // lower.ts folds a compile-time condition to `true` with the dead arm left out
+        // (constFoldBool): that else never runs.
+        const folded = e.cond.kind === "BoolLit" && e.cond.value && e.elseBody.length === 0;
+        this.region("} else {", () => { if (!folded) return this.tail(e.elseBody, ty); this.emit("milo.unreachable"); return true; });
         this.emit("}");
         return { ref, ty, own: this.hasDrop(ty) ? "owned" : undefined };
       }
