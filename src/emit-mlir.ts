@@ -2895,8 +2895,24 @@ class FnEmitter {
     const ty = this.value(e.type, "move closure");
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: Val[] = [];
+    // A 128+ byte or place-only capture: its address goes in, the helper binds the capture
+    // from `*p` (a bit copy the closure moves into its env), and the local's slot is
+    // emptied after the call: one owner throughout, as legacy's move of the local.
+    const viaPtr: { name: string; type: TypeKind; slot: string; ty: string }[] = [];
+    const after: (() => void)[] = [];
     for (const c of e.captures) {
       if (c.type.tag === "ref") throw new MlirUnsupported("move closure capturing a reference");
+      if (valueType(this.cx, c.type) === null || inSlot(this.cx, this.place$(c.type, "capture"))) {
+        const pty = this.place$(c.type, "capture");
+        const b = this.lookup(c.name);
+        if (b.kind !== "var" || b.ty !== pty || (this.hasDrop(pty) && !b.owned) || c.share) throw new MlirUnsupported("128+ byte capture that is not an owned local");
+        const pt: TypeKind = { tag: "ptr", inner: c.type };
+        params.push({ name: `${c.name}$p`, type: pt, isRef: false, isRefMut: false });
+        args.push(this.def(`milo.addr ${b.ref} : !milo.ref<${pty}>`, PTR));
+        viaPtr.push({ name: c.name, type: c.type, slot: b.ref, ty: pty });
+        if (this.hasDrop(pty)) after.push(() => { this.def(`milo.move ${b.ref} : !milo.ref<${pty}>`, pty); });
+        continue;
+      }
       const cty = this.value(c.type, "capture");
       const b = this.lookup(c.name);
       let v: Val;
@@ -2924,12 +2940,18 @@ class FnEmitter {
     this.cx.mlirHelper(name, () => ({
       params, retType: e.type,
       // The helper's params are its own: every capture is moved into the env.
-      body: [{ kind: "Return", retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } }],
+      body: [
+        ...viaPtr.map(p => ({ kind: "Let" as const, name: p.name, type: p.type, mutable: false,
+          value: { kind: "PtrDeref" as const, type: p.type, operand: { kind: "Ident" as const, name: `${p.name}$p`, type: { tag: "ptr", inner: p.type } as TypeKind, isMove: false } } } as HIRStmt)),
+        { kind: "Return", retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } },
+      ],
     }));
     const fnTy = `(${args.map(a => a.ty).join(", ")}) -> ${ty}`;
     this.callees.set(name, fnTy);
     this.dropGlue(ty, e.type);
-    return { ...this.def(`func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`, ty), own: "owned" };
+    const r = this.def(`func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`, ty);
+    for (const done of after) done();
+    return { ...r, own: "owned" };
   }
 
   /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */

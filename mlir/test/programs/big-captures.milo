@@ -1,0 +1,26 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a `move` closure that
+// captures a 128+ byte struct (owning a string) and a fixed array: each is moved into the
+// env once (the local's slot emptied), read by every call, and freed with the closure.
+
+struct Opts { pad: [i64; 16], name: string, n: i64 }
+
+fn opts(i: i64): Opts {
+    var pad: [i64; 16] = [0; 16]
+    pad[2] = i
+    return Opts { pad: pad, name: $"opts{i}", n: i }
+}
+
+fn make(i: i64): move (i64) => i64 {
+    let mine = opts(i)
+    let arr: [i64; 4] = [i, i * 2, i * 3, i * 4]
+    return move(x: i64): i64 => {
+        return x + mine.pad[2] + mine.name.len() + arr[3]
+    }
+}
+
+fn main() {
+    let f = make(3)
+    print(f(1), " ", f(10))
+    let g = make(5)
+    print(g(0))
+}
