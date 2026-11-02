@@ -40,6 +40,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
+| `scripts/dialect-hygiene.ts` | Hygiene gate for the milo MLIR dialect (mlir/Milo.td): docs on every op, type and attribute, and no hygiene count below its baseline. |
 | `scripts/differential.ts` | Differential gate: builds every runtime fixture and `// @run:` example twice (A and B flags or checkouts) and compares stdout and exit code; any difference is a finding. |
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |

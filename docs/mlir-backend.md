@@ -879,6 +879,18 @@ type and attribute carries a summary and a description, and `sh mlir/build.sh` w
 hand). Still needed: a `libMiloDialect` library and C API, and a versioned format after M7 (MLIR bytecode dialect versioning). The
 verifiers are the contract a client codes against.
 
+### Dialect hygiene
+
+`bun scripts/dialect-hygiene.ts` (run by `mlir/run.sh`) reads `Milo.td` through
+`llvm-tblgen --dump-json`, so class inheritance and trait lists are resolved by TableGen,
+and fails when any op, type or attribute lacks a summary or a description, when
+[docs/dialect/milo.md](dialect/milo.md) is not what `Milo.td` generates, or when a count drops
+below `scripts/dialect-hygiene.baseline.json`: ops with verifiers, declared effects, Pure,
+op interfaces, folders, canonicalizers, verify-diagnostics cases, and the op-verifier errors
+in `Milo.cpp` that some `expected-error` names. `--ops` prints one row per op; `--update`
+rewrites the baseline after a count went up. Deleting one summary or one `expected-error`
+turns it red.
+
 ### Deploying apps built with MLIR
 
 Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the
@@ -942,6 +954,7 @@ per-function compile cache.
   the same message and line) and the scalar program too.
 - **FileCheck tests** per pass and per lowering, in `mlir/test/`, each run by its own
   `RUN:` line from `mlir/run.sh`; `verify.mlir` covers the op verifiers.
+- **Dialect hygiene**: `bun scripts/dialect-hygiene.ts` green (see The dialect as a product).
 - **Ownership** from M4 on, required for any commit touching ownership lowering (owned
   slots, scopes, moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs
   --owned` before committing, the full corpus with `--owned` in the background. For every

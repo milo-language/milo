@@ -41,6 +41,9 @@ done
 [ "$n" -ge 4 ] || { echo "FAIL: only $n FileCheck tests ran"; exit 1; }
 echo "ok ($n files)"
 
+echo "== dialect hygiene: docs on every op, no count below its baseline"
+(cd .. && bun scripts/dialect-hygiene.ts) | tail -1
+
 echo "== default build vs MILO_LEGACY=1 on test/programs (scalar fns, every trap)"
 out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 1; }
 echo "$out" | tail -3

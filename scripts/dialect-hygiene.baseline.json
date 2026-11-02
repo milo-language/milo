@@ -1,0 +1,16 @@
+{
+  "ops": 88,
+  "types": 13,
+  "attrs": 1,
+  "summary": 88,
+  "description": 88,
+  "verifier": 53,
+  "effectsDeclared": 72,
+  "pure": 32,
+  "interfaces": 0,
+  "folders": 1,
+  "canonicalizers": 0,
+  "verifyDiagnosticsCases": 42,
+  "verifierErrorsCovered": 30,
+  "fileCheckFiles": 23
+}
