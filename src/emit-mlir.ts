@@ -2656,6 +2656,16 @@ class FnEmitter {
         this.emit(`milo.string.append ${dst}, ${x.ref} : !milo.ref<${STR}>`);
         return { ref: "", ty: "" };
       }
+      case "StringPushInt": {
+        // `s.pushInt(n)`: legacy's genStringPushInt (grow, then the digits in place) in a
+        // helper, the string lent `&mut`, the int by value.
+        const dst = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
+        const v = this.expr(e.value);
+        if (!isScalarTy(v.ty)) throw new MlirUnsupported("pushInt of a non-scalar");
+        this.intrinsic("pushint", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: dst }, { name: "v", type: e.value.type, mode: "val", ref: v.ref }],
+          ([x, y]) => ({ ...e, str: x, value: y }), null, false);
+        return { ref: "", ty: "" };
+      }
       case "ArrayLit": {
         if (e.type.tag !== "vec") throw new MlirUnsupported("array literal as a value");
         const ty = this.value(e.type, "Vec literal");
