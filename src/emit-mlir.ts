@@ -535,7 +535,10 @@ interface ClosureState { next: number; texts: string[]; names: string[] }
 // Builtins taken as a call of a legacy function doing exactly them (builtinCall): they
 // read their operands and touch nothing of the caller's frame. exit never returns, so
 // nothing after it runs either way.
-const HELPER_BUILTINS = /^(_atomic\w+|exit|flush|_cstrToString|_bytesToString|_strDataPtr|_putByte|_loadU8|_loadI32|_callClosureVoid|_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
+// Builtins still made by legacy helpers: the process globals (argv, scheduler, panic hook)
+// move with the module scaffold, the atomics to an op of their own.
+const HELPER_BUILTINS = /^(_atomic\w+|_callClosureVoid|_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
+const NATIVE_BUILTINS = new Set(["exit", "flush", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32"]);
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -1321,6 +1324,21 @@ class FnEmitter {
     const call = `func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
     return this.def(call, ret);
+  }
+
+  /**
+   * A call of C function `name`, typed as the program's own extern declares it when it has
+   * one (one module, one signature per symbol): operands and result cast between the two.
+   */
+  private libcCall(name: string, args: Val[], ret: string | null): Val {
+    const ext = this.fns.get(name);
+    if (!ext?.isExtern) return this.rtCall(name, args, ret);
+    const ptys = ext.params.map(p => p.isRef || p.isRefMut ? null : valueType(this.cx, p.type));
+    const rty = ext.retType.tag === "void" ? null : valueType(this.cx, ext.retType);
+    if (ptys.length !== args.length || ptys.some(t => t === null) || (ret !== null && rty === null)) throw new MlirUnsupported(`${name}: its extern's signature`);
+    const cast = (v: Val, to: string) => v.ty === to ? v : this.def(`milo.cast ${v.ref} : ${v.ty} to ${to}`, to);
+    const res = this.rtCall(name, args.map((a, i) => cast(a, ptys[i]!)), rty);
+    return ret === null || rty === null ? res : cast(res, ret);
   }
 
   /** A null buffer from an allocating runtime call: legacy's emitAllocNullCheck text. */
@@ -4493,6 +4511,39 @@ class FnEmitter {
     return { ref: "", ty: "" };
   }
 
+  /** The builtins that are a libc call, a runtime section or a load (legacy genBuiltinCall). */
+  private nativeBuiltin(e: HIRExpr & { kind: "Call" }): Val {
+    const arg = (i: number, ty: string) => {
+      const v = this.expr(e.args[i].expr);
+      if (v.ty !== ty) throw new MlirUnsupported(`${e.func} operand type`);
+      return v;
+    };
+    const none = { ref: "", ty: "" };
+    switch (e.func) {
+      case "flush": this.libcCall("fflush", [this.def(`milo.zero : ${PTR}`, PTR)], "si32"); return none;
+      case "exit": this.libcCall("exit", [arg(0, "si32")], null); return none;
+      case "_putByte": {
+        const w = this.def(`milo.cast ${arg(0, "ui8").ref} : ui8 to ui32`, "ui32");
+        this.libcCall("putchar", [this.def(`milo.cast ${w.ref} : ui32 to si32`, "si32")], "si32");
+        return none;
+      }
+      case "_loadU8": return this.def(`milo.ptr.load ${arg(0, PTR).ref} : ui8`, "ui8");
+      case "_loadI32": return this.def(`milo.ptr.load ${arg(0, PTR).ref} : si32`, "si32");
+      case "_bytesToString": case "_cstrToString": {
+        // A fresh NUL-terminated copy, so the string can go back to C without another.
+        const p = arg(0, PTR);
+        const n = e.func === "_bytesToString" ? arg(1, "si64") : this.libcCall("strlen", [p], "si64");
+        this.stringHelpers();
+        return { ...this.rtCall("milo.str.from", [p, n], STR), own: "owned" };
+      }
+      case "_strDataPtr": {
+        const s = this.place(e.args[0].expr, `!milo.ref<${STR}>`, false).ref;
+        return this.def(`milo.string.data ${this.def(`milo.load ${s} : !milo.ref<${STR}>`, STR).ref}`, PTR);
+      }
+    }
+    throw new MlirUnsupported(`builtin ${e.func}`);
+  }
+
   /** `format(a, b, ...)`: a fresh string with each part's text appended, as print shows it. */
   private formatText(args: (HIRExpr & { kind: "Call" })["args"]): Val {
     if (args.some(a => a.passByRef)) throw new MlirUnsupported("by-ref format part");
@@ -4847,6 +4898,7 @@ class FnEmitter {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
+      if (NATIVE_BUILTINS.has(e.func)) return this.nativeBuiltin(e);
       if (e.func === "format") return this.formatText(e.args);
       if (e.func === "assert") return this.assert(e);
       if (e.func === "todo") return this.todo(e);
