@@ -299,7 +299,7 @@ MILO_ARITH(NegOp, !getWrapping())
 #undef MILO_ARITH
 
 bool milo::needsDrop(Type t) {
-  if (isa<StringType, VecValType, VecTailType, MapType, HeapType, DynType>(t))
+  if (isa<StringType, VecValType, VecTailType, ArrayTailType, MapType, HeapType, DynType>(t))
     return true;
   if (auto f = dyn_cast<FnType>(t))
     return f.getOwning();
@@ -478,6 +478,52 @@ static VecTailType vecTailSlot(Operation *op, Value ref) {
     return {};
   }
   return t;
+}
+
+LogicalResult ArrayTailType::verify(function_ref<InFlightDiagnostic()> emitError, Type array) {
+  if (!isa<ArrayType>(array))
+    return emitError() << "holds a fixed array, not " << array;
+  return success();
+}
+
+// The arraytail ops' slot: an owned one (only its drop glue drops what no iteration took).
+static ArrayTailType arrayTailSlot(Operation *op, Value ref) {
+  auto t = dyn_cast<ArrayTailType>(cast<RefType>(ref.getType()).getPointee());
+  auto v = ref.getDefiningOp<VarOp>();
+  if (!t || !v || !v.getOwned()) {
+    op->emitOpError("needs an owned slot of a !milo.arraytail");
+    return {};
+  }
+  return t;
+}
+
+LogicalResult ArrayTailArrayOp::verify() {
+  auto t = arrayTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (cast<RefType>(getArray().getType()).getPointee() != t.getArrayType())
+    return emitOpError("gives the place of ") << t.getArrayType();
+  return success();
+}
+
+LogicalResult ArrayTailStartOp::verify() { return success(arrayTailSlot(*this, getRef()) != nullptr); }
+
+LogicalResult ArrayTailTakeOp::verify() {
+  auto t = arrayTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (getType() != cast<ArrayType>(t.getArrayType()).getElementType())
+    return emitOpError("takes an element of ") << t.getArrayType();
+  return success();
+}
+
+LogicalResult ArrayTailTakePlaceOp::verify() {
+  auto t = arrayTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (cast<RefType>(getType()).getPointee() != cast<ArrayType>(t.getArrayType()).getElementType())
+    return emitOpError("gives the place of an element of ") << t.getArrayType();
+  return success();
 }
 
 LogicalResult VecTailInitOp::verify() {

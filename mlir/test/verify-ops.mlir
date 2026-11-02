@@ -318,3 +318,39 @@ func.func @closure_two_envs(%n: si64) {
   %f = milo.closure @closure_body(%slot : !milo.ref<si64>) heap static : !milo.fn<(si64) -> si64>
   milo.return
 }
+
+// -----
+
+func.func @arraytail_not_owned(%i: si64) -> si64 {
+  %slot = milo.var "t" : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>>
+  // expected-error @+1 {{needs an owned slot of a !milo.arraytail}}
+  %x = milo.arraytail.take %slot[%i] : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>> -> si64
+  milo.return %x : si64
+}
+
+// -----
+
+func.func @arraytail_wrong_elem(%i: si64) -> si32 {
+  %slot = milo.var "t" owned : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>>
+  // expected-error @+1 {{takes an element of}}
+  %x = milo.arraytail.take %slot[%i] : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>> -> si32
+  milo.return %x : si32
+}
+
+// -----
+
+func.func @arraytail_wrong_place() {
+  %slot = milo.var "t" owned : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>>
+  // expected-error @+1 {{gives the place of}}
+  %a = milo.arraytail.array %slot : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>> -> !milo.ref<!milo.array<si64, 4>>
+  milo.return
+}
+
+// -----
+
+func.func @arraytail_take_place_wrong(%i: si64) {
+  %slot = milo.var "t" owned : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>>
+  // expected-error @+1 {{gives the place of an element of}}
+  %p = milo.arraytail.take_place %slot[%i] : !milo.ref<!milo.arraytail<!milo.array<si64, 3>>> -> !milo.ref<si32>
+  milo.return
+}

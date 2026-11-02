@@ -3348,14 +3348,15 @@ export class Codegen {
    * legacy's consumed for-in tail drop: the elements from the cursor on, then the buffer.
    */
   public mlirVecTailDropHelper(key: string, vec: TypeKind): void {
-    this.mlirVecTailDropHelpers.set(`milo.drop.vectail.${key}`, vec);
+    this.mlirVecTailDropHelpers.set(`milo.drop.${vec.tag === "array" ? "arraytail" : "vectail"}.${key}`, vec);
   }
 
   private emitMlirVecTailDropFn(name: string, vec: TypeKind): void {
     this.emitHelperFn(2, body => {
       const b = new LlvmTextBuilder(body, this);
       b.defineFn({ name, ret: Ty.void, params: [{ name: "p", ty: Ty.ptr }], internal: true });
-      const cursor = b.gep(Ty.of("{ %Vec, i64 }"), val("%p", Ty.ptr), [i32c(0), i32c(1)]);
+      // A vectail is `{ %Vec, i64 }`, an arraytail `{ [N x T], i64 }`: the cursor follows the storage.
+      const cursor = b.gep(Ty.of(`{ ${vec.tag === "array" ? this.llvmType(vec) : "%Vec"}, i64 }`), val("%p", Ty.ptr), [i32c(0), i32c(1)]);
       // Its loop counter's alloca goes into the body, which emitHelperFn hoists.
       this.emitConsumedTailDrop(body, "%p", vec, cursor.ref, body);
       b.ret();

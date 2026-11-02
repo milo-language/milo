@@ -361,6 +361,10 @@ struct ElaborateDropsPass
         ref = t.getRef();
       else if (auto t = dyn_cast<VecTailTakePlaceOp>(op))
         ref = t.getRef();
+      else if (auto t = dyn_cast<ArrayTailTakeOp>(op))
+        ref = t.getRef();
+      else if (auto t = dyn_cast<ArrayTailTakePlaceOp>(op))
+        ref = t.getRef();
       if (!ref || !isOwnedSlot(ref))
         return;
       const InitLattice *l = before(op);
@@ -688,6 +692,65 @@ struct VecTailTakePlaceLowering : ConvertOpToLLVMPattern<VecTailTakePlaceOp> {
   }
 };
 
+// An arraytail slot is `{ [N x T], i64 cursor }`: the array at offset 0, the cursor after it.
+Value arrayTailCursor(ConversionPatternRewriter &rw, Location loc, const TypeConverter *tc, Value ref, Value slot) {
+  auto t = cast<ArrayTailType>(cast<RefType>(ref.getType()).getPointee());
+  return LLVM::GEPOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()),
+                             tc->convertType(t), slot, ArrayRef<LLVM::GEPArg>{0, 1});
+}
+
+struct ArrayTailArrayLowering : ConvertOpToLLVMPattern<ArrayTailArrayOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ArrayTailArrayOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getRef());
+    return success();
+  }
+};
+
+struct ArrayTailStartLowering : ConvertOpToLLVMPattern<ArrayTailStartOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ArrayTailStartOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Value zero = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(0));
+    LLVM::StoreOp::create(rw, loc, zero, arrayTailCursor(rw, loc, getTypeConverter(), op.getRef(), a.getRef()));
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
+// The address of element `index` of the arraytail at `slot`, and the cursor set past it.
+Value arrayTailTake(ConversionPatternRewriter &rw, Location loc, const TypeConverter *tc, Value ref, Value slot, Value index) {
+  auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+  auto t = cast<ArrayTailType>(cast<RefType>(ref.getType()).getPointee());
+  Type arr = tc->convertType(t.getArrayType());
+  Value ep = LLVM::GEPOp::create(rw, loc, ptrTy, arr, slot, ArrayRef<LLVM::GEPArg>{0, index});
+  Value one = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(1));
+  Value next = LLVM::AddOp::create(rw, loc, index, one);
+  LLVM::StoreOp::create(rw, loc, next, arrayTailCursor(rw, loc, tc, ref, slot));
+  return ep;
+}
+
+struct ArrayTailTakeLowering : ConvertOpToLLVMPattern<ArrayTailTakeOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ArrayTailTakeOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Value ep = arrayTailTake(rw, op.getLoc(), getTypeConverter(), op.getRef(), a.getRef(), a.getIndex());
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, getTypeConverter()->convertType(op.getType()), ep);
+    return success();
+  }
+};
+
+struct ArrayTailTakePlaceLowering : ConvertOpToLLVMPattern<ArrayTailTakePlaceOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ArrayTailTakePlaceOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, arrayTailTake(rw, op.getLoc(), getTypeConverter(), op.getRef(), a.getRef(), a.getIndex()));
+    return success();
+  }
+};
+
 struct MapLenLowering : ConvertOpToLLVMPattern<MapLenOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -783,7 +846,11 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     return LLVM::LLVMStructType::getLiteral(
         ctx, {tc.convertType(VecValType::get(ctx, t.getElementType())), IntegerType::get(ctx, 64)});
   });
+  tc.addConversion([&tc](ArrayTailType t) -> Type {
+    return LLVM::LLVMStructType::getLiteral(&tc.getContext(), {tc.convertType(t.getArrayType()), IntegerType::get(&tc.getContext(), 64)});
+  });
   patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering, MapLenLowering>(tc);
+  patterns.add<ArrayTailArrayLowering, ArrayTailStartLowering, ArrayTailTakeLowering, ArrayTailTakePlaceLowering>(tc);
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }

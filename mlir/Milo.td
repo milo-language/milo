@@ -229,6 +229,20 @@ def Milo_VecTailType : TypeDef<Milo_Dialect, "VecTail"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+def Milo_ArrayTailType : TypeDef<Milo_Dialect, "ArrayTail"> {
+  let summary = "a fixed array being consumed from the front";
+  let description = [{
+    What is left of a fixed array a consuming `for x in [a, b]` takes apart from the front:
+    legacy's `{ [N x T], i64 cursor }` (genConsumedIterable). As !milo.vectail: the drop
+    glue drops the elements from the cursor on, so a break or a return out of the loop drops
+    exactly what no iteration took. Lives only in an owned slot, never as an SSA value.
+  }];
+  let mnemonic = "arraytail";
+  let parameters = (ins "::mlir::Type":$arrayType);
+  let assemblyFormat = "`<` $arrayType `>`";
+  let genVerifyDecl = 1;
+}
+
 def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
   let summary = "Milo's string value";
   let description = [{
@@ -897,6 +911,53 @@ def Milo_VecTailTakePlaceOp : Milo_Op<"vectail.take_place"> {
   }];
   let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>, MemRead<Milo_VecHeader>]>:$ref,
                        SI64:$index);
+  let results = (outs Milo_RefType:$result);
+  let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Milo_ArrayTailArrayOp : Milo_Op<"arraytail.array", [Pure]> {
+  let summary = "the array place of an arraytail slot";
+  let description = [{
+    The array an arraytail slot holds, as a place: the array is built there, then
+    milo.arraytail.start sets the cursor.
+  }];
+  let arguments = (ins Milo_RefType:$ref);
+  let results = (outs Milo_RefType:$array);
+  let assemblyFormat = "$ref attr-dict `:` type($ref) `->` type($array)";
+  let hasVerifier = 1;
+}
+
+def Milo_ArrayTailStartOp : Milo_Op<"arraytail.start"> {
+  let summary = "set an arraytail's cursor to its first element";
+  let description = [{
+    The cursor of the arraytail in `ref` set to 0, after its array was built in place. The
+    emitter follows it with milo.filled.
+  }];
+  let arguments = (ins Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref);
+  let assemblyFormat = "$ref attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
+def Milo_ArrayTailTakeOp : Milo_Op<"arraytail.take"> {
+  let summary = "move the next element out of an arraytail";
+  let description = [{
+    Element `index` moved out of the arraytail in `ref`, the cursor set past it. Unchecked,
+    as milo.vectail.take: the loop keeps `index` below N and in order.
+  }];
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>]>:$ref, SI64:$index);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Milo_ArrayTailTakePlaceOp : Milo_Op<"arraytail.take_place"> {
+  let summary = "the place of the next element of an arraytail";
+  let description = [{
+    milo.arraytail.take for a place-only element: its place, which the caller copies out
+    of (milo.copy), with the cursor set past it.
+  }];
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>]>:$ref, SI64:$index);
   let results = (outs Milo_RefType:$result);
   let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
   let hasVerifier = 1;

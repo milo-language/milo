@@ -2002,6 +2002,49 @@ class FnEmitter {
     return false;
   }
 
+  /**
+   * `for x in [a, b]` consumed, of elements with a user Drop: the array is built in an
+   * arraytail slot (legacy's consumed iterable with its cursor), each iteration moves one
+   * element into the binding (dropped at the iteration's end), and the slot's drop glue drops
+   * the elements no iteration took, however the loop ends. [MILO-O-consumedForIn]
+   */
+  private consumedArrayForEach(s: HIRStmt & { kind: "ForEach" }, at: TypeKind & { tag: "array" }, aty: string, ety: string): boolean {
+    const byPlace = valueType(this.cx, at.element) === null;
+    const tailTy = `!milo.arraytail<${aty}>`;
+    this.owned.push([]);
+    const start = this.body.length;
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "for.arr" owned : !milo.ref<${tailTy}>`);
+    this.owned[this.owned.length - 1].push({ ref: slot, ty: tailTy });
+    this.cx.mlirVecTailDropHelper(typeKey(at), at);
+    const arr = this.def(`milo.arraytail.array ${slot} : !milo.ref<${tailTy}> -> !milo.ref<${aty}>`, `!milo.ref<${aty}>`).ref;
+    this.into(s.iterable, arr, aty);
+    this.emit(`milo.arraytail.start ${slot} : !milo.ref<${tailTy}>`);
+    this.emit(`milo.filled ${slot} : !milo.ref<${tailTy}>`);
+    const iv = this.fresh();
+    this.loops++; this.loopBase.push(this.pending.length);
+    this.region(`milo.for ${this.def("milo.const 0 : si64", "si64").ref} to ${this.def(`milo.const ${at.size} : si64`, "si64").ref} : si64 {`, () => {
+      this.emit(`^bb0(${iv}: si64):`);
+      const name = s.varName2 ?? s.varName;
+      const own = this.ownedSlot(name, ety, at.element);
+      if (byPlace) {
+        const from = this.def(`milo.arraytail.take_place ${slot}[${iv}] : !milo.ref<${tailTy}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`).ref;
+        this.emit(`milo.copy ${from}, ${own} : !milo.ref<${ety}>, !milo.ref<${ety}> of ${ety}`);
+        this.emit(`milo.filled ${own} : !milo.ref<${ety}>`);
+      } else {
+        const x = this.def(`milo.arraytail.take ${slot}[${iv}] : !milo.ref<${tailTy}> -> ${ety}`, ety);
+        this.emit(`milo.store ${x.ref}, ${own} : !milo.ref<${ety}>`);
+      }
+      this.bind(name, { kind: "var", ref: own, ty: ety, owned: true });
+      if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: iv, ty: "si64" } });
+      return this.stmts(s.body);
+    });
+    this.emit("}");
+    this.loops--; this.loopBase.pop();
+    this.closeScope(start, false, null);
+    return false;
+  }
+
   private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
     /**
      * `for x in arr` over a fixed array, as legacy genForEach:
@@ -2018,7 +2061,7 @@ class FnEmitter {
     // Legacy moves each element of a consumed array into the binding and drops it at the
     // end of its iteration; here the array's slot drops them all after the loop. Only a
     // user Drop can tell (the order). A binding moved out is zeroed in its slot (zeroOnMove).
-    if (s.consume && this.runsUserDrop(ety)) throw new MlirUnsupported("consumed for over an array with a user Drop");
+    if (s.consume && this.runsUserDrop(ety)) return this.consumedArrayForEach(s, at as TypeKind & { tag: "array" }, aty, ety);
     const scopeStart = this.body.length;
     this.scopes.push(new Map());
     this.blocks.push(this.owned.length);

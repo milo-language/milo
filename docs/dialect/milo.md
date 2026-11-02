@@ -200,6 +200,116 @@ milo-expand-index lowers it to bounds_check and array.elem_ref.
 
 
 
+### `milo.arraytail.array` (::milo::ArrayTailArrayOp)
+
+_The array place of an arraytail slot_
+
+Syntax:
+
+```
+operation ::= `milo.arraytail.array` $ref attr-dict `:` type($ref) `->` type($array)
+```
+
+The array an arraytail slot holds, as a place: the array is built there, then
+milo.arraytail.start sets the cursor.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `array` | the address of a place: a local slot, a field, an element |
+
+
+
+### `milo.arraytail.start` (::milo::ArrayTailStartOp)
+
+_Set an arraytail's cursor to its first element_
+
+Syntax:
+
+```
+operation ::= `milo.arraytail.start` $ref attr-dict `:` type($ref)
+```
+
+The cursor of the arraytail in `ref` set to 0, after its array was built in place. The
+emitter follows it with milo.filled.
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
+
+
+
+### `milo.arraytail.take` (::milo::ArrayTailTakeOp)
+
+_Move the next element out of an arraytail_
+
+Syntax:
+
+```
+operation ::= `milo.arraytail.take` $ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)
+```
+
+Element `index` moved out of the arraytail in `ref`, the cursor set past it. Unchecked,
+as milo.vectail.take: the loop keeps `index` below N and in order.
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
+| `index` | 64-bit signed integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+
+
+### `milo.arraytail.take_place` (::milo::ArrayTailTakePlaceOp)
+
+_The place of the next element of an arraytail_
+
+Syntax:
+
+```
+operation ::= `milo.arraytail.take_place` $ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)
+```
+
+milo.arraytail.take for a place-only element: its place, which the caller copies out
+of (milo.copy), with the cursor set past it.
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
+| `index` | 64-bit signed integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | the address of a place: a local slot, a field, an element |
+
+
+
 ### `milo.bounds_check` (::milo::BoundsCheckOp)
 
 _Panic unless 0 <= index < len_
@@ -2812,6 +2922,29 @@ Effects: `MemoryEffects::Effect{}`
 
 
 ## Types
+
+### ArrayTailType
+
+_A fixed array being consumed from the front_
+
+Syntax:
+
+```
+!milo.arraytail<
+  ::mlir::Type   # arrayType
+>
+```
+
+What is left of a fixed array a consuming `for x in [a, b]` takes apart from the front:
+legacy's `{ [N x T], i64 cursor }` (genConsumedIterable). As !milo.vectail: the drop
+glue drops the elements from the cursor on, so a break or a return out of the loop drops
+exactly what no iteration took. Lives only in an owned slot, never as an SSA value.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| arrayType | `::mlir::Type` |  |
 
 ### ArrayType
 
