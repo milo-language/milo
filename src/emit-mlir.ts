@@ -4617,7 +4617,26 @@ class FnEmitter {
         this.def(`milo.move ${sl.ref} : !milo.ref<${sl.ty}>`, sl.ty);
         return { ...v, own: "owned" };
       }
-    } else throw new MlirUnsupported(`move out of a field (${this.moveRoot(e)})`);
+    } else {
+      // Out of a field of a temporary (`mk().req.path`): the temporary goes to a slot of the
+      // statement, the moved field is reached through the path and zeroed, and the slot's
+      // drop at the statement's end frees the rest. Only where no struct on the path runs a
+      // user Drop: one would observe the zeroed field and the order. [MILO-O-fieldMove]
+      const path: (HIRExpr & { kind: "FieldAccess" })[] = [e];
+      let root: HIRExpr = o;
+      while (root.kind === "FieldAccess") { path.unshift(root); root = root.object; }
+      const rk = root.kind;
+      const temp = rk !== "Ident" && rk !== "IndexAccess" && rk !== "HeapDeref" && rk !== "PtrDeref";
+      if (!temp || path.length < 2 || path.some(x => x.object.type.tag !== "struct" || this.runsUserDrop(this.place$(x.object.type, "struct"))))
+        throw new MlirUnsupported(`move out of a field (${this.moveRoot(e)})`);
+      const sl = this.bigSlot("tmp", root, true);
+      let at = { ref: sl.ref, ty: sl.ty };
+      for (const step of path) {
+        const { index, ty } = this.field(step);
+        at = { ref: this.def(`milo.field_ref ${at.ref}[${index}] : !milo.ref<${at.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref, ty };
+      }
+      p = at;
+    }
     const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
     this.emit(`milo.store ${this.def(`milo.zero : ${p.ty}`, p.ty).ref}, ${p.ref} init : !milo.ref<${p.ty}>`);
     return { ...v, own: "owned" };
