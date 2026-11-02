@@ -3248,6 +3248,19 @@ class FnEmitter {
     const p = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param }
       : e.kind === "FieldAccess" || e.kind === "IndexAccess" ? this.fieldPlace(e) ?? this.scalarElem(e) : null;
     if (p) return this.lendAs(p.ref, `!milo.ref<${p.ty}>`, refTy, p.param);
+    if (!b && (e.kind === "IndexAccess" || e.kind === "PtrDeref" || e.kind === "FieldAccess") && valueType(this.cx, e.type) === null && placeType(this.cx, e.type) !== null) {
+      // A 128+ byte element behind a raw pointer (`f(data[i])` with a `&T` param, as std's
+      // sortBy does): lent as a bit copy in a slot nothing drops. Building it with bigSlot
+      // would drop the copy after the call and free what the pointer still owns.
+      const pp = this.ptrPlace(e);
+      if (pp) {
+        if (mut) throw new MlirUnsupported("&mut of a 128+ byte element behind a pointer");
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var "arg" : !milo.ref<${pp.ty}>`);
+        this.emit(`milo.copy ${pp.ptr}, ${slot} : ${PTR}, !milo.ref<${pp.ty}> of ${pp.ty}`);
+        return this.lendAs(slot, `!milo.ref<${pp.ty}>`, refTy);
+      }
+    }
     if (this.isSretCall(e) || (!b && valueType(this.cx, e.type) === null && placeType(this.cx, e.type) !== null)) {
       // One that lives in memory is built in a slot of this frame, which drops it.
       const sl = this.bigSlot("arg", e, true);

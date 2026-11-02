@@ -1,0 +1,14 @@
+// sortBy over elements of 128+ bytes: std reads each as `f(data[j - 1], tmp)` with `&T`
+// params, which must lend the element in place, not a copy that is dropped after the call.
+struct Item { a: string, b: string, c: string, d: string, e: string, n: i64 }
+
+pub fn main(): i32 {
+    var out: Vec<Item> = []
+    for i in 0..3 {
+        out.push(Item { a: "a".clone(), b: "b".clone(), c: "c".clone(), d: "d".clone(), e: "e".clone(), n: 5 })
+    }
+    out.sortBy((x: &Item, y: &Item) => if y.n > x.n { 1 } else { 0 })
+    print($"{out.len} {out[0].a} {out[1].e} {out[2].c}")
+    return 0
+}
+// @expect: 3 a e c
