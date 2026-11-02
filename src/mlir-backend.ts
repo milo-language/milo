@@ -221,6 +221,8 @@ export class MlirPlan {
     if (typeof r === "string") {
       const [first, ...more] = r.split("\n");
       this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
+      // No legacy body to fall back to: the dialect must cover every function.
+      if (process.env.MILO_MLIR_FALLBACK !== "1") throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
       return null;
     }
     // A lazy global's init function is codegen's own, not in the HIR module.
