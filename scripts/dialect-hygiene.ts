@@ -3,12 +3,15 @@
 // attribute, and no hygiene count below its baseline.
 //
 // Every op, type, attribute and the dialect itself must have a summary and a description,
-// and the counts of verifiers, declared effects, interfaces, folders, canonicalizers and
-// verify-diagnostics cases never drop below scripts/dialect-hygiene.baseline.json.
+// every error an op verifier in mlir/Milo.cpp can emit must be expected by some
+// verify-diagnostics case, and the counts of verifiers, declared effects, interfaces,
+// folders, canonicalizers and verify-diagnostics cases never drop below
+// scripts/dialect-hygiene.baseline.json.
 //
 //   bun scripts/dialect-hygiene.ts            # counts; exit 1 on a missing doc or a regression
 //   bun scripts/dialect-hygiene.ts --ops      # also one row per op
 //   bun scripts/dialect-hygiene.ts --update   # write the current counts as the new baseline
+//   bun scripts/dialect-hygiene.ts --uncovered  # list verifier errors no test expects
 //
 // Milo.td is read through `llvm-tblgen --dump-json` (the LLVM install build.sh uses), so
 // classes, `let` overrides and trait lists are resolved by TableGen itself rather than by a
@@ -108,9 +111,13 @@ for (const f of readdirSync(TESTS).filter((f) => f.endsWith(".mlir"))) {
 
 // Every error an op verifier in Milo.cpp can emit, by the text of its first string literal,
 // must have a verify-diagnostics case that expects it.
+// An error is the statement from `emitOpError(` to its `;`; an expected text covers it when
+// it contains one of the statement's string literals or lies inside one.
 const verifierErrors = [...new Set([...readFileSync(join(ROOT, "mlir", "Milo.cpp"), "utf8")
-  .matchAll(/emitOpError\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]))];
-const uncovered = verifierErrors.filter((msg) => !expected.some((e) => msg.includes(e) || e.includes(msg)));
+  .matchAll(/emitOpError\(([^;]*);/g)].map((m) => m[1]))];
+const pieces = (stmt: string) => [...stmt.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).filter((p) => p.trim().length >= 4);
+const uncovered = verifierErrors.filter((stmt) =>
+  !pieces(stmt).some((p) => expected.some((e) => e.includes(p.trim()) || p.includes(e))));
 
 const counts: Record<string, number> = {
   ops: ops.length,
@@ -139,6 +146,8 @@ for (const n of [...types, ...attrs]) {
   if (!text(J[n].summary)) problems.push(`${n} has no summary`);
   if (!text(J[n].description)) problems.push(`${n} has no description`);
 }
+for (const stmt of uncovered)
+  problems.push(`no verify-diagnostics case expects the error of emitOpError(${stmt.split("\n")[0].trim()}`);
 
 // The generated reference (mlir/build.sh) must be what Milo.td generates now.
 const DOC = join(ROOT, "docs", "dialect", "milo.md");

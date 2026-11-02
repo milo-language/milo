@@ -4,13 +4,13 @@
   "attrs": 1,
   "summary": 88,
   "description": 88,
-  "verifier": 53,
+  "verifier": 56,
   "effectsDeclared": 72,
   "pure": 32,
   "interfaces": 15,
   "folders": 1,
   "canonicalizers": 0,
-  "verifyDiagnosticsCases": 42,
-  "verifierErrorsCovered": 30,
+  "verifyDiagnosticsCases": 76,
+  "verifierErrorsCovered": 61,
   "fileCheckFiles": 25
 }

@@ -85,6 +85,7 @@ def Milo_VecLoadOp : Milo_Op<"vec.load"> {
     I64:$index);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$vec `[` $index `]` attr-dict `:` type($vec) `->` type($result)";
+  let hasVerifier = 1;
 }
 
 def Milo_VecStoreOp : Milo_Op<"vec.store"> {
@@ -98,6 +99,7 @@ def Milo_VecStoreOp : Milo_Op<"vec.store"> {
     Arg<Milo_VecType, "", [MemRead<Milo_VecHeader>, MemWrite<Milo_VecElems>]>:$vec,
     I64:$index);
   let assemblyFormat = "$value `,` $vec `[` $index `]` attr-dict `:` type($value) `,` type($vec)";
+  let hasVerifier = 1;
 }
 
 def Milo_BoundsCheckOp : Milo_Op<"bounds_check",
@@ -711,6 +713,7 @@ def Milo_CastOp : Milo_Op<"cast", [Pure]> {
   let arguments = (ins Milo_Simple:$operand);
   let results = (outs Milo_Simple:$result);
   let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($result)";
+  let hasVerifier = 1;
 }
 
 def Milo_VarOp : Milo_Op<"var"> {

@@ -520,6 +520,29 @@ template <typename OpT> static LogicalResult verifyArrayElem(OpT op) {
 LogicalResult ArrayIndexOp::verify() { return verifyArrayElem(*this); }
 LogicalResult ArrayElemRefOp::verify() { return verifyArrayElem(*this); }
 
+LogicalResult VecLoadOp::verify() {
+  if (getType() != getVec().getType().getElementType())
+    return emitOpError("result is not the Vec's element type");
+  return success();
+}
+
+LogicalResult VecStoreOp::verify() {
+  if (getValue().getType() != getVec().getType().getElementType())
+    return emitOpError("value is not the Vec's element type");
+  return success();
+}
+
+// The lowering has ptrtoint and inttoptr, nothing between a pointer and a float.
+LogicalResult CastOp::verify() {
+  Type from = getOperand().getType(), to = getType();
+  if (isa<PtrType>(from) != isa<PtrType>(to)) {
+    Type other = isa<PtrType>(from) ? to : from;
+    if (!isa<IntegerType>(other))
+      return emitOpError("converts a pointer only to or from an integer, not ") << other;
+  }
+  return success();
+}
+
 LogicalResult IndexStoreOp::verify() {
   if (getValue().getType() != getVec().getType().getElementType())
     return emitOpError("value is not the Vec's element type");

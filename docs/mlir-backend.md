@@ -883,7 +883,9 @@ verifiers are the contract a client codes against.
 
 `bun scripts/dialect-hygiene.ts` (run by `mlir/run.sh`) reads `Milo.td` through
 `llvm-tblgen --dump-json`, so class inheritance and trait lists are resolved by TableGen,
-and fails when any op, type or attribute lacks a summary or a description, when
+and fails when any op, type or attribute lacks a summary or a description, when an error
+an op verifier in `Milo.cpp` can emit has no `expected-error` case (`--uncovered` lists them;
+`verify.mlir` and `verify-ops.mlir` hold the cases), when
 [docs/dialect/milo.md](dialect/milo.md) is not what `Milo.td` generates, or when a count drops
 below `scripts/dialect-hygiene.baseline.json`: ops with verifiers, declared effects, Pure,
 op interfaces, folders, canonicalizers, verify-diagnostics cases, and the op-verifier errors
