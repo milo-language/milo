@@ -4379,8 +4379,8 @@ class FnEmitter {
     e.args.forEach((a, k) => {
       const t = stripRefs(a.expr.type);
       const name = `a${k}`;
-      // format reads its string parts: lent from their places, as print lends them.
-      if (a.passByRef || (lendStrings && t.tag === "string")) {
+      // format only reads its parts: a non-scalar one is lent from its place, as print lends it.
+      if (a.passByRef || (lendStrings && !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr"))) {
         const ty = this.lent(t, "builtin operand");
         const r = this.place(a.expr, ty, a.refMut).ref;
         params.push({ name, type: t, isRef: !a.refMut, isRefMut: !!a.refMut });

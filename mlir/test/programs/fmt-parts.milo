@@ -1,0 +1,16 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: string interpolation
+// (format) with non-scalar parts, a Vec, a struct and an enum, each lent from its place.
+
+struct P { x: i64, name: string }
+
+enum Shape { Dot, Box(i64, i64) }
+
+fn main() {
+    let v: Vec<i64> = [3, 1, 4]
+    let p = P { x: 7, name: "pt" + "" }
+    let b = Shape.Box(2, 5)
+    let s = $"v={v} p={p} b={b} d={Shape.Dot}"
+    print(s)
+    let names: Vec<string> = ["a" + "", "b" + ""]
+    print($"names {names} len {names.len()}")
+}
