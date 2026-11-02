@@ -1231,6 +1231,15 @@ class FnEmitter {
   // one, owned (the checker then sorts with sortByKeyOwned, which drops it).
   private keyBody = false;
   private inClosureBody = false;
+  // A place lent from a raw pointer (milo.ptr.lend) may only be a call's argument: what
+  // wants its address takes the pointer it came from (addressOf).
+  private lentFrom = new Map<string, string>();
+
+  /** The address of place `ref` (of type `ty`) as a raw pointer. */
+  private addressOf(ref: string, ty: string): Val {
+    const p = this.lentFrom.get(ref);
+    return p ? { ref: p, ty: PTR } : this.def(`milo.addr ${ref} : ${ty}`, PTR);
+  }
   private retPlaceOnly = false;
   // Set by into() for the call it is about to emit: its place-only result may be an SSA
   // value, the ABI's, stored straight into the destination.
@@ -2109,12 +2118,12 @@ class FnEmitter {
           this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
         }
       }
-      const pa = this.def(`milo.addr ${p.ref} : !milo.ref<${dty}>`, PTR).ref;
+      const pa = this.addressOf(p.ref, `!milo.ref<${dty}>`).ref;
       const data = this.def(`milo.ptr.load ${pa} : ${PTR}`, PTR);
       const it = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`, PTR);
       const fn = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${it.ref}[${this.def(`milo.const ${e.methodIndex} : si64`, "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
       const args = [data, ...ops.slice(1).map(o => o.mode !== "val"
-        ? this.def(`milo.addr ${o.ref} : ${this.lent(o.type, "interface call operand")}`, PTR)
+        ? this.addressOf(o.ref, this.lent(o.type, "interface call operand"))
         : { ref: o.ref, ty: valueType(this.cx, o.type)! })];
       const call = `milo.call_ptr ${fn.ref}(${args.map(a => a.ref).join(", ")}) : (${args.map(a => a.ty).join(", ")}) -> ${ret ?? "()"}`;
       if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
@@ -2868,7 +2877,7 @@ class FnEmitter {
         // A Vec's (or slice's) header gives data and len; a fixed array is its own storage.
         const header = lent.startsWith("!milo.vec<");
         if (!header && !(vt.tag === "array" && vt.size !== null)) throw new MlirUnsupported("slice of another place");
-        const base = header ? this.def(`milo.vec.data ${v} : ${lent}`, PTR) : this.def(`milo.addr ${v} : ${lent}`, PTR);
+        const base = header ? this.def(`milo.vec.data ${v} : ${lent}`, PTR) : this.addressOf(v, lent);
         const len = header ? this.def(`milo.len ${v} : ${lent}`, "si64") : this.def(`milo.const ${(vt as { size: number }).size} : si64`, "si64");
         this.rangeCheck("slice", a, b, len, e.span);
         const data = this.def(`milo.ptr.elem ${base.ref}[${a.ref}] : ${elem}`, PTR);
@@ -2920,7 +2929,7 @@ class FnEmitter {
           const mut = e.type.tag === "ref" && e.type.mutable;
           const lt = this.lent(st, "coerced value");
           const p = this.place(e.value, lt, mut).ref;
-          return { ...pair(ty, this.def(`milo.addr ${p} : ${lt}`, PTR)), own: "view" };
+          return { ...pair(ty, this.addressOf(p, lt)), own: "view" };
         }
         const ty = this.value(e.type, "interface value");
         const v = this.consume(this.expr(e.value), "coerced box");
@@ -2931,7 +2940,7 @@ class FnEmitter {
         const vt = stripRefs(e.object.type);
         const lent = this.lent(vt, "vec of capacity");
         if (!lent.startsWith("!milo.vec<")) return this.builtinOf(e, "object", false);
-        const at = this.def(`milo.addr ${this.place(e.object, lent, false).ref} : ${lent}`, PTR).ref;
+        const at = this.addressOf(this.place(e.object, lent, false).ref, lent).ref;
         return this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${at}[2] : !milo.struct<"Vec", ${PTR}, si64, si64>`, PTR).ref} : si64`, "si64");
       }
       case "HeapPtr": {
@@ -2940,7 +2949,7 @@ class FnEmitter {
         const ht = stripRefs(e.object.type);
         if (ht.tag !== "heap" || ht.inner.tag === "interface" || scalar(e.type, "heap pointer") !== PTR) return this.builtinOf(e, "object", false);
         const lt = this.lent(ht, "heap of ptr");
-        const at = this.def(`milo.addr ${this.place(e.object, lt, false).ref} : ${lt}`, PTR).ref;
+        const at = this.addressOf(this.place(e.object, lt, false).ref, lt).ref;
         return this.def(`milo.ptr.load ${at} : ${PTR}`, PTR);
       }
       case "EnumTryFrom": {
@@ -2990,20 +2999,20 @@ class FnEmitter {
         return this.def(`milo.bits "${e.intrinsic}", ${v.ref}${amt ? `, ${amt.ref}` : ""} : ${v.ty}${amt ? `, ${amt.ty}` : ""} -> ${rt}`, rt);
       }
       case "Adopt": {
-        // adoptHeap(p) / adoptVec(p, len): legacy's genAdopt (no conversion, only the type,
-        // whose drop glue now frees the block) in a helper. The result is owned.
+        // adoptHeap(p) / adoptVec(p, len) (legacy genAdopt): no conversion, only the type,
+        // whose drop glue now frees the block. A Vec is { p, len, len }; a Heap is p.
         const ty = this.value(e.type, "adopted value");
         const p = this.expr(e.ptr);
         if (p.ty !== PTR) throw new MlirUnsupported("adopt of a non-pointer");
-        const ops = [{ name: "p", type: e.ptr.type, mode: "val" as const, ref: p.ref }];
         if (e.len) {
           const n = this.expr(e.len);
           if (n.ty !== "si64") throw new MlirUnsupported("adopt length type");
-          ops.push({ name: "n", type: I64, mode: "val", ref: n.ref });
+          return this.makeView(ty, p, n, n);
         }
-        const r = this.intrinsic(e.len ? "adoptvec" : "adoptheap", e, ops,
-          ([x, y]) => ({ ...e, ptr: x, ...(y && { len: y }) }), ty, false);
-        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var "adopt" : !milo.ref<${ty}>`);
+        this.emit(`milo.ptr.store ${p.ref}, ${this.def(`milo.addr ${slot} : !milo.ref<${ty}>`, PTR).ref} : ${PTR}`);
+        return { ...this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "RawSlice": {
         // A foreign view `&[T]` over (ptr, len): the header { ptr, len, 0 } (legacy
@@ -4674,7 +4683,9 @@ class FnEmitter {
     if (pb) {
       // Lent to a call where it is, as legacy passes the pointer.
       if (refTy !== `!milo.ref<${pb.ty}>`) throw new MlirUnsupported(`by-ref arg of another type (pointee ${pb.ty} as ${refTy})`);
-      return { ref: this.def(`milo.ptr.lend ${pb.ptr} -> ${refTy}`, refTy).ref };
+      const r = this.def(`milo.ptr.lend ${pb.ptr} -> ${refTy}`, refTy).ref;
+      this.lentFrom.set(r, pb.ptr);
+      return { ref: r };
     }
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return this.lendAs(b.ref, `!milo.vec<${b.elem}>`, refTy, b.param);
@@ -4707,7 +4718,9 @@ class FnEmitter {
         const vm = /^!milo\.vecval<(.*)>$/.exec(pp.ty);
         const lent = vm ? `!milo.vec<${vm[1]}>` : `!milo.ref<${pp.ty}>`;
         if (lent !== refTy) throw new MlirUnsupported(`by-ref arg of another type (${lent} as ${refTy})`);
-        return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
+        const r = this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref;
+        this.lentFrom.set(r, pp.ptr);
+        return { ref: r };
       }
     }
     // A raw slice, a Vec slice (`&mut v[a..b]`) or a `&mut T` coerced to `&mut I` is a
@@ -4941,10 +4954,13 @@ class FnEmitter {
     const callee = this.fns.get(e.func), sig = this.cx.fnSigs.get(e.func);
     if (!callee || !sig) return null;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
-    if (ret !== null && !isScalarTy(ret) && ret !== PTR) return null;
+    // Only C coerces a struct by value (the ABI); a Milo callee that took a string as *u8
+    // takes any other value as the normal call path passes it.
+    const cAbi = callee.isExtern;
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR && (cAbi || ret === STR)) return null;
     for (const a of e.args) {
       const t = stripRefs(a.expr.type);
-      if (!a.passByRef && t.tag !== "string" && t.tag !== "array" && (() => { const vt = valueType(this.cx, a.expr.type); return vt === null || !(isScalarTy(vt) || vt === PTR); })()) return null;
+      if (!a.passByRef && t.tag !== "string" && t.tag !== "array" && (() => { const vt = valueType(this.cx, a.expr.type); return vt === null || (cAbi && !(isScalarTy(vt) || vt === PTR)); })()) return null;
       if (a.passByRef && (t.tag === "string" || t.tag === "vec" || (t.tag === "array" && t.size === null))) return null;
     }
     const keep = this.cx.retainingLibc.has(e.func);

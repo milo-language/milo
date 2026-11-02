@@ -30,6 +30,7 @@ import {
 } from "./codegen-drop";
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
+import { MlirUnsupported } from "./emit-mlir";
 import { OwnLedger, type CopyDecl } from "./codegen-own";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
@@ -3005,6 +3006,8 @@ export class Codegen {
    * the same symbol from MLIR types (Milo.h typeKey).
    */
   public mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string {
+    // MILO_MLIR_NO_HELPERS=1: refuse instead, so the census lists what still needs one.
+    if (process.env.MILO_MLIR_NO_HELPERS === "1") throw new MlirUnsupported(`legacy helper ${name.split(".").slice(0, 3).join(".")}`);
     if (!this.mlirHelpers.has(name)) this.mlirHelpers.set(name, { name, isExtern: false, isVariadic: false, ...make() });
     return name;
   }
