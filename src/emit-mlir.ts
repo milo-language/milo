@@ -828,6 +828,26 @@ class FnEmitter {
     this.emit("}");
   }
 
+  /**
+   * `o.map(f)` and the other closure-taking Option/Result ops: legacy's genOptionOp (the
+   * tag test, the conditional call, the result enum) in a helper, the receiver lent by its
+   * place and the closure passed as its value. Only a receiver that owns nothing: legacy
+   * forwards an orElse receiver verbatim, which for an owning one would alias the result.
+   */
+  private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
+    const st = stripRefs(e.value.type);
+    const rt = this.place$(st, "option receiver");
+    if (this.hasDrop(rt) || !e.default) throw new MlirUnsupported(`option op ${e.op} on an owning receiver`);
+    const fty = this.value(e.default.type, "option callback");
+    const ty = this.value(e.type, "option result");
+    const o = this.place(e.value, this.lent(st, "option receiver"), false).ref;
+    const f = this.expr(e.default);
+    if (f.ty !== fty) throw new MlirUnsupported("option callback type");
+    const r = this.intrinsic(`opt.${e.op}`, e, [{ name: "o", type: st, mode: "ref", ref: o }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
+      ([x, y]) => ({ ...e, value: x, default: y }), ty);
+    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+  }
+
   /** `clone(&*slot)` through the type's own Clone fn: an owned value of `ty`. */
   private cloneCall(fn: string, slot: string, ty: string, t: TypeKind): Val {
     const name = `repeat$of${this.n++}`;
@@ -2330,6 +2350,7 @@ class FnEmitter {
         // is `??`. The closure-taking ones stay legacy.
         if (e.op === "unwrapOr" && e.default)
           return this.defaultValue({ kind: "DefaultValue", operand: e.value, default: e.default, enumName: e.enumName, type: e.type, span: e.span });
+        if (e.op === "map" || e.op === "optionAndThen" || e.op === "optionOrElse" || e.op === "resultMap" || e.op === "resultMapErr") return this.optionCallback(e);
         if (e.op !== "isSome" && e.op !== "isNone") throw new MlirUnsupported(`option op ${e.op}`);
         const pt = placeType(this.cx, e.value.type);
         let tag: string;
