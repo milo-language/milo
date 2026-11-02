@@ -60,7 +60,7 @@ MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it s
 
 | Lever | Upstream piece | What Milo gets | Status |
 |---|---|---|---|
-| Cheaper safety | `IntegerRangeAnalysis`, dataflow framework | prove overflow and bounds checks dead and delete them; checked arithmetic costs less | partly: bounds-check versioning ships; range analysis not wired |
+| Cheaper safety | `IntegerRangeAnalysis`, dataflow framework | prove overflow and bounds checks dead and delete them; checked arithmetic costs less | partly: bounds-check versioning ships; the region ops describe their control flow (RegionBranchOpInterface, LoopLikeOpInterface) and milo.const/milo.cmp their ranges, so `--int-range-optimizations` proves ranges through them (`mlir/test/region-branch.mlir`); not in the pipeline |
 | Correctness tooling | crash reproducers (`--mlir-pass-pipeline-crash-reproducer`), `mlir-reduce`, `--mlir-print-ir-after-all`, debug counters | a compiler crash becomes a one-file repro, reduced automatically; bisect a miscompile to one pass application | available, not wired into the driver |
 | Compile time | multithreaded pass manager | function passes run in parallel for free; the fix for the current build-time regression | not measured |
 | Contracts | `smt` dialect | `requires`/`ensures` checked by a solver from the same IR the compiler lowers | decided (see Verification) |
@@ -890,6 +890,15 @@ op interfaces, folders, canonicalizers, verify-diagnostics cases, and the op-ver
 in `Milo.cpp` that some `expected-error` names. `--ops` prints one row per op; `--update`
 rewrites the baseline after a count went up. Deleting one summary or one `expected-error`
 turns it red.
+
+Control flow: milo.if, milo.match and milo.scope yield to their parent, milo.while goes
+cond to body or out, milo.for runs its body zero or more times (a signed one names its
+induction variable and bounds; an unsigned one cannot, since upstream reads loop bounds as
+signed), and milo.yield and milo.condition are the region branch terminators. break,
+continue and return are not: they leave any number of regions at once, which
+RegionBranchOpInterface cannot express. Sparse analyses stay sound (no value travels along
+those jumps, and liveness is per block); dense analyses would not, so none runs before
+`--milo-lower-structured-cf`.
 
 ### Deploying apps built with MLIR
 

@@ -387,7 +387,7 @@ is NaN, so `x != x` is true for NaN.
 
 Traits: `AlwaysSpeculatableImplTrait`, `SameTypeOperands`
 
-Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `InferIntRangeInterface`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
 Effects: `MemoryEffects::Effect{}`
 
@@ -428,7 +428,7 @@ loop exits.
 
 Traits: `AlwaysSpeculatableImplTrait`, `HasParent<WhileOp>`, `Terminator`
 
-Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 
 Effects: `MemoryEffects::Effect{}`
 
@@ -455,7 +455,7 @@ signedness, a bool is i1). The dialect's constant materializer makes these for f
 
 Traits: `AlwaysSpeculatableImplTrait`, `ConstantLike`
 
-Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `InferIntRangeInterface`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
 Effects: `MemoryEffects::Effect{}`
 
@@ -955,6 +955,8 @@ already bounds i, so the step cannot overflow.
 
 Traits: `RecursiveMemoryEffects`
 
+Interfaces: `LoopLikeOpInterface`, `RegionBranchOpInterface`
+
 #### Operands:
 
 | Operand | Description |
@@ -1121,6 +1123,8 @@ then yield values of the result types. A region may instead end in return, break
 continue or unreachable.
 
 Traits: `NoRegionArguments`, `RecursiveMemoryEffects`
+
+Interfaces: `RegionBranchOpInterface`
 
 #### Operands:
 
@@ -1297,6 +1301,8 @@ continue (the next iteration) or a jump.
 
 Traits: `NoRegionArguments`, `RecursiveMemoryEffects`
 
+Interfaces: `LoopLikeOpInterface`, `RegionBranchOpInterface`
+
 
 
 ### `milo.map.len` (::milo::MapLenOp)
@@ -1349,6 +1355,8 @@ is unreachable (the checker proved the match exhaustive). With results it is an
 expression: each arm yields them or ends in a jump.
 
 Traits: `RecursiveMemoryEffects`
+
+Interfaces: `RegionBranchOpInterface`
 
 #### Attributes:
 
@@ -1821,6 +1829,8 @@ leaves it, by falling off its end or by a break, continue or return out of it
 (milo-scope-drops puts the drops there). With results it yields them, like milo.if.
 
 Traits: `NoRegionArguments`, `RecursiveMemoryEffects`
+
+Interfaces: `RegionBranchOpInterface`
 
 #### Operands:
 
@@ -2648,6 +2658,8 @@ operation ::= `milo.while` $condRegion `do` $bodyRegion attr-dict
 
 Traits: `NoRegionArguments`, `RecursiveMemoryEffects`
 
+Interfaces: `LoopLikeOpInterface`, `RegionBranchOpInterface`
+
 
 
 ### `milo.xor` (::milo::XorOp)
@@ -2699,7 +2711,7 @@ region again).
 
 Traits: `AlwaysSpeculatableImplTrait`, `HasParent<IfOp, WhileOp, LoopOp, ForOp, MatchOp, ScopeOp>`, `Terminator`
 
-Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 
 Effects: `MemoryEffects::Effect{}`
 

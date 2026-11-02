@@ -8,6 +8,9 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/LoopLikeInterface.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
 
 def Milo_Dialect : Dialect {
   let name = "milo";
@@ -544,6 +547,7 @@ def Milo_ZeroOp : Milo_Op<"zero", [Pure]> {
 }
 
 def Milo_ConstOp : Milo_Op<"const", [ConstantLike, Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>,
     AllTypesMatch<["value", "result"]>]> {
   let summary = "an int, float or bool literal";
   let description = [{
@@ -682,7 +686,8 @@ def Milo_CmpPredicate : I64EnumAttr<"CmpPredicate", "comparison", [
   }];
 }
 
-def Milo_CmpOp : Milo_Op<"cmp", [Pure, SameTypeOperands]> {
+def Milo_CmpOp : Milo_Op<"cmp", [Pure, SameTypeOperands,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>]> {
   let summary = "compare two scalars or pointers";
   let description = [{
     Signedness comes from the operand type (bool compares as signed i1, as legacy codegen
@@ -723,7 +728,8 @@ def Milo_VarOp : Milo_Op<"var"> {
   let hasVerifier = 1;
 }
 
-def Milo_ScopeOp : Milo_Op<"scope", [NoRegionArguments, RecursiveMemoryEffects]> {
+def Milo_ScopeOp : Milo_Op<"scope", [NoRegionArguments, RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface, ["getSuccessorInputs"]>]> {
   let summary = "a lexical scope that owns slots";
   let description = [{
     A lexical scope that owns the slots it lists: whatever they still hold dies when control
@@ -1188,7 +1194,9 @@ def Milo_GlobalInitOp : Milo_Op<"global.init"> {
   let hasVerifier = 1;
 }
 
-def Milo_IfOp : Milo_Op<"if", [NoRegionArguments, RecursiveMemoryEffects]> {
+def Milo_IfOp : Milo_Op<"if", [NoRegionArguments, RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                              ["getEntrySuccessorRegions", "getSuccessorInputs"]>]> {
   let summary = "if/else, as a statement or an expression";
   let description = [{
     `if cond { } else { }`. With results it is an expression (`&&`, `||`): both regions
@@ -1202,7 +1210,9 @@ def Milo_IfOp : Milo_Op<"if", [NoRegionArguments, RecursiveMemoryEffects]> {
   let hasVerifier = 1;
 }
 
-def Milo_WhileOp : Milo_Op<"while", [NoRegionArguments, RecursiveMemoryEffects]> {
+def Milo_WhileOp : Milo_Op<"while", [NoRegionArguments, RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+    DeclareOpInterfaceMethods<LoopLikeOpInterface>]> {
   let summary = "a while loop";
   let description = [{
     `while cond { body }`: the cond region ends in milo.condition, the body in a yield
@@ -1212,7 +1222,9 @@ def Milo_WhileOp : Milo_Op<"while", [NoRegionArguments, RecursiveMemoryEffects]>
   let assemblyFormat = "$condRegion `do` $bodyRegion attr-dict";
 }
 
-def Milo_LoopOp : Milo_Op<"loop", [NoRegionArguments, RecursiveMemoryEffects]> {
+def Milo_LoopOp : Milo_Op<"loop", [NoRegionArguments, RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+    DeclareOpInterfaceMethods<LoopLikeOpInterface>]> {
   let summary = "an infinite loop";
   let description = [{
     `while true { body }`: only break or return leaves it. The body ends in yield or
@@ -1222,7 +1234,11 @@ def Milo_LoopOp : Milo_Op<"loop", [NoRegionArguments, RecursiveMemoryEffects]> {
   let assemblyFormat = "$bodyRegion attr-dict";
 }
 
-def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start", "end"]>]> {
+def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start", "end"]>,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+    DeclareOpInterfaceMethods<LoopLikeOpInterface,
+        ["getLoopInductionVars", "getLoopLowerBounds", "getLoopUpperBounds", "getLoopSteps",
+         "isValidInductionVarType"]>]> {
   let summary = "a counted loop over a half-open int range";
   let description = [{
     `for i in start..end { body }`: both bounds evaluated once, before the loop; the body's
@@ -1236,7 +1252,8 @@ def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start",
   let hasVerifier = 1;
 }
 
-def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects]> {
+def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface, ["getSuccessorInputs"]>]> {
   let summary = "a switch on an enum tag or an int or bool";
   let description = [{
     `match subject { arms }`, one region per arm. On an enum, `cases` holds each arm's tag
@@ -1255,6 +1272,7 @@ def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects]> {
 }
 
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
+    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface, ["getMutableSuccessorOperands"]>,
     ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "MatchOp", "ScopeOp"]>]> {
   let summary = "end a region normally";
   let description = [{
@@ -1267,7 +1285,8 @@ def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
   let hasVerifier = 1;
 }
 
-def Milo_ConditionOp : Milo_Op<"condition", [Pure, Terminator, HasParent<"WhileOp">]> {
+def Milo_ConditionOp : Milo_Op<"condition", [Pure, Terminator, HasParent<"WhileOp">,
+    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface, ["getMutableSuccessorOperands"]>]> {
   let summary = "end the cond region of milo.while";
   let description = [{
     Ends the cond region of milo.while: when `condition` is true the body runs, else the

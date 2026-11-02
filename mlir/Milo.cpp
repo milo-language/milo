@@ -4,6 +4,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -689,4 +690,178 @@ LogicalResult ReturnOp::verify() {
   if (!ok)
     return emitOpError("does not match the function's result type");
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Region control flow, described to MLIR (RegionBranchOpInterface, LoopLikeOpInterface),
+// so upstream dataflow (dead code, constant propagation, integer ranges) and LICM see
+// through milo.if, milo.match, milo.scope and the loops.
+//
+// milo.yield and milo.condition are the region branch terminators. break, continue and
+// return are not: they leave any depth of regions at once, which the interface cannot
+// say. A sparse (SSA value) analysis stays sound without those edges: no value travels
+// along them (loops have no results and no loop-carried block arguments; mutable locals are
+// slots), and it tracks liveness per block, so the ops after a loop in its block stay live
+// even when only a break reaches them. A dense (memory state) analysis would miss the
+// state a break or return carries out, and would take the code after a milo.loop for
+// unreachable: none runs before milo-lower-structured-cf (milo-elaborate-drops runs after).
+//===----------------------------------------------------------------------===//
+
+// The results of an op whose regions yield to it; no region takes forwarded inputs.
+static ValueRange resultsOrNone(Operation *op, RegionSuccessor s) {
+  return s.isOperation() ? ValueRange(op->getResults()) : ValueRange();
+}
+
+void IfOp::getSuccessorRegions(RegionBranchPoint point,
+                               SmallVectorImpl<RegionSuccessor> &regions) {
+  if (!point.isParent()) {
+    regions.push_back(RegionSuccessor(getOperation()));
+    return;
+  }
+  regions.push_back(RegionSuccessor(&getThenRegion()));
+  if (getElseRegion().empty())
+    regions.push_back(RegionSuccessor(getOperation()));
+  else
+    regions.push_back(RegionSuccessor(&getElseRegion()));
+}
+
+void IfOp::getEntrySuccessorRegions(ArrayRef<Attribute> operands,
+                                    SmallVectorImpl<RegionSuccessor> &regions) {
+  auto c = dyn_cast_or_null<BoolAttr>(operands[0]);
+  if (!c)
+    return getSuccessorRegions(RegionBranchPoint::parent(), regions);
+  if (c.getValue())
+    regions.push_back(RegionSuccessor(&getThenRegion()));
+  else if (getElseRegion().empty())
+    regions.push_back(RegionSuccessor(getOperation()));
+  else
+    regions.push_back(RegionSuccessor(&getElseRegion()));
+}
+
+ValueRange IfOp::getSuccessorInputs(RegionSuccessor s) { return resultsOrNone(*this, s); }
+
+void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
+                                  SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent())
+    regions.push_back(RegionSuccessor(&getBody()));
+  else
+    regions.push_back(RegionSuccessor(getOperation()));
+}
+
+ValueRange ScopeOp::getSuccessorInputs(RegionSuccessor s) { return resultsOrNone(*this, s); }
+
+// Every arm may run; without a default some arm always does (the checker proved the match
+// exhaustive). An arm's payload arguments come from the subject, not from a forwarded
+// operand, so analyses take them as unknown.
+void MatchOp::getSuccessorRegions(RegionBranchPoint point,
+                                  SmallVectorImpl<RegionSuccessor> &regions) {
+  if (!point.isParent()) {
+    regions.push_back(RegionSuccessor(getOperation()));
+    return;
+  }
+  for (Region &arm : getArms())
+    regions.push_back(RegionSuccessor(&arm));
+}
+
+ValueRange MatchOp::getSuccessorInputs(RegionSuccessor s) { return resultsOrNone(*this, s); }
+
+void WhileOp::getSuccessorRegions(RegionBranchPoint point,
+                                  SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent()) {
+    regions.push_back(RegionSuccessor(&getCondRegion()));
+    return;
+  }
+  if (point.getTerminatorPredecessorOrNull()->getParentRegion() == &getCondRegion()) {
+    regions.push_back(RegionSuccessor(&getBodyRegion()));
+    regions.push_back(RegionSuccessor(getOperation()));
+    return;
+  }
+  regions.push_back(RegionSuccessor(&getCondRegion()));
+}
+
+// Only a break leaves a milo.loop, and a break is not a region branch: no edge returns
+// to the parent.
+void LoopOp::getSuccessorRegions(RegionBranchPoint,
+                                 SmallVectorImpl<RegionSuccessor> &regions) {
+  regions.push_back(RegionSuccessor(&getBodyRegion()));
+}
+
+// Zero or more iterations; the induction variable is not forwarded from an operand (it is
+// start, then the step), so analyses read its range from the loop bounds below.
+void ForOp::getSuccessorRegions(RegionBranchPoint,
+                                SmallVectorImpl<RegionSuccessor> &regions) {
+  regions.push_back(RegionSuccessor(&getBodyRegion()));
+  regions.push_back(RegionSuccessor(getOperation()));
+}
+
+SmallVector<Region *> WhileOp::getLoopRegions() { return {&getCondRegion(), &getBodyRegion()}; }
+SmallVector<Region *> LoopOp::getLoopRegions() { return {&getBodyRegion()}; }
+SmallVector<Region *> ForOp::getLoopRegions() { return {&getBodyRegion()}; }
+
+// IntegerRangeAnalysis reads loop bounds as signed (as for scf.for), but an unsigned
+// milo.for compares unsigned: its iv can pass the signed max. So only a signed loop
+// names its induction variable and bounds.
+std::optional<SmallVector<Value>> ForOp::getLoopInductionVars() {
+  if (!getStart().getType().isSignedInteger())
+    return std::nullopt;
+  return SmallVector<Value>{getBodyRegion().front().getArgument(0)};
+}
+
+std::optional<SmallVector<OpFoldResult>> ForOp::getLoopLowerBounds() {
+  if (!getStart().getType().isSignedInteger())
+    return std::nullopt;
+  return SmallVector<OpFoldResult>{getStart()};
+}
+
+std::optional<SmallVector<OpFoldResult>> ForOp::getLoopUpperBounds() {
+  if (!getStart().getType().isSignedInteger())
+    return std::nullopt;
+  return SmallVector<OpFoldResult>{getEnd()};
+}
+
+std::optional<SmallVector<OpFoldResult>> ForOp::getLoopSteps() {
+  if (!getStart().getType().isSignedInteger())
+    return std::nullopt;
+  return SmallVector<OpFoldResult>{IntegerAttr::get(getStart().getType(), 1)};
+}
+
+bool ForOp::isValidInductionVarType(Type t) { return isa<IntegerType>(t); }
+
+MutableOperandRange YieldOp::getMutableSuccessorOperands(RegionSuccessor) {
+  return getValuesMutable();
+}
+
+// The condition picks the successor; no value is forwarded.
+MutableOperandRange ConditionOp::getMutableSuccessorOperands(RegionSuccessor) {
+  return MutableOperandRange(getOperation(), 0, 0);
+}
+
+//===----------------------------------------------------------------------===//
+// Integer ranges (InferIntRangeInterface), for IntegerRangeAnalysis.
+//===----------------------------------------------------------------------===//
+
+void ConstOp::inferResultRanges(ArrayRef<ConstantIntRanges>, SetIntRangeFn set) {
+  if (auto i = dyn_cast<IntegerAttr>(getValue()))
+    set(getResult(), ConstantIntRanges::constant(i.getValue()));
+}
+
+// Signedness from the operand type, as the lowering compares (bool as signed i1).
+void CmpOp::inferResultRanges(ArrayRef<ConstantIntRanges> args, SetIntRangeFn set) {
+  std::optional<bool> known;
+  if (auto t = dyn_cast<IntegerType>(getLhs().getType())) {
+    using P = intrange::CmpPredicate;
+    bool u = t.isUnsigned();
+    P p = P::eq;
+    switch (getPredicate()) {
+    case CmpPredicate::eq: p = P::eq; break;
+    case CmpPredicate::ne: p = P::ne; break;
+    case CmpPredicate::lt: p = u ? P::ult : P::slt; break;
+    case CmpPredicate::le: p = u ? P::ule : P::sle; break;
+    case CmpPredicate::gt: p = u ? P::ugt : P::sgt; break;
+    case CmpPredicate::ge: p = u ? P::uge : P::sge; break;
+    }
+    known = intrange::evaluatePred(p, args[0], args[1]);
+  }
+  set(getResult(), known ? ConstantIntRanges::constant(APInt(1, *known))
+                         : ConstantIntRanges::fromUnsigned(APInt(1, 0), APInt(1, 1)));
 }

@@ -7,10 +7,10 @@
   "verifier": 53,
   "effectsDeclared": 72,
   "pure": 32,
-  "interfaces": 0,
+  "interfaces": 13,
   "folders": 1,
   "canonicalizers": 0,
   "verifyDiagnosticsCases": 42,
   "verifierErrorsCovered": 30,
-  "fileCheckFiles": 23
+  "fileCheckFiles": 24
 }
