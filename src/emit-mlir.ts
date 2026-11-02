@@ -4578,6 +4578,8 @@ class FnEmitter {
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef && !viewArg(i)) throw new MlirUnsupported("by-ref arg mismatch");
+      // An extern's fn-typed param is a C function pointer (legacy declares it `ptr`).
+      if (callee.isExtern && !byRef && p.type.tag === "fn" && sig.paramTypes[i] === "ptr") return PTR;
       const ty = byRef ? this.lent(p.type, "by-ref arg") : this.place$(p.type, "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return ty;
@@ -4609,6 +4611,13 @@ class FnEmitter {
         return ref.ref;
       }
       if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
+      if (paramTys[i] === PTR && a.expr.type.tag === "fn") {
+        // A named function to C: its own symbol, as legacy passes it.
+        const x = a.expr;
+        if (x.kind !== "Ident" || !this.fns.has(x.name) || this.scopes.some(m => m.has(x.name))) throw new MlirUnsupported("fn value to a C function pointer param");
+        provenance.push(null);
+        return this.fieldValue(x, { tag: "cfn" } as TypeKind).ref;
+      }
       const pt = paramTys[i];
       if (pt.startsWith("!milo.fn<") && !pt.startsWith("!milo.fn<owning ")) {
         const own = this.expr(a.expr);
