@@ -21,7 +21,26 @@ fn load(n: i64): Result<Big, string> {
     return Result.Ok(find(n)!)
 }
 
+// 128+ bytes that own nothing: unwrapped by bit copy, the source left as it is.
+struct Plain { a: [i64; 16], b: i64 }
+
+struct HasOpt { o: Option<Plain>, n: i64 }
+
+fn plain(i: i64): Option<Plain> {
+    if i < 0 { return Option.None }
+    return Option.Some(Plain { a: [i; 16], b: i * 2 })
+}
+
 fn main() {
+    let p = plain(3)
+    let q = p!
+    let q2 = p!
+    print(q.a[5] + q2.b)
+    let h = HasOpt { o: plain(4), n: 1 }
+    let r2 = h.o!
+    print(r2.b + h.n)
+    let t = plain(6)!
+    print(t.a[0])
     let x = find(3)!
     print(x.name)
     print(x.tags[0])

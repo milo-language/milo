@@ -4104,16 +4104,19 @@ class FnEmitter {
   private unwrapInto(e: HIRExpr & { kind: "Unwrap" }, dst: string, ty: string): void {
     const o = e.operand, st = stripRefs(o.type);
     let src: { ref: string; ty: string };
-    if (o.kind === "Ident") {
+    // An enum that owns nothing is bit-copied: read from wherever it is, nothing emptied.
+    const plain = !this.hasDrop(this.place$(st, "unwrapped enum"));
+    if (plain) {
+      const p = o.kind === "Ident" || o.kind === "FieldAccess" ? this.fieldPlace(o) : null;
+      src = p ?? this.bigSlot("unwrap.of", o, true);
+    } else if (o.kind === "Ident") {
       const b = this.lookup(o.name);
       if (b.kind !== "var" || !b.owned || !o.isMove) throw new MlirUnsupported("unwrap of a 128+ byte payload out of a borrow");
       src = { ref: b.ref, ty: b.ty };
     } else if (o.kind === "FieldAccess" || o.kind === "IndexAccess" || o.kind === "HeapDeref" || o.kind === "PtrDeref") {
       throw new MlirUnsupported("unwrap of a 128+ byte payload out of a place");
     } else {
-      const sl = this.bigSlot("unwrap.of", o, true);
-      if (!sl.owned) throw new MlirUnsupported("unwrap of a 128+ byte payload that owns nothing");
-      src = sl;
+      src = this.bigSlot("unwrap.of", o, true);
     }
     if (src.ty !== this.place$(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
     const l = this.site(e.span);
@@ -4129,7 +4132,7 @@ class FnEmitter {
     this.callees.set(name, fnTy);
     const at = this.def(`milo.addr ${src.ref} : !milo.ref<${src.ty}>`, PTR);
     this.emit(`func.call @${quote(name)}(${dst}, ${at.ref}) : ${fnTy}`);
-    this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
+    if (!plain) this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
   }
 
   /** What a refused field move reads from, for the legacy reason: the root and its binding. */
