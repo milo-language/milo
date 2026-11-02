@@ -71,42 +71,48 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
 // arith's `select %c, 1, 0` -> `extui %c` makes a signless-only op from a select whose
 // type is Milo's si32 (a bool if-expression folded to a select), which then fails to verify.
-const CANONICALIZE = "--canonicalize=disable-patterns=SelectToExtUI";
+const CANONICALIZE = "canonicalize{disable-patterns=SelectToExtUI}";
 
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
-export const MLIR_PIPELINE = [
-  "--milo-verify",
-  // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value
-  // ahead of the store would name the place and so stop the rewrite.
-  "--milo-append-in-place",
-  // Drops where owned slots' scopes end and before stores over owned values, while the
-  // scopes are still regions; which of them run is decided after control flow is lowered.
-  "--milo-scope-drops",
-  "--milo-expand-index",
-  // Loops scf.for can hold go there, where the Vec passes work: hoist `len` out of loops
-  // that never grow a Vec, then run a check-free copy when one range test proves every
-  // bounds check in the loop passes (mlir/README.md).
-  "--milo-raise-to-scf",
-  // The milo region ops left (loops with early exits, ifs outside raised loops) go to cf
-  // before any generic pass runs: they do not describe their control flow to MLIR
-  // (no RegionBranchOpInterface), so CSE would reuse a load from before a milo.while
-  // inside its body as if the loop never stored in between.
-  "--milo-lower-structured-cf",
-  // Init state of every owned slot over the CFG (MLIR's dense dataflow): before any
-  // generic pass can move a store or a drop.
-  "--milo-elaborate-drops",
-  CANONICALIZE,
-  "--milo-hoist-vec-reads",
-  "--loop-invariant-code-motion",
-  "--milo-version-bounds-checks",
-  "--cse",
-  CANONICALIZE,
-  "--convert-scf-to-cf",
-  "--convert-milo-to-llvm",
-  "--reconcile-unrealized-casts",
-  "--mem2reg",
-  CANONICALIZE,
-];
+// Passes that see one function at a time sit under func.func(...) / llvm.func(...): MLIR's
+// pass manager runs those on every function in parallel. At module level the generic
+// passes (canonicalize, cse, licm, mem2reg) ran on one thread over the whole module.
+export const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
+  "milo-verify",
+  "func.func(" + [
+    // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value
+    // ahead of the store would name the place and so stop the rewrite.
+    "milo-append-in-place",
+    // Drops where owned slots' scopes end and before stores over owned values, while the
+    // scopes are still regions; which of them run is decided after control flow is lowered.
+    "milo-scope-drops",
+  ].join(",") + ")",
+  "milo-expand-index",
+  "func.func(" + [
+    // Loops scf.for can hold go there, where the Vec passes work: hoist `len` out of loops
+    // that never grow a Vec, then run a check-free copy when one range test proves every
+    // bounds check in the loop passes (mlir/README.md).
+    "milo-raise-to-scf",
+    // The milo region ops left (loops with early exits, ifs outside raised loops) go to cf
+    // before any generic pass runs: they do not describe their control flow to MLIR
+    // (no RegionBranchOpInterface), so CSE would reuse a load from before a milo.while
+    // inside its body as if the loop never stored in between.
+    "milo-lower-structured-cf",
+    // Init state of every owned slot over the CFG (MLIR's dense dataflow): before any
+    // generic pass can move a store or a drop.
+    "milo-elaborate-drops",
+    CANONICALIZE,
+    "milo-hoist-vec-reads",
+    "loop-invariant-code-motion",
+    "milo-version-bounds-checks",
+    "cse",
+    CANONICALIZE,
+    "convert-scf-to-cf",
+  ].join(",") + ")",
+  "convert-milo-to-llvm",
+  "reconcile-unrealized-casts",
+  "llvm.func(mem2reg," + CANONICALIZE + ")",
+].join(",") + ")";
 
 const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
 const DEFINE_RE = new RegExp(String.raw`^define [^@]*@(${IDENT})\(`);
@@ -264,7 +270,7 @@ export class MlirPlan {
     const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText(this.taken)}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
-    const ll = run(optPath, ["--emit-llvmir", ...MLIR_PIPELINE], text).split("\n");
+    const ll = run(optPath, ["--emit-llvmir", MLIR_PIPELINE], text).split("\n");
     // The bodies are spliced into the legacy module: a triple or layout the two disagree on
     // would size a struct differently on each side of a call.
     if (!ll.includes(`target triple = "${triple}"`) || !ll.includes(`target datalayout = "${dl}"`)) throw new Error(`mlir: milo-opt did not emit for ${triple}`);

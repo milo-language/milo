@@ -10,6 +10,7 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "mlir/Support/Timing.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
@@ -25,6 +26,9 @@
 static int emitLLVMIR(int argc, char **argv, mlir::DialectRegistry &registry) {
   llvm::InitLLVM init(argc, argv);
   mlir::registerPassManagerCLOptions();
+  // --mlir-disable-threading and --mlir-timing: the build-time profile of a real compile.
+  mlir::registerMLIRContextCLOptions();
+  mlir::registerDefaultTimingManagerCLOptions();
   mlir::PassPipelineCLParser pipeline("", "Passes to run before translating");
   llvm::cl::ParseCommandLineOptions(argc, argv, "milo-opt --emit-llvmir\n");
 
@@ -45,6 +49,9 @@ static int emitLLVMIR(int argc, char **argv, mlir::DialectRegistry &registry) {
                        mlir::OpPassManager::Nesting::Implicit);
   if (failed(mlir::applyPassManagerCLOptions(pm)))
     return 1;
+  auto tm = std::make_unique<mlir::DefaultTimingManager>();
+  mlir::applyDefaultTimingManagerCLOptions(*tm);
+  pm.enableTiming(std::move(tm));
   auto err = [](const llvm::Twine &msg) {
     llvm::errs() << msg << "\n";
     return mlir::failure();
