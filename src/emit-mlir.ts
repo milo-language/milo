@@ -2060,6 +2060,17 @@ class FnEmitter {
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
       }
+      case "RawSlice": {
+        // A foreign view `&[T]` over (ptr, len): legacy's genRawSlice header { ptr, len, 0 }
+        // in a helper. Its capacity 0 owns nothing, so it is a view.
+        const elem = vecElem(this.cx, stripRefs(e.type));
+        if (elem === null) throw new MlirUnsupported("raw slice element type");
+        const p = this.expr(e.ptr), n = this.expr(e.len);
+        if (p.ty !== PTR || n.ty !== "si64") throw new MlirUnsupported("raw slice operand types");
+        const r = this.intrinsic("rawslice", e, [{ name: "p", type: e.ptr.type, mode: "val", ref: p.ref },
+          { name: "n", type: I64, mode: "val", ref: n.ref }], ([x, y]) => ({ ...e, ptr: x, len: y }), `!milo.vecval<${elem}>`, false);
+        return { ...r, own: "view" };
+      }
       case "RangeCheck": {
         // A value flowing into a ranged int: legacy's emitRangeCheck (its panic text) in a
         // helper per site, which returns the value unchanged.
@@ -3413,7 +3424,9 @@ class FnEmitter {
         return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
       }
     }
-    if (mut) throw new MlirUnsupported(`&mut of a value (${e.kind})`);
+    // A raw slice is a view header over foreign memory: lent from a temporary, as legacy
+    // spills it, writes through it still reach the elements.
+    if (mut && e.kind !== "RawSlice") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
     if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");
     let slot: string;
