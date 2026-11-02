@@ -3831,7 +3831,10 @@ class FnEmitter {
     });
     this.pending.length = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
-    if (ret !== null && !isScalarTy(ret) && ret !== PTR) throw new MlirUnsupported("extern call result type");
+    // A plain struct result comes back from the helper as an LLVM struct value; a 128+
+    // byte one would make the helper sret, and one that owns would need a drop here.
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR && (e.type.tag !== "struct" || this.hasDrop(ret) || this.cx.typeSizeOf(e.type) >= 128))
+      throw new MlirUnsupported("extern call result type");
     const l = this.site(e.span);
     const name = this.cx.mlirHelper(`milo.ffi.${e.func}.${keys.join(".")}.${l.line}.${l.col}.${fnv1a(l.file)}`, () => {
       const call: HIRExpr = { ...e, args: e.args.map((a, k) => ({ ...a, expr: { kind: "Ident", name: params[k].name, type: params[k].type, isMove: false } })) };
@@ -4058,9 +4061,10 @@ class FnEmitter {
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
     // A struct passed to or returned from C by value goes through the platform ABI's
     // register coercion (src/abi.ts), which only legacy's genCall applies: an MLIR call
-    // would pass the LLVM struct as-is and C would read the wrong registers.
+    // would pass the LLVM struct as-is and C would read the wrong registers. So the call
+    // is legacy's, in a helper (ffiCall) that Milo code calls with plain LLVM structs.
     if (callee.isExtern && [callee.retType, ...callee.params.filter(p => !p.isRef && !p.isRefMut).map(p => p.type)].some(t => t.tag === "struct" || t.tag === "array"))
-      throw new MlirUnsupported("extern struct by value");
+      return this.ffiCall(e, stmt);
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
