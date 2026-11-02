@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: truncate(2) lands inside a multibyte UTF-8 character; truncate takes a byte length that must end on a character boundary, at mlir/test/programs/panic-truncate.milo:5:5\n",
+  "stdout": "6\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "6 6 6\nababab abab\nabababab 8 abab\n6 55 9 5\n5 114\nabab ababab\n11 1\n12\n\nabab\nstatic static\n"
+}

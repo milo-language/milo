@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "runtime error: value out of range at mlir/test/programs/panic-range.milo:10\n",
+  "stdout": ""
+}

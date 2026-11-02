@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: shift amount out of range (>= 64) at mlir/test/programs/trap-shr-neg.milo:3:36\n",
+  "stdout": ""
+}

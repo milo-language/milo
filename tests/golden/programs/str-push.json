@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "abc 3\nabcde abcde!\n300 efghijklmn\nn==4536271809 7\n24\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": "0",
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "runtime error: integer overflow at mlir/test/programs/trap-sub-u8.milo:3\n",
+  "stdout": ""
+}

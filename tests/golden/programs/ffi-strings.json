@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "3 11 11 6 11 7 6\nhello there|42|2000000000000|2.50|static\nhello there hello there static 11 3\n"
+}

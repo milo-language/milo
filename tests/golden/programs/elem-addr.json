@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: array index out of bounds: 9/4 at mlir/test/programs/elem-addr.milo:18\n",
+  "stdout": "53\n"
+}

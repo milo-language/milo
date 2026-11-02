@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "34\n120\na heap allocated name number 7a heap allocated name number 7!\n19\n93\n60\n60\n30\n"
+}

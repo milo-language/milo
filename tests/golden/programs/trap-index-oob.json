@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: array index out of bounds: 3/3 at mlir/test/programs/trap-index-oob.milo:5\n",
+  "stdout": ""
+}

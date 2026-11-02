@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "s\nss\nsss\nssss\n10 s\nss\nsss\nssss\n10\n[1, 2, 3, 4] [\"s\", \"ss\", \"sss\", \"ssss\"]\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "e 7 8\n",
+  "stdout": "a in f 1\n1 b in f 2\n2\nin f 3\nin f 4\nin g c\n34cin f 5\n5\nin g d\ndin g e\ne\nin f 6\nin g h\n6 and h\nin f 7\nin f 8\ntrue in g tail\n2.5tail\n"
+}

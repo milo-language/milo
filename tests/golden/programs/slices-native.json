@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: slice range out of bounds: 2..6 (len 5) at mlir/test/programs/slices-native.milo:22:15\n",
+  "stdout": "world 5 0\n9 3 7\n30 0\n12\n"
+}
