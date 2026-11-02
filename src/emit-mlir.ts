@@ -60,10 +60,12 @@ export function mlirType(t: TypeKind): string | null {
   return null;
 }
 
-/** The element type of a Vec of scalars, or null. */
-/** The dialect's element type of a Vec, or null. Indexing takes only scalar ones. */
+/**
+ * The dialect's element type of a Vec, or of a slice `[T]` (a Vec header that a slice
+ * expression makes or a Vec lends, legacy's %Vec), or null.
+ */
 function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
-  if (t.tag !== "vec") return null;
+  if (t.tag !== "vec" && !(t.tag === "array" && t.size === null)) return null;
   const e = placeType(cx, t.element);
   return e === null || e === PTR ? null : e;
 }
@@ -92,7 +94,9 @@ function typeKey(t: TypeKind): string {
         t.ret.tag === "void" ? "v" : typeKey(t.ret)].join(".");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
-    case "array": if (t.size !== null) return `arr${t.size}.${typeKey(t.element)}`; throw new MlirUnsupported("helper for a slice");
+    // A slice is lent as a Vec header (!milo.vec), which Scalar.cpp spells `vec`: a plain fn
+    // type with a `&[T]` param keys its glue `rvec.T` on both sides.
+    case "array": return t.size !== null ? `arr${t.size}.${typeKey(t.element)}` : `vec.${typeKey(t.element)}`;
     default: throw new MlirUnsupported(`helper for a ${t.tag}`);
   }
 }
@@ -297,12 +301,20 @@ function fnType(cx: MlirEmitCtx, t: TypeKind & { tag: "fn" }): string | null {
 
 /** A closure param: a `&T` is the place (legacy closureParamTy passes a pointer). */
 function closureParamType(cx: MlirEmitCtx, p: TypeKind): string | null {
-  if (p.tag !== "ref") return placeType(cx, p);
-  if (p.inner.tag === "vec") { const e = vecElem(cx, p.inner); return e && `!milo.vec<${e}>`; }
-  // A slice param is the address of a %Vec header that a slice expression makes: not yet.
-  if (p.inner.tag === "array") return null;
-  // A place, so a 128+ byte struct is lent like any other (its address).
-  const v = placeType(cx, p.inner);
+  return p.tag === "ref" ? lentType(cx, p.inner) : placeType(cx, p);
+}
+
+/**
+ * The one answer to what a by-ref argument of `t` is lent as (legacy passes its address): a
+ * Vec's or a slice's header place (!milo.vec), anything else's !milo.ref, a 128+ byte
+ * struct like any other; null for a type the dialect lacks.
+ */
+function lentType(cx: MlirEmitCtx, t: TypeKind): string | null {
+  t = stripRefs(t);
+  const e = vecElem(cx, t);
+  if (e !== null) return `!milo.vec<${e}>`;
+  if (t.tag === "vec" || t.tag === "array" && t.size === null) return null;
+  const v = placeType(cx, t);
   return v && `!milo.ref<${v}>`;
 }
 
@@ -427,6 +439,9 @@ class FnEmitter {
   private scopes: Map<string, Binding>[] = [new Map()];
   // The owned slots each open block declared, innermost last: its milo.scope's operands.
   private owned: { ref: string; ty: string }[][] = [[]];
+  // Which frames of `owned` are blocks' (a region, an unsafe block, a loop's own), innermost last;
+  // the others are a statement's, a call's or an operator's (tempSlot).
+  private blocks: number[] = [0];
   readonly callees = new Map<string, string>();
   // Each call, with the param index of every by-ref argument that is one of this fn's own
   // by-ref params (null for anything else): what codegen's stub must reproduce.
@@ -791,11 +806,11 @@ class FnEmitter {
   }
 
   /** A slot of this block holding `e` (128+ bytes), filled in place; owned when it has drop glue. */
-  private bigSlot(name: string, e: HIRExpr, temp = false): { ref: string; ty: string; owned: boolean } {
+  private bigSlot(name: string, e: HIRExpr, temp = false, block = false): { ref: string; ty: string; owned: boolean } {
     const ty = this.place$(e.type, "value");
     const owned = this.hasDrop(ty);
     let ref: string;
-    if (owned) ref = temp ? this.tempSlot(name, ty, e.type) : this.ownedSlot(name, ty, e.type);
+    if (owned) ref = temp ? this.tempSlot(name, ty, e.type, undefined, false, block) : this.ownedSlot(name, ty, e.type);
     else {
       ref = this.fresh();
       this.vars.push(`  ${ref} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
@@ -840,6 +855,13 @@ class FnEmitter {
   private place$(t: TypeKind, what: string): string {
     const v = placeType(this.cx, t);
     if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
+    return v;
+  }
+
+  /** lentType, or the reason the function stays legacy. */
+  private lent(t: TypeKind, what: string): string {
+    const v = lentType(this.cx, t);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, stripRefs(t))}`);
     return v;
   }
 
@@ -896,6 +918,7 @@ class FnEmitter {
     this.emit(open);
     this.depth++;
     this.scopes.push(new Map());
+    this.blocks.push(this.owned.length);
     this.owned.push([]);
     const start = this.body.length;
     const r = fill();
@@ -903,6 +926,7 @@ class FnEmitter {
     const end = this.closeScope(start, r === true, v);
     if (r !== true) this.emit(end ? `milo.yield ${end.ref} : ${end.ty}` : "milo.yield");
     this.scopes.pop();
+    this.blocks.pop();
     this.depth--;
     return r === true;
   }
@@ -956,15 +980,16 @@ class FnEmitter {
    *    comparison's operand): at the end of its statement, `stmt`. Legacy drops these right
    *    after their operator, which is the same point: nothing else runs in between;
    *  - a `let` initializer's: at the end of the `let` (`scoped`); a for-in iterable's after
-   *    the loop, as legacy's registerScopedTemp.
+   *    the loop, as legacy's registerScopedTemp; a temporary array a slice is taken of
+   *    (`total([a, b])`): when its block ends (`block`), as legacy's frame slot does;
    * `structural`: the temporary is a structural clone of an element (a `v[i]` match
    * subject, legacy emitDeepCloneFromPtr), which shares its resources with the element, so
    * it is freed structurally (milo.var `structural`, legacy's structuralDropTypes) and no
    * user Drop runs for it. A clone with a user Drop held anywhere else stays legacy.
    */
-  private tempSlot(name: string, ty: string, t: TypeKind, of?: Val, structural = false): string {
+  private tempSlot(name: string, ty: string, t: TypeKind, of?: Val, structural = false, block = false): string {
     if (of && this.clones.has(of.ref) && !structural && this.runsUserDrop(ty)) throw new MlirUnsupported("a clone with a user Drop as a temporary");
-    return this.ownedSlot(name, ty, t, structural);
+    return this.ownedSlot(name, ty, t, structural, block);
   }
   // Results of copyOut: legacy's structural clones of what a place holds.
   private clones = new Set<string>();
@@ -985,10 +1010,10 @@ class FnEmitter {
   }
 
   /** A slot owning a `ty` (string, Vec) for the innermost block. */
-  private ownedSlot(name: string, ty: string, t: TypeKind, structural = false): string {
+  private ownedSlot(name: string, ty: string, t: TypeKind, structural = false, block = false): string {
     const ref = this.fresh();
     this.vars.push(`  ${ref} = milo.var ${quote(name)} owned${structural ? " structural" : ""} : !milo.ref<${ty}>`);
-    this.owned[this.owned.length - 1].push({ ref, ty });
+    this.owned[block ? this.blocks[this.blocks.length - 1] : this.owned.length - 1].push({ ref, ty });
     this.dropGlue(ty, t, structural);
     return ref;
   }
@@ -1262,8 +1287,11 @@ class FnEmitter {
         // on before the body, so a `continue` (back to the condition) cannot skip it.
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         if (s.consume && s.iterableKind === "vec") return this.consumedForEach(s);
-        if (s.iterableKind === "array") return this.arrayForEach(s);
-        if ((s.iterableKind !== "vec" && s.iterableKind !== "string") || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
+        // A slice is a Vec header: borrowed and walked as a Vec is.
+        const it = stripRefs(s.iterable.type);
+        const slice = s.iterableKind === "array" && it.tag === "array" && it.size === null;
+        if (s.iterableKind === "array" && !slice) return this.arrayForEach(s);
+        if ((s.iterableKind !== "vec" && s.iterableKind !== "string" && !slice) || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
         let place = "", elem: string, data: string, len: string, byPlace = false;
@@ -1356,13 +1384,14 @@ class FnEmitter {
         return this.stmts(s.body);
       case "UnsafeBlock": {
         this.scopes.push(new Map());
+        this.blocks.push(this.owned.length);
         this.owned.push([]);
         const start = this.body.length;
         try {
           const jumped = this.stmts(s.body);
           this.closeScope(start, jumped, null);
           return jumped;
-        } finally { this.scopes.pop(); }
+        } finally { this.scopes.pop(); this.blocks.pop(); }
       }
       default:
         throw new MlirUnsupported(`stmt ${s.kind}`);
@@ -1392,8 +1421,7 @@ class FnEmitter {
     e.args.forEach((a, k) => {
       const t = stripRefs(a.expr.type);
       if (a.passByRef) {
-        const ty = this.place$(t, "interface call operand");
-        ops.push({ name: `a${k}`, type: t, mode: a.refMut ? "mut" : "ref", ref: this.place(a.expr, refOf(ty), a.refMut).ref });
+        ops.push({ name: `a${k}`, type: t, mode: a.refMut ? "mut" : "ref", ref: this.place(a.expr, this.lent(t, "interface call operand"), a.refMut).ref });
         return;
       }
       const { v, type } = this.helperOperand(a.expr, "interface call argument");
@@ -1449,6 +1477,7 @@ class FnEmitter {
     if (s.consume && this.runsUserDrop(ety)) throw new MlirUnsupported("consumed for over an array with a user Drop");
     const scopeStart = this.body.length;
     this.scopes.push(new Map());
+    this.blocks.push(this.owned.length);
     this.owned.push([]);
     try {
       let arr: string;
@@ -1473,7 +1502,7 @@ class FnEmitter {
       this.loops--;
       this.closeScope(scopeStart, false, null);
       return false;
-    } finally { this.scopes.pop(); }
+    } finally { this.scopes.pop(); this.blocks.pop(); }
   }
 
   private consumedForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
@@ -1865,6 +1894,34 @@ class FnEmitter {
         if (!m.ty.startsWith("!milo.map<")) throw new MlirUnsupported("len of a non-map");
         return this.def(`milo.map.len ${m.ref} : ${m.ty}`, "si64");
       });
+      case "ArrayLen": {
+        // A fixed array's is its size, the object never evaluated (legacy genArrayLen); a
+        // slice's is its header's.
+        const ot = stripRefs(e.object.type);
+        if (scalar(e.type, "array length") !== "si64") throw new MlirUnsupported("array length type");
+        if (ot.tag === "array" && ot.size !== null) return this.def(`milo.const ${ot.size} : si64`, "si64");
+        const { place, elem } = this.vecPlace(e.object);
+        return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");
+      }
+      case "VecSlice": {
+        // `v[a..b]` of a Vec, a fixed array or a slice: legacy's genVecSlice (range checks, the
+        // header into v's buffer) in a helper, v lent by its place. A view: nothing owned.
+        const vt = stripRefs(e.vec.type);
+        const lent = this.lent(vt, "sliced value");
+        const k = e.vec.kind, at = placeType(this.cx, e.vec.type);
+        let v: string;
+        if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && at !== null && !isSsa(this.cx, at) && lent === `!milo.ref<${at}>`) {
+          // A temporary array (`total([a, b])`) lives until its block ends (tempSlot).
+          v = this.bigSlot("slice.of", e.vec, true, true).ref;
+        } else v = this.place(e.vec, lent, false).ref;
+        const a = this.expr(e.start), b = this.expr(e.end);
+        const elem = this.place$(e.elementType, "slice element");
+        if (a.ty !== "si64" || b.ty !== "si64" || vecElem(this.cx, stripRefs(e.type)) !== elem) throw new MlirUnsupported("slice operand types");
+        const r = this.intrinsic("vecslice", e, [{ name: "v", type: vt, mode: "ref", ref: v },
+          { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
+        ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
+        return { ...r, own: "view" };
+      }
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);
         return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");
@@ -2072,7 +2129,7 @@ class FnEmitter {
     make: (idents: HIRExpr[]) => HIRExpr, ret: string | null, panics = true): Val {
     const l = panics ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : { line: 0, col: 0, file: "" };
     if (!l) throw new MlirUnsupported("no source file for a panic location");
-    const tys = ops.map(o => { const t = this.value(o.type, "intrinsic operand"); return o.mode === "val" ? t : refOf(t); });
+    const tys = ops.map(o => o.mode === "val" ? this.value(o.type, "intrinsic operand") : this.lent(o.type, "intrinsic operand"));
     const site = panics ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
     const name = `milo.intr.${kind}.${ops.map(o => typeKey(o.type)).join(".")}${site}`;
     const retType = e.type;
@@ -2905,6 +2962,13 @@ class FnEmitter {
         this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
         return { ref: this.def(`milo.vec.place ${slot} : !milo.ref<${v.ty}> -> ${refTy}`, refTy).ref };
       }
+      if (vm && refTy === `!milo.vec<${vm[1]}>` && v.own === "view") {
+        // A slice (`v[a..b]`, a header into another's buffer) lends from a slot that drops nothing.
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var "slice" : !milo.ref<${v.ty}>`);
+        this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
+        return { ref: this.def(`milo.vec.place ${slot} : !milo.ref<${v.ty}> -> ${refTy}`, refTy).ref };
+      }
       if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
       if (this.hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary that owns a buffer lends from a slot that drops it.
@@ -2991,10 +3055,10 @@ class FnEmitter {
         // C gets the place's address, as legacy passes it; the helper's param is that place.
         const st = stripRefs(t);
         if (st.tag === "string" || st.tag === "vec" || st.tag === "array") throw new MlirUnsupported(`by-ref ${st.tag} argument of an extern call`);
-        const ty = this.place$(st, "extern by-ref operand");
-        const r = this.place(a.expr, refOf(ty), a.refMut).ref;
+        const ty = this.lent(st, "extern by-ref operand");
+        const r = this.place(a.expr, ty, a.refMut).ref;
         params.push({ name, type: st, isRef: !a.refMut, isRefMut: !!a.refMut });
-        args.push(`${r} : ${refOf(ty)}`);
+        args.push(`${r} : ${ty}`);
         keys.push(`r${typeKey(st)}`);
         return;
       }
@@ -3059,10 +3123,10 @@ class FnEmitter {
       const name = `a${k}`;
       // format reads its string parts: lent from their places, as print lends them.
       if (a.passByRef || (lendStrings && t.tag === "string")) {
-        const ty = this.value(t, "builtin operand");
-        const r = this.place(a.expr, refOf(ty), a.refMut).ref;
+        const ty = this.lent(t, "builtin operand");
+        const r = this.place(a.expr, ty, a.refMut).ref;
         params.push({ name, type: t, isRef: !a.refMut, isRefMut: !!a.refMut });
-        args.push(`${r} : ${refOf(ty)}`);
+        args.push(`${r} : ${ty}`);
         keys.push(`r${typeKey(t)}`);
         return;
       }
@@ -3171,11 +3235,9 @@ class FnEmitter {
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
-      const elem = byRef ? vecElem(this.cx, p.type) : null;
-      const pt = placeType(this.cx, p.type);
-      const ty = elem ?? (byRef || (pt !== null && inSlot(this.cx, pt)) ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
+      const ty = byRef ? this.lent(p.type, "by-ref arg") : this.place$(p.type, "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
-      return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
+      return ty;
     });
     const ret = callee.retType.tag === "void" || sret ? null : abi ? this.place$(callee.retType, "call result") : this.value(callee.retType, "call result");
     if (sret) paramTys.unshift(`!milo.ref<${this.place$(callee.retType, "sret result")}>`);

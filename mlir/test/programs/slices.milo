@@ -1,0 +1,86 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: slices as Vec headers.
+// A `&[T]` / `&mut [T]` param is the address of a header (indexed, measured, walked,
+// written); a Vec is lent as one, and `v[a..b]` of a Vec, a fixed array (a global's too)
+// or another slice is legacy's genVecSlice in a helper, a view lent from a slot that drops
+// nothing. Fn values and closures take slice params the same way.
+
+let TABLE: [i32; 6] = [2, 3, 5, 7, 11, 13]
+
+fn find(keys: &[i32], cp: i32): i64 {
+    var lo: i64 = 0
+    var hi = keys.len
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        let k = keys[mid]
+        if k == cp {
+            return mid
+        }
+        if k < cp {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return -1
+}
+
+fn total(xs: &[string]): i64 {
+    var t: i64 = 0
+    for s in xs {
+        t += s.len
+    }
+    return t
+}
+
+fn scale(xs: &mut [i64], k: i64): void {
+    for i in 0..xs.len {
+        xs[i] = xs[i] * k
+    }
+}
+
+fn firstOf(xs: &[i64]): i64 {
+    return inner(xs[1..xs.len])
+}
+
+fn inner(xs: &[i64]): i64 {
+    if xs.len == 0 {
+        return -1
+    }
+    return xs[0]
+}
+
+fn viaFn(f: (&[i32]) => i64, xs: &[i32]): i64 {
+    return f(xs) + 1
+}
+
+fn count(xs: &[i32]): i64 {
+    return xs.len
+}
+
+fn exercise() {
+    print(find(TABLE, 7))
+    print(find(TABLE, 4))
+    print(find(TABLE[1..4], 5))
+    var names: Vec<string> = Vec.new()
+    names.push("ab")
+    names.push("cde")
+    names.push("f")
+    print(total(names))
+    print(total(names[1..3]))
+    var nums: Vec<i64> = Vec.new()
+    for i in 0..5 {
+        nums.push(i + 1)
+    }
+    scale(&mut nums, 3)
+    print(nums[4])
+    print(firstOf(nums))
+    let arr: [i64; 4] = [9, 8, 7, 6]
+    print(firstOf(arr[0..4]))
+    print(viaFn(count, TABLE))
+    let base: i64 = 100
+    print(viaFn((xs: &[i32]): i64 => base + xs.len, TABLE[2..6]))
+}
+
+fn main() {
+    exercise()
+}
