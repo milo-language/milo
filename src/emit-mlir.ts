@@ -757,7 +757,7 @@ class FnEmitter {
       const i = layout.fields.findIndex(lf => lf.name === f.name);
       const lt = layout.fields[i]?.typeKind;
       const pty = lt && valueType(this.cx, lt) === null ? placeType(this.cx, lt) : null;
-      if (pty === null) { given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"), f.value.type)); continue; }
+      if (pty === null) { given.set(f.name, this.pend(this.fieldValue(f.value, lt), f.value.type)); continue; }
       // A field that is a place only (an array) is built in its own place, in source order.
       const fr = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref;
       this.into(f.value, fr, pty);
@@ -813,6 +813,18 @@ class FnEmitter {
     const toOwning = ty.startsWith("!milo.fn<owning ");
     if (!toOwning && !(leak && v.own === "owned")) return v;
     return { ...this.def(`milo.fn.cast ${v.ref} : ${v.ty} -> ${ty}`, ty), own: toOwning ? "owned" : undefined };
+  }
+
+  /**
+   * A struct literal's field value. A named function given to a C fn-pointer field (an
+   * extern struct's ops table) is the function's own symbol, as legacy stores it.
+   */
+  private fieldValue(x: HIRExpr, ft: TypeKind | undefined): Val {
+    if (ft?.tag === "cfn" && x.kind === "Ident" && x.type.tag === "fn" && this.fns.has(x.name) && !this.scopes.some(m => m.has(x.name))) {
+      const u8p: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+      return this.fnAddress({ kind: "Cast", operand: x, targetType: u8p, type: u8p } as HIRExpr & { kind: "Cast" });
+    }
+    return this.consume(this.expr(x), "field");
   }
 
   /** `[T; N]` where a `*T` is wanted (a cast, a pointer argument): the array's address, as legacy. */
@@ -3098,7 +3110,7 @@ class FnEmitter {
     if (!layout) throw new MlirUnsupported("struct layout");
     const given = new Map<string, Val>();
     const mark = this.pending.length;
-    for (const f of e.fields) given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"), f.value.type));
+    for (const f of e.fields) given.set(f.name, this.pend(this.fieldValue(f.value, layout.fields.find(lf => lf.name === f.name)?.typeKind), f.value.type));
     this.pending.length = mark;
     // The base gives up its unlisted fields and drops its listed ones: not with owned ones yet.
     if (e.base && this.hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
