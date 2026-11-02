@@ -34,7 +34,6 @@ export interface MlirEmitCtx {
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
-  mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
   hasVecType: boolean;
   mlirDropHelper(key: string, t: TypeKind, structural?: boolean): void;
@@ -4467,76 +4466,8 @@ class FnEmitter {
     const only = args.length === 1 ? args[0].expr : null;
     const formatted = only?.kind === "Call" && only.func === "format" && this.cx.isBuiltinName("format");
     if (formatted) args = only.args;
-    const stderr = e.func === "eprint";
-    const flag = stderr ? " stderr" : "";
-    let parts: { v: Val; key: string; type: TypeKind }[] = [];
-    const flush = (partial: boolean) => {
-      this.cx.mlirPrintHelper(stderr, parts.map(p => ({ key: p.key, type: p.type })), partial);
-      const attrs = `${flag}${partial ? " partial" : ""}`;
-      if (parts.length === 0) this.emit(`milo.print${attrs}`);
-      else this.emit(`milo.print${attrs} ${parts.map(p => p.v.ref).join(", ")} : ${parts.map(p => p.v.ty).join(", ")}`);
-      parts = [];
-    };
-    const strip = (t: TypeKind) => { while (t.tag === "ref") t = t.inner; return t; };
-    if (args.every(a => !a.passByRef && this.hasDisplayGlue(a.expr.type))) return this.printText(args, stderr, formatted, !e.noNewline);
-    // A part milo.print cannot carry (a fixed array, a HashMap): the whole print is one
-    // call of legacy's print helper, which takes scalars by value and the rest by reference.
-    if (!formatted && args.some(a => { const t = strip(a.expr.type); return t.tag === "array" || t.tag === "hashmap"; })) {
-      const ops: string[] = [];
-      const mark = this.pending.length;
-      for (const a of args) {
-        if (a.passByRef) throw new MlirUnsupported("by-ref print part");
-        const t = strip(a.expr.type);
-        if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr") {
-          const v = this.pend(this.expr(a.expr), t);
-          if (valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
-          ops.push(`${v.ref} : ${v.ty}`);
-        } else {
-          const lt = this.lent(t, "print part");
-          ops.push(`${this.place(a.expr, lt, false).ref} : ${lt}`);
-        }
-      }
-      this.pending.length = mark;
-      const name = this.cx.mlirPrintHelper(stderr, args.map(a => ({ key: typeKey(strip(a.expr.type)), type: strip(a.expr.type) })));
-      this.callHelper(name, ops, null);
-      return { ref: "", ty: "" };
-    }
-    args.forEach((a, i) => {
-      if (a.passByRef) throw new MlirUnsupported("by-ref print part");
-      let t = a.expr.type;
-      while (t.tag === "ref") t = t.inner;
-      const v = this.borrow(this.expr(a.expr), t);
-      // Scalar.cpp printKey spells the same names. A slice is its Vec header (a view), and
-      // prints as a Vec does.
-      const slice = t.tag === "array" && t.size === null ? vecElem(this.cx, { tag: "vec", element: t.element } as TypeKind) : null;
-      const want = slice !== null ? `!milo.vecval<${slice}>` : valueType(this.cx, t);
-      if (want !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
-      parts.push({ v, key: typeKey(t), type: t });
-      if (!formatted && t.tag === "string" && i < args.length - 1) flush(true);
-    });
-    flush(false);
-    return { ref: "", ty: "" };
-  }
-
-  /** Every type inside `t` has display glue (src/mlir-glue.ts). */
-  private hasDisplayGlue(t: TypeKind, seen: string[] = []): boolean {
-    t = stripRefs(t);
-    switch (t.tag) {
-      case "int": case "float": case "bool": case "ptr": case "string": case "fn": case "heap": case "interface": return true;
-      case "vec": case "array": return this.hasDisplayGlue(t.element, seen);
-      case "hashmap": return this.hasDisplayGlue(t.key, seen) && this.hasDisplayGlue(t.value, seen);
-      case "struct": case "enum": {
-        if (seen.includes(t.name)) return true;
-        const inner = [...seen, t.name];
-        if (t.tag === "struct") {
-          const l = this.cx.structLayouts.get(t.name);
-          return !!l && l.fields.every(f => this.hasDisplayGlue(f.typeKind, inner));
-        }
-        const l = this.cx.mlirEnumLayout(t.name);
-        return !!l && l.variants.every(v => v.fields.every(f => this.hasDisplayGlue(f, inner)));
-      }
-      default: return false;
-    }
+    if (args.some(a => a.passByRef)) throw new MlirUnsupported("by-ref print part");
+    return this.printText(args, e.func === "eprint", formatted, !e.noNewline);
   }
 
   /**

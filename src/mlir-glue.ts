@@ -120,8 +120,8 @@ class GlueFn {
       this.call(`milo.string.push_${scalar}`, [[dst, STR_REF], [v, arg]], PTR);
       return;
     }
-    if (t.tag === "fn" || t.tag === "heap" || t.tag === "interface") {
-      // Shown as legacy codegen shows a part it has no text for.
+    if (t.tag !== "struct" && t.tag !== "enum" && t.tag !== "vec" && t.tag !== "array" && t.tag !== "hashmap") {
+      // A closure, a box, an interface: no text, shown as legacy codegen shows one.
       this.text("<unprintable>", dst);
       return;
     }

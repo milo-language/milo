@@ -697,19 +697,6 @@ LogicalResult IndexStoreOp::verify() {
   return success();
 }
 
-LogicalResult PrintOp::verify() {
-  for (Type t : getParts().getTypes()) {
-    auto i = dyn_cast<IntegerType>(t);
-    bool ok = (i && (!i.isSignless() || i.getWidth() == 1)) || t.isF32() || t.isF64() ||
-              isa<PtrType, StringType, StructType, EnumType, VecValType>(t);
-    if (!ok)
-      return emitOpError("cannot display a part of type ") << t;
-  }
-  if (getPartial() && (getParts().empty() || !isa<StringType>(getParts().back().getType())))
-    return emitOpError("partial must end at a string part");
-  return success();
-}
-
 LogicalResult StructNewOp::verify() {
   if (getFields().getTypes() != getType().getFields())
     return emitOpError("operands are not the fields of ") << getType();

@@ -206,7 +206,7 @@ export class Codegen {
   // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
-  // Legacy functions MLIR bodies call (mlirHelper, mlirPrintHelper), by symbol, and the
+  // Legacy functions MLIR bodies call (mlirHelper), by symbol, and the
   // drop glue they call (mlirDropHelper), by symbol and type.
   private mlirHelpers = new Map<string, HIRFunction>();
   private mlirDropHelpers = new Map<string, TypeKind>();
@@ -3321,22 +3321,6 @@ export class Codegen {
   public mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string {
     if (!this.mlirHelpers.has(name)) this.mlirHelpers.set(name, { name, isExtern: false, isVariadic: false, ...make() });
     return name;
-  }
-
-  /** The legacy function doing `print(a0, a1, ...)` (or eprint); non-scalar parts by reference. */
-  public mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial = false): string {
-    const name = [stderr ? "milo.eprint" : "milo.print", ...(partial ? ["part"] : []), ...parts.map(p => p.key)].join(".");
-    return this.mlirHelper(name, () => {
-      const byRef = (t: TypeKind) => !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr");
-      const params = parts.map((p, i) => ({ name: `a${i}`, type: p.type, isRef: byRef(p.type), isRefMut: false }));
-      return {
-        params, retType: { tag: "void" },
-        body: [{ kind: "ExprStmt", expr: {
-          kind: "Call", func: stderr ? "eprint" : "print", type: { tag: "void" }, variadic: true, noNewline: partial,
-          args: params.map(p => ({ expr: { kind: "Ident", name: p.name, type: p.type }, passByRef: false, refMut: false })),
-        } }],
-      };
-    });
   }
 
   /** `milo.drop.<key>(ptr)`: legacy's drop glue for `t`, run on the value at the pointer. */

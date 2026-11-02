@@ -1665,44 +1665,6 @@ namespace {
 
 // Scalars are passed by value, everything else by reference (a slot in the entry block,
 // so a print in a loop does not grow the stack).
-struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
-  LogicalResult
-  matchAndRewrite(PrintOp op, OpAdaptor a,
-                  ConversionPatternRewriter &rw) const override {
-    Location loc = op.getLoc();
-    auto module = op->getParentOfType<ModuleOp>();
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    std::string name = op.getStderr() ? "milo.eprint" : "milo.print";
-    if (op.getPartial())
-      name += ".part";
-    SmallVector<Value> args;
-    SmallVector<Type> argTys;
-    for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
-      Type t = part.getType();
-      name += "." + typeKey(t);
-      // As legacy mlirPrintHelper: scalars and pointers by value, every other part by
-      // address (a by-value Vec param would be dropped inside the helper).
-      if (isa<IntegerType, FloatType, PtrType>(t)) {
-        args.push_back(v);
-        argTys.push_back(v.getType());
-        continue;
-      }
-      Value slot = entrySlot(rw, op, v.getType());
-      LLVM::StoreOp::create(rw, loc, v, slot);
-      args.push_back(slot);
-      argTys.push_back(ptrTy);
-    }
-    auto fn = LLVM::lookupOrCreateFn(rw, module, name, argTys,
-                                     LLVM::LLVMVoidType::get(rw.getContext()));
-    if (failed(fn))
-      return failure();
-    LLVM::CallOp::create(rw, loc, *fn, args);
-    rw.eraseOp(op);
-    return success();
-  }
-};
-
 struct CheckUnaliasedLowering : ConvertOpToLLVMPattern<CheckUnaliasedOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1821,7 +1783,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
                ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, OverflowsLowering, SaturatingLowering,
-               StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
+               StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,
