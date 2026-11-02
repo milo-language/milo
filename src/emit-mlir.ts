@@ -1144,13 +1144,16 @@ class FnEmitter {
           this.bind(s.name, { kind: "var", ref: b.ref, ty: b.ty, owned: b.owned });
           return false;
         }
-        if (s.type.tag === "ref" && !s.mutable) {
-          // A `&T` let (`let base = s[0..end]`): a view of what it is taken from, never an
-          // owner, so bound as it is: a place as that place, a view as its SSA value.
+        const slice = s.type.tag === "array" && s.type.size === null;
+        if ((s.type.tag === "ref" || slice) && !s.mutable) {
+          // A `&T` or slice let (`let base = s[0..end]`): a view of what it is taken from,
+          // never an owner, so bound as it is: a place as that place, a view as its SSA value.
           const p = this.fieldPlace(s.value);
           if (p) { this.bind(s.name, { kind: "var", ref: p.ref, ty: p.ty, param: p.param }); return false; }
           const v = this.scoped(() => this.expr(s.value));
-          if (v.ty !== this.value(s.type.inner, "let") || (this.hasDrop(v.ty) && v.own !== "view")) throw new MlirUnsupported("`&T` let of a value it would own");
+          const inner = s.type.tag === "ref" ? s.type.inner : s.type;
+          const want = inner.tag === "array" && inner.size === null ? `!milo.vecval<${this.lent(inner, "let").slice(10, -1)}>` : this.value(inner, "let");
+          if (v.ty !== want || (v.own !== "view" && this.hasDrop(v.ty))) throw new MlirUnsupported("`&T` let of a value it would own");
           this.bind(s.name, { kind: "ssa", v });
           return false;
         }
@@ -2950,6 +2953,21 @@ class FnEmitter {
     if (b?.kind === "vec") return { place: b.ref, elem: b.elem, param: b.param };
     // A Vec local, a Vec field of a place, or a Vec element.
     const slot = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : e.kind === "FieldAccess" || e.kind === "IndexAccess" ? this.fieldPlace(e) : null;
+    if (!slot && !(b?.kind === "var")) {
+      // A Vec that is a value (`s.split(";")[0]`, a slice let): materialized into a slot,
+      // a temporary's owning it for the open frame (tempSlot), a view's dropping nothing.
+      const v = b?.kind === "ssa" ? b.v : this.expr(e);
+      const vm = /^!milo\.vecval<(.*)>$/.exec(v.ty);
+      if (!vm) throw new MlirUnsupported("a Vec that is not a param, a local or a field");
+      let ref: string;
+      if (v.own === "owned" && !this.bitCopies.has(v.ref)) ref = this.tempSlot("vec", v.ty, e.type, v);
+      else {
+        ref = this.fresh();
+        this.vars.push(`  ${ref} = milo.var "vec" : !milo.ref<${v.ty}>`);
+      }
+      this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${v.ty}>`);
+      return { place: this.def(`milo.vec.place ${ref} : !milo.ref<${v.ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref, elem: vm[1] };
+    }
     const m = slot ? /^!milo\.vecval<(.*)>$/.exec(slot.ty) : null;
     if (!slot || !m) throw new MlirUnsupported("a Vec that is not a param, a local or a field");
     const place = this.def(`milo.vec.place ${slot.ref} : !milo.ref<${slot.ty}> -> !milo.vec<${m[1]}>`, `!milo.vec<${m[1]}>`);

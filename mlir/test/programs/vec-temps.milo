@@ -1,0 +1,46 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a Vec that is a value
+// read in place (indexed, measured, lent): a call's result, a split's, a slice let. The
+// temporary owns its slot until its frame closes; a view's slot drops nothing.
+
+fn nums(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n {
+        v.push(i * i)
+    }
+    return v
+}
+
+fn words(): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    v.push("alpha")
+    v.push("beta")
+    return v
+}
+
+fn sum(xs: &[i64]): i64 {
+    var t: i64 = 0
+    for x in xs {
+        t += x
+    }
+    return t
+}
+
+fn coding(v: &string): string {
+    let name = v.split(";") [0].trim().toLower()
+    return name
+}
+
+fn exercise() {
+    print(nums(5) [3])
+    print(nums(4).len)
+    print(words() [1])
+    print(coding(" GZip ;q=1"))
+    print(sum(nums(4)))
+    let all = nums(6)
+    let tail = all[2..6]
+    print(tail[0] + tail.len)
+}
+
+fn main() {
+    exercise()
+}
