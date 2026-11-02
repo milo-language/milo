@@ -34,6 +34,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "../tests/annotations";
 import { OWNERSHIP_RULES } from "./ownership-rules";
+import { VALUE_RULES } from "./value-rules";
 
 const ROOT = join(import.meta.dir, "..");
 const ERRORS_DIR = join(ROOT, "tests", "errors");
@@ -180,6 +181,7 @@ function render(reqs: Requirement[]): string {
   L.push(`| rejection | ${rejects.length} | \`MILO-E-\` | \`tests/run.test.ts\` — *errors (type checker rejects)* |`);
   L.push(`| behavioural | ${behaviours.length} | \`MILO-B-\` | \`tests/run.test.ts\` — *fixtures (compile + run)* |`);
   L.push(`| ownership | ${OWNERSHIP_RULES.length} | \`MILO-O-\` | the \`MILO-B-\` programs each rule cites |`);
+  L.push(`| value semantics | ${VALUE_RULES.length} | \`MILO-V-\` | the \`MILO-B-\` programs each rule cites |`);
   L.push("");
   L.push("Every identifier below cites the program that states it and the suite that discharges it. A");
   L.push("requirement with no verification cannot appear here: the generator reads the annotations the test");
@@ -216,6 +218,20 @@ function render(reqs: Requirement[]): string {
     "prints when it runs) is what makes the order observable.");
   L.push("");
   for (const r of OWNERSHIP_RULES) {
+    L.push(`### ${r.id}`);
+    L.push("");
+    L.push(r.rule);
+    L.push("");
+    L.push(`*Pinned by:* ${r.fixtures.map(x => `[\`MILO-B-${x}\`](#milo-b-${x.toLowerCase()})`).join(", ")}`);
+    L.push("");
+  }
+
+  L.push("## Value semantics rules");
+  L.push("");
+  L.push("How a value prints, how it is cloned, in what order it is dropped, and how HashMap keys " +
+    "compare. Each rule is discharged by the behavioural programs it cites.");
+  L.push("");
+  for (const r of VALUE_RULES) {
     L.push(`### ${r.id}`);
     L.push("");
     L.push(r.rule);

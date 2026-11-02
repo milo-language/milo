@@ -1,0 +1,62 @@
+// @expect: drop-user D
+// @expect: drop c
+// @expect: drop b
+// @expect: drop a
+// @expect: drop v0
+// @expect: drop v1
+// @expect: drop v2
+
+// A struct runs its own Drop first, then drops its fields last-to-first. A Vec drops
+// its elements in index order.
+struct Tag {
+    name: string,
+}
+
+impl Drop for Tag {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.name)
+    }
+}
+
+struct D {
+    a: Tag,
+    b: Tag,
+    c: Tag,
+}
+
+impl Drop for D {
+    fn drop(self: &mut Self): void {
+        print("drop-user D")
+    }
+}
+
+fn structCase(): void {
+    let _d = D {
+        a: Tag {
+            name: "a"
+        }, b: Tag {
+            name: "b"
+        }, c: Tag {
+            name: "c"
+        }
+    }
+}
+
+fn vecCase(): void {
+    var v: Vec<Tag> = Vec.new()
+    v.push(Tag {
+        name: "v0"
+    })
+    v.push(Tag {
+        name: "v1"
+    })
+    v.push(Tag {
+        name: "v2"
+    })
+}
+
+pub fn main(): i32 {
+    structCase()
+    vecCase()
+    return 0
+}

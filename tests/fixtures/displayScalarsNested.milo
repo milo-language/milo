@@ -1,0 +1,46 @@
+// @expect: true false
+// @expect: 0.1 1.5 3
+// @expect: Empty {  }
+// @expect: Wrap { s: "hi", n: -4 }
+// @expect: Msg("a", 2)
+// @expect: Plain
+// @expect: ["x", "y"]
+// @expect: {"k": "v"}
+// @expect: top-level string
+
+// Display: ints decimal, bool true/false, floats shortest round-trip digits. A top-level
+// string prints its bytes; inside a struct, enum or container it is double-quoted.
+struct Empty {
+}
+
+struct Wrap {
+    s: string,
+    n: i64,
+}
+
+enum E {
+    Msg(string, i64),
+    Plain,
+}
+
+pub fn main(): i32 {
+    print(true, " ", false)
+    let a: f64 = 0.1
+    let b: f64 = 1.5
+    let c: f64 = 3.0
+    print(a, " ", b, " ", c)
+    print(Empty {
+    })
+    print(Wrap {
+        s: "hi", n: -4
+    })
+    print(E.Msg("a", 2))
+    print(E.Plain)
+    let v: Vec<string> = ["x", "y"]
+    print(v)
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("k", "v")
+    print(m)
+    print("top-level string")
+    return 0
+}
