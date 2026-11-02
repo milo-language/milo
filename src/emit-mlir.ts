@@ -3060,7 +3060,13 @@ class FnEmitter {
         }));
         v = { ...this.def(`milo.string.share ${b.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       } else if (b.owned && !c.share) v = { ...this.def(`milo.move ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
-      else throw new MlirUnsupported("capture that is not a move of an owned local");
+      else if (!b.owned && !c.share && this.inClosureBody && !this.runsUserDrop(cty)) {
+        // A capture of an enclosing by-ref closure (its slot is the owner's, in another
+        // frame) moved on into this one, as legacy does it: read out and zeroed through
+        // the reference, so the owner's own drop later finds it empty.
+        v = { ...this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
+        this.emit(`milo.store ${this.def(`milo.zero : ${cty}`, cty).ref}, ${b.ref} init : !milo.ref<${cty}>`);
+      } else throw new MlirUnsupported("capture that is not a move of an owned local");
       params.push({ name: c.name, type: c.type, isRef: false, isRefMut: false });
       args.push(v);
     }
