@@ -1,0 +1,13 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `todo(msg)` on a path
+// that runs: the message names the enclosing function and the site, then it aborts.
+
+fn half(n: i64): i64 {
+    if n > 0 { return n / 2 }
+    todo($"neg {n}")
+}
+
+fn main(): i32 {
+    print(half(8))
+    print(half(-3))
+    return 0
+}

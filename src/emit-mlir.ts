@@ -4078,6 +4078,27 @@ class FnEmitter {
   }
 
   /**
+   * `todo()` / `todo(msg)`: legacy's message and abort in a helper per site. The message
+   * names the enclosing function by what follows its name's last `$` (legacy's
+   * currentFnName), so the helper's name ends in `$` and that same name. A message
+   * string goes by reference. The call never returns.
+   */
+  private todo(e: HIRExpr & { kind: "Call" }): Val {
+    const l = this.site(e.span);
+    const who = this.fn.name.slice(this.fn.name.lastIndexOf("$") + 1);
+    const msg = e.args[0]?.expr;
+    if (e.args.length > 1 || (msg && stripRefs(msg.type).tag !== "string")) throw new MlirUnsupported("todo arguments");
+    const name = this.cx.mlirHelper(`milo.todo.${l.line}.${l.col}.${fnv1a(l.file)}$${who}`, () => ({
+      params: msg ? [{ name: "m", type: { tag: "string" }, isRef: true, isRefMut: false }] : [],
+      retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
+      body: [{ kind: "ExprStmt", expr: { ...e, args: msg ? [{ expr: { kind: "Ident", name: "m", type: { tag: "string" }, isMove: false }, passByRef: false, refMut: false }] : [] } }],
+    }));
+    const args = msg ? [`${this.place(msg, `!milo.ref<${STR}>`, false).ref} : !milo.ref<${STR}>`] : [];
+    this.callHelper(name, args, null);
+    return { ref: "", ty: "" };
+  }
+
+  /**
    * An extern call that is variadic or turns a string into a `*u8`: legacy's genCall in a
    * legacy function per callee, argument shape and call site, so the C string conversion
    * (a view or a literal copied to a NUL-terminated temporary for the call) and the
@@ -4356,6 +4377,7 @@ class FnEmitter {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
       if (e.func === "format") return this.builtinCall(e, stmt, true);
       if (e.func === "assert") return this.assert(e);
+      if (e.func === "todo") return this.todo(e);
       throw new MlirUnsupported(`builtin ${e.func}`);
     }
     const callee = this.fns.get(e.func);
