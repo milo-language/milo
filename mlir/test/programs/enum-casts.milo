@@ -1,0 +1,34 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a repr'd
+// enum cast to an integer is its tag, sign-extended to a wider target (a negative
+// discriminant stays negative, also as u64) and truncated to a narrower one.
+
+enum Op: i32 {
+    LDA = 169, STA = 141, NOP
+}
+
+enum Signed: i32 {
+    Neg = -1, Zero, Big = 70000
+}
+
+struct Instr {
+    op: Op,
+    arg: i64,
+}
+
+fn code(o: Op): i64 {
+    return o as i64
+}
+
+fn main() {
+    let ops = [Op.LDA, Op.STA, Op.NOP]
+    var t: i64 = 0
+    for o in ops { t = t * 1000 + code(o) }
+    print(t)
+    print(Signed.Neg as i64)
+    print(Signed.Neg as u64)
+    print(Signed.Big as u8)
+    print(Signed.Big as i16)
+    print(Signed.Zero as i32)
+    let ins = Instr { op: Op.NOP, arg: 3 }
+    print((ins.op as i64) + ins.arg)
+}

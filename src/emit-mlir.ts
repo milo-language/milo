@@ -1782,6 +1782,16 @@ class FnEmitter {
           return this.def(`milo.string.data ${v.ref}`, PTR);
         }
         if (e.operand.type.tag === "fn" && e.targetType.tag === "ptr") return this.fnAddress(e);
+        if (stripRefs(e.operand.type).tag === "enum" && e.targetType.tag === "int") {
+          // A repr'd enum's discriminant is its tag (legacy genCast): a signed i32, then
+          // sign-extended or truncated to the target.
+          const to = scalar(e.targetType, "cast target");
+          const tag = this.peek(e.operand, v => {
+            if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("cast of a non-enum");
+            return this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32");
+          });
+          return to === "si32" ? tag : this.def(`milo.cast ${tag.ref} : si32 to ${to}`, to);
+        }
         const from = scalar(e.operand.type, "cast source");
         const to = scalar(e.targetType, "cast target");
         const v = this.expr(e.operand);
