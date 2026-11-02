@@ -942,6 +942,18 @@ def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]>
   let hasVerifier = 1;
 }
 
+def Milo_CallPtrOp : Milo_Op<"call_ptr"> {
+  let summary = "a call through a raw code pointer";
+  let description = [{
+    A C function pointer called (`extern (..) => R` values), or a closure's code pointer
+    called with its env (`_callClosureVoid`): an indirect call with the C convention, scalar
+    and pointer arguments and result. It may do anything a call does.
+  }];
+  let arguments = (ins Milo_PtrType:$callee, Variadic<Milo_Simple>:$args);
+  let results = (outs Optional<Milo_Simple>:$result);
+  let assemblyFormat = "$callee `(` $args `)` attr-dict `:` functional-type($args, $result)";
+}
+
 def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {
   let summary = "the code address of a named function";
   let description = [{

@@ -397,6 +397,35 @@ Traits: `Terminator`
 
 
 
+### `milo.call_ptr` (::milo::CallPtrOp)
+
+_A call through a raw code pointer_
+
+Syntax:
+
+```
+operation ::= `milo.call_ptr` $callee `(` $args `)` attr-dict `:` functional-type($args, $result)
+```
+
+A C function pointer called (`extern (..) => R` values), or a closure's code pointer
+called with its env (`_callClosureVoid`): an indirect call with the C convention, scalar
+and pointer arguments and result. It may do anything a call does.
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `callee` | a raw pointer, untyped |
+| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped |
+
+
+
 ### `milo.cast` (::milo::CastOp)
 
 _Convert a scalar to another scalar type_

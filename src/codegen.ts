@@ -8608,6 +8608,21 @@ export class Codegen {
   }
   private emittedMlirWrites = new Set<string>();
 
+  /**
+   * MLIR path: the function for std's `_atomic<Op><Width>` (ATOMIC_INTRINSICS), an
+   * instance of a src/runtime/atomic.ll section; its symbol.
+   */
+  public mlirAtomic(builtin: string): string | null {
+    const spec = Codegen.ATOMIC_INTRINSICS[builtin];
+    if (!spec) return null;
+    const name = `milo.atomic.${builtin}`;
+    if (this.emittedMlirWrites.has(name)) return name;
+    this.emittedMlirWrites.add(name);
+    const key = { load: "milo.atomic.load", store: "milo.atomic.store", rmw: "milo.atomic.rmw", cas: "milo.atomic.cas" }[spec.kind];
+    this.helperFnBodies.push(runtimeFn(key, { name, ty: spec.ty, align: String(spec.align), ...(spec.kind === "rmw" ? { op: spec.rmwOp! } : {}) }));
+    return name;
+  }
+
   /** MLIR path: offsetOf(S, f), the byte offset legacy lays the field at (0 when unknown, as legacy). */
   public mlirFieldOffset(struct: string, field: string): number {
     const layout = this.structLayouts.get(struct);

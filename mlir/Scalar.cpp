@@ -1297,6 +1297,26 @@ struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
   }
 };
 
+struct CallPtrLowering : ConvertOpToLLVMPattern<CallPtrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(CallPtrOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    SmallVector<Type> params;
+    for (Value v : a.getArgs())
+      params.push_back(v.getType());
+    Type ret = op.getResult() ? getTypeConverter()->convertType(op.getResult().getType()) : LLVM::LLVMVoidType::get(rw.getContext());
+    auto fty = LLVM::LLVMFunctionType::get(ret, params);
+    SmallVector<Value> ops{a.getCallee()};
+    ops.append(a.getArgs().begin(), a.getArgs().end());
+    auto call = LLVM::CallOp::create(rw, op.getLoc(), fty, ops);
+    if (op.getResult())
+      rw.replaceOp(op, call.getResult());
+    else
+      rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1819,7 +1839,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

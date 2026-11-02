@@ -36,6 +36,7 @@ export interface MlirEmitCtx {
   mlirPanicText(): string;
   mlirDisplayName(name: string): string;
   mlirFieldOffset(struct: string, field: string): number;
+  mlirAtomic(builtin: string): string | null;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -540,8 +541,8 @@ interface ClosureState { next: number; texts: string[]; names: string[] }
 // nothing after it runs either way.
 // Builtins still made by legacy helpers: the process globals (argv, scheduler, panic hook)
 // move with the module scaffold, the atomics to an op of their own.
-const HELPER_BUILTINS = /^(_atomic\w+|_callClosureVoid|_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
-const NATIVE_BUILTINS = new Set(["exit", "flush", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32"]);
+const HELPER_BUILTINS = /^(_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
+const NATIVE_BUILTINS = new Set(["exit", "flush", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid"]);
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -2841,8 +2842,8 @@ class FnEmitter {
         return this.makeView(`!milo.vecval<${elem}>`, data, this.def(`milo.sub ${b.ref}, ${a.ref} wrapping : si64`, "si64"));
       }
       case "CFnCall": {
-        // A call through a C fn pointer: legacy's indirect C call in a helper, scalar
-        // arguments and result only (a struct by value would need the C ABI here).
+        // A call through a C fn pointer (milo.call_ptr): scalar arguments and result only (a
+        // struct by value would need the C ABI here).
         const f = this.expr(e.callee);
         if (f.ty !== PTR) throw new MlirUnsupported("C fn pointer of another type");
         const ops = [{ name: "f", type: e.callee.type, mode: "val" as const, ref: f.ref }];
@@ -2855,10 +2856,11 @@ class FnEmitter {
           ops.push({ name: `a${k}`, type: a.expr.type, mode: "val", ref: v.ref });
         });
         const ret = e.type.tag === "void" ? null : scalar(e.type, "C fn pointer result");
-        const sig = fnv1a(ops.map(o => typeKey(o.type)).join(",") + "->" + (ret ?? "v"));
-        const r = this.intrinsic(`cfncall.${sig}`, e, ops,
-          ([x, ...xs]) => ({ ...e, callee: x, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })) }), ret, false);
-        return this.valued(r, stmt);
+        const args = ops.slice(1);
+        const tys = args.map(o => valueType(this.cx, o.type)!);
+        const call = `milo.call_ptr ${f.ref}(${args.map(o => o.ref).join(", ")}) : (${tys.join(", ")}) -> ${ret ?? "()"}`;
+        if (ret === null) { this.emit(call); return this.valued({ ref: "", ty: "" }, stmt); }
+        return this.valued(this.def(call, ret), stmt);
       }
       case "OffsetOf": {
         // A constant of the struct layout (legacy structFieldOffset).
@@ -4654,6 +4656,20 @@ class FnEmitter {
       return v;
     };
     const none = { ref: "", ty: "" };
+    const atomic = e.func.startsWith("_atomic") ? this.cx.mlirAtomic(e.func) : null;
+    if (atomic) {
+      // A bool is its byte in memory: widened going in, compared back to i1 coming out.
+      const vty = /Bool$/.test(e.func) ? "ui8" : /I32$/.test(e.func) ? "si32" : "si64";
+      const ops = [arg(0, PTR), ...e.args.slice(1).map(a => {
+        const v = this.expr(a.expr);
+        return v.ty === "i1" && vty === "ui8" ? this.def(`milo.cast ${v.ref} : i1 to ui8`, "ui8") : v;
+      })];
+      if (ops.slice(1).some(o => o.ty !== vty)) throw new MlirUnsupported(`${e.func} operand type`);
+      const ret = /^_atomicStore/.test(e.func) ? null : vty;
+      const r = this.rtCall(atomic, ops, ret);
+      if (ret === "ui8") return this.def(`milo.cmp ne, ${r.ref}, ${this.def("milo.const 0 : ui8", "ui8").ref} : ui8`, "i1");
+      return r;
+    }
     switch (e.func) {
       case "flush": this.libcCall("fflush", [this.def(`milo.zero : ${PTR}`, PTR)], "si32"); return none;
       case "exit": this.libcCall("exit", [arg(0, "si32")], null); return none;
@@ -4663,6 +4679,11 @@ class FnEmitter {
         return none;
       }
       case "_loadU8": return this.def(`milo.ptr.load ${arg(0, PTR).ref} : ui8`, "ui8");
+      case "_callClosureVoid": {
+        const f = arg(0, PTR), env = arg(1, PTR);
+        this.emit(`milo.call_ptr ${f.ref}(${env.ref}) : (${PTR}) -> ()`);
+        return none;
+      }
       case "_loadI32": return this.def(`milo.ptr.load ${arg(0, PTR).ref} : si32`, "si32");
       case "_bytesToString": case "_cstrToString": {
         // A fresh NUL-terminated copy, so the string can go back to C without another.
@@ -5049,7 +5070,7 @@ class FnEmitter {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
-      if (NATIVE_BUILTINS.has(e.func)) return this.nativeBuiltin(e);
+      if (NATIVE_BUILTINS.has(e.func) || e.func.startsWith("_atomic")) return this.nativeBuiltin(e);
       if (e.func === "format") return this.formatText(e.args);
       if (e.func === "assert") return this.assert(e);
       if (e.func === "todo") return this.todo(e);

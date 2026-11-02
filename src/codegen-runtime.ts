@@ -6,6 +6,7 @@
 // `bun build --compile`, so a shipped binary carries it like the bundled stdlib.
 import STR_LL from "./runtime/str.ll" with { type: "text" };
 import MAP_LL from "./runtime/map.ll" with { type: "text" };
+import ATOMIC_LL from "./runtime/atomic.ll" with { type: "text" };
 
 const FILE = "src/runtime/*.ll";
 
@@ -33,7 +34,7 @@ export function parseSections(text: string): Map<string, readonly string[]> {
 }
 
 const SECTIONS = new Map<string, readonly string[]>();
-for (const text of [STR_LL, MAP_LL]) {
+for (const text of [STR_LL, MAP_LL, ATOMIC_LL]) {
   for (const [k, body] of parseSections(text)) {
     if (SECTIONS.has(k)) throw new Error(`${FILE}: section ${k} defined twice`);
     SECTIONS.set(k, body);
