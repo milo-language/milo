@@ -3984,6 +3984,29 @@ class FnEmitter {
       else this.emit(`milo.print${attrs} ${parts.map(p => p.v.ref).join(", ")} : ${parts.map(p => p.v.ty).join(", ")}`);
       parts = [];
     };
+    const strip = (t: TypeKind) => { while (t.tag === "ref") t = t.inner; return t; };
+    // A part milo.print cannot carry (a fixed array, a HashMap): the whole print is one
+    // call of legacy's print helper, which takes scalars by value and the rest by reference.
+    if (!formatted && args.some(a => { const t = strip(a.expr.type); return t.tag === "array" || t.tag === "hashmap"; })) {
+      const ops: string[] = [];
+      const mark = this.pending.length;
+      for (const a of args) {
+        if (a.passByRef) throw new MlirUnsupported("by-ref print part");
+        const t = strip(a.expr.type);
+        if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr") {
+          const v = this.pend(this.expr(a.expr), t);
+          if (valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+          ops.push(`${v.ref} : ${v.ty}`);
+        } else {
+          const lt = this.lent(t, "print part");
+          ops.push(`${this.place(a.expr, lt, false).ref} : ${lt}`);
+        }
+      }
+      this.pending.length = mark;
+      const name = this.cx.mlirPrintHelper(stderr, args.map(a => ({ key: typeKey(strip(a.expr.type)), type: strip(a.expr.type) })));
+      this.callHelper(name, ops, null);
+      return { ref: "", ty: "" };
+    }
     args.forEach((a, i) => {
       if (a.passByRef) throw new MlirUnsupported("by-ref print part");
       let t = a.expr.type;
