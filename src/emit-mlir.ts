@@ -850,7 +850,16 @@ class FnEmitter {
     if (this.hasDrop(ety)) {
       // So here: the value parks in a slot that owns nothing, slots 0..n-2 get structural
       // clones of it (copyOut, legacy's emitDeepCloneFromPtr), the last gets the value.
-      if (e.count < 1 || (!e.cloneFn && this.runsUserDrop(ety))) throw new MlirUnsupported("array repeat of an owning value");
+      if (e.count === 0) {
+        // No slot takes it: dropped right here, as legacy's emitDropValue of it.
+        this.owned.push([]);
+        const start = this.body.length;
+        this.emit(`milo.store ${v.ref}, ${this.ownedSlot("repeat.none", ety, e.value.type)} : !milo.ref<${ety}>`);
+        this.closeScope(start, false, null);
+        return;
+      }
+      // Clones are needed only for the slots before the last: a user Drop then needs its Clone.
+      if (e.count > 1 && !e.cloneFn && this.runsUserDrop(ety)) throw new MlirUnsupported("array repeat of a value with a user Drop and no Clone");
       const park = this.fresh();
       this.vars.push(`  ${park} = milo.var "repeat.of" : !milo.ref<${ety}>`);
       this.emit(`milo.store ${v.ref}, ${park} : !milo.ref<${ety}>`);
