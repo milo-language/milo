@@ -6,7 +6,7 @@
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
 // covers, so the function stays on legacy codegen; `mlirSupports` is that test alone.
 
-import type { HIRExpr, HIRFunction, HIRPattern, HIRStmt } from "./hir";
+import type { HIRExpr, HIRFunction, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 
@@ -381,6 +381,21 @@ function fnv1a(s: string): string {
   let h = 0x811c9dc5;
   for (const ch of Buffer.from(s, "utf-8")) h = Math.imul(h ^ ch, 0x01000193) >>> 0;
   return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * A literal pattern's value as the expression it is compared with, of the payload's type
+ * `ty`. An int pattern on a float payload (`A(3)` with an f64 field) is a float, as legacy
+ * compares it.
+ */
+function patLiteral(kind: (HIRPattern & { kind: "LiteralPattern" })["literalKind"], value: bigint | number | string | boolean, ty: TypeKind): HIRExpr {
+  if (kind === "float" || (kind === "int" && ty.tag === "float")) return { kind: "FloatLit", value: Number(value), type: ty };
+  switch (kind) {
+    case "string": return { kind: "StringLit", value: String(value), type: ty };
+    case "bool": return { kind: "BoolLit", value: !!value, type: ty };
+    case "char": return { kind: "CharLit", value: Number(value), type: ty };
+    default: return { kind: "IntLit", value: BigInt(value as bigint), type: ty };
+  }
 }
 
 function quote(s: string): string {
@@ -2548,9 +2563,11 @@ class FnEmitter {
     if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
       return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy, armBody);
     const st = stripRefs(m.subject.type);
-    const layout = isEnum && st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
-    if (isEnum && !layout) throw new MlirUnsupported("match subject layout");
+    const layout = isEnum ? this.enumLayout(st.tag === "enum" ? st.name : "") : null;
     if (!isEnum && !/^([su]i\d+|i1)$/.test(subj.ty)) throw new MlirUnsupported(`match on ${subj.ty}`);
+    // Literal arms (none in a checked enum match) and a lone arm stay on the flat path's refusals.
+    if (layout && m.arms.length > 1 && m.arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.tests) && m.arms.every(a => a.pattern.kind !== "LiteralPattern"))
+      return this.nestedMatch(m, { subj, from, place, structural, bigEnum, enumName: (st as { name: string }).name }, resultTy, armBody);
     const cases: bigint[] = [];
     const arms: { arm: typeof m.arms[0]; args: { name: string; ty: string }[]; tag?: number }[] = [];
     let dflt: typeof m.arms[0] | null = null;
@@ -2564,9 +2581,9 @@ class FnEmitter {
       let c: bigint;
       let args: { name: string; ty: string }[] = [];
       if (p.kind === "EnumPattern") {
-        if (!layout || p.tests) throw new MlirUnsupported("nested pattern");
-        const v = layout.variants.find(x => x.tag === p.tag);
-        if (!v || p.bindings.length > v.fields.length || p.bindings.some(b => b.escapes || b.path)) throw new MlirUnsupported("enum pattern");
+        // A nested arm reaches here only in a match of one arm (nestedMatch takes the rest).
+        const v = layout?.variants.find(x => x.tag === p.tag);
+        if (!v || p.tests || p.bindings.length > v.fields.length || p.bindings.some(b => b.escapes)) throw new MlirUnsupported("enum pattern");
         c = BigInt(p.tag);
         args = v.fields.map((f, k) => ({ name: p.bindings[k]?.name ?? "_", ty: bigEnum ? this.place$(f, "payload") : this.value(f, "payload") }));
       } else {
@@ -2586,7 +2603,7 @@ class FnEmitter {
       const consumes = from !== null && !structural && args.some(a => a.name !== "_" && this.hasDrop(a.ty));
       // Legacy stops dropping the subject once an arm takes a payload, so an owning field
       // the arm leaves unbound would be legacy's leak; not reproduced.
-      if (consumes && args.some(a => a.name === "_" && this.hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
+      if (consumes && args.some(a => a.name === "_" && this.hasDrop(a.ty))) this.leaksUnbound();
       const done = this.region(i === 0 ? head : "}, {", () => {
         if (bigEnum && consumes) {
           // The arm takes the payload: its fields are read out of the place, then the
@@ -2667,6 +2684,186 @@ class FnEmitter {
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && this.hasDrop(resultTy) ? "owned" : undefined } };
   }
 
+  /** An enum's layout, or the function stays legacy (a niche-optimized enum has none here). */
+  private enumLayout(name: string): NonNullable<ReturnType<MlirEmitCtx["mlirEnumLayout"]>> {
+    const l = this.cx.mlirEnumLayout(name);
+    if (!l) throw new MlirUnsupported("match subject layout");
+    return l;
+  }
+
+  /**
+   * Legacy stops dropping the subject once an arm takes a payload, so an owning part the
+   * arm leaves unbound would be legacy's leak; not reproduced.
+   */
+  private leaksUnbound(): never { throw new MlirUnsupported("match leaving an owning payload field unbound"); }
+
+  /**
+   * A match with a nested arm, as legacy genNestedArms: arms are tried in order, each by
+   * its top tag and then its sub-pattern tests, and the first that passes runs. Testing
+   * only reads the subject, so the choice is made first, as the arm's index (milo.ifs, a
+   * test short-circuiting the ones after it, since a test's path reads a payload that only
+   * the tests before it prove is there); a milo.match on the index then runs the arm,
+   * which binds each payload at its path with a flat arm's move/borrow rule.
+   */
+  private nestedMatch(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
+    s: { subj: Val; from: string | null; place: { ref: string; ty: string } | null; structural: boolean; bigEnum: boolean; enumName: string },
+    resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
+    const { subj, place, bigEnum } = s;
+    const variantOf = (enumName: string, pick: (v: { name: string; tag: number }) => boolean) => {
+      return this.enumLayout(enumName).variants.find(pick)!;
+    };
+    // The payload `path` names: its place (a field_ref chain) when `inPlace`, else its value.
+    const walk = (path: HIRPatStep[], inPlace: boolean, root?: Val): Val => {
+      let at = root ?? (inPlace ? { ref: place!.ref, ty: `!milo.ref<${place!.ty}>` } : subj);
+      for (const st of path) {
+        const v = variantOf(st.enumName, x => x.name === st.variant);
+        const f = v.fields[st.index];
+        if (inPlace) {
+          const ty = `!milo.ref<${this.place$(f, "payload")}>`;
+          at = this.def(`milo.enum.field_ref ${at.ref}[${v.tag}, ${st.index}] : ${at.ty} -> ${ty}`, ty);
+        } else {
+          const ty = this.value(f, "payload");
+          at = this.def(`milo.enum.payload ${at.ref}[${v.tag}, ${st.index}] : ${at.ty} -> ${ty}`, ty);
+        }
+      }
+      return at;
+    };
+    const fieldType = (path: HIRPatStep[]): TypeKind => {
+      const st = path[path.length - 1];
+      return variantOf(st.enumName, x => x.name === st.variant).fields[st.index];
+    };
+    const eqTag = (tag: Val, want: number): Val =>
+      this.def(`milo.cmp eq, ${tag.ref}, ${this.def(`milo.const ${want} : si32`, "si32").ref} : si32`, "i1");
+    // A 128+ byte subject is tested in its place; any other through its value.
+    const tagAt = (path: HIRPatStep[]): Val => {
+      if (bigEnum && path.length === 0) return subj;
+      const at = walk(path, bigEnum);
+      return bigEnum ? this.def(`milo.enum.tag_at ${at.ref} : ${at.ty}`, "si32") : this.def(`milo.enum.tag ${at.ref} : ${at.ty}`, "si32");
+    };
+    const litTest = (t: HIRPatTest & { kind: "lit" }): Val => {
+      let v = walk(t.path, bigEnum);
+      if (bigEnum) {
+        const ty = v.ty.slice("!milo.ref<".length, -1);
+        v = this.def(`milo.load ${v.ref} : ${v.ty}`, ty);
+      }
+      const name = `match$lit${this.n++}`;
+      this.bind(name, { kind: "ssa", v: { ...v, own: this.hasDrop(v.ty) ? "view" : undefined } });
+      const left: HIRExpr = { kind: "Ident", name, type: t.type, isMove: false };
+      return this.binop({ kind: "BinOp", op: "==", left, right: patLiteral(t.literalKind, t.value, t.type), type: { tag: "bool" } });
+    };
+    // Every test of an arm, in order, each run only when the ones before it passed.
+    const all = (tests: (() => Val)[], i: number): Val => {
+      const c = tests[i]();
+      if (i === tests.length - 1) return c;
+      const r = this.fresh();
+      this.region(`${r} = milo.if ${c.ref} -> i1 {`, () => all(tests, i + 1));
+      this.region("} else {", () => this.def("milo.const false", "i1"));
+      this.emit("}");
+      return { ref: r, ty: "i1" };
+    };
+    // The checker proved some arm matches, so the last one is taken without its tests.
+    const index = (i: number): Val => {
+      const p = m.arms[i].pattern;
+      const k = () => this.def(`milo.const ${i} : si32`, "si32");
+      if (i === m.arms.length - 1 || p.kind === "WildcardPattern") return k();
+      if (p.kind !== "EnumPattern") return k();
+      const c = all([() => eqTag(tagAt([]), p.tag), ...(p.tests ?? []).map(t => () => t.kind === "tag" ? eqTag(tagAt(t.path), t.tag) : litTest(t))], 0);
+      const r = this.fresh();
+      this.region(`${r} = milo.if ${c.ref} -> si32 {`, k);
+      this.region("} else {", () => index(i + 1));
+      this.emit("}");
+      return { ref: r, ty: "si32" };
+    };
+    const idx = index(0);
+    const ref = resultTy ? this.fresh() : "";
+    const head = `${resultTy ? `${ref} = ` : ""}milo.match ${idx.ref} : si32${resultTy ? ` -> ${resultTy}` : ""} [${m.arms.slice(1).map((_, i) => i).join(", ")}] default {`;
+    let allDone = true;
+    m.arms.forEach((arm, i) => {
+      const done = this.region(i === 0 ? head : "}, {", () => {
+        const p = arm.pattern;
+        if (p.kind === "EnumPattern" && p.bindings.length) this.bindPaths(p, s, walk, fieldType, variantOf, m.subjectIsMut);
+        return armBody ? armBody(arm.body) : resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
+      });
+      if (!done) allDone = false;
+    });
+    this.emit("}");
+    if (!resultTy && !armBody && allDone) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
+    return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && this.hasDrop(resultTy) ? "owned" : undefined } };
+  }
+
+  /**
+   * A nested arm's bindings, each the payload at its path, by legacy bindPayloads' rule:
+   * matched by value with an owning payload bound, the subject is moved out (milo.move)
+   * and each binding owns its payload, and a string a literal test matched is dropped
+   * (legacy frees it rather than leak it); otherwise each binding is a copy of its payload
+   * or, through `&mut` or for one with drop glue, the payload's place.
+   */
+  private bindPaths(p: HIRPattern & { kind: "EnumPattern" },
+    s: { subj: Val; from: string | null; place: { ref: string; ty: string } | null; structural: boolean; bigEnum: boolean; enumName: string },
+    walk: (path: HIRPatStep[], inPlace: boolean, root?: Val) => Val, fieldType: (path: HIRPatStep[]) => TypeKind,
+    variantOf: (enumName: string, pick: (v: { name: string; tag: number }) => boolean) => { name: string; tag: number; fields: TypeKind[] },
+    subjectIsMut?: boolean): void {
+    const { subj, from, place, structural, bigEnum } = s;
+    if (p.bindings.some(b => b.escapes)) throw new MlirUnsupported("enum pattern");
+    const binds = p.bindings.map((b, k) => {
+      const path = b.path ?? [{ enumName: s.enumName, variant: p.variant, index: k }];
+      const t = fieldType(path);
+      return { name: b.name, path, t, ty: bigEnum ? this.place$(t, "payload") : this.value(t, "payload") };
+    }).filter(b => b.name !== "_");
+    const consumes = from !== null && !structural && binds.some(b => this.hasDrop(b.ty));
+    const plain = (name: string, ty: string, v: string) => {
+      const slot = this.fresh();
+      this.vars.push(`  ${slot} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+      this.emit(`milo.store ${v}, ${slot} : !milo.ref<${ty}>`);
+      this.bind(name, { kind: "var", ref: slot, ty });
+    };
+    if (!consumes) {
+      for (const b of binds) {
+        if (!place) { plain(b.name, b.ty, walk(b.path, false).ref); continue; }
+        const r = walk(b.path, true);
+        // Through `&mut`, and for a payload with drop glue, the binding is the payload's
+        // place (legacy binds a pointer); a Copy payload under `&` is a copy.
+        if (subjectIsMut || this.hasDrop(b.ty) || inSlot(this.cx, b.ty)) { this.bind(b.name, { kind: "var", ref: r.ref, ty: b.ty }); continue; }
+        plain(b.name, b.ty, this.def(`milo.load ${r.ref} : ${r.ty}`, b.ty).ref);
+      }
+      return;
+    }
+    // Every owning part of the subject must leave with a binding or be a matched string,
+    // or it would be legacy's leak (the subject is no longer dropped); not reproduced.
+    const key = (path: HIRPatStep[]) => path.map(st => `${st.variant}.${st.index}`).join("/");
+    const bound = new Set(binds.map(b => key(b.path)));
+    const tests = new Map((p.tests ?? []).map(t => [key(t.path), t]));
+    const lits: { path: HIRPatStep[]; t: TypeKind; ty: string }[] = [];
+    const visit = (enumName: string, variant: { name: string; fields: TypeKind[] }, path: HIRPatStep[]) => variant.fields.forEach((f, k) => {
+      const at = [...path, { enumName, variant: variant.name, index: k }];
+      const t = tests.get(key(at));
+      if (bound.has(key(at))) return;
+      if (t?.kind === "tag") { visit(t.enumName, variantOf(t.enumName, x => x.tag === t.tag) as { name: string; fields: TypeKind[] }, at); return; }
+      const ty = bigEnum ? this.place$(f, "payload") : this.value(f, "payload");
+      if (!this.hasDrop(ty)) return;
+      if (t?.kind !== "lit") this.leaksUnbound();
+      lits.push({ path: at, t: f, ty });
+    });
+    visit(s.enumName, variantOf(s.enumName, x => x.name === p.variant) as { name: string; fields: TypeKind[] }, []);
+    const parts = [...binds, ...lits.map(l => ({ name: "", ...l }))];
+    let vals: string[];
+    if (bigEnum) {
+      // Read out of the place, then the subject's slot is emptied (its value goes unused).
+      vals = parts.map(b => { const r = walk(b.path, true); return this.def(`milo.load ${r.ref} : ${r.ty}`, b.ty).ref; });
+      this.def(`milo.move ${from} : !milo.ref<${place!.ty}>`, place!.ty);
+    } else {
+      const moved = this.def(`milo.move ${from} : !milo.ref<${subj.ty}>`, subj.ty);
+      vals = parts.map(b => walk(b.path, false, moved).ref);
+    }
+    parts.forEach((b, k) => {
+      if (!this.hasDrop(b.ty)) { plain(b.name, b.ty, vals[k]); return; }
+      // The binding owns the payload now, for the arm's scope; a matched string dies with it.
+      const slot = this.ownedSlot(b.name || "lit", b.ty, b.t);
+      this.emit(`milo.store ${vals[k]}, ${slot} : !milo.ref<${b.ty}>`);
+      if (b.name) this.bind(b.name, { kind: "var", ref: slot, ty: b.ty, owned: true });
+    });
+  }
+
   /**
    * `x?` as the match it means, as legacy genPropagate: `Ok(v) => v` (tag 0, Some for an
    * Option), `Err(e) => return Err(e)` in the function's result enum, the error wrapped in
@@ -2734,15 +2931,7 @@ class FnEmitter {
     const name = `match$subject${this.n++}`;
     this.bind(name, { kind: "ssa", v: subj });
     const subject: HIRExpr = { kind: "Ident", name, type: subjTy, isMove: false };
-    const lit = (p: HIRPattern & { kind: "LiteralPattern" }): HIRExpr => {
-      switch (p.literalKind) {
-        case "string": return { kind: "StringLit", value: String(p.value), type: subjTy };
-        case "float": return { kind: "FloatLit", value: Number(p.value), type: subjTy };
-        case "bool": return { kind: "BoolLit", value: !!p.value, type: subjTy };
-        case "char": return { kind: "CharLit", value: Number(p.value), type: subjTy };
-        default: return { kind: "IntLit", value: BigInt(p.value as bigint), type: subjTy };
-      }
-    };
+    const lit = (p: HIRPattern & { kind: "LiteralPattern" }): HIRExpr => patLiteral(p.literalKind, p.value, subjTy);
     const arm = (i: number): boolean | Val => {
       if (i === arms.length) { this.emit("milo.unreachable"); return true; }
       const { pattern: p, body } = arms[i];

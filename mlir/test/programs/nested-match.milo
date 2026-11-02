@@ -1,0 +1,112 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: nested patterns, arms tried in order by top tag, then sub-tags and
+// literals (int, string, bool, float), first match wins. An owned subject moves the bound
+// payloads out (a matched string payload is freed, the rest of the subject is not dropped
+// again); a borrowed or `&mut` one binds views; a 128+ byte enum is matched in its place.
+
+enum E { A(string), B(i64), C }
+
+enum Cmd { Set(string, Option<string>), Flag(bool), Ratio(f64), Quit }
+
+enum Big { Wide(Option<string>, [i64; 20]), Narrow(i64) }
+
+struct Holder { inner: Option<Result<string, E>> }
+
+fn classify(r: Result<Option<i64>, E>): string {
+    match r {
+        Ok(Some(0)) => { return "zero" }
+        Ok(Some(v)) => { return "some " + v.toString() }
+        Ok(None) => { return "none" }
+        Err(E.A(msg)) => { return "A " + msg }
+        Err(E.B(n)) => { return "B " + n.toString() }
+        Err(E.C) => { return "C" }
+    }
+}
+
+// Consuming: the string bound in each arm is moved out of the subject; the matched
+// "name" key is a string the subject owned, freed in the arm.
+fn run(c: Cmd): string {
+    return match c {
+        Set("name", Some(v)) => "name=" + v,
+        Set(k, Some(v)) => k + "=" + v,
+        Set(k, None) => "unset " + k,
+        Flag(true) => "on",
+        Flag(false) => "off",
+        Ratio(0.5) => "half",
+        Ratio(x) => "ratio " + x.toString(),
+        Quit => "quit",
+    }
+}
+
+// A place through a reference: every binding is a view and the subject survives.
+fn show(h: &Holder): string {
+    match h.inner {
+        Some(Ok(s)) => { return "ok " + s }
+        Some(Err(E.A(m))) => { return "A " + m }
+        Some(Err(E.B(n))) => { return "B " + n.toString() }
+        Some(Err(E.C)) => { return "C" }
+        None => { return "none" }
+    }
+}
+
+// Through `&mut`, a nested binding writes the payload in place.
+fn bump(r: &mut Option<Result<i64, string>>) {
+    match r {
+        Some(Ok(n)) => { n += 1 }
+        _ => {}
+    }
+}
+
+fn big(b: Big): string {
+    match b {
+        Wide(Some(s), xs) => { return s + " " + xs[19].toString() }
+        Wide(None, xs) => { return "none " + xs[0].toString() }
+        Narrow(n) => { return "narrow " + n.toString() }
+    }
+}
+
+fn bigRef(b: &Big): i64 {
+    match b {
+        Wide(Some(s), _) => { return s.len() }
+        _ => { return -1 }
+    }
+}
+
+pub fn main() {
+    print(classify(Ok(Some(0))))
+    print(classify(Ok(Some(7))))
+    print(classify(Ok(None)))
+    print(classify(Err(E.A("bad".repeat(2)))))
+    print(classify(Err(E.B(3))))
+    print(classify(Err(E.C)))
+    for i in 0..3 {
+        print(run(Cmd.Set("name".repeat(1), Some("v".repeat(i + 1)))))
+        print(run(Cmd.Set("k".repeat(i + 1), Some("w".repeat(2)))))
+        print(run(Cmd.Set("gone".repeat(1), None)))
+    }
+    print(run(Cmd.Flag(true)))
+    print(run(Cmd.Flag(false)))
+    print(run(Cmd.Ratio(0.5)))
+    print(run(Cmd.Ratio(2.0)))
+    print(run(Cmd.Quit))
+    let h = Holder { inner: Some(Ok("held".repeat(2))) }
+    print(show(h))
+    print(show(h))
+    let h2 = Holder { inner: Some(Err(E.A("e".repeat(3)))) }
+    print(show(h2))
+    print(show(Holder { inner: None }))
+    var r: Option<Result<i64, string>> = Some(Ok(41))
+    bump(&mut r)
+    match r {
+        Some(Ok(n)) => print(n),
+        _ => print("?"),
+    }
+    var arr: [i64; 20] = [0; 20]
+    arr[19] = 9
+    arr[0] = 4
+    let w = Big.Wide(Some("wide".repeat(2)), arr)
+    print(bigRef(w))
+    print(big(w))
+    print(big(Big.Wide(None, arr)))
+    print(big(Big.Narrow(5)))
+}
