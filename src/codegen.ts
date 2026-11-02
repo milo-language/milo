@@ -3385,6 +3385,29 @@ export class Codegen {
     return lines;
   }
 
+  /**
+   * MLIR path: `milo.panic.text(ptr s)`, which writes the string (the whole message, by
+   * length) to stderr and runs the panic tail; it never returns. Moves with the scaffold.
+   */
+  public mlirPanicText(): string {
+    const name = "milo.panic.text";
+    if (this.emittedMlirWrites.has(name)) return name;
+    this.emittedMlirWrites.add(name);
+    this.strRt();
+    const lines: string[] = [];
+    const saved = this.tempCounter;
+    this.tempCounter = 0;
+    lines.push(`define internal void @${name}(ptr nonnull dereferenceable(24) align 8 %s) noreturn cold noinline {`, "entry:");
+    lines.push("  %v = load %String, ptr %s", "  %d = extractvalue %String %v, 0", "  %n = extractvalue %String %v, 1");
+    if (this.target.os === "none") this.emitFdWrite(lines, 2, "%d", "%n");
+    else this.emitStderrWrite(lines, "%d", "%n");
+    this.panicAbort(lines);
+    lines.push("  unreachable", "}");
+    this.tempCounter = saved;
+    this.helperFnBodies.push(lines);
+    return name;
+  }
+
   // The out-of-line handler MLIR's milo.contract_check calls: legacy's contract message
   // (emitContractCheck) and panic tail. Moves with its siblings in the scaffold step.
   private contractFailHelper(): string[] {

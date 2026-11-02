@@ -30,6 +30,7 @@ export interface MlirEmitCtx {
   mlirMapOps(): void;
   mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void;
   mlirOutWrite(stderr: boolean): string;
+  mlirPanicText(): string;
   mlirDisplayName(name: string): string;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
@@ -4581,25 +4582,20 @@ class FnEmitter {
   }
 
   /**
-   * `todo()` / `todo(msg)`: legacy's message and abort in a helper per site. The message
-   * names the enclosing function by what follows its name's last `$` (legacy's
-   * currentFnName), so the helper's name ends in `$` and that same name. A message
-   * string goes by reference. The call never returns.
+   * `todo()` / `todo(msg)`: "todo: '<fn>' is not implemented (<site>)", and the message,
+   * then the panic tail. The function is named by what follows its name's last `$`.
    */
   private todo(e: HIRExpr & { kind: "Call" }): Val {
-    const l = this.site(e.span);
     const who = this.fn.name.slice(this.fn.name.lastIndexOf("$") + 1);
-    const msg = e.args[0]?.expr;
-    if (e.args.length > 1 || (msg && stripRefs(msg.type).tag !== "string")) throw new MlirUnsupported("todo arguments");
-    const name = this.cx.mlirHelper(`milo.todo.${l.line}.${l.col}.${fnv1a(l.file)}$${who}`, () => ({
-      params: msg ? [{ name: "m", type: { tag: "string" }, isRef: true, isRefMut: false }] : [],
-      retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
-      body: [{ kind: "ExprStmt", expr: { ...e, args: msg ? [{ expr: { kind: "Ident", name: "m", type: { tag: "string" }, isMove: false }, passByRef: false, refMut: false }] : [] } }],
-    }));
-    const args = msg ? [`${this.place(msg, `!milo.ref<${STR}>`, false).ref} : !milo.ref<${STR}>`] : [];
-    this.callHelper(name, args, null);
+    const msg = e.args[0];
+    if (e.args.length > 1 || (msg && stripRefs(msg.expr.type).tag !== "string")) throw new MlirUnsupported("todo arguments");
+    const head = `todo: '${who}' is not implemented (${this.panicAt(e.span)})`;
+    // Under an always-true milo.if, so what follows the call still has a block to go in.
+    this.region(`milo.if ${this.constTrue()} {`, () => { this.panicText(msg ? [`${head}: `, msg, "\n"] : [`${head}\n`]); return true; });
+    this.emit("}");
     return { ref: "", ty: "" };
   }
+
 
   /**
    * An extern call that is variadic or turns a string into a `*u8`: legacy's genCall in a
@@ -4719,21 +4715,38 @@ class FnEmitter {
   }
 
   /**
-   * `assert(c, msg)` as legacy's: the message is evaluated only once `c` is false, then
-   * legacy's own failure path runs in a helper (`assert(false, msg)`), which never returns.
+   * `assert(c, msg)`: when c is false, "assertion failed at <site>: msg" on stderr, then
+   * the panic tail. The message is evaluated only on that path.
    */
   private assert(e: HIRExpr & { kind: "Call" }): Val {
     const c = this.expr(e.args[0].expr);
     if (c.ty !== "i1") throw new MlirUnsupported("assert of a non-bool");
-    const no: HIRExpr = { kind: "BoolLit", value: false, type: { tag: "bool" }, span: e.args[0].expr.span };
+    if (e.args.length > 2 || (e.args[1] && stripRefs(e.args[1].expr.type).tag !== "string")) throw new MlirUnsupported("assert arguments");
     this.region(`milo.if ${c.ref} {`, () => false);
     this.region("} else {", () => {
-      this.builtinCall({ ...e, args: [{ ...e.args[0], expr: no }, ...e.args.slice(1)] }, true, true);
-      this.emit("milo.unreachable");
+      const at = this.panicAt(e.span);
+      this.panicText(e.args[1] ? [`assertion failed at ${at}: `, e.args[1], "\n"] : [`assertion failed at ${at}\n`]);
       return true;
     });
     this.emit("}");
     return { ref: "", ty: "" };
+  }
+
+  /**
+   * Builds the message (static text and string parts) in a scratch string, then
+   * milo.panic.text writes it to stderr and aborts. Ends the block: the call never returns.
+   */
+  private panicText(parts: (string | (HIRExpr & { kind: "Call" })["args"][number])[]): void {
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "panic.msg" : !milo.ref<${STR}>`);
+    this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+    this.stringHelpers();
+    for (const p of parts) {
+      if (typeof p === "string") this.emit(`milo.string.append ${slot}, ${this.def(`milo.string.lit ${quote(p)}`, STR).ref} : !milo.ref<${STR}>`);
+      else this.appendText(slot, [p], null);
+    }
+    this.rtCall(this.cx.mlirPanicText(), [{ ref: slot, ty: `!milo.ref<${STR}>` }], null);
+    this.emit("milo.unreachable");
   }
 
   /** `e` never returns: a `never` value, a std panic, or the builtin exit (typed void in HIR). */
