@@ -824,6 +824,93 @@ the function with the same drops.
   rather than one case each; nested patterns (a decision tree, not a switch) and
   interfaces (boxing into one, `&I` receivers) are features of their own.
 
+**Tenth batch (2026-11-01): one place/operand model.** Tahoe Roads api at the start: 5302
+of 5351 (99.1%); census 389998 of 391725 (99.56%); 239 `MlirUnsupported` sites in
+`src/emit-mlir.ts`. The emitter was rebuilt incrementally, not rewritten: each commit kept
+`--programs --owned` same, and a refactor commit was checked by a byte diff of the MLIR it
+prints for every third fixture (349 modules, paths and path hashes normalized) against its
+parent: zero differences, or only the functions the commit meant to take.
+
+- *One decision per type* (Clang CodeGen's evaluation kind): every dialect type is interned
+  once per context and its decisions are flag bits on its id, set when a checker type
+  spells it (`recordType`): F_DROP and F_USER_DROP (what it owns, from the checker's type),
+  F_SLOT (a binding of it lives in a slot) and F_MEMORY (it is never an SSA operand except
+  at an ABI boundary: 128+ bytes or holding a fixed array, but a 128..512 byte enum is
+  F_SLOT without F_MEMORY, as legacy passes it by value). This replaced the placeOnly and
+  bigTypes sets, the owners and per-type maps, `abiValue`, `memType` and the per-position
+  `isBig` / `valueType(...) === null` mixtures. `lentType` is the one answer to what a
+  by-ref argument of a type is lent as (a Vec's or a slice's header, anything else's ref).
+- *One operand helper, one lend helper*: every by-value position (argument, return, let,
+  assignment, field and element stores, payloads, Vec literal elements, a box's value,
+  `replace`) takes its operand through `operand` / `take`: consumed, a fn value cast across
+  owning (fnAs), of exactly the position's type, loaded whole from its place at an ABI
+  boundary. Every by-ref position (direct, closure, interface, extern and builtin calls,
+  intrinsics) lends through `place` / `lendAs`: a place where it is, a Vec as its header,
+  a value spilled to a slot (owned by the call's frame when it is a temporary). Legacy
+  helpers take any operand that owns nothing (`helperOperand`). Twenty-odd "X of another
+  type" refusals became one, and the 239 sites are 210.
+- *One place for temporaries, at legacy's drop points* (`tempSlot`, its comment the rule):
+  a temporary an operator only reads (`.len`, a tag test, a string byte, a Copy field)
+  dies right after it (`peek`, legacy's dropOwnedTemp); a by-ref argument's right after
+  its call (`callScope`, also around closure calls now; legacy's argTempDrops); a match
+  subject's when the match ends (a match statement opens a frame); an `if` condition's
+  before either branch; a discarded result's at its statement's end; a `let`
+  initializer's at the `let`'s end; a temporary array a slice is taken of when its block
+  ends (`block`, `arrayLitSliceArgDrops` found it). Batch 9's red fixtures were not a
+  timing problem: lifting the refusal for every temporary but a clone left all 80
+  user-Drop fixtures same. They were *clones*: legacy frees a `v[i]` match subject's
+  structural clone structurally, running no user Drop (`structuralDropTypes`, "a clone of
+  a resource shares its handle"). That is now dialect: `milo.var ... owned structural`,
+  whose drop calls legacy's `milo.sdrop.<key>` glue (Drops.cpp; codegen
+  `mlirDropHelper(.., structural)`); its bindings only borrow. FileCheck `@clone` in
+  `user-drop.mlir`, a verifier case. Planted bug: the `structural` marker not printed
+  (`matchIndexSubjectDrop`, `dropElementBorrowForms`, `cacheTtl` stdout: extra drops).
+- *Lifted, each general rather than one type in one position*: fn types whose params or
+  results live in memory, as the ABI's SSA value (`bindParam`, one binding rule for
+  function and closure params; program `fn-abi`; planted: the param's spill store left
+  out); slices as Vec headers (`&[T]` params, ArrayLen, VecSlice in a helper, for-in, a
+  slice in a fn type; program `slices`; planted: the slice bounds swapped); `&mut v[i]` of a
+  Vec of scalars (milo.index.ref; program `mut-elems`; planted: index 0 for every element,
+  the alias check fires); `&T` and slice lets bound as views, a copy of a view or of a
+  temporary string, void if and match expressions taken as statements (program
+  `view-binds`; planted: the view binding replaced by another string); owning fn values
+  stored through a raw pointer (`Vec<(i64) => i64>.push`: a generic body sees an owning T
+  as plain behind `*T`; planted: the cast left out, milo-opt rejects the store); a Vec that
+  is a value (`s.split(";")[0]`, a call's result, a slice let) read from a slot of its own
+  (program `vec-temps`; planted: the temporary's slot not owned, `--owned` 5 live blocks);
+  per-module externs (`string.substr`'s memcpy), which the backend now renames in the MLIR
+  module's LLVM IR the way legacy renames its own calls (planted: no rename, an undefined
+  symbol at link); an sret result read in place (`regionByKey(s).isNone()`, `mk().field`;
+  program `sret-reads`; planted: the read from an unfilled slot).
+- *Bugs found*: MLIR string literals spelled a `\xNN` escape as the UTF-8 of the lexer's
+  sentinel (U+F7NN, three bytes) instead of the raw byte; `unicodeCase` went red once the
+  slice commit let `main` reach MLIR. Fixed (`literalBytes`), program `byte-literals`
+  (planted: the old spelling, stdout). Two vecval-of-a-slice views reached `hasDrop`
+  before their `own` was checked, which kept functions legacy ("ownership of a type not
+  spelled"); fixed. `tests/runtime-errors/stringWithCapacityNegative` pinned 11:9, a
+  location neither backend produced even at the commit that added it (both say 12:5, the
+  call); the annotation is fixed.
+- *The language questions*. The 128-byte rule should not change at the language level:
+  it is a backend representation choice (SROA's cost of whole-aggregate loads), and with
+  F_MEMORY as one flag every position handles a memory type the same way; what is left
+  of it in the census is emitter gaps (an Unwrap's result built in place, a Vec literal of
+  128+ byte elements), not language friction. The owning/plain fn split should change, or
+  at least stop leaking: a generic body sees an owning `T` as plain behind `*T` (the
+  "store through a pointer of another type" reason, 58 in the census, was exactly that:
+  legacy stores the bits either way), heap-env closures remain a reason of their own, and
+  fnAs exists only to cast between two spellings of one ABI value (`{ ptr, ptr }`). One
+  fn type whose drop is "free the env if the closure owns one" (the env pointer says it)
+  would erase the cast, the leak-on-store rule and the typeKey `ownfn` split.
+- *Where it stands*: Tahoe Roads api 5327 of 5352 (99.5%); census 390652 of 391725 (99.73%; the functions left on legacy went from 1727 to 1073); 210
+  `MlirUnsupported` sites. Next reasons by census count: fn value in main 120 and raw pointer in main 63 and global in
+  main 38 (mlir-backend's main restriction: the noalias analysis reads main's legacy body,
+  which the prologue splice cannot keep; more mains reach it now that their callees do),
+  nested patterns 62, heap-env closures 61, enum patterns whose bindings escape 48,
+  ownership of a type not spelled 42 (std/fs setMode, makeDir), VecGetOpt 38, an Unwrap's
+  128+ byte result built in place 36, for over a HashMap 33, a field moved out of a
+  temporary 26 (legacy's dropStructFieldsExcept), `&mut` of a field of a value 18. The full
+  corpus `--owned` was started in the background at the last commit and not waited on.
+
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
 
@@ -937,7 +1024,7 @@ under ASan); a shadow run, then a canary through the existing socket-activated r
 `MILO_LEGACY=1` (the build is the legacy codegen byte for byte); drop it per app after the
 canary.
 
-### Batch 10: one place/operand model (planned)
+### Batch 10: one place/operand model (done: see the tenth batch above)
 
 The tail of legacy reasons is mostly one shape: a type in a position (by-ref param of a Heap
 struct, string copy of a temporary, a Vec that is not a param/local/field, sret call as a
