@@ -4484,6 +4484,31 @@ class FnEmitter {
     const write = this.cx.mlirOutWrite(stderr);
     const flush = () => { this.rtCall(write, [{ ref: slot, ty: `!milo.ref<${STR}>` }], null); empty(); };
     empty();
+    this.appendText(slot, args, formatted ? null : flush);
+    if (newline) {
+      this.stringHelpers();
+      this.emit(`milo.string.append ${slot}, ${this.def('milo.string.lit "\\0A"', STR).ref} : !milo.ref<${STR}>`);
+    }
+    flush();
+    return { ref: "", ty: "" };
+  }
+
+  /** `format(a, b, ...)`: a fresh string with each part's text appended, as print shows it. */
+  private formatText(args: (HIRExpr & { kind: "Call" })["args"]): Val {
+    if (args.some(a => a.passByRef)) throw new MlirUnsupported("by-ref format part");
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "format" : !milo.ref<${STR}>`);
+    this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+    this.appendText(slot, args, null);
+    return { ...this.def(`milo.load ${slot} : !milo.ref<${STR}>`, STR), own: "owned" };
+  }
+
+  /**
+   * Appends each part's text to the string at `slot`: a top-level string as its bytes,
+   * anything else through its display glue. `afterString`, when given, runs after every
+   * string part but the last (print's chunk boundary).
+   */
+  private appendText(slot: string, args: (HIRExpr & { kind: "Call" })["args"], afterString: (() => void) | null): void {
     args.forEach((a, i) => {
       const t = stripRefs(a.expr.type);
       if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr") {
@@ -4495,19 +4520,13 @@ class FnEmitter {
         if (v.ty !== STR) throw new MlirUnsupported("print part string type");
         this.stringHelpers();
         this.emit(`milo.string.append ${slot}, ${v.ref} : !milo.ref<${STR}>`);
-        if (!formatted && i < args.length - 1) flush();
+        if (afterString && i < args.length - 1) afterString();
       } else {
         const lt = this.glue.placeOf(t);
         const p = this.place(a.expr, lt, false).ref;
         this.rtCall(this.glue.display(t), [{ ref: p, ty: lt }, { ref: slot, ty: `!milo.ref<${STR}>` }], null);
       }
     });
-    if (newline) {
-      this.stringHelpers();
-      this.emit(`milo.string.append ${slot}, ${this.def('milo.string.lit "\\0A"', STR).ref} : !milo.ref<${STR}>`);
-    }
-    flush();
-    return { ref: "", ty: "" };
   }
 
   /**
@@ -4828,7 +4847,7 @@ class FnEmitter {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
-      if (e.func === "format") return this.builtinCall(e, stmt, true);
+      if (e.func === "format") return this.formatText(e.args);
       if (e.func === "assert") return this.assert(e);
       if (e.func === "todo") return this.todo(e);
       throw new MlirUnsupported(`builtin ${e.func}`);
