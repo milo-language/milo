@@ -2091,6 +2091,17 @@ class FnEmitter {
         if (l.ty !== ty || r.ty !== ty) throw new MlirUnsupported("wrapping operand types");
         return this.def(`milo.${op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
       }
+      case "SaturatingArith": case "CheckedArith": {
+        // `a.saturatingAdd(b)` / `a.checkedAdd(b)` (an Option): legacy's own lowering in a
+        // helper, both operands scalars.
+        const l = this.expr(e.left), r = this.expr(e.right);
+        const lt = valueType(this.cx, e.left.type), rt = valueType(this.cx, e.right.type);
+        if (l.ty !== lt || r.ty !== rt || !isScalarTy(l.ty) || !isScalarTy(r.ty)) throw new MlirUnsupported(`${e.kind} operand types`);
+        const ty = this.value(e.type, `${e.kind} result`);
+        return this.intrinsic(`${e.kind === "CheckedArith" ? "checked" : "sat"}.${e.op}`, e,
+          [{ name: "l", type: e.left.type, mode: "val", ref: l.ref }, { name: "r", type: e.right.type, mode: "val", ref: r.ref }],
+          ([x, y]) => ({ ...e, left: x, right: y }), ty, false);
+      }
       case "MemReplace": {
         // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the
         // result's now), then `v` stored over it with nothing dropped.
