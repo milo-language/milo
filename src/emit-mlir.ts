@@ -520,7 +520,9 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 // the loop: a move takes it and leaves the zero value (legacy zeroes a moved element too).
 // `view`: a `var` of a `&T` or slice type, a slot of view headers that owns none of them:
 // an assignment replaces the header and drops nothing.
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean; view?: boolean }
+// `flag`: a move closure's capture, held by its env, with the place of its liveness flag:
+// a move out zeroes the capture and clears the flag, so the env's drop skips it.
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean; view?: boolean; flag?: string }
   | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string }
   // A `&T` reached through a raw pointer (`let p = b else` on a `?&mut T`): the dialect
   // has no milo.ref behind a pointer, so it is read and written through the pointer
@@ -575,15 +577,25 @@ class FnEmitter {
    * Closure literal `e` as a function of its own, `name`: the env, then its params. Each
    * capture is bound to its place, read out of the env (milo.env.capture).
    */
-  runClosure(e: HIRExpr & { kind: "Closure" }, name: string, caps: { name: string; place: string; b: Binding }[]): string {
+  runClosure(e: HIRExpr & { kind: "Closure" }, name: string, caps: { name: string; place: string; b: Binding }[], flags: { of: number; once: boolean }[] = []): string {
     // A closure body runs per call: a closure it builds keeps a frame env (legacy scopes
     // staticEnv by currentFnName, which a closure body never is).
     this.inClosureBody = true;
     const params = ["%env: !milo.ptr"];
+    const refs = caps.map((c, i) => this.def(`milo.env.capture %env[${i}] : ${c.place}`, c.place).ref);
+    // A move env's liveness flags follow its captures in the table.
+    const flagOf = new Map(flags.map((f, j) => [f.of, this.def(`milo.env.capture %env[${caps.length + j}] : !milo.ref<i1>`, "!milo.ref<i1>").ref]));
     caps.forEach((c, i) => {
-      const r = this.def(`milo.env.capture %env[${i}] : ${c.place}`, c.place).ref;
-      this.bind(c.name, c.b.kind === "vec" ? { kind: "vec", ref: r, elem: c.b.elem } : { kind: "var", ref: r, ty: (c.b as { ty: string }).ty });
+      const r = refs[i];
+      this.bind(c.name, c.b.kind === "vec" ? { kind: "vec", ref: r, elem: c.b.elem } : { kind: "var", ref: r, ty: (c.b as { ty: string }).ty, flag: flagOf.get(i) });
     });
+    // A move closure that gives a capture away can run once (legacy genClosure): a cleared
+    // flag on such a capture means this is the second call.
+    for (const f of flags) {
+      if (!f.once) continue;
+      const spent = this.def(`milo.not ${this.def(`milo.load ${flagOf.get(f.of)!} : !milo.ref<i1>`, "i1").ref} : i1`, "i1");
+      this.panicIf(spent.ref, `closure called again after it moved '${caps[f.of].name}' out (${this.panicAt(e.span)}): a move closure that gives a capture away can run once\n`);
+    }
     e.params.forEach((p, i) => {
       const ty = closureParamType(this.cx, p.type);
       if (ty === null) throw new MlirUnsupported(`closure param of type ${placeBlocker(this.cx, stripRefs(p.type))}`);
@@ -2505,9 +2517,11 @@ class FnEmitter {
         if (!this.hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };
-        if (b.zeroOnMove) {
+        if (b.zeroOnMove || b.flag) {
           const v = this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
-          this.emit(`milo.store ${this.def(`milo.zero : ${b.ty}`, b.ty).ref}, ${b.ref} init : !milo.ref<${b.ty}>`);
+          // A flagged capture is skipped by its env's drop once the flag is clear.
+          if (b.flag) this.emit(`milo.store ${this.def("milo.const false", "i1").ref}, ${b.flag} : !milo.ref<i1>`);
+          else this.emit(`milo.store ${this.def(`milo.zero : ${b.ty}`, b.ty).ref}, ${b.ref} init : !milo.ref<${b.ty}>`);
           return { ...v, own: "owned" };
         }
         if (!b.owned) throw new MlirUnsupported("move out of a borrow");
@@ -3340,6 +3354,8 @@ class FnEmitter {
    */
   private moveClosure(e: HIRExpr & { kind: "Closure" }): Val {
     const ty = this.value(e.type, "move closure");
+    // Nothing captured: no env at all (null), as legacy; the by-reference form is exactly that.
+    if (e.captures.length === 0) return { ...this.closure({ ...e, isMove: false }), own: "owned" };
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: Val[] = [];
     // A 128+ byte or place-only capture: its address goes in, the helper binds the capture
@@ -3374,6 +3390,11 @@ class FnEmitter {
         this.cx.mlirStringOps();
         v = { ...this.def(`milo.string.share ${b.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       } else if (b.owned && !c.share) v = { ...this.def(`milo.move ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
+      else if (b.flag && !c.share) {
+        // A capture of the enclosing move closure, moved on into this one.
+        v = { ...this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
+        this.emit(`milo.store ${this.def("milo.const false", "i1").ref}, ${b.flag} : !milo.ref<i1>`);
+      }
       else if (!b.owned && !c.share && this.inClosureBody && !this.runsUserDrop(cty)) {
         // A capture of an enclosing by-ref closure (its slot is the owner's, in another
         // frame) moved on into this one, as legacy does it: read out and zeroed through
@@ -3384,22 +3405,66 @@ class FnEmitter {
       params.push({ name: c.name, type: c.type, isRef: false, isRefMut: false });
       args.push(v);
     }
-    const name = `milo.mkclosure.${this.fn.name}.${this.closures.next++}`;
-    this.cx.mlirHelper(name, () => ({
-      params, retType: e.type,
-      // The helper's params are its own: every capture is moved into the env.
-      body: [
-        ...viaPtr.map(p => ({ kind: "Let" as const, name: p.name, type: p.type, mutable: false,
-          value: { kind: "PtrDeref" as const, type: p.type, operand: { kind: "Ident" as const, name: `${p.name}$p`, type: { tag: "ptr", inner: p.type } as TypeKind, isMove: false } } } as HIRStmtBase)),
-        { kind: "Return" as const, retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } },
-      ],
-    }));
-    const fnTy = `(${args.map(a => a.ty).join(", ")}) -> ${ty}`;
-    this.callees.set(name, fnTy);
-    this.dropGlue(ty, e.type);
-    const r = this.def(`func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`, ty);
+    // The env (legacy genClosure's, laid out here): a header (the env's drop function), a
+    // table with each capture's address and then each flag's, then the captures' bytes
+    // and the flags, every field 8-aligned. The table is what lets the body read a move
+    // env exactly as a by-reference one (milo.env.capture). The env owns the captures:
+    // a flag says whether the body has given its capture away.
+    const name = `${this.fn.name}$closure${this.closures.next++}`;
+    const own = e.captures.map((c, i) => [c, i] as const).filter(([c]) => this.hasDrop(this.place$(c.type, "capture"))).map(([, i]) => i);
+    const align = (n: number) => Math.ceil(n / 8) * 8;
+    const table = 8 * (1 + e.captures.length + own.length);
+    const offs: number[] = [];
+    let at = table;
+    for (const c of e.captures) { offs.push(at); at += align(this.cx.typeSizeOf(c.type)); }
+    const flagOffs = own.map(() => { const o = at; at += 8; return o; });
+    this.cx.mlirCloneOps();
+    const env = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def("milo.const 1 : si64", "si64"), this.def(`milo.const ${at} : si64`, "si64")], PTR), e.span);
+    const off = (o: number) => o === 0 ? env.ref : this.def(`milo.ptr.elem ${env.ref}[${this.def(`milo.const ${o} : si64`, "si64").ref}] : ui8`, PTR).ref;
+    this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(`${name}$envdrop`)}`, PTR).ref}, ${env.ref} : ${PTR}`);
+    [...offs, ...flagOffs].forEach((o, k) => this.emit(`milo.ptr.store ${off(o)}, ${off(8 * (1 + k))} : ${PTR}`));
+    // args[i] is capture i: its value, or for one that lives in a slot, the slot's address.
+    e.captures.forEach((c, i) => {
+      const pty = this.place$(c.type, "capture");
+      const vp = viaPtr.find(p => p.name === c.name);
+      if (vp) this.emit(`milo.copy ${vp.slot}, ${off(offs[i])} : !milo.ref<${pty}>, ${PTR} of ${pty}`);
+      else this.emit(`milo.ptr.store ${args[i].ref}, ${off(offs[i])} : ${args[i].ty}`);
+    });
+    for (const o of flagOffs) this.emit(`milo.ptr.store ${this.def("milo.const true", "i1").ref}, ${off(o)} : i1`);
+    // The body, reading the env through the table.
+    const caps = e.captures.map(c => {
+      const pty = this.place$(c.type, "capture");
+      // A Vec capture is its value's slot in the env (a var of !milo.vecval), so the body
+      // can move it out as any other capture.
+      return { name: c.name, place: `!milo.ref<${pty}>`, b: { kind: "var", ref: "", ty: pty } as Binding };
+    });
+    const inner = new FnEmitter(this.fn, this.cx, this.fns, this.closures, this.glue);
+    this.closures.texts.push(inner.runClosure({ ...e, captures: e.captures.map(c => ({ ...c, share: false })) }, name, caps,
+      own.map(i => ({ of: i, once: !!e.captures[i].consumedInClosure }))));
+    this.closures.names.push(name);
+    for (const [k, v] of inner.callees) this.callees.set(k, v);
+    // Its drop: each capture still held, then the block.
+    const dl = [`func.func @${quote(`${name}$envdrop`)}(%env: ${PTR}) attributes {llvm.linkage = #llvm.linkage<internal>} {`];
+    let n = 0;
+    const d = (op: string) => { const r = `%d${n++}`; dl.push(`  ${r} = ${op}`); return r; };
+    const eo = (o: number) => d(`milo.ptr.elem %env[${d(`milo.const ${o} : si64`)}] : ui8`);
+    own.forEach((i, j) => {
+      const glue = this.glue.drop(stripRefs(e.captures[i].type));
+      dl.push(`  milo.if ${d(`milo.ptr.load ${eo(flagOffs[j])} : i1`)} {`, `  func.call @${quote(glue)}(${eo(offs[i])}) : (${PTR}) -> ()`, "  milo.yield", "  }");
+    });
+    dl.push(`  func.call @"free"(%env) : (${PTR}) -> ()`, "  milo.return", "}");
+    this.closures.texts.push(dl.join("\n"));
+    this.closures.names.push(`${name}$envdrop`);
+    this.callees.set("free", `(${PTR}) -> ()`);
     for (const done of after) done();
-    return { ...r, own: "owned" };
+    // The value { body, env }, owning: its drop calls the header.
+    const pair = this.fresh();
+    this.vars.push(`  ${pair} = milo.var "closure" : !milo.ref<${ty}>`);
+    const pa = this.def(`milo.addr ${pair} : !milo.ref<${ty}>`, PTR).ref;
+    this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(name)}`, PTR).ref}, ${pa} : ${PTR}`);
+    this.emit(`milo.ptr.store ${env.ref}, ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`);
+    this.dropGlue(ty, e.type);
+    return { ...this.def(`milo.load ${pair} : !milo.ref<${ty}>`, ty), own: "owned" };
   }
 
   /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */
