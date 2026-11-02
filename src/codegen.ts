@@ -31,7 +31,6 @@ import {
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
 import { OwnLedger, type CopyDecl } from "./codegen-own";
-import { PROLOGUE_END } from "./mlir-backend";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
@@ -175,7 +174,7 @@ export class Codegen {
   public trapOnOverflow = false;
   // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
-  public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
+  public mlirTake: ((fn: HIRFunction) => string[] | null) | null = null;
   // Legacy functions MLIR bodies call (mlirHelper), by symbol.
   private mlirHelpers = new Map<string, HIRFunction>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
@@ -327,7 +326,10 @@ export class Codegen {
   private closureBodies: string[][] = [];
   private closureCounter = 0;
   // `&mut` params that carry pointer attributes, per fn: what applyNoalias may mark.
-  private noaliasCandidates = new Map<string, string[]>();
+  // Per fn, its `&mut` params that may get noalias: name and position in the define line
+  // (an sret fn's out pointer comes first). The position is what the MLIR path reads: its
+  // spliced bodies number their params.
+  private noaliasCandidates = new Map<string, { name: string; at: number }[]>();
   // Closures whose environment holds pointers to the creator's locals, for applyNoalias.
   private byRefClosures = new Set<string>();
   // Mutable module globals by IR name, for applyNoalias.
@@ -1947,7 +1949,8 @@ export class Codegen {
 
     if (this.fnSigs.has("replayHeapMalloc")) this.output = this.replayHeapCalls(this.output);
     // Last: it reads the final call graph, the replay heap's calls included.
-    if (noaliasEnabled()) this.output = this.applyNoalias(this.output);
+    // The MLIR path runs it on the module its bodies are spliced into (noaliasOnFinal).
+    if (noaliasEnabled() && (!this.mlirTake || process.env.MILO_NOALIAS_STUBS === "1")) this.output = this.applyNoalias(this.output);
     const externLinks = new Map(externs.filter(e => e.linkName).map(e => [e.name, e.linkName!]));
     let ir = this.output.join("\n") + "\n";
     if (externLinks.size > 0) ir = mapSymbols(ir, n => externLinks.get(n));
@@ -2052,6 +2055,19 @@ export class Codegen {
     if (!fn) return false; // declared by codegen itself (printf, malloc, abort, ...)
     return !(fn.sourceFile ?? "").startsWith(resolve(STDLIB_DIR, "std") + "/");
   }
+  /** MLIR path: the noalias pass over the final module, every body MLIR's (no stubs). */
+  public noaliasOnFinal(ir: string, closureBodies: string[]): string {
+    if (!noaliasEnabled() || process.env.MILO_NOALIAS_STUBS === "1") return ir;
+    // MLIR's closure bodies are what may write a caller's locals (the pass seeds that from
+    // byRefClosures). A move closure's are counted too: conservative, never unsound.
+    for (const c of closureBodies) this.byRefClosures.add(c);
+    // MLIR's translation quotes some uses of a symbol (`@"f$closure1"`) and not others;
+    // the pass reads symbols unquoted, and a quoted one it cannot see is a closure it
+    // thinks nobody takes the address of, or a call it thinks goes nowhere.
+    const plain = ir.replace(/@"([\w$.\-]+)"/g, "@$1");
+    return this.applyNoalias(plain.split("\n")).join("\n");
+  }
+
   private applyNoalias(lines: string[]): string[] {
     type Fn = {
       start: number; end: number; params: string[];
@@ -2261,8 +2277,7 @@ export class Codegen {
       const f = fns.get(name);
       if (!f) continue;
       let l = out[f.start];
-      for (const p of params) {
-        const k = f.params.indexOf(`%${p}`);
+      for (const { name: p, at: k } of params) {
         const clash = [...(k >= 0 ? f.paramReach[k] : [])].filter(g => f.touches.has(g));
         // A global whose address went where the pass cannot follow may be reached through
         // any loaded pointer in any fn, not only by name, so it poisons every candidate.
@@ -2271,7 +2286,14 @@ export class Codegen {
           : clash.length ? `reaches and touches ${clash.slice(0, 3).join(",")}` : "";
         if (debug) console.error(`noalias ${name} %${p}: ${why ? `withheld (${why})` : "applied"}`);
         if (why) continue;
-        l = l.replace(new RegExp(`ptr (nonnull dereferenceable\\(\\d+\\) align \\d+ %${p.replace(/[$.]/g, "\\$&")})([,)])`), "ptr noalias $1$2");
+        // The k-th param of the define line, by position: legacy names it %p, MLIR %k.
+        const open = l.indexOf("(", l.indexOf("@"));
+        const ps = splitArgs(l.slice(open + 1));
+        if (k < ps.length && /^\s*ptr nonnull dereferenceable\(\d+\) align \d+ %/.test(ps[k])) {
+          ps[k] = ps[k].replace(/ptr nonnull/, "ptr noalias nonnull");
+          const close = open + 1 + splitArgs(l.slice(open + 1)).join(",").length;
+          l = l.slice(0, open + 1) + ps.join(",") + l.slice(close);
+        }
       }
       out[f.start] = l;
     }
@@ -2357,7 +2379,7 @@ export class Codegen {
       const attrs = this.refParamAttrs(fn, p);
       if (attrs && p.isRefMut) {
         const c = this.noaliasCandidates.get(fn.name) ?? [];
-        c.push(p.name);
+        c.push({ name: p.name, at: fn.params.indexOf(p) + (this.sretFns.has(fn.name) ? 1 : 0) });
         this.noaliasCandidates.set(fn.name, c);
       }
       return { name: p.name, ty, attrs };
@@ -2396,8 +2418,6 @@ export class Codegen {
       if (this.needsGlobalInit) b.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
     }
     // main's prologue above stays: the splice moves it into the MLIR body's entry block.
-    // A main kept whole for the noalias analysis marks where its prologue ends.
-    if (mlirStub === "legacy" && fn.name === "main" && !this.wrapMainGreen) lines.push(PROLOGUE_END);
     if (Array.isArray(mlirStub)) {
       lines.push(...mlirStub);
       b.endFn();

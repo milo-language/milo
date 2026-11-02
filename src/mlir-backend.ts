@@ -186,9 +186,6 @@ function run(cmd: string, args: string[], input: string): string {
 const ONLY = process.env.MILO_MLIR_ONLY ? new RegExp(process.env.MILO_MLIR_ONLY) : null;
 const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
-// Where main's prologue ends when main keeps its legacy body for the noalias analysis
-// (take's "legacy"): codegen writes it right after the prologue, the splice stops there.
-export const PROLOGUE_END = "; milo.mlir.prologue.end";
 
 /**
  * Which functions go through MLIR, decided by legacy codegen as it reaches each one
@@ -210,15 +207,10 @@ export class MlirPlan {
   }
 
   /**
-   * The stub body for `fn` when MLIR takes it, else null. The stub is never executed and
-   * never shipped; it exists for codegen's module-wide noalias dataflow, which reads call
-   * edges out of the IR text: one dead call per callee keeps the edges through this
-   * function. With by-ref params and scalars that is all the analysis would see in the
-   * real body. A raw pointer flows in ways a stub does not capture (stored, returned,
-   * made from an int), so a function with one keeps its legacy body for the analysis
-   * ("legacy"), and pays for generating it.
+   * The stub body for `fn` when MLIR takes it, else null: a placeholder the splice
+   * replaces with the MLIR body, never executed and never shipped.
    */
-  take(fn: HIRFunction): string[] | "legacy" | null {
+  take(fn: HIRFunction): string[] | null {
     if (fn.isExtern) return null;
     // Bisecting a miscompile: only functions whose name matches go through MLIR.
     if (ONLY && !ONLY.test(fn.name)) return null;
@@ -232,34 +224,17 @@ export class MlirPlan {
     }
     // A lazy global's init function is codegen's own, not in the HIR module.
     if (!this.fns.has(r.name)) this.fns.set(r.name, fn);
-    // Mutable globals the body names are what the analysis reads as `touches`, and their
-    // addresses flow like a raw pointer's: neither is in a stub's call list.
-    const body = r.text.slice(r.text.indexOf("\n"));
-    // A fn value runs unknown code, and a closure lends this frame's slots to it: the
-    // analysis reads both from the legacy body (byRefClosures, an indirect call).
-    const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ") || body.includes("!milo.fn<");
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(r.name);
-    if (ptrs) return "legacy";
-    const stub = [STUB_FIRST, "mlir.stub.calls:", STUB_MARK];
-    // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
-    // everything else is a scalar or a slot of this frame, which reaches no global.
-    for (const call of r.calls) {
-      const callee = this.fns.get(call.name)!;
-      const args = callee.params.map((p, i) => {
-        const own = call.refParams[i];
-        if (p.isRef || p.isRefMut) return `ptr ${own == null ? "poison" : `%${fn.params[own].name}`}`;
-        return `${this.cx.llvmType(p.type)} poison`;
-      });
-      const sym = /^[-\w$.]+$/.test(call.name) ? call.name : `"${call.name}"`;
-      // An sret callee is `void @f(ptr %__sret.out, ...)`; its out slot is this frame's.
-      const sret = this.cx.sretFns.has(call.name);
-      if (sret) args.unshift("ptr poison");
-      stub.push(`  call ${sret ? "void" : this.cx.llvmType(callee.retType)} @${sym}(${args.join(", ")})`);
-    }
-    stub.push("  unreachable");
-    return stub;
+    // The noalias pass runs on the spliced module (Codegen.noaliasOnFinal), so the stub
+    // only holds the place: the splice replaces it whole.
+    return [STUB_FIRST, "mlir.stub.calls:", STUB_MARK, "  unreachable"];
+  }
+
+  /** The closure bodies MLIR emitted (not their env drops), for the noalias pass. */
+  closureBodies(): string[] {
+    return this.taken.flatMap(f => f.closures).filter(n => !n.endsWith("$envdrop"));
   }
 
   /** `ir` with every stub replaced by the function's body compiled through MLIR. */
@@ -357,11 +332,11 @@ export class MlirPlan {
         header = header.replace(re, ` %${k}`);
         renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
       });
-      // Legacy lines ahead of the stub or PROLOGUE_END (main's prologue: argc/argv globals, stdout
+      // Legacy lines ahead of the stub (main's prologue: argc/argv globals, stdout
       // buffering, global init) run first, at the top of the MLIR entry block. They are
       // calls and stores of params and globals, so they number no values of their own.
       const prologue: string[] = [];
-      for (let j = i + 1; name === "main" && lines[j] !== PROLOGUE_END && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
+      for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
         if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
         // The legacy entry label goes; the MLIR body brings its own entry block.
         if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
