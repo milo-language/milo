@@ -67,7 +67,7 @@ export function mlirType(t: TypeKind): string | null {
 function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
   if (t.tag !== "vec" && !(t.tag === "array" && t.size === null)) return null;
   const e = placeType(cx, t.element);
-  return e === null || e === PTR ? null : e;
+  return e;
 }
 
 const I64: TypeKind = { tag: "int", bits: 64, signed: true };
@@ -364,6 +364,25 @@ function stripRefs(t: TypeKind): TypeKind {
   return t;
 }
 
+/** Why placeType rejects `t`: the innermost field type it refuses, with the path to it. */
+function placeBlocker(cx: MlirEmitCtx, t: TypeKind, depth = 0): string {
+  if (depth > 4) return t.tag;
+  const inner = (u: TypeKind) => `${t.tag} (${placeBlocker(cx, u, depth + 1)})`;
+  switch (t.tag) {
+    case "vec": return vecElem(cx, t) === null ? inner(t.element) : "vec";
+    case "heap": return inner(t.inner);
+    case "hashmap": return inner(placeType(cx, t.key) === null ? t.key : t.value);
+    case "array": return t.size === null ? "slice" : inner(t.element);
+    case "fn": return t.owning ? "owning fn" : "fn";
+    case "struct": case "enum": {
+      if (cx.llvmType(t) !== `%${t.name}`) return `${t.tag} (niche)`;
+      const bad = fieldTypes(cx, t).find(f => placeType(cx, f) === null);
+      return bad ? inner(bad) : t.tag;
+    }
+    default: return t.tag;
+  }
+}
+
 /** Why valueType rejects `t`: its tag, and for an aggregate what inside it blocks it. */
 function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0, seen: string[] = []): string {
   if (t.tag === "int") return "ranged int";
@@ -508,7 +527,7 @@ class FnEmitter {
     });
     e.params.forEach((p, i) => {
       const ty = closureParamType(this.cx, p.type);
-      if (ty === null) throw new MlirUnsupported(`closure param of type ${blocker(this.cx, stripRefs(p.type))}`);
+      if (ty === null) throw new MlirUnsupported(`closure param of type ${placeBlocker(this.cx, stripRefs(p.type))}`);
       params.push(`%p${i}: ${ty}`);
       if (ty.startsWith("!milo.vec<")) this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem: ty.slice(10, -1) });
       else if (p.type.tag === "ref") this.bind(p.name, { kind: "var", ref: `%p${i}`, ty: ty.slice(10, -1) });
@@ -566,7 +585,7 @@ class FnEmitter {
         return `%p${i}: !milo.vec<${elem}>`;
       }
       if ((p.isRef || p.isRefMut) && placeType(this.cx, p.type) === null) {
-        this.bind(p.name, { kind: "opaque", what: blocker(this.cx, p.type) });
+        this.bind(p.name, { kind: "opaque", what: placeBlocker(this.cx, p.type) });
         return `%p${i}: ${PTR}`;
       }
       const pt = placeType(this.cx, p.type);
@@ -891,14 +910,14 @@ class FnEmitter {
    */
   private place$(t: TypeKind, what: string): string {
     const v = placeType(this.cx, t);
-    if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${placeBlocker(this.cx, t)}`);
     return v;
   }
 
   /** lentType, or the reason the function stays legacy. */
   private lent(t: TypeKind, what: string): string {
     const v = lentType(this.cx, t);
-    if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, stripRefs(t))}`);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${placeBlocker(this.cx, stripRefs(t))}`);
     return v;
   }
 

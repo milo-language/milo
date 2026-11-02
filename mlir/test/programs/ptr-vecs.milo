@@ -1,0 +1,75 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a Vec of
+// raw pointers (milojs's object graph keeps one per heap, `Vec<*T>`), as a local, a struct
+// field, a by-ref param and an element read and written through.
+
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8)
+
+struct Node {
+    value: i64,
+    next: i64,
+}
+
+struct Pool {
+    nodes: Vec<*Node>,
+    name: string,
+}
+
+fn alloc(pool: &mut Pool, v: i64): i64 {
+    unsafe {
+        let p = malloc(16) as *Node
+        (*p).value = v
+        (*p).next = -1
+        pool.nodes.push(p)
+    }
+    return pool.nodes.len() - 1
+}
+
+fn sum(nodes: &Vec<*Node>): i64 {
+    var t: i64 = 0
+    for p in nodes {
+        unsafe { t = t + (*p).value }
+    }
+    return t
+}
+
+fn link(pool: &mut Pool) {
+    for i in 0..pool.nodes.len() - 1 {
+        unsafe { (*pool.nodes[i]).next = i + 1 }
+    }
+}
+
+fn walk(pool: &Pool): string {
+    var out = pool.name.clone()
+    var i: i64 = 0
+    while i >= 0 {
+        unsafe {
+            let p = pool.nodes[i]
+            out.pushStr(" ")
+            out.pushStr((*p).value.toString())
+            i = (*p).next
+        }
+    }
+    return out
+}
+
+fn release(pool: &mut Pool) {
+    while pool.nodes.len() > 0 {
+        let p = pool.nodes.pop()!
+        unsafe { free(p as *u8) }
+    }
+}
+
+fn main() {
+    var pool = Pool { nodes: Vec.new(), name: "pool" }
+    for i in 0..5 { let _ = alloc(&mut pool, i * 7) }
+    link(&mut pool)
+    print(sum(pool.nodes))
+    print(walk(pool))
+    var copy: Vec<*Node> = Vec.new()
+    for p in pool.nodes { copy.push(p) }
+    print(copy.len())
+    release(&mut pool)
+    print(pool.nodes.len())
+}
