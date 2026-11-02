@@ -3343,6 +3343,13 @@ class FnEmitter {
       // A view fork's arms only lend (a place, a literal): nothing here is owned.
       if (v.own === "owned" && !this.bitCopies.has(v.ref)) throw new MlirUnsupported("view fork arm that owns its value");
       if (v.own === "view") fork.sawView = true;
+    } else if (fork?.mode === "own" && v.own === "view") {
+      // An owning fork's place arm (`if c { s } else { s + "y" }`) hands over a clone, so
+      // the fork owns what it yields on every path (legacy cloneViewValue). [MILO-O-forkOwnership]
+      const slot = this.fresh();
+      this.vars.push(`  ${slot} = milo.var "fork.view" : !milo.ref<${v.ty}>`);
+      this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
+      v = this.copyOut(last.expr, slot, v.ty, true);
     } else v = this.consume(v, "block value");
     if (v.ty !== ty) throw new MlirUnsupported("block value of another type");
     return v;
