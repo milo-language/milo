@@ -1,0 +1,39 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a C fn
+// pointer (`extern (..) => R`) held as a raw pointer, stored in a let and a struct field,
+// passed along and called with scalar arguments (legacy's indirect C call).
+
+pub fn add(a: i64, b: i64): i64 {
+    return a + b
+}
+
+pub fn half(x: f64): f64 {
+    return x / 2.0
+}
+
+pub fn hello() {
+    print("hello")
+}
+
+struct Ops {
+    op: extern (i64, i64) => i64,
+}
+
+fn apply(f:
+
+extern (i64, i64) => i64, a: i64, b: i64): i64 {
+    unsafe { return f(a, b) }
+}
+
+fn main() {
+    unsafe {
+        let f = (add as *u8) as extern (i64, i64) => i64
+        print(f(2, 3))
+        let o = Ops { op: f }
+        print(o.op(10, 20))
+        print(apply(f, 7, 8))
+        let h = (half as *u8) as extern (f64) => f64
+        print(h(5.0))
+        let g = (hello as *u8) as extern () => void
+        g()
+    }
+}

@@ -58,7 +58,8 @@ export function mlirType(t: TypeKind): string | null {
   if (t.tag === "int") return `${t.signed ? "si" : "ui"}${t.bits}`;
   if (t.tag === "float") return t.bits === 32 ? "f32" : "f64";
   if (t.tag === "bool") return "i1";
-  if (t.tag === "ptr") return PTR;
+  // A C fn pointer (`extern (..) => R`) is a plain pointer, as legacy holds it.
+  if (t.tag === "ptr" || t.tag === "cfn") return PTR;
   return null;
 }
 
@@ -84,7 +85,7 @@ function typeKey(t: TypeKind): string {
     case "int": return `${t.signed ? "si" : "ui"}${t.bits}`;
     case "float": return t.bits === 32 ? "f32" : "f64";
     case "bool": return "i1";
-    case "ptr": return "ptr";
+    case "ptr": case "cfn": return "ptr";
     case "string": return "string";
     case "vec": return `vec.${typeKey(t.element)}`;
     case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
@@ -2059,6 +2060,26 @@ class FnEmitter {
           { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
+      }
+      case "CFnCall": {
+        // A call through a C fn pointer: legacy's indirect C call in a helper, scalar
+        // arguments and result only (a struct by value would need the C ABI here).
+        const f = this.expr(e.callee);
+        if (f.ty !== PTR) throw new MlirUnsupported("C fn pointer of another type");
+        const ops = [{ name: "f", type: e.callee.type, mode: "val" as const, ref: f.ref }];
+        e.args.forEach((a, k) => {
+          if (a.passByRef) throw new MlirUnsupported("by-ref argument to a C fn pointer");
+          const vt = valueType(this.cx, a.expr.type);
+          if (vt === null || !(isScalarTy(vt) || vt === PTR)) throw new MlirUnsupported("non-scalar argument to a C fn pointer");
+          const v = this.expr(a.expr);
+          if (v.ty !== vt) throw new MlirUnsupported("C fn pointer argument type");
+          ops.push({ name: `a${k}`, type: a.expr.type, mode: "val", ref: v.ref });
+        });
+        const ret = e.type.tag === "void" ? null : scalar(e.type, "C fn pointer result");
+        const sig = fnv1a(ops.map(o => typeKey(o.type)).join(",") + "->" + (ret ?? "v"));
+        const r = this.intrinsic(`cfncall.${sig}`, e, ops,
+          ([x, ...xs]) => ({ ...e, callee: x, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })) }), ret, false);
+        return this.valued(r, stmt);
       }
       case "VecCapacity": case "HeapPtr": return this.builtinOf(e, "object", false);
       case "EnumTryFrom": return this.builtinOf(e, "value", false);
