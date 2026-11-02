@@ -1,0 +1,14 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a Vec literal of
+// place-only elements (arrays, 128+ byte structs that own a string): built in slots, read
+// through a pointer by the helper, the slots emptied so the Vec alone owns them.
+
+struct Tag { pad: [i64; 16], name: string }
+
+fn tag(i: i64): Tag { return Tag { pad: [i; 16], name: $"t{i}" } }
+
+fn main() {
+    let v: Vec<Tag> = [tag(1), tag(2)]
+    print(v.len(), " ", v[1].name, " ", v[0].pad[3])
+    let w: Vec<[i64; 2]> = [[1, 2], [3, 4]]
+    print(w[1][0])
+}

@@ -2700,6 +2700,26 @@ class FnEmitter {
         // evaluated) in a legacy function per element type and count, the elements
         // evaluated here in order and moved into it.
         const et = e.type.element;
+        if (valueType(this.cx, et) === null) {
+          // A place-only element (an array, a 128+ byte struct): each is built in a slot of
+          // the statement, the helper reads it through a raw pointer (a bit copy, as
+          // unwrapInto), and the slot is then emptied: the Vec owns the element now. A jump
+          // out of a later element drops the slots built so far.
+          const pty = this.place$(et, "Vec literal element");
+          const slots = e.elements.map(x => this.bigSlot("veclit.elem", x, true));
+          const args = slots.map(sl => `${this.def(`milo.addr ${sl.ref} : !milo.ref<${pty}>`, PTR).ref} : ${PTR}`);
+          const pt: TypeKind = { tag: "ptr", inner: et };
+          const name = this.cx.mlirHelper(`milo.veclit.p.${typeKey(et)}.${e.elements.length}`, () => ({
+            params: e.elements.map((_, k) => ({ name: `e${k}`, type: pt, isRef: false, isRefMut: false })),
+            retType: e.type,
+            body: [{ kind: "Return", retType: e.type, value: { kind: "ArrayLit", type: e.type,
+              elements: e.elements.map((_, k) => ({ kind: "PtrDeref" as const, type: et, operand: { kind: "Ident" as const, name: `e${k}`, type: pt, isMove: false } })) } }],
+          }));
+          const r = this.callHelper(name, args, ty);
+          for (const sl of slots) if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${pty}>`, pty);
+          if (this.hasDrop(pty)) this.dropGlue(ty, e.type);
+          return { ...r, own: "owned" };
+        }
         const ety = this.value(et, "Vec literal element");
         const mark = this.pending.length;
         const args = e.elements.map(x => {
