@@ -1746,9 +1746,12 @@ class FnEmitter {
     const ot = stripRefs(e.object.type);
     // A borrowed interface (`g: &Greeter`) is the same `{ data, itable }` pair in its place.
     if ((ot.tag !== "heap" || ot.inner.tag !== "interface") && ot.tag !== "interface") throw new MlirUnsupported("interface call on a non-interface");
-    const p = this.fieldPlace(e.object);
     const dty = this.place$(ot, "interface box");
-    if (!p || p.ty !== dty) throw new MlirUnsupported("interface call on a box that is not a place");
+    // Dispatch only reads { data, itable }: a named or indexed receiver is lent where it is,
+    // an SSA view of one (`for s in shapes`) spilled to a slot nothing drops (place).
+    const k = e.object.kind;
+    if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess") throw new MlirUnsupported("interface call on a temporary box");
+    const p = this.place(e.object, `!milo.ref<${dty}>`, false);
     const ops: { name: string; type: TypeKind; mode: "val" | "ref" | "mut"; ref: string }[] = [{ name: "o", type: ot, mode: "ref", ref: p.ref }];
     const mark = this.pending.length;
     e.args.forEach((a, k) => {
