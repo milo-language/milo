@@ -26,6 +26,66 @@ miss:
   ret i64 -1
 }
 
+; @@ milo.strview.step
+; One step of `for v in s.lines()` / `s.splitView(sep)` (legacy genForStrView's loop body,
+; for the MLIR backend): false when the pieces ran out; else the next piece, a view into
+; s's buffer (cap 0), in *out and the next start in *posp. Lines pass sep = "\n", split=0.
+define internal i1 @milo.strview.step(ptr %s, ptr %sep, i1 %split, ptr %posp, ptr %out) {
+entry:
+  %data = load ptr, ptr %s
+  %lenp = getelementptr inbounds { ptr, i64, i64 }, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %sdata = load ptr, ptr %sep
+  %slenp = getelementptr inbounds { ptr, i64, i64 }, ptr %sep, i32 0, i32 1
+  %slen = load i64, ptr %slenp
+  %pos = load i64, ptr %posp
+; a trailing newline ends the last line; `pos == len` still yields the piece after a
+; trailing separator, except for an empty one, which runs out one step earlier
+  %lt = icmp slt i64 %pos, %len
+  %le = icmp sle i64 %pos, %len
+  %sepEmpty = icmp eq i64 %slen, 0
+  %okEmpty = select i1 %sepEmpty, i1 %lt, i1 true
+  %splitMore = and i1 %le, %okEmpty
+  %more = select i1 %split, i1 %splitMore, i1 %lt
+  br i1 %more, label %body, label %done
+done:
+  ret i1 false
+body:
+  %found = call i64 @milo.strfind(ptr %data, i64 %len, ptr %sdata, i64 %slen, i64 %pos)
+; an empty needle matches at pos and would never advance: the next byte is the separator
+  %pos1 = add i64 %pos, 1
+  %emptySplit = and i1 %split, %sepEmpty
+  %sepIdx = select i1 %emptySplit, i64 %pos1, i64 %found
+  %hasSep = icmp sge i64 %sepIdx, 0
+  %pieceEnd = select i1 %hasSep, i64 %sepIdx, i64 %len
+  br i1 %split, label %emit, label %crlf
+crlf:
+; CRLF: the '\r' belongs to the line ending; the probe is clamped inside the buffer
+  %nonEmpty = icmp sgt i64 %pieceEnd, %pos
+  %prev = sub i64 %pieceEnd, 1
+  %probeIdx = select i1 %nonEmpty, i64 %prev, i64 %pos
+  %probeP = getelementptr i8, ptr %data, i64 %probeIdx
+  %probe = load i8, ptr %probeP
+  %isCR = icmp eq i8 %probe, 13
+  %strip = and i1 %nonEmpty, %isCR
+  %lineEnd = select i1 %strip, i64 %prev, i64 %pieceEnd
+  br label %emit
+emit:
+  %viewEnd = phi i64 [ %pieceEnd, %body ], [ %lineEnd, %crlf ]
+  %vp = getelementptr i8, ptr %data, i64 %pos
+  %vl = sub i64 %viewEnd, %pos
+  store ptr %vp, ptr %out
+  %olp = getelementptr inbounds { ptr, i64, i64 }, ptr %out, i32 0, i32 1
+  store i64 %vl, ptr %olp
+  %ocp = getelementptr inbounds { ptr, i64, i64 }, ptr %out, i32 0, i32 2
+  store i64 0, ptr %ocp
+  %after = add i64 %pieceEnd, %slen
+  %pastEnd = add i64 %len, 1
+  %next = select i1 %hasSep, i64 %after, i64 %pastEnd
+  store i64 %next, ptr %posp
+  ret i1 true
+}
+
 ; @@ milo.fmt.u64
 define internal i64 @milo.fmt.u64(ptr %dst, i64 %v) {
 entry:

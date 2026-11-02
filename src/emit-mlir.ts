@@ -23,6 +23,7 @@ export interface MlirEmitCtx {
   llvmType(t: TypeKind): string;
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
+  mlirStrViewStep(): string;
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
   hasVecType: boolean;
@@ -1503,6 +1504,7 @@ class FnEmitter {
         this.loops--; this.loopBase.pop();
         return false;
       }
+      case "ForStrView": return this.forStrView(s);
       case "ForEach": {
         // `for x in v` over a Vec place, as legacy genForEach: data and len read once,
         // then each element by index. The element is read at the top of each iteration,
@@ -1750,6 +1752,55 @@ class FnEmitter {
       this.closeScope(scopeStart, false, null);
       return false;
     } finally { this.scopes.pop(); this.blocks.pop(); }
+  }
+
+  /**
+   * `for v in s.lines()` / `s.splitView(sep)`, as legacy genForStrView: each step
+   * (runtime milo.strview.step) finds the next piece and writes it, a view into s's buffer
+   * that nothing drops, to the binding's slot. The step runs in the condition, so a
+   * `continue` cannot skip it; the enumerate index counts up from -1 at the top of the body.
+   */
+  private forStrView(s: HIRStmt & { kind: "ForStrView" }): boolean {
+    if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+    const placeOf = (x: HIRExpr, what: string) => {
+      if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "StringLit") throw new MlirUnsupported(`${what} of a for over string pieces that is not a place`);
+      return this.place(x, refOf(STR), false).ref;
+    };
+    const src = placeOf(s.src, "source");
+    const sep = placeOf(s.mode === "split" && s.sep ? s.sep : { kind: "StringLit", value: "\n", type: { tag: "string" } } as HIRExpr, "separator");
+    const step = this.cx.mlirStrViewStep();
+    const slot = (name: string, ty: string) => {
+      const r = this.fresh();
+      this.vars.push(`  ${r} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+      return r;
+    };
+    const pos = slot("strview.pos", "si64");
+    const piece = slot(s.varName2 ?? s.varName, STR);
+    this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${pos} : !milo.ref<si64>`);
+    const idx = s.varName2 ? slot("strview.idx", "si64") : null;
+    if (idx) this.emit(`milo.store ${this.def("milo.const -1 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
+    const split = this.def(`milo.const ${s.mode === "split"}`, "i1").ref;
+    this.loops++; this.loopBase.push(this.pending.length);
+    this.region("milo.while {", () => {
+      const more = this.callHelper(step, [`${src} : !milo.ref<${STR}>`, `${sep} : !milo.ref<${STR}>`, `${split} : i1`, `${pos} : !milo.ref<si64>`, `${piece} : !milo.ref<${STR}>`], "i1");
+      this.emit(`milo.condition ${more.ref}`);
+      return true;
+    });
+    this.scopes.push(new Map());
+    try {
+      this.region("} do {", () => {
+        this.bind(s.varName2 ?? s.varName, { kind: "var", ref: piece, ty: STR });
+        if (idx) {
+          const i = this.def(`milo.add ${this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref}, ${this.def("milo.const 1 : si64", "si64").ref} wrapping : si64`, "si64");
+          this.emit(`milo.store ${i.ref}, ${idx} : !milo.ref<si64>`);
+          this.bind(s.varName, { kind: "ssa", v: i });
+        }
+        return this.stmts(s.body);
+      });
+    } finally { this.scopes.pop(); }
+    this.emit("}");
+    this.loops--; this.loopBase.pop();
+    return false;
   }
 
   private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {

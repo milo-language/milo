@@ -350,6 +350,7 @@ export class Codegen {
   public ifaceMethodCounts = new Map<string, number>();
   private helperFnBodies: string[][] = [];
   private emittedStrFind = false;
+  private emittedStrViewStep = false;
   // Inside a closure body: capture alloca name -> pointer to its liveness flag in the
   // environment. A move out of a capture clears the flag so the env drop glue skips it.
   private captureFlagByAddr = new Map<string, string>();
@@ -4639,6 +4640,17 @@ export class Codegen {
       this.helperFnBodies.push(runtimeFn("milo.strfind"));
     }
     return "@milo.strfind";
+  }
+
+  /** MLIR path: the runtime step of a `for` over lines()/splitView() (runtime/str.ll). */
+  public mlirStrViewStep(): string {
+    this.strFindFn();
+    this.hasStringType = true;
+    if (!this.emittedStrViewStep) {
+      this.emittedStrViewStep = true;
+      this.helperFnBodies.push(runtimeFn("milo.strview.step"));
+    }
+    return "milo.strview.step";
   }
 
   // `for line in text.lines()` / `for f in text.splitView(sep)`. Each iteration stores a

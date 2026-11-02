@@ -1,0 +1,45 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `for v in s.lines()`
+// and `s.splitView(sep)` (milo.strview.step): CRLF, a trailing newline or separator, an
+// empty separator, empty input, the enumerate index, and continue/break in the body.
+
+struct Doc { text: string, sep: string }
+
+fn show(label: string, s: &string) {
+    var out = ""
+    for line in s.lines() { out = out + "[" + line + "]" }
+    print(label, " lines ", out)
+}
+
+fn pieces(s: &string, sep: &string): string {
+    var out = ""
+    for i, p in s.splitView(sep) { out = out + $"{i}:" + p + ";" }
+    return out
+}
+
+fn main() {
+    show("plain", "a\nbb\nccc")
+    show("trailing", "a\nb\n")
+    show("crlf", "x\r\ny\r\n\r\nz")
+    show("empty", "")
+    show("only-nl", "\n\n")
+    let s = "a,b,,c," + ""
+    print(pieces(s, ","))
+    print(pieces("abc", ""))
+    print(pieces("", ","))
+    print(pieces("one", ","))
+    print(pieces("a--b--", "--"))
+    let d = Doc { text: "k1=v1;k2=v2;skip;k3=v3", sep: ";" }
+    var n = 0
+    for f in d.text.splitView(d.sep) {
+        if f == "skip" { continue }
+        n = n + f.len()
+        if f.len() == 0 { break }
+    }
+    print("n ", n)
+    var count = 0
+    for i, line in "l0\nl1\nl2\nl3".lines() {
+        if i == 2 { break }
+        count = count + i + line.len()
+    }
+    print("count ", count)
+}
