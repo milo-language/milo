@@ -3928,13 +3928,27 @@ class FnEmitter {
         return { ...this.def(`milo.move ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own: "owned" };
       }
     } else if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && k !== "HeapDeref" && k !== "PtrDeref"
-      && o.type.tag === "struct" && !this.runsUserDrop(this.place$(o.type, "struct"))) {
+      && o.type.tag === "struct" && !this.cx.dropImpls.has(o.type.name)) {
       // Out of a temporary (`make().name`): it goes to a slot that dies with the
       // statement, so the fields left behind are dropped there (legacy
       // dropStructFieldsExcept), the moved one zeroed first.
       const sl = this.bigSlot("tmp", o, true);
       const { index, ty } = this.field(e);
       p = { ref: this.def(`milo.field_ref ${sl.ref}[${index}] : !milo.ref<${sl.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref, ty };
+      if (this.runsUserDrop(sl.ty)) {
+        // A user Drop in the leftovers is observable, so they die here, first field
+        // first, as legacy's dropStructFieldsExcept runs them, and the slot is emptied.
+        const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
+        fieldTypes(this.cx, o.type).forEach((ft, j) => {
+          if (j === index || !ownsStructurally(this.cx, ft, [])) return;
+          const fty = this.place$(ft, "field");
+          this.dropGlue(fty, ft);
+          const fr = this.def(`milo.field_ref ${sl.ref}[${j}] : !milo.ref<${sl.ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`);
+          this.emit(`milo.drop ${fr.ref} : !milo.ref<${fty}>`);
+        });
+        this.def(`milo.move ${sl.ref} : !milo.ref<${sl.ty}>`, sl.ty);
+        return { ...v, own: "owned" };
+      }
     } else throw new MlirUnsupported(`move out of a field (${this.moveRoot(e)})`);
     const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
     this.emit(`milo.store ${this.def(`milo.zero : ${p.ty}`, p.ty).ref}, ${p.ref} init : !milo.ref<${p.ty}>`);

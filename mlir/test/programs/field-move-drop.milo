@@ -118,7 +118,17 @@ fn bigOut(): void {
     takeBig(c)
 }
 
+// Out of a temporary: the leftovers die at the move, before the taker runs.
+fn temps(): void {
+    take(pair(200).b)
+    let r = pair(210).a
+    print($"temp {r.id}")
+    let n = Nest { inner: pair(220), tail: Res { id: 225 }, tag: "x" }
+    takePair(n.inner)
+}
+
 fn main(): i32 {
+    temps()
     fromParam(pair(1))
     branches(1)
     branches(2)
