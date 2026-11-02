@@ -393,6 +393,8 @@ function viewResult(cx: MlirEmitCtx, t: TypeKind): string | null {
 
 const dynRef = (iface: string) => `!milo.dynref<${quote(iface)}>`;
 
+const isTempBox = (op: HIRExpr) => op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "HeapCreate";
+
 function stripRefs(t: TypeKind): TypeKind {
   while (t.tag === "ref") t = t.inner;
   return t;
@@ -2387,7 +2389,7 @@ class FnEmitter {
       }
       case "HeapDeref": {
         const op = e.operand;
-        const temp = op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "HeapCreate";
+        const temp = isTempBox(op);
         const ty = this.value(e.type, "boxed value");
         const hty = `!milo.heap<${ty}>`;
         const payload = (h: string) => this.def(`milo.load ${this.def(`milo.heap.place ${h} : ${hty} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref} : !milo.ref<${ty}>`, ty);
@@ -3040,7 +3042,9 @@ class FnEmitter {
       return b.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : null;
     }
     if (e.kind === "IndexAccess") return this.elemRef(e);
-    if (e.kind === "HeapDeref") return this.heapPlace(e);
+    // A temporary box is no place: a read through it moves the payload out and frees the
+    // box (the HeapDeref value), then drops what it read once the read is done.
+    if (e.kind === "HeapDeref") return isTempBox(e.operand) ? null : this.heapPlace(e);
     if (e.kind !== "FieldAccess") return null;
     const base = this.fieldPlace(e.object) ?? this.memTemp(e.object);
     if (!base) return null;
