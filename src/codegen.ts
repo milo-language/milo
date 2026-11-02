@@ -8663,7 +8663,7 @@ export class Codegen {
     this.needsMalloc = true;
     this.needsMemcpy = true;
     this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
-    this.helperFnBodies.push(runtimeFn("milo.buf.clone"));
+    this.helperFnBodies.push(runtimeFn("milo.buf.clone"), runtimeFn("milo.buf.alloc"));
   }
   private emittedMlirCloneOps = false;
   private emittedMlirMapOps = false;

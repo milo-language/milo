@@ -1391,10 +1391,11 @@ class FnEmitter {
   }
 
   /**
-   * A view `{ data, len, cap 0 }` of type `ty` (a `&string`, a slice's !milo.vecval): cap 0
-   * owns nothing, so nothing drops it. Written through a slot's address, then loaded.
+   * A header `{ data, len, cap }` of type `ty` (a string, a Vec's !milo.vecval), written
+   * through a slot's address, then loaded. Without `cap` it is a view (cap 0 owns nothing,
+   * so nothing drops it); with one it owns its buffer.
    */
-  private makeView(ty: string, data: Val, len: Val): Val {
+  private makeView(ty: string, data: Val, len: Val, cap?: Val): Val {
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var "view" : !milo.ref<${ty}>`);
     const rec = `!milo.struct<"${ty === STR ? "String" : "Vec"}", ${PTR}, si64, si64>`;
@@ -1402,8 +1403,8 @@ class FnEmitter {
     const field = (i: number) => this.def(`milo.ptr.field ${at}[${i}] : ${rec}`, PTR).ref;
     this.emit(`milo.ptr.store ${data.ref}, ${field(0)} : ${PTR}`);
     this.emit(`milo.ptr.store ${len.ref}, ${field(1)} : si64`);
-    this.emit(`milo.ptr.store ${this.def("milo.const 0 : si64", "si64").ref}, ${field(2)} : si64`);
-    return { ...this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty), own: "view" };
+    this.emit(`milo.ptr.store ${(cap ?? this.def("milo.const 0 : si64", "si64")).ref}, ${field(2)} : si64`);
+    return { ...this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty), own: cap ? "owned" : "view" };
   }
 
   private constTrue(): string {
@@ -3194,45 +3195,30 @@ class FnEmitter {
         if (e.type.tag !== "vec") throw new MlirUnsupported("array literal as a value");
         const ty = this.value(e.type, "Vec literal");
         if (e.elements.length === 0) return { ...this.def(`milo.vec.new : ${ty}`, ty), own: "owned" };
-        // Legacy's genArrayLit (one malloc of exactly n elements, each stored as it is
-        // evaluated) in a legacy function per element type and count, the elements
-        // evaluated here in order and moved into it.
+        // Legacy genArrayLit: one malloc of exactly n elements, each written as it is
+        // evaluated (a place-only one, an array or a 128+ byte struct, built in a slot of
+        // the statement, copied in, the slot then emptied); then the header { buf, n, n }.
+        // A jump out of a later element drops the slots built so far.
         const et = e.type.element;
+        const pty = this.place$(et, "Vec literal element");
+        const n = e.elements.length, es = this.cx.typeSizeOf(et);
+        this.cx.mlirCloneOps();
+        const buf = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def(`milo.const ${n} : si64`, "si64"), this.def(`milo.const ${es} : si64`, "si64")], PTR), e.span);
+        const at = (k: number) => k === 0 ? buf.ref : this.def(`milo.ptr.elem ${buf.ref}[${this.def(`milo.const ${k} : si64`, "si64").ref}] : ${pty}`, PTR).ref;
         if (valueType(this.cx, et) === null) {
-          // A place-only element (an array, a 128+ byte struct): each is built in a slot of
-          // the statement, the helper reads it through a raw pointer (a bit copy, as
-          // unwrapInto), and the slot is then emptied: the Vec owns the element now. A jump
-          // out of a later element drops the slots built so far.
-          const pty = this.place$(et, "Vec literal element");
           const slots = e.elements.map(x => this.bigSlot("veclit.elem", x, true));
-          const args = slots.map(sl => `${this.def(`milo.addr ${sl.ref} : !milo.ref<${pty}>`, PTR).ref} : ${PTR}`);
-          const pt: TypeKind = { tag: "ptr", inner: et };
-          const name = this.cx.mlirHelper(`milo.veclit.p.${typeKey(et)}.${e.elements.length}`, () => ({
-            params: e.elements.map((_, k) => ({ name: `e${k}`, type: pt, isRef: false, isRefMut: false })),
-            retType: e.type,
-            body: [{ kind: "Return", retType: e.type, value: { kind: "ArrayLit", type: e.type,
-              elements: e.elements.map((_, k) => ({ kind: "PtrDeref" as const, type: et, operand: { kind: "Ident" as const, name: `e${k}`, type: pt, isMove: false } })) } }],
-          }));
-          const r = this.callHelper(name, args, ty);
+          slots.forEach((sl, k) => this.emit(`milo.copy ${sl.ref}, ${at(k)} : !milo.ref<${pty}>, ${PTR} of ${pty}`));
           for (const sl of slots) if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${pty}>`, pty);
-          if (this.hasDrop(pty)) this.dropGlue(ty, e.type);
-          return { ...r, own: "owned" };
+        } else {
+          const ety = this.value(et, "Vec literal element");
+          const mark = this.pending.length;
+          const vals = e.elements.map(x => this.pend(this.operand(x, ety, "Vec literal element"), x.type));
+          this.pending.length = mark;
+          vals.forEach((v, k) => this.emit(`milo.ptr.store ${v.ref}, ${at(k)} : ${ety}`));
         }
-        const ety = this.value(et, "Vec literal element");
-        const mark = this.pending.length;
-        const args = e.elements.map(x => {
-          const v = this.pend(this.operand(x, ety, "Vec literal element"), x.type);
-          return `${v.ref} : ${ety}`;
-        });
-        this.pending.length = mark;
-        const name = this.cx.mlirHelper(`milo.veclit.${typeKey(et)}.${e.elements.length}`, () => ({
-          params: e.elements.map((_, k) => ({ name: `e${k}`, type: et, isRef: false, isRefMut: false })),
-          retType: e.type,
-          body: [{ kind: "Return", retType: e.type, value: { kind: "ArrayLit", type: e.type,
-            elements: e.elements.map((_, k) => ({ kind: "Ident" as const, name: `e${k}`, type: et, isMove: true })) } }],
-        }));
-        if (this.hasDrop(ety)) this.dropGlue(ty, e.type);
-        return { ...this.callHelper(name, args, ty), own: "owned" };
+        if (this.hasDrop(pty)) this.dropGlue(ty, e.type);
+        const count = this.def(`milo.const ${n} : si64`, "si64");
+        return this.makeView(ty, buf, count, count);
       }
       default:
         throw new MlirUnsupported(`expr ${e.kind}`);

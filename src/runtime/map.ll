@@ -98,3 +98,19 @@ fail:
   call void @milo.str.oom()
   unreachable
 }
+
+; @@ milo.buf.alloc
+; `n * size` uninitialized bytes from malloc (a Vec literal's buffer, exactly its
+; elements); null when the product overflows or malloc fails, so the caller reports it.
+define internal ptr @milo.buf.alloc(i64 %n, i64 %size) {
+entry:
+  %m = call { i64, i1 } @llvm.umul.with.overflow.i64(i64 %n, i64 %size)
+  %bytes = extractvalue { i64, i1 } %m, 0
+  %ovf = extractvalue { i64, i1 } %m, 1
+  br i1 %ovf, label %fail, label %go
+go:
+  %p = call ptr @malloc(i64 %bytes)
+  ret ptr %p
+fail:
+  ret ptr null
+}
