@@ -2026,6 +2026,22 @@ class FnEmitter {
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
       }
+      case "VecGetOpt": {
+        // `v.get(i)` / first / last: legacy's genVecGetOpt (the bounds test, a deep clone of
+        // the element into Some) in a helper, v lent by its place. Legacy also drops a
+        // temporary receiver after the read; only a named place is taken here.
+        const k = e.object.kind;
+        if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess") throw new MlirUnsupported("get on a temporary vec");
+        const vt = stripRefs(e.object.type);
+        const v = this.place(e.object, this.lent(vt, "vec of get"), false).ref;
+        const i = this.expr(e.index);
+        if (i.ty !== "si64") throw new MlirUnsupported("get index type");
+        const ty = this.value(e.type, "get result");
+        const r = this.intrinsic("vecget", e, [{ name: "v", type: vt, mode: "ref", ref: v },
+          { name: "i", type: I64, mode: "val", ref: i.ref }],
+        ([x, y]) => ({ ...e, object: x, index: y }), ty, false);
+        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+      }
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);
         return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");

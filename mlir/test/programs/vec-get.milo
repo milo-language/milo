@@ -1,0 +1,66 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): `v.get(i)`,
+// `first()` and `last()` (VecGetOpt), in and out of range and negative, of scalars and of
+// owning elements (Some holds a deep clone the caller owns), through a local, a field and
+// a by-ref param.
+
+struct Item {
+    name: string,
+    n: i64,
+}
+
+struct Bag {
+    items: Vec<Item>,
+}
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Option.Some(x) => x.toString(),
+        Option.None => "none",
+    }
+}
+
+fn name(b: &Bag, i: i64): string {
+    return match b.items.get(i) {
+        Option.Some(it) => it.name,
+        Option.None => "?",
+    }
+}
+
+fn total(v: &Vec<i64>): i64 {
+    var t: i64 = 0
+    var i: i64 = 0
+    while v.get(i).isSome() {
+        t = t + v.get(i)!
+        i = i + 1
+    }
+    return t
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..5 { v.push(i * 3) }
+    print(show(v.get(2)))
+    print(show(v.get(5)))
+    print(show(v.get(-1)))
+    print(show(v.first()))
+    print(show(v.last()))
+    print(total(v))
+    var s: Vec<string> = Vec.new()
+    s.push("alpha")
+    s.push("beta")
+    print(s.get(0).isSome())
+    print(s.get(0)!)
+    let got = s.get(1)
+    s.clear()
+    match got {
+        Option.Some(x) => print(x),
+        Option.None => print("none"),
+    }
+    var b = Bag { items: Vec.new() }
+    b.items.push(Item { name: "one", n: 1 })
+    b.items.push(Item { name: "two", n: 2 })
+    print(name(b, 1))
+    print(name(b, 7))
+    let e: Vec<string> = Vec.new()
+    print(e.first().isNone())
+}
