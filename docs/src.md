@@ -61,6 +61,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/ir.ts` | Typed IR builder: codegen describes instructions as typed values, and a backend prints them. |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
+| `src/layout.ts` | Type layout: struct and enum registration, sizes, alignments, field offsets, niches and which types need drop glue. |
 | `src/lazy-globals.ts` | Lazy module globals: the HIR pass that puts a first-use guard in front of every read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering pass. |
