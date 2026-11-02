@@ -910,6 +910,16 @@ global the legacy module defines, so the MLIR module holds no symbol to define o
 needs the emitter to declare each global at module level (a `milo.global.decl` symbol that
 milo.global then uses), which is a change to `src/emit-mlir.ts`.
 
+Folders (`mlir/test/fold.mlir`): checked add, sub, mul, div, rem, shl, shr and neg fold
+constant int operands only when the result cannot trap (in the type's signedness; a zero
+divisor never folds, signed MIN / -1 only under `wrapping`), so a program still panics
+where Milo panics; and, or, xor, not (and `not` of `not`), cmp of constants or of a value
+with itself (ints only: NaN), int-to-int casts (a constant, a cast to the same type, a cast
+back from a type at least as wide), struct.get of a struct.new and enum.tag of an
+enum.new. A milo.if on a constant becomes the region it takes when that region ends in
+milo.yield. Floats fold in LLVM. The dialect conversion folds too, so these also run inside
+`--convert-milo-to-llvm`.
+
 ### Deploying apps built with MLIR
 
 Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the

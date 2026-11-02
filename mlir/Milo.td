@@ -346,6 +346,7 @@ def Milo_StructGetOp : Milo_Op<"struct.get", [Pure]> {
   let results = (outs Milo_Value:$result);
   let assemblyFormat = "$value `[` $index `]` attr-dict `:` type($value) `->` type($result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def Milo_FieldRefOp : Milo_Op<"field_ref", [Pure]> {
@@ -379,6 +380,7 @@ def Milo_EnumTagOp : Milo_Op<"enum.tag", [Pure]> {
   let arguments = (ins Milo_EnumType:$value);
   let results = (outs SI32:$tag);
   let assemblyFormat = "$value attr-dict `:` type($value)";
+  let hasFolder = 1;
 }
 
 def Milo_EnumPayloadOp : Milo_Op<"enum.payload", [Pure]> {
@@ -576,6 +578,7 @@ class Milo_ArithOp<string mnemonic, Type operandType>
   let results = (outs operandType:$result);
   let assemblyFormat = "$lhs `,` $rhs (`wrapping` $wrapping^)? attr-dict `:` type($result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def Milo_AddOp : Milo_ArithOp<"add", Milo_Number> {
@@ -637,6 +640,7 @@ class Milo_BitOp<string mnemonic> : Milo_Op<mnemonic, [Pure, SameOperandsAndResu
   let arguments = (ins Milo_Bits:$lhs, Milo_Bits:$rhs);
   let results = (outs Milo_Bits:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+  let hasFolder = 1;
 }
 def Milo_AndOp : Milo_BitOp<"and"> {
   let summary = "bitwise and, or logical and on bool";
@@ -669,6 +673,7 @@ def Milo_NegOp : Milo_Op<"neg", [SameOperandsAndResultType,
   let results = (outs Milo_Number:$result);
   let assemblyFormat = "$operand (`wrapping` $wrapping^)? attr-dict `:` type($result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 def Milo_NotOp : Milo_Op<"not", [Pure, SameOperandsAndResultType]> {
   let summary = "logical not on bool, bitwise not on an int";
@@ -678,6 +683,7 @@ def Milo_NotOp : Milo_Op<"not", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins Milo_Bits:$operand);
   let results = (outs Milo_Bits:$result);
   let assemblyFormat = "$operand attr-dict `:` type($result)";
+  let hasFolder = 1;
 }
 
 def Milo_CmpPredicate : I64EnumAttr<"CmpPredicate", "comparison", [
@@ -701,6 +707,7 @@ def Milo_CmpOp : Milo_Op<"cmp", [Pure, SameTypeOperands,
   let arguments = (ins Milo_CmpPredicate:$predicate, Milo_Simple:$lhs, Milo_Simple:$rhs);
   let results = (outs I1:$result);
   let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasFolder = 1;
 }
 
 def Milo_CastOp : Milo_Op<"cast", [Pure]> {
@@ -714,6 +721,7 @@ def Milo_CastOp : Milo_Op<"cast", [Pure]> {
   let results = (outs Milo_Simple:$result);
   let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($result)";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def Milo_VarOp : Milo_Op<"var"> {
@@ -1222,6 +1230,7 @@ def Milo_IfOp : Milo_Op<"if", [NoRegionArguments, RecursiveMemoryEffects,
   let regions = (region MinSizedRegion<1>:$thenRegion, AnyRegion:$elseRegion);
   let assemblyFormat = "$condition (`->` type($results)^)? $thenRegion (`else` $elseRegion^)? attr-dict";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def Milo_WhileOp : Milo_Op<"while", [NoRegionArguments, RecursiveMemoryEffects,

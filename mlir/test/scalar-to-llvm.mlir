@@ -115,11 +115,11 @@ func.func @ashr(%a: si16, %b: si16) -> si16 {
 // CHECK: llvm.icmp "ult"
 // CHECK: llvm.fcmp "une"
 // CHECK: llvm.fcmp "oge"
-func.func @cmps(%a: si32, %b: ui32, %x: f64) -> i1 {
-  %0 = milo.cmp lt, %a, %a : si32
-  %1 = milo.cmp lt, %b, %b : ui32
+func.func @cmps(%a: si32, %a2: si32, %b: ui32, %b2: ui32, %x: f64, %y: f64) -> i1 {
+  %0 = milo.cmp lt, %a, %a2 : si32
+  %1 = milo.cmp lt, %b, %b2 : ui32
   %2 = milo.cmp ne, %x, %x : f64
-  %3 = milo.cmp ge, %x, %x : f64
+  %3 = milo.cmp ge, %x, %y : f64
   %4 = milo.and %0, %1 : i1
   %5 = milo.or %2, %3 : i1
   %6 = milo.xor %4, %5 : i1

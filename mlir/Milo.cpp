@@ -3,6 +3,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -903,4 +905,260 @@ void CmpOp::inferResultRanges(ArrayRef<ConstantIntRanges> args, SetIntRangeFn se
   }
   set(getResult(), known ? ConstantIntRanges::constant(APInt(1, *known))
                          : ConstantIntRanges::fromUnsigned(APInt(1, 0), APInt(1, 1)));
+}
+
+//===----------------------------------------------------------------------===//
+// Folders. A checked op folds only when its constant operands cannot trap: one that would
+// panic is left alone, so the program still panics where Milo panics. Ints only; floats
+// fold in LLVM after lowering.
+//===----------------------------------------------------------------------===//
+
+// The constant int operand `a`, or null.
+static IntegerAttr intConst(Attribute a) {
+  auto i = dyn_cast_or_null<IntegerAttr>(a);
+  return i && isMiloInt(i.getType()) ? i : IntegerAttr();
+}
+
+// `l op r` of two constant ints of `t`: `f` computes it and sets `trap` when Milo would
+// panic on it (the overflow check, a zero divisor, a shift out of range).
+template <typename F>
+static OpFoldResult foldInts(Type t, Attribute l, Attribute r, F f) {
+  IntegerAttr a = intConst(l), b = intConst(r);
+  if (!a || !b)
+    return {};
+  bool trap = false;
+  APInt v = f(a.getValue(), b.getValue(), cast<IntegerType>(t).isUnsigned(), trap);
+  if (trap)
+    return {};
+  return IntegerAttr::get(t, v);
+}
+
+OpFoldResult AddOp::fold(FoldAdaptor a) {
+  bool wrap = getWrapping();
+  return foldInts(getType(), a.getLhs(), a.getRhs(), [&](const APInt &x, const APInt &y, bool u, bool &trap) {
+    bool ov = false;
+    APInt v = u ? x.uadd_ov(y, ov) : x.sadd_ov(y, ov);
+    trap = ov && !wrap;
+    return v;
+  });
+}
+
+OpFoldResult SubOp::fold(FoldAdaptor a) {
+  bool wrap = getWrapping();
+  return foldInts(getType(), a.getLhs(), a.getRhs(), [&](const APInt &x, const APInt &y, bool u, bool &trap) {
+    bool ov = false;
+    APInt v = u ? x.usub_ov(y, ov) : x.ssub_ov(y, ov);
+    trap = ov && !wrap;
+    return v;
+  });
+}
+
+OpFoldResult MulOp::fold(FoldAdaptor a) {
+  bool wrap = getWrapping();
+  return foldInts(getType(), a.getLhs(), a.getRhs(), [&](const APInt &x, const APInt &y, bool u, bool &trap) {
+    bool ov = false;
+    APInt v = u ? x.umul_ov(y, ov) : x.smul_ov(y, ov);
+    trap = ov && !wrap;
+    return v;
+  });
+}
+
+// A zero divisor traps even under `wrapping`; signed MIN / -1 traps unless `wrapping`,
+// which gives MIN (quotient) or 0 (remainder), as the lowering's select does.
+template <bool IsDiv>
+static OpFoldResult foldDivRem(Type t, Attribute l, Attribute r, bool wrap) {
+  return foldInts(t, l, r, [&](const APInt &x, const APInt &y, bool u, bool &trap) {
+    if (y.isZero()) {
+      trap = true;
+      return x;
+    }
+    if (u)
+      return IsDiv ? x.udiv(y) : x.urem(y);
+    if (x.isMinSignedValue() && y.isAllOnes()) {
+      trap = !wrap;
+      return IsDiv ? x : APInt::getZero(x.getBitWidth());
+    }
+    return IsDiv ? x.sdiv(y) : x.srem(y);
+  });
+}
+
+OpFoldResult DivOp::fold(FoldAdaptor a) {
+  return foldDivRem<true>(getType(), a.getLhs(), a.getRhs(), getWrapping());
+}
+OpFoldResult RemOp::fold(FoldAdaptor a) {
+  return foldDivRem<false>(getType(), a.getLhs(), a.getRhs(), getWrapping());
+}
+
+// An amount >= the width, compared unsigned (so a negative one too), traps unless
+// `wrapping`, which masks it to the width.
+template <bool IsShl>
+static OpFoldResult foldShift(Type t, Attribute l, Attribute r, bool wrap) {
+  return foldInts(t, l, r, [&](const APInt &x, const APInt &y, bool u, bool &trap) {
+    unsigned bits = x.getBitWidth();
+    APInt amt = y;
+    if (amt.uge(bits)) {
+      if (!wrap) {
+        trap = true;
+        return x;
+      }
+      amt = amt & APInt(bits, bits - 1);
+    }
+    if (IsShl)
+      return x.shl(amt);
+    return u ? x.lshr(amt) : x.ashr(amt);
+  });
+}
+
+OpFoldResult ShlOp::fold(FoldAdaptor a) {
+  return foldShift<true>(getType(), a.getLhs(), a.getRhs(), getWrapping());
+}
+OpFoldResult ShrOp::fold(FoldAdaptor a) {
+  return foldShift<false>(getType(), a.getLhs(), a.getRhs(), getWrapping());
+}
+
+// 0 - x: traps on signed MIN and on any nonzero unsigned, unless `wrapping`.
+OpFoldResult NegOp::fold(FoldAdaptor a) {
+  IntegerAttr x = intConst(a.getOperand());
+  if (!x)
+    return {};
+  APInt zero = APInt::getZero(x.getValue().getBitWidth());
+  bool ov = false;
+  APInt v = cast<IntegerType>(getType()).isUnsigned() ? zero.usub_ov(x.getValue(), ov)
+                                                       : zero.ssub_ov(x.getValue(), ov);
+  if (ov && !getWrapping())
+    return {};
+  return IntegerAttr::get(getType(), v);
+}
+
+// The bit ops on ints and bools; a bool constant is an i1 IntegerAttr (BoolAttr).
+static IntegerAttr bitsConst(Attribute a) { return dyn_cast_or_null<IntegerAttr>(a); }
+
+template <typename F>
+static OpFoldResult foldBits(Type t, Attribute l, Attribute r, F f) {
+  IntegerAttr a = bitsConst(l), b = bitsConst(r);
+  if (!a || !b)
+    return {};
+  return IntegerAttr::get(t, f(a.getValue(), b.getValue()));
+}
+
+OpFoldResult AndOp::fold(FoldAdaptor a) {
+  return foldBits(getType(), a.getLhs(), a.getRhs(), [](const APInt &x, const APInt &y) { return x & y; });
+}
+OpFoldResult OrOp::fold(FoldAdaptor a) {
+  return foldBits(getType(), a.getLhs(), a.getRhs(), [](const APInt &x, const APInt &y) { return x | y; });
+}
+OpFoldResult XorOp::fold(FoldAdaptor a) {
+  return foldBits(getType(), a.getLhs(), a.getRhs(), [](const APInt &x, const APInt &y) { return x ^ y; });
+}
+
+// not(not x) is x; not of a constant flips its bits.
+OpFoldResult NotOp::fold(FoldAdaptor a) {
+  if (auto inner = getOperand().getDefiningOp<NotOp>())
+    return inner.getOperand();
+  if (IntegerAttr x = bitsConst(a.getOperand()))
+    return IntegerAttr::get(getType(), ~x.getValue());
+  return {};
+}
+
+// Constant ints compare by the operand type's signedness (bool as signed i1, as the
+// lowering does); `x == x` and its kin hold for an int whatever x is. Floats never fold:
+// NaN != NaN.
+OpFoldResult CmpOp::fold(FoldAdaptor a) {
+  auto t = dyn_cast<IntegerType>(getLhs().getType());
+  if (!t)
+    return {};
+  bool u = t.isUnsigned();
+  CmpPredicate p = getPredicate();
+  if (getLhs() == getRhs()) {
+    bool reflexive = p == CmpPredicate::eq || p == CmpPredicate::le || p == CmpPredicate::ge;
+    return BoolAttr::get(getContext(), reflexive);
+  }
+  IntegerAttr l = bitsConst(a.getLhs()), r = bitsConst(a.getRhs());
+  if (!l || !r)
+    return {};
+  const APInt &x = l.getValue(), &y = r.getValue();
+  bool v = false;
+  switch (p) {
+  case CmpPredicate::eq: v = x == y; break;
+  case CmpPredicate::ne: v = x != y; break;
+  case CmpPredicate::lt: v = u ? x.ult(y) : x.slt(y); break;
+  case CmpPredicate::le: v = u ? x.ule(y) : x.sle(y); break;
+  case CmpPredicate::gt: v = u ? x.ugt(y) : x.sgt(y); break;
+  case CmpPredicate::ge: v = u ? x.uge(y) : x.sge(y); break;
+  }
+  return BoolAttr::get(getContext(), v);
+}
+
+// Int to int: a cast to the same type is nothing; a constant extends by the source's
+// signedness (bool zero-extends) or truncates, as the lowering does; and a cast back from
+// a type at least as wide is the original value (extension then truncation keeps every
+// bit). Casts touching a float or a pointer are left to LLVM.
+OpFoldResult CastOp::fold(FoldAdaptor a) {
+  Type from = getOperand().getType(), to = getType();
+  if (from == to)
+    return getOperand();
+  auto fi = dyn_cast<IntegerType>(from), ti = dyn_cast<IntegerType>(to);
+  if (!fi || !ti)
+    return {};
+  if (IntegerAttr c = bitsConst(a.getOperand())) {
+    bool zext = fi.getWidth() == 1 || fi.isUnsigned();
+    APInt v = zext ? c.getValue().zextOrTrunc(ti.getWidth()) : c.getValue().sextOrTrunc(ti.getWidth());
+    return IntegerAttr::get(to, v);
+  }
+  if (auto inner = getOperand().getDefiningOp<CastOp>()) {
+    auto mid = fi;
+    auto orig = dyn_cast<IntegerType>(inner.getOperand().getType());
+    if (orig && inner.getOperand().getType() == to && mid.getWidth() >= orig.getWidth())
+      return inner.getOperand();
+  }
+  return {};
+}
+
+// A field of a struct built here is the operand that built it.
+OpFoldResult StructGetOp::fold(FoldAdaptor) {
+  if (auto s = getValue().getDefiningOp<StructNewOp>())
+    return s.getFields()[getIndex()];
+  return {};
+}
+
+// The tag of an enum built here.
+OpFoldResult EnumTagOp::fold(FoldAdaptor) {
+  if (auto e = getValue().getDefiningOp<EnumNewOp>())
+    return IntegerAttr::get(getType(), e.getTag());
+  return {};
+}
+
+// milo.if on a constant becomes the region it takes, when that is one block ending in
+// milo.yield (the yielded values replace the results). A region ending in a jump stays:
+// the jump cannot move into the middle of the parent block. False with no else region
+// takes nothing, and an if with results always has an else.
+namespace {
+struct InlineConstantIf : OpRewritePattern<IfOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(IfOp op, PatternRewriter &rw) const override {
+    BoolAttr c;
+    if (!matchPattern(op.getCondition(), m_Constant(&c)))
+      return failure();
+    Region &taken = c.getValue() ? op.getThenRegion() : op.getElseRegion();
+    if (taken.empty()) {
+      rw.eraseOp(op);
+      return success();
+    }
+    if (!taken.hasOneBlock())
+      return failure();
+    Block &b = taken.front();
+    auto y = dyn_cast<YieldOp>(b.getTerminator());
+    if (!y)
+      return failure();
+    SmallVector<Value> results(y.getValues());
+    rw.eraseOp(y);
+    rw.inlineBlockBefore(&b, op);
+    rw.replaceOp(op, results);
+    return success();
+  }
+};
+} // namespace
+
+void IfOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRContext *ctx) {
+  patterns.add<InlineConstantIf>(ctx);
 }

@@ -8,9 +8,9 @@
   "effectsDeclared": 72,
   "pure": 32,
   "interfaces": 15,
-  "folders": 1,
-  "canonicalizers": 0,
+  "folders": 17,
+  "canonicalizers": 1,
   "verifyDiagnosticsCases": 76,
   "verifierErrorsCovered": 61,
-  "fileCheckFiles": 25
+  "fileCheckFiles": 26
 }

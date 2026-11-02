@@ -8,9 +8,17 @@
 // CHECK:   %[[U:.*]] = llvm.mlir.undef : !llvm.struct<"Point", (i64, f64)>
 // CHECK:   %[[A:.*]] = llvm.insertvalue %arg0, %[[U]][0]
 // CHECK:   %[[B:.*]] = llvm.insertvalue %arg1, %[[A]][1]
-// CHECK:   llvm.extractvalue %[[B]][1] : !llvm.struct<"Point", (i64, f64)>
-func.func @point(%x: si64, %y: f64) -> f64 {
+// CHECK:   llvm.return %[[B]]
+// (A field of a struct built in the same function folds to the operand; @field reads one
+// it was given.)
+// CHECK-LABEL: llvm.func @field
+// CHECK:   llvm.extractvalue %arg0[1] : !llvm.struct<"Point", (i64, f64)>
+func.func @point(%x: si64, %y: f64) -> !milo.struct<"Point", si64, f64> {
   %p = milo.struct.new %x, %y : si64, f64 -> !milo.struct<"Point", si64, f64>
+  milo.return %p : !milo.struct<"Point", si64, f64>
+}
+
+func.func @field(%p: !milo.struct<"Point", si64, f64>) -> f64 {
   %f = milo.struct.get %p[1] : !milo.struct<"Point", si64, f64> -> f64
   milo.return %f : f64
 }
