@@ -1516,6 +1516,7 @@ class FnEmitter {
           return jumped;
         } finally { this.scopes.pop(); this.blocks.pop(); }
       }
+      case "ForIterator": return this.forIterator(s);
       default:
         throw new MlirUnsupported(`stmt ${s.kind}`);
     }
@@ -3182,6 +3183,42 @@ class FnEmitter {
       ? !(this.cx.trapOnOverflow && !this.fn.isWrapping && e.span)
       : !!this.fn.isWrapping);
     return this.def(`milo.${op} ${l.ref}, ${r.ref}${wrapping ? " wrapping" : ""} : ${ty}`, ty, isInt ? this.loc(e.span) : "");
+  }
+
+  /**
+   * `for x in it` over an iterator (legacy genForIterator), as the loop it means:
+   * `while true { match next(&mut it) { Some(x) => body, None => break } }`. The binding
+   * owns each element, as legacy's does. A temporary iterable is first bound to a `var`
+   * of the enclosing block (a Block opens no scope), which drops it when that block
+   * exits, as legacy drops its temp alloca.
+   */
+  private forIterator(s: HIRStmt & { kind: "ForIterator" }): boolean {
+    if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+    const layout = this.cx.mlirEnumLayout(s.optionEnumName);
+    const some = layout?.variants.find(v => v.name === "Some"), none = layout?.variants.find(v => v.name === "None");
+    if (!some || !none || some.fields.length !== 1) throw new MlirUnsupported("iterator option layout");
+    const k = s.iterable.kind;
+    // Legacy takes an element's address once; the loop below would index again per next().
+    if (k === "IndexAccess") throw new MlirUnsupported("for over an iterator element");
+    const pre: HIRStmt[] = [];
+    let it = s.iterable;
+    if (k !== "Ident" && k !== "FieldAccess") {
+      const name = `__iter.${this.fresh().slice(1)}`;
+      pre.push({ kind: "Let", name, type: s.iterable.type, value: s.iterable, mutable: true, span: s.span });
+      it = { kind: "Ident", name, type: s.iterable.type, isMove: false, span: s.span };
+    }
+    const optTy: TypeKind = { tag: "enum", name: s.optionEnumName };
+    const next: HIRExpr = { kind: "Call", func: s.nextMethod, args: [{ expr: it, passByRef: true, refMut: true }], type: optTy, variadic: false, span: s.span };
+    const loop: HIRStmt = {
+      kind: "While", cond: { kind: "BoolLit", value: true, type: { tag: "bool" } }, span: s.span,
+      body: [{
+        kind: "Match", subject: next, enumName: s.optionEnumName, span: s.span, arms: [
+          { pattern: { kind: "EnumPattern", variant: "Some", tag: some.tag, bindings: [{ name: s.varName, type: s.varType }] }, body: s.body },
+          { pattern: { kind: "EnumPattern", variant: "None", tag: none.tag, bindings: [] }, body: [{ kind: "Break", span: s.span }] },
+        ],
+      }],
+    };
+    return this.stmt({ kind: "Block", body: [...pre, loop], span: s.span });
   }
 
   /**
