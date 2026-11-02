@@ -9,3 +9,11 @@ pub fn mkCtx(path: string): Ctx {
     let req = Req { method: "GET", path: path, query: "", body: "xyz", a: "", b: "" }
     return Ctx { req: req, status: 0, notes: Vec.new() }
 }
+
+// An Option of a 128+ byte struct from another module: sret, for sret-reads.milo.
+pub fn findCtx(p: string): Option<Ctx> {
+    if p.len == 0 {
+        return Option.None
+    }
+    return Option.Some(mkCtx(p))
+}

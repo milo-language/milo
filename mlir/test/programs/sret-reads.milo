@@ -1,0 +1,22 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: an sret call's result
+// read in place (a field, a field of a field, a string field shared out) is built in a
+// slot of the statement's frame, which drops it after the statement, as legacy's does.
+
+from "./lib/ctx" import { Ctx, mkCtx, findCtx }
+
+fn status(p: string): i64 {
+    return mkCtx(p).status + mkCtx(p + "/x").req.body.len
+}
+
+fn path(p: string): string {
+    let s = mkCtx(p).req.path
+    return s
+}
+
+fn main() {
+    print(status("/a"))
+    print(path("/deep"))
+    print(mkCtx("/c").notes.len)
+    print(findCtx("").isNone())
+    print(findCtx("/d").isSome())
+}

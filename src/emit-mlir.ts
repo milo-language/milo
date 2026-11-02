@@ -2058,8 +2058,8 @@ class FnEmitter {
         if (e.op !== "isSome" && e.op !== "isNone") throw new MlirUnsupported(`option op ${e.op}`);
         const pt = placeType(this.cx, e.value.type);
         let tag: string;
-        if (pt !== null && valueType(this.cx, e.value.type) === null) {
-          const p = this.fieldPlace(e.value);
+        if ((pt !== null && valueType(this.cx, e.value.type) === null) || this.isSretCall(e.value)) {
+          const p = this.fieldPlace(e.value) ?? this.memTemp(e.value);
           if (!p) throw new MlirUnsupported("tag test of a 128+ byte enum that is not a place");
           tag = this.def(`milo.enum.tag_at ${p.ref} : !milo.ref<${p.ty}>`, "si32").ref;
         } else {
@@ -2357,6 +2357,21 @@ class FnEmitter {
   // `&T` param, a print part), it must not be dropped, as legacy lends the element's address.
   private bitCopies = new Set<string>();
 
+  /**
+   * A value that lives in memory (Repr) but is no place (an sret call's result, a 128+
+   * byte literal) read in place (`regionByKey(s).isNone()`, `mk().field`): built in a slot
+   * of the open frame (tempSlot), or null for anything else. One whose drop runs a user
+   * Drop stays legacy: legacy drops it right after the read, the frame later.
+   */
+  private memTemp(e: HIRExpr): { ref: string; ty: string } | null {
+    if (e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" || e.kind === "HeapDeref" || e.kind === "PtrDeref") return null;
+    const pt = placeType(this.cx, e.type);
+    if (!this.isSretCall(e) && (pt === null || isSsa(this.cx, pt))) return null;
+    if (pt !== null && this.runsUserDrop(pt)) throw new MlirUnsupported("a temporary with a user Drop read in place");
+    const sl = this.bigSlot("tmp", e, true);
+    return { ref: sl.ref, ty: sl.ty };
+  }
+
   /** The slot `e` names (a `var`, a by-ref param, a field of either), or null for a value. */
   private fieldPlace(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
     if (e.kind === "Ident") {
@@ -2366,7 +2381,7 @@ class FnEmitter {
     if (e.kind === "IndexAccess") return this.elemRef(e);
     if (e.kind === "HeapDeref") return this.heapPlace(e);
     if (e.kind !== "FieldAccess") return null;
-    const base = this.fieldPlace(e.object);
+    const base = this.fieldPlace(e.object) ?? this.memTemp(e.object);
     if (!base) return null;
     const { index, ty } = this.field(e);
     const r = this.def(`milo.field_ref ${base.ref}[${index}] : !milo.ref<${base.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`);
