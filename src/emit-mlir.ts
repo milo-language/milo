@@ -837,9 +837,28 @@ class FnEmitter {
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
-      // A Vec element: legacy deep-copies an owning one, which no place copy is.
-      if (this.hasDrop(ty)) throw new MlirUnsupported("deep copy of a 128+ byte element");
+      // A Vec element: legacy deep-copies an owning one (emitDeepCloneFromPtr), here into
+      // a fresh slot by a legacy helper. The slot owns nothing: every bigPlace consumer
+      // takes what the place holds, so the clone passes to it whole.
       const er = this.elemRef(e);
+      if (er && er.ty === ty && this.hasDrop(ty)) {
+        const tmp = this.fresh();
+        this.vars.push(`  ${tmp} = milo.var "elem.copy" : !milo.ref<${ty}>`);
+        const t = stripRefs(e.type);
+        const name = `milo.intr.elemcopy.${typeKey(t)}`;
+        this.cx.mlirHelper(name, () => {
+          const id = (n: string): HIRExpr => ({ kind: "Ident", name: n, type: t, isMove: false });
+          return {
+            params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "s", type: t, isRef: true, isRefMut: false }],
+            retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
+            body: [{ kind: "Assign", target: id("d"), value: { kind: "MapCopyOut", type: t, value: id("s") }, isInit: true }],
+          };
+        });
+        const fnTy = `(!milo.ref<${ty}>, !milo.ref<${ty}>) -> ()`;
+        this.callees.set(name, fnTy);
+        this.emit(`func.call @${quote(name)}(${tmp}, ${er.ref}) : ${fnTy}`);
+        return { ref: tmp, refTy: `!milo.ref<${ty}>`, done: none };
+      }
       return er && er.ty === ty ? { ref: er.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
     return null;

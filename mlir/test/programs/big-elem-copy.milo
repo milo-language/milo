@@ -1,0 +1,50 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a 128+ byte
+// Vec element that owns (strings, a Vec) read by value is a deep copy (legacy
+// emitDeepCloneFromPtr): into a let, a by-value argument and a struct field, and the
+// original stays intact after the copy is changed and dropped.
+
+struct Rec {
+    name: string,
+    tags: Vec<string>,
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64,
+    g: i64, h: i64, i: i64, j: i64, k: i64, l: i64,
+}
+
+struct Holder {
+    rec: Rec,
+    n: i64,
+}
+
+fn mk(name: string, n: i64): Rec {
+    var tags: Vec<string> = Vec.new()
+    tags.push(name.clone())
+    tags.push("t" + n.toString())
+    return Rec { name: name, tags: tags, a: n, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: n * 2 }
+}
+
+fn describe(r: Rec): string {
+    var s = r.name.clone()
+    for t in r.tags {
+        s.pushStr(",")
+        s.pushStr(t)
+    }
+    s.pushStr(":")
+    s.pushStr((r.a + r.l).toString())
+    return s
+}
+
+fn main() {
+    var v: Vec<Rec> = Vec.new()
+    v.push(mk("alpha", 1))
+    v.push(mk("beta", 2))
+    var c = v[1]
+    c.name.pushStr("!")
+    c.tags.push("extra")
+    print(describe(c))
+    print(describe(v[1]))
+    let h = Holder { rec: v[0], n: 5 }
+    print(describe(h.rec))
+    print(h.n)
+    print(v[0].name)
+    print(v.len())
+}
