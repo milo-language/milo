@@ -450,3 +450,11 @@ func.func @vec_slot_elem(%v: !milo.vec<si64>) {
   %0 = milo.vec.slot %v : !milo.vec<si64> -> !milo.ref<!milo.vecval<f64>>
   milo.return
 }
+
+// -----
+
+func.func @ccall_fixed(%a: si32) {
+  // expected-error @+1 {{has more fixed arguments than arguments}}
+  %0 = milo.ccall @printf(%a) fixed 2 : (si32) -> si32
+  milo.return
+}
