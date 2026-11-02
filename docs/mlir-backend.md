@@ -3,7 +3,7 @@ system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
+last-verified: 2026-11-01 (dialect hygiene: docs, region and call interfaces, verifier cases, folders, round-trip; ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
 -->
 
 # MLIR backend
@@ -920,6 +920,12 @@ enum.new. A milo.if on a constant becomes the region it takes when that region e
 milo.yield. Floats fold in LLVM. The dialect conversion folds too, so these also run inside
 `--convert-milo-to-llvm`.
 
+Round-trip: `mlir/run.sh` runs MlirOptMain's `--verify-roundtrip` (print in generic form and
+as bytecode, parse back, print again, compare) over every test file of valid IR and over the
+module the emitter prints for every `mlir/test/programs` program (`MILO_MLIR_DUMP`), so a
+type printer and parser that disagree (`!milo.fn<owning ...>`, the identified
+`!milo.struct`/`!milo.enum` bodies) fail there before any frontend meets them.
+
 ### Deploying apps built with MLIR
 
 Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the
@@ -983,7 +989,8 @@ per-function compile cache.
   the same message and line) and the scalar program too.
 - **FileCheck tests** per pass and per lowering, in `mlir/test/`, each run by its own
   `RUN:` line from `mlir/run.sh`; `verify.mlir` covers the op verifiers.
-- **Dialect hygiene**: `bun scripts/dialect-hygiene.ts` green (see The dialect as a product).
+- **Dialect hygiene**: `bun scripts/dialect-hygiene.ts` green, and every test file and emitted
+  program module round-trips (`mlir/run.sh`; see Dialect hygiene).
 - **Ownership** from M4 on, required for any commit touching ownership lowering (owned
   slots, scopes, moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs
   --owned` before committing, the full corpus with `--owned` in the background. For every

@@ -44,6 +44,28 @@ echo "ok ($n files)"
 echo "== dialect hygiene: docs on every op, no count below its baseline"
 (cd .. && bun scripts/dialect-hygiene.ts) | tail -1
 
+echo "== round-trip: generic form and bytecode print, parse back, print the same"
+# --verify-roundtrip (MlirOptMain): every test file of valid IR, and the module the emitter
+# prints for every test/programs program (MILO_MLIR_DUMP), 8 at a time.
+RT=build/roundtrip
+rm -rf "$RT"
+mkdir -p "$RT"
+n=0
+for t in test/*.mlir; do
+  grep -q "verify-diagnostics" "$t" && continue
+  build/milo-opt --verify-roundtrip -split-input-file "$t" > /dev/null 2> "$RT/err" || { echo "FAIL $t"; head -20 "$RT/err"; exit 1; }
+  n=$((n + 1))
+done
+ls test/programs/*.milo | xargs -P 8 -I{} sh -c \
+  'cd .. && MILO_MLIR_DUMP="mlir/$1/$(basename "$2" .milo).mlir" bun src/main.ts emit-ir "mlir/$2" > /dev/null 2>&1; true' _ "$RT" {}
+m=0
+for e in "$RT"/*.mlir; do
+  build/milo-opt --verify-roundtrip "$e" > /dev/null 2> "$RT/err" || { echo "FAIL $e"; head -20 "$RT/err"; exit 1; }
+  m=$((m + 1))
+done
+[ "$m" -ge 90 ] || { echo "FAIL: only $m emitted modules"; exit 1; }
+echo "ok ($n test files, $m emitted modules)"
+
 echo "== default build vs MILO_LEGACY=1 on test/programs (scalar fns, every trap)"
 out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 1; }
 echo "$out" | tail -3

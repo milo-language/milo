@@ -70,4 +70,4 @@ grid was already vectorized by LLVM; it is memory-bound and stays at parity.
   conservatively.
 - Buffer disjointness (fact 3), DWARF, the C ABI, everything outside these kernels.
 
-Build: `sh build.sh` (milo-opt only), or `./run.sh` (build plus every gate here: the FileCheck tests in `test/` run by their RUN lines).
+Build: `sh build.sh` (milo-opt and the generated dialect reference, `docs/dialect/milo.md`), or `./run.sh` (build plus every gate here: the FileCheck tests in `test/` run by their RUN lines, the dialect hygiene gate, and `--verify-roundtrip` over the tests and the emitter's program modules).
