@@ -22,6 +22,17 @@ quiet() { "$@" >"$LOG" 2>&1 || { cat "$LOG" >&2; exit 1; }; }
 [ -f "$BUILD/build.ninja" ] || quiet cmake -G Ninja -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DMILO_STATIC=$STATIC \
   -DMLIR_DIR="$LLVM/../lib/cmake/mlir" -DCMAKE_CXX_COMPILER="$LLVM/clang++" -DCMAKE_C_COMPILER="$LLVM/clang"
 quiet ninja -C "$BUILD"
+# The dialect reference, generated from Milo.td (never edited by hand): the doc-meta header,
+# then mlir-tblgen's page. scripts/dialect-hygiene.ts fails when it is stale.
+DOC=../docs/dialect/milo.md
+mkdir -p ../docs/dialect
+{
+  printf '%s\n' '<!-- doc-meta' 'system: milo-dialect-reference' \
+    'purpose: every op, type and attribute of the milo MLIR dialect, generated from mlir/Milo.td' \
+    'key-files: mlir/Milo.td, mlir/build.sh, scripts/dialect-hygiene.ts' \
+    'update-when: never by hand: sh mlir/build.sh regenerates it' 'last-verified: generated' '-->' ''
+  "$LLVM/mlir-tblgen" -gen-dialect-doc -dialect=milo -I "$LLVM/../include" Milo.td
+} > "$DOC.tmp" && mv "$DOC.tmp" "$DOC"
 # A no-op ninja leaves the binary older than freshly touched sources; src/mlir-backend.ts
 # would then call it stale.
 touch "$BUILD/milo-opt"

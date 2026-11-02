@@ -873,9 +873,10 @@ transform it, and it prints back as source. Milo gets the same:
 ### The dialect as a product
 
 Anything that emits valid milo dialect gets Milo's semantics and lowering; the first such
-client is the self-hosted frontend. Needed: op and dialect docs generated from `Milo.td`
-(`mlir-tblgen -gen-dialect-doc`, gated, never hand-written), a `libMiloDialect` library
-and C API, and a versioned format after M7 (MLIR bytecode dialect versioning). The
+client is the self-hosted frontend. The reference is generated from `Milo.td`: every op,
+type and attribute carries a summary and a description, and `sh mlir/build.sh` writes
+[docs/dialect/milo.md](dialect/milo.md) with `mlir-tblgen -gen-dialect-doc` (never edited by
+hand). Still needed: a `libMiloDialect` library and C API, and a versioned format after M7 (MLIR bytecode dialect versioning). The
 verifiers are the contract a client codes against.
 
 ### Deploying apps built with MLIR
