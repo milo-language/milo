@@ -45,6 +45,7 @@ export interface MlirEmitCtx {
 // What codegen names main's body behind the green-task wrapper (Codegen.MAIN_BODY_FN).
 export const MAIN_BODY = "__milo_main_body";
 
+const CALLBACK_OPS = new Set(["map", "optionAndThen", "optionOrElse", "resultMap", "resultMapErr", "unwrapOrElse", "resultAndThen", "resultOrElse", "resultUnwrapOrElse", "resultContext"]);
 const PROBE = !!process.env.MILO_MLIR_PROBE;
 const PROBE_SKIPPED = "(skipped by probe)";
 
@@ -837,20 +838,32 @@ class FnEmitter {
   /**
    * `o.map(f)` and the other closure-taking Option/Result ops: legacy's genOptionOp (the
    * tag test, the conditional call, the result enum) in a helper, the receiver lent by its
-   * place and the closure passed as its value. Only a receiver that owns nothing: legacy
-   * forwards an orElse receiver verbatim, which for an owning one would alias the result.
+   * place and the closure passed as its value. An owning receiver is consumed: it moves
+   * into the helper by value and the op there takes it (`isMove`), as in the source, so
+   * a receiver orElse forwards is the result's alone.
    */
   private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
     const st = stripRefs(e.value.type);
     const rt = this.place$(st, "option receiver");
-    if (this.hasDrop(rt) || !e.default) throw new MlirUnsupported(`option op ${e.op} on an owning receiver`);
+    if (!e.default) throw new MlirUnsupported(`option op ${e.op} without a callback`);
     const fty = this.value(e.default.type, "option callback");
     const ty = this.value(e.type, "option result");
+    if (this.hasDrop(rt)) {
+      if (inSlot(this.cx, rt)) throw new MlirUnsupported(`option op ${e.op} on a 128+ byte owning receiver`);
+      const mark = this.pending.length;
+      const v = this.pend(this.operand(e.value, rt, "option receiver"), st);
+      const f = this.consume(this.expr(e.default), "option callback");
+      this.pending.length = mark;
+      if (f.ty !== fty) throw new MlirUnsupported("option callback type");
+      const r = this.intrinsic(`opt.own.${e.op}`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
+        ([x, y]) => ({ ...e, value: { ...x, isMove: true } as HIRExpr, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
+      return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+    }
     const o = this.place(e.value, this.lent(st, "option receiver"), false).ref;
-    const f = this.expr(e.default);
+    const f = this.consume(this.expr(e.default), "option callback");
     if (f.ty !== fty) throw new MlirUnsupported("option callback type");
     const r = this.intrinsic(`opt.${e.op}`, e, [{ name: "o", type: st, mode: "ref", ref: o }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
-      ([x, y]) => ({ ...e, value: x, default: y }), ty);
+      ([x, y]) => ({ ...e, value: x, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
     return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
@@ -2460,10 +2473,10 @@ class FnEmitter {
       }
       case "OptionOp": {
         // isSome/isNone (isOk/isErr): a test of the tag, Some and Ok being tag 0; unwrapOr
-        // is `??`. The closure-taking ones stay legacy.
+        // is `??`. The closure-taking ones go through legacy in a helper (optionCallback).
         if (e.op === "unwrapOr" && e.default)
           return this.defaultValue({ kind: "DefaultValue", operand: e.value, default: e.default, enumName: e.enumName, type: e.type, span: e.span });
-        if (e.op === "map" || e.op === "optionAndThen" || e.op === "optionOrElse" || e.op === "resultMap" || e.op === "resultMapErr") return this.optionCallback(e);
+        if (CALLBACK_OPS.has(e.op)) return this.optionCallback(e);
         if (e.op !== "isSome" && e.op !== "isNone") throw new MlirUnsupported(`option op ${e.op}`);
         const pt = placeType(this.cx, e.value.type);
         let tag: string;
