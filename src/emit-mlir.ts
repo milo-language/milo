@@ -2157,11 +2157,12 @@ class FnEmitter {
   /**
    * A by-reference closure literal (legacy genClosure without `move`): a function of its
    * own, and a milo.closure lending it the place of every capture. A `let` held as an SSA
-   * value is spilled to a slot: it is immutable, so the copy reads the same.
+   * value is spilled to a slot: it is immutable, so the copy reads the same. A scoped
+   * task's literal (`heapEnv`) has its env on the heap, freed by the task's reap.
    */
   private closure(e: HIRExpr & { kind: "Closure" }): Val {
     if (e.isMove && !e.heapEnv && !e.keyExtractor) return this.moveClosure(e);
-    if (e.isMove || e.heapEnv || e.keyExtractor) throw new MlirUnsupported(e.isMove ? "move closure" : "heap-env closure");
+    if (e.isMove || e.keyExtractor) throw new MlirUnsupported(e.isMove ? "move closure" : "key extractor closure");
     const ty = this.value(e.type, "closure");
     // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
     // global's closure is ever called, so legacy gives that env a static slot instead.
@@ -2183,7 +2184,7 @@ class FnEmitter {
     this.closures.names.push(name);
     for (const [k, v] of inner.callees) this.callees.set(k, v);
     const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
-    return this.def(`milo.closure @${quote(name)}${ops} : ${ty}`, ty);
+    return this.def(`milo.closure @${quote(name)}${ops}${e.heapEnv ? " heap" : ""} : ${ty}`, ty);
   }
 
   /**

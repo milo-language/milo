@@ -313,7 +313,7 @@ _A by-reference closure value_
 Syntax:
 
 ```
-operation ::= `milo.closure` $fn (`(` $captures^ `:` type($captures) `)`)? attr-dict `:` type($result)
+operation ::= `milo.closure` $fn (`(` $captures^ `:` type($captures) `)`)? (`heap` $heap^)? attr-dict `:` type($result)
 ```
 
 A by-reference closure literal: `fn` is its body, a func.func taking `(!milo.ptr env,
@@ -322,6 +322,10 @@ the captures' addresses in order) lends it every capture in place. The checker k
 such a closure from outliving the frame; no captures means a null env. Not Pure: the
 body may write any capture whenever the value is called.
 
+`heap`: the env is malloc'd instead, its drop header `free` (legacy genClosure's
+heapEnv, a scoped task's literal: the creating frame returns before the scope joins
+the task, and the task's reap calls the header). It owns the block and no capture.
+
 Interfaces: `SymbolUserOpInterface`
 
 #### Attributes:
@@ -329,6 +333,7 @@ Interfaces: `SymbolUserOpInterface`
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>fn</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+<tr><td><code>heap</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 </table>
 
 #### Operands:
@@ -2314,7 +2319,7 @@ _A mutable local slot_
 Syntax:
 
 ```
-operation ::= `milo.var` $name (`owned` $owned^)? attr-dict `:` type($ref)
+operation ::= `milo.var` $name (`owned` $owned^)? (`structural` $structural^)? attr-dict `:` type($ref)
 ```
 
 `var name`: a mutable local. Must sit in the function's entry block, so the frame is
@@ -2325,12 +2330,17 @@ slot is listed by the milo.scope that owns it; from there on the IR says only wh
 value is stored (milo.store), moved out (milo.move) and read in place (milo.load, a view
 that never owns), and milo-scope-drops / milo-elaborate-drops decide where it dies.
 
+`structural`: an owned slot holding a structural clone (legacy emitDeepCloneFromPtr of a
+Vec element matched by value), which shares any resource handle with the original: its
+drop is legacy's structural one (`milo.sdrop.<key>`), which runs no user Drop.
+
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
 <tr><td><code>owned</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>structural</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 </table>
 
 #### Results:

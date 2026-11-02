@@ -828,8 +828,9 @@ struct ReplayLowering : ConvertOpToLLVMPattern<OpT> {
 };
 
 // The env: { ptr drop header (null: a frame's env owns nothing), ptr capture... } in an
-// entry-block slot; the value: { ptr @fn, ptr env }, with a null env when nothing is
-// captured, as legacy genClosure builds both.
+// entry-block slot, or a malloc'd block whose header is `free` (`heap`); the value:
+// { ptr @fn, ptr env }, with a null env when nothing is captured, as legacy genClosure
+// builds both.
 struct ClosureLowering : ConvertOpToLLVMPattern<ClosureOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -843,11 +844,26 @@ struct ClosureLowering : ConvertOpToLLVMPattern<ClosureOp> {
     } else {
       SmallVector<Type> fields(a.getCaptures().size() + 1, ptrTy);
       auto envTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), fields);
-      env = entrySlot(rw, op, envTy);
+      Value header;
+      if (op.getHeap()) {
+        // As legacy sizes it: at least 16 bytes. The header frees the block and nothing
+        // else, which is all legacy's envdrop for a by-reference env does.
+        auto module = op->getParentOfType<ModuleOp>();
+        auto malloc = LLVM::lookupOrCreateFn(rw, module, "malloc", {rw.getI64Type()}, ptrTy);
+        auto free = LLVM::lookupOrCreateFn(rw, module, "free", {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
+        if (failed(malloc) || failed(free))
+          return failure();
+        Value size = constInt(rw, loc, rw.getI64Type(), std::max<int64_t>(8 * fields.size(), 16));
+        env = LLVM::CallOp::create(rw, loc, *malloc, ValueRange{size}).getResult();
+        header = LLVM::AddressOfOp::create(rw, loc, ptrTy, "free");
+      } else {
+        env = entrySlot(rw, op, envTy);
+        header = LLVM::ZeroOp::create(rw, loc, ptrTy);
+      }
       auto field = [&](int32_t i) {
         return LLVM::GEPOp::create(rw, loc, ptrTy, envTy, env, ArrayRef<LLVM::GEPArg>{0, i});
       };
-      LLVM::StoreOp::create(rw, loc, LLVM::ZeroOp::create(rw, loc, ptrTy), field(0));
+      LLVM::StoreOp::create(rw, loc, header, field(0));
       for (auto [i, c] : llvm::enumerate(a.getCaptures()))
         LLVM::StoreOp::create(rw, loc, c, field(i + 1));
     }
