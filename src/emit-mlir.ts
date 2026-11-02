@@ -38,6 +38,7 @@ export interface MlirEmitCtx {
   mlirFieldOffset(struct: string, field: string): number;
   mlirAtomic(builtin: string): string | null;
   mlirItable(from: string, iface: string): string;
+  mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -537,13 +538,9 @@ interface MatchOuter { scope: Map<string, Binding>; frame: number }
 // What the closure bodies of one top-level function share: their names and texts.
 interface ClosureState { next: number; texts: string[]; names: string[] }
 
-// Builtins taken as a call of a legacy function doing exactly them (builtinCall): they
-// read their operands and touch nothing of the caller's frame. exit never returns, so
-// nothing after it runs either way.
-// Builtins still made by legacy helpers: the process globals (argv, scheduler, panic hook)
-// move with the module scaffold, the atomics to an op of their own.
-const HELPER_BUILTINS = /^(_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
-const NATIVE_BUILTINS = new Set(["exit", "flush", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid"]);
+// The builtins that are a libc call, a runtime section, a load or a process global (nativeBuiltin).
+const NATIVE_BUILTINS = new Set(["exit", "flush", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid",
+  "_schedulerGet", "_schedulerSet", "_panicHookSet", "_miloArgCount", "_miloArgAt"]);
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -4703,6 +4700,26 @@ class FnEmitter {
         return none;
       }
       case "_loadU8": return this.def(`milo.ptr.load ${arg(0, PTR).ref} : ui8`, "ui8");
+      case "_miloArgCount": {
+        const g = this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("argc"))}`, PTR);
+        return this.def(`milo.cast ${this.def(`milo.ptr.load ${g.ref} : si32`, "si32").ref} : si32 to si64`, "si64");
+      }
+      case "_miloArgAt": {
+        // argv[i] copied into a fresh NUL-terminated string.
+        const i = arg(0, "si64");
+        const argv = this.def(`milo.ptr.load ${this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("argv"))}`, PTR).ref} : ${PTR}`, PTR);
+        const p = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${argv.ref}[${i.ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
+        this.stringHelpers();
+        return { ...this.rtCall("milo.str.from", [p, this.libcCall("strlen", [p], "si64")], STR), own: "owned" };
+      }
+      case "_schedulerGet":
+        return this.def(`milo.ptr.load ${this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("scheduler"))}`, PTR).ref} : ${PTR}`, PTR);
+      case "_schedulerSet": case "_panicHookSet": {
+        const v = arg(0, PTR);
+        const g = this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal(e.func === "_schedulerSet" ? "scheduler" : "panicHook"))}`, PTR);
+        this.emit(`milo.ptr.store ${v.ref}, ${g.ref} : ${PTR}`);
+        return none;
+      }
       case "_callClosureVoid": {
         const f = arg(0, PTR), env = arg(1, PTR);
         this.emit(`milo.call_ptr ${f.ref}(${env.ref}) : (${PTR}) -> ()`);
@@ -4850,47 +4867,6 @@ class FnEmitter {
         body: [ret === null ? { kind: "ExprStmt", expr: call } : { kind: "Return", retType: e.type, value: call }] };
     });
     return this.callHelper(name, args, ret);
-  }
-
-  /**
-   * A builtin that only reads its operands (HELPER_BUILTINS): legacy's code for it in a
-   * legacy function per builtin, operand shape and call site. A by-ref operand goes as
-   * its place; the others are scalars or pointers by value. A string result is owned.
-   */
-  private builtinCall(e: HIRExpr & { kind: "Call" }, _stmt: boolean, lendStrings = false): Val {
-    const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
-    const args: string[] = [];
-    const keys: string[] = [];
-    const mark = this.pending.length;
-    e.args.forEach((a, k) => {
-      const t = stripRefs(a.expr.type);
-      const name = `a${k}`;
-      // format only reads its parts: a non-scalar one is lent from its place, as print lends it.
-      if (a.passByRef || (lendStrings && !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr"))) {
-        const ty = this.lent(t, "builtin operand");
-        const r = this.place(a.expr, ty, a.refMut).ref;
-        params.push({ name, type: t, isRef: !a.refMut, isRefMut: !!a.refMut });
-        args.push(`${r} : ${ty}`);
-        keys.push(`r${typeKey(t)}`);
-        return;
-      }
-      const { v, type } = this.helperOperand(a.expr, "builtin operand");
-      params.push({ name, type, isRef: false, isRefMut: false });
-      args.push(`${v.ref} : ${v.ty}`);
-      keys.push(typeKey(type));
-    });
-    this.pending.length = mark;
-    const ret = e.type.tag === "void" || e.type.tag === "never" ? null : this.value(e.type, "builtin result");
-    if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("builtin result type");
-    const l = e.span ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : null;
-    const site = l ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
-    const name = this.cx.mlirHelper(`milo.builtin.${e.func}.${keys.join(".")}${site}`, () => {
-      const call: HIRExpr = { ...e, args: e.args.map((a, k) => ({ ...a, expr: { kind: "Ident", name: params[k].name, type: params[k].type, isMove: false } })) };
-      return { params, retType: ret === null ? { tag: "void" } : e.type, trackedCaller: this.fn.trackedCaller,
-        body: [ret === null ? { kind: "ExprStmt", expr: call } : { kind: "Return", retType: e.type, value: call }] };
-    });
-    const r = this.callHelper(name, args, ret);
-    return ret === STR ? { ...r, own: "owned" } : r;
   }
 
   /**
@@ -5093,7 +5069,6 @@ class FnEmitter {
     this.abiResult = false;
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
-      if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
       if (NATIVE_BUILTINS.has(e.func) || e.func.startsWith("_atomic")) return this.nativeBuiltin(e);
       if (e.func === "format") return this.formatText(e.args);
       if (e.func === "assert") return this.assert(e);

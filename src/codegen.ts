@@ -8623,6 +8623,16 @@ export class Codegen {
     return name;
   }
 
+  /**
+   * MLIR path: the symbol of a process global legacy's module defines (argc/argv, the
+   * scheduler, the panic hook), marked used so it is emitted.
+   */
+  public mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string {
+    if (which === "scheduler") this.usesSchedulerGlobal = true;
+    if (which === "panicHook") this.usesPanicHook = true;
+    return { argc: "_milo_argc_global", argv: "_milo_argv_global", scheduler: "_milo_scheduler", panicHook: "_milo_panic_hook" }[which];
+  }
+
   /** MLIR path: the itable global of type `from` as interface `iface` (genInterfaceCoerce). */
   public mlirItable(from: string, iface: string): string {
     return (this.itableLayouts.get(`${from}.${iface}`)?.globalName ?? `@itable.${from}.${iface}`).slice(1);
