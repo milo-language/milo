@@ -504,6 +504,22 @@ LogicalResult ContractCheckOp::verify() {
   return success();
 }
 
+LogicalResult BitsOp::verify() {
+  StringRef k = getKind();
+  bool count = k == "ctpop" || k == "ctlz" || k == "cttz";
+  bool rotate = k == "fshl" || k == "fshr";
+  if (!count && !rotate && k != "bitreverse")
+    return emitOpError("is ctpop, ctlz, cttz, bitreverse, fshl or fshr, not ") << k;
+  if (rotate != static_cast<bool>(getAmount()))
+    return emitOpError("takes an amount exactly when it rotates");
+  if (rotate && getAmount().getType() != getValue().getType())
+    return emitOpError("rotates by an amount of the value's type");
+  auto r = cast<IntegerType>(getType());
+  if (count ? !(r.isSigned() && r.getWidth() == 64) : getType() != getValue().getType())
+    return emitOpError(count ? "counts into an si64" : "gives the value's type");
+  return success();
+}
+
 LogicalResult OverflowsOp::verify() {
   StringRef k = getKind();
   if (k != "add" && k != "sub" && k != "mul" && k != "div" && k != "rem")

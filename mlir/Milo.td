@@ -942,6 +942,19 @@ def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]>
   let hasVerifier = 1;
 }
 
+def Milo_BitsOp : Milo_Op<"bits", [Pure]> {
+  let summary = "a bit intrinsic of an integer";
+  let description = [{
+    `ctpop`, `ctlz`, `cttz` count bits of `value` (defined for 0: the width) and give an
+    si64; `bitreverse` gives the value's type; `fshl` / `fshr` rotate `value` by
+    `amount` (taken mod the width), the value's type.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$value, Optional<Milo_Int>:$amount);
+  let results = (outs Milo_Int:$result);
+  let assemblyFormat = "$kind `,` $value (`,` $amount^)? attr-dict `:` type($value) (`,` type($amount)^)? `->` type($result)";
+  let hasVerifier = 1;
+}
+
 def Milo_PanicIfOp : Milo_Op<"panic_if",
     [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
   let summary = "panic with a message when a condition holds";

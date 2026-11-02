@@ -1297,6 +1297,34 @@ struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
   }
 };
 
+struct BitsLowering : ConvertOpToLLVMPattern<BitsOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(BitsOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Value v = a.getValue();
+    Type t = v.getType();
+    StringRef k = op.getKind();
+    Value r;
+    if (k == "ctpop")
+      r = LLVM::CtPopOp::create(rw, loc, t, v);
+    else if (k == "ctlz")
+      r = LLVM::CountLeadingZerosOp::create(rw, loc, t, v, false);
+    else if (k == "cttz")
+      r = LLVM::CountTrailingZerosOp::create(rw, loc, t, v, false);
+    else if (k == "bitreverse")
+      r = LLVM::BitReverseOp::create(rw, loc, t, v);
+    else if (k == "fshl")
+      r = LLVM::FshlOp::create(rw, loc, t, v, v, a.getAmount());
+    else
+      r = LLVM::FshrOp::create(rw, loc, t, v, v, a.getAmount());
+    if ((k == "ctpop" || k == "ctlz" || k == "cttz") && cast<IntegerType>(t).getWidth() < 64)
+      r = LLVM::ZExtOp::create(rw, loc, rw.getI64Type(), r);
+    rw.replaceOp(op, r);
+    return success();
+  }
+};
+
 // The message as the format of the module's `__milo_mlir_panic(fmt)`, or with values
 // `__milo_mlir_panic_v3(fmt, a, b, c)` (unused slots 0: printf reads only what the
 // format names), on the failing edge only.
@@ -1782,7 +1810,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

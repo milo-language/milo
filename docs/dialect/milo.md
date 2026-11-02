@@ -310,6 +310,48 @@ of (milo.copy), with the cursor set past it.
 
 
 
+### `milo.bits` (::milo::BitsOp)
+
+_A bit intrinsic of an integer_
+
+Syntax:
+
+```
+operation ::= `milo.bits` $kind `,` $value (`,` $amount^)? attr-dict `:` type($value) (`,` type($amount)^)? `->` type($result)
+```
+
+`ctpop`, `ctlz`, `cttz` count bits of `value` (defined for 0: the width) and give an
+si64; `bitreverse` gives the value's type; `fshl` / `fshr` rotate `value` by
+`amount` (taken mod the width), the value's type.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `value` | signed integer or unsigned integer |
+| `amount` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer |
+
+
+
 ### `milo.bounds_check` (::milo::BoundsCheckOp)
 
 _Panic unless 0 <= index < len_
@@ -1792,39 +1834,6 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::milo::PanicResource}`
 | :-----: | ----------- |
 | `bad` | 1-bit signless integer |
 | `values` | variadic of 64-bit signed integer |
-
-
-
-### `milo.print` (::milo::PrintOp)
-
-_Print or eprint a line_
-
-Syntax:
-
-```
-operation ::= `milo.print` (`stderr` $stderr^)? (`partial` $partial^)? ($parts^ `:` type($parts))? attr-dict
-```
-
-`print(a, b, ...)` (or `eprint` with `stderr`): each part displayed the way Milo
-displays its type, then a newline. Lowered to one call of a function the legacy module
-defines for exactly this sequence of part types (codegen mlirPrintHelper), so the text
-is legacy's byte for byte. Writes a stream: no traits, so nothing moves it or drops it.
-`partial`: the first parts of one print, up to and including a string part, with no
-newline (legacy writes a string part as soon as it is evaluated).
-
-#### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>stderr</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
-<tr><td><code>partial</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
-</table>
-
-#### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `parts` | variadic of any non-token type |
 
 
 

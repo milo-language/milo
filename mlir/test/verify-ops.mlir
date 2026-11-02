@@ -410,3 +410,35 @@ func.func @panic_if_four_values(%b: i1, %v: si64) {
   milo.panic_if %b, "%lld %lld %lld %lld\n"(%v, %v, %v, %v)
   milo.return
 }
+
+// -----
+
+func.func @bits_kind(%a: si32) {
+  // expected-error @+1 {{is ctpop, ctlz, cttz, bitreverse, fshl or fshr, not popcnt}}
+  %0 = milo.bits "popcnt", %a : si32 -> si32
+  milo.return
+}
+
+// -----
+
+func.func @bits_rotate_amount(%a: ui8) {
+  // expected-error @+1 {{takes an amount exactly when it rotates}}
+  %0 = milo.bits "fshl", %a : ui8 -> ui8
+  milo.return
+}
+
+// -----
+
+func.func @bits_rotate_amount_type(%a: ui8, %n: ui16) {
+  // expected-error @+1 {{rotates by an amount of the value's type}}
+  %0 = milo.bits "fshr", %a, %n : ui8, ui16 -> ui8
+  milo.return
+}
+
+// -----
+
+func.func @bits_count_type(%a: ui8) {
+  // expected-error @+1 {{counts into an si64}}
+  %0 = milo.bits "ctpop", %a : ui8 -> ui8
+  milo.return
+}

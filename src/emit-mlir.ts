@@ -2880,10 +2880,50 @@ class FnEmitter {
           ([x]) => ({ ...e, value: { ...x, isMove: true } as HIRExpr }), ty, false);
         return { ...r, own: "owned" };
       }
-      case "VecCapacity": case "HeapPtr": return this.builtinOf(e, "object", false);
-      case "EnumTryFrom": return this.builtinOf(e, "value", false);
+      case "VecCapacity": {
+        // The header's third word.
+        const vt = stripRefs(e.object.type);
+        const lent = this.lent(vt, "vec of capacity");
+        if (!lent.startsWith("!milo.vec<")) return this.builtinOf(e, "object", false);
+        const at = this.def(`milo.addr ${this.place(e.object, lent, false).ref} : ${lent}`, PTR).ref;
+        return this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${at}[2] : !milo.struct<"Vec", ${PTR}, si64, si64>`, PTR).ref} : si64`, "si64");
+      }
+      case "HeapPtr": return this.builtinOf(e, "object", false);
+      case "EnumTryFrom": {
+        // `E.tryFrom(n)`: Some of the variant whose discriminant is n (its tag), else None;
+        // n compared in i64, widened by its own signedness.
+        let n = this.expr(e.value);
+        const m = /^([su])i(\d+)$/.exec(n.ty);
+        if (!m) throw new MlirUnsupported("tryFrom operand type");
+        if (m[1] === "u") n = this.def(`milo.cast ${n.ref} : ${n.ty} to ui64`, "ui64");
+        if (n.ty !== "si64") n = this.def(`milo.cast ${n.ref} : ${n.ty} to si64`, "si64");
+        const oty = this.value(e.type, "tryFrom result"), ety = this.value({ tag: "enum", name: e.enumName } as TypeKind, "tryFrom enum");
+        const vs = this.cx.mlirEnumLayout(e.optionEnumName)?.variants;
+        const some = vs?.find(x => x.name === "Some"), none = vs?.find(x => x.name === "None");
+        if (!some || !none) throw new MlirUnsupported("tryFrom Option layout");
+        const arm = (k: number): Val => {
+          if (k === e.discriminants.length) return this.def(`milo.enum.new ${none.tag} -> ${oty}`, oty);
+          const d = e.discriminants[k];
+          const c = this.def(`milo.cmp eq, ${n.ref}, ${this.def(`milo.const ${d} : si64`, "si64").ref} : si64`, "i1");
+          const r = this.fresh();
+          this.region(`${r} = milo.if ${c.ref} -> ${oty} {`, () => this.def(`milo.enum.new ${some.tag} (${this.def(`milo.enum.new ${d} -> ${ety}`, ety).ref} : ${ety}) -> ${oty}`, oty));
+          this.region("} else {", () => arm(k + 1));
+          this.emit("}");
+          return { ref: r, ty: oty };
+        };
+        return arm(0);
+      }
       case "JsonStringify": return this.builtinOf(e, "value", false);
-      case "BitIntrinsic": return this.builtinOf(e, "value", true);
+      case "BitIntrinsic": {
+        const v = this.expr(e.value);
+        if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("bit intrinsic operand type");
+        const count = ["ctpop", "ctlz", "cttz"].includes(e.intrinsic);
+        const amt = e.amount ? this.expr(e.amount) : null;
+        if (amt && amt.ty !== v.ty) throw new MlirUnsupported("rotate amount type");
+        const rt = count ? "si64" : v.ty;
+        if (this.value(e.type, "bit intrinsic result") !== rt) throw new MlirUnsupported("bit intrinsic result type");
+        return this.def(`milo.bits "${e.intrinsic}", ${v.ref}${amt ? `, ${amt.ref}` : ""} : ${v.ty}${amt ? `, ${amt.ty}` : ""} -> ${rt}`, rt);
+      }
       case "Adopt": {
         // adoptHeap(p) / adoptVec(p, len): legacy's genAdopt (no conversion, only the type,
         // whose drop glue now frees the block) in a helper. The result is owned.
@@ -4746,7 +4786,7 @@ class FnEmitter {
           this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
         }
         if (local || a.expr.kind !== "StringLit" && a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")
-          this.intrinsic("unique", { ...e, type: { tag: "void" } }, [{ name: "s", type: t, mode: "mut", ref }], ([x]) => ({ kind: "StrUnique", type: { tag: "void" }, span: e.span, str: x }), null);
+          { this.stringHelpers(); this.rtCall("milo.str.unique", [{ ref, ty: `!milo.ref<${STR}>` }], null); }
         params.push({ name, type: t, isRef: true, isRefMut: false });
         args.push(`${ref} : !milo.ref<${STR}>`);
         keys.push("rstring");
