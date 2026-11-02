@@ -31,7 +31,7 @@ export interface MlirEmitCtx {
   mlirCloneOps(): void;
   mlirDropOps(): void;
   mlirIfaceMethodCount(name: string): number | null;
-  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr" | "json"): void;
+  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr" | "json" | "cstr"): void;
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
   mlirDisplayName(name: string): string;
@@ -4930,7 +4930,84 @@ class FnEmitter {
    * its buffer, as legacy's emitCStrUniquePlace does before C may write through it.
    * Scalars and pointers go by value, an array as its address.
    */
+  /**
+   * An extern call natively (legacy genCall): a by-ref argument as its place (after the
+   * alias guard), which lowers to its address, a string as its bytes as a C string (milo.string.cstr; a
+   * literal as is), a fixed array as its address, a scalar or pointer by value; a variadic
+   * callee through milo.ccall. Null for what still needs legacy: a struct by value, either
+   * way, which the C ABI coerces.
+   */
+  private nativeFfi(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val | null {
+    const callee = this.fns.get(e.func), sig = this.cx.fnSigs.get(e.func);
+    if (!callee || !sig) return null;
+    const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR) return null;
+    for (const a of e.args) {
+      const t = stripRefs(a.expr.type);
+      if (!a.passByRef && t.tag !== "string" && t.tag !== "array" && (() => { const vt = valueType(this.cx, a.expr.type); return vt === null || !(isScalarTy(vt) || vt === PTR); })()) return null;
+      if (a.passByRef && (t.tag === "string" || t.tag === "vec" || (t.tag === "array" && t.size === null))) return null;
+    }
+    const keep = this.cx.retainingLibc.has(e.func);
+    const vals: Val[] = [];
+    const refs: { ref: string; mut: boolean; ty: string }[] = [];
+    const mark = this.pending.length;
+    e.args.forEach(a => {
+      const t = stripRefs(a.expr.type);
+      if (a.passByRef) {
+        const ty = this.lent(t, "extern by-ref operand");
+        const r = this.place(a.expr, ty, a.refMut).ref;
+        refs.push({ ref: r, mut: !!a.refMut, ty });
+        // The place, typed as the extern's other calls declare it: it lowers to the address.
+        vals.push({ ref: r, ty });
+      } else if (t.tag === "string") {
+        if (a.expr.kind === "StringLit") {
+          // A literal is NUL-terminated in place.
+          vals.push(this.def(`milo.string.data ${this.expr(a.expr).ref}`, PTR));
+          return;
+        }
+        let ref: string;
+        const local = this.ownedLocal(a.expr);
+        if (a.expr.kind === "Ident" || a.expr.kind === "FieldAccess") ref = this.place(a.expr, `!milo.ref<${STR}>`, false).ref;
+        else {
+          const v = this.expr(a.expr);
+          if (v.ty !== STR || v.own !== "owned" || this.bitCopies.has(v.ref)) throw new MlirUnsupported("C string of a view");
+          // C borrows the bytes for the call; one that keeps them gets them leaked.
+          if (keep) { ref = this.fresh(); this.vars.push(`  ${ref} = milo.var "cstr" : !milo.ref<${STR}>`); }
+          else ref = this.tempSlot("cstr", STR, t, v);
+          this.emit(`milo.store ${v.ref}, ${ref}${keep ? "" : " init"} : !milo.ref<${STR}>`);
+        }
+        this.stringHelpers();
+        // C may write through the bytes: a string owned outright here is made unique first.
+        if (local || (a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")) this.rtCall("milo.str.unique", [{ ref, ty: `!milo.ref<${STR}>` }], null);
+        const copy = keep ? this.fresh() : this.tempSlot("cstr.copy", STR, { tag: "string" });
+        if (keep) this.vars.push(`  ${copy} = milo.var "cstr.copy" : !milo.ref<${STR}>`);
+        this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${copy} init : !milo.ref<${STR}>`);
+        this.cx.mlirPushScalar("cstr");
+        vals.push(this.rtCall("milo.string.cstr", [{ ref, ty: `!milo.ref<${STR}>` }, { ref: copy, ty: `!milo.ref<${STR}>` }], PTR));
+      } else if (t.tag === "array") {
+        vals.push(this.decay(a.expr));
+      } else {
+        vals.push(this.helperOperand(a.expr, "extern argument").v);
+      }
+    });
+    this.pending.length = mark;
+    for (let i = 0; i < refs.length; i++) {
+      for (let j = i + 1; j < refs.length; j++) {
+        if ((!refs[i].mut && !refs[j].mut) || refs[i].ref === refs[j].ref) continue;
+        this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
+      }
+    }
+    const tys = `(${vals.map(v => v.ty).join(", ")}) -> ${ret ?? "()"}`;
+    const call = sig.variadic || e.variadic
+      ? `milo.ccall @${quote(e.func)}(${vals.map(v => v.ref).join(", ")}) fixed ${callee.params.length} : ${tys}`
+      : (this.callees.set(e.func, tys), `func.call @${quote(e.func)}(${vals.map(v => v.ref).join(", ")}) : ${tys}`);
+    if (ret === null) { this.emit(call); return this.valued({ ref: "", ty: "" }, stmt); }
+    return this.valued(this.def(call, ret), stmt);
+  }
+
   private ffiCall(e: HIRExpr & { kind: "Call" }, _stmt: boolean): Val {
+    const native = this.nativeFfi(e, _stmt);
+    if (native) return native;
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];

@@ -461,6 +461,42 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.ccall` (::milo::CCallOp)
+
+_A call of a C function that is variadic_
+
+Syntax:
+
+```
+operation ::= `milo.ccall` $callee `(` $args `)` `fixed` $fixed attr-dict `:` functional-type($args, $result)
+```
+
+`printf(fmt, ...)`, `open(path, flags, ...)`: the first `fixed` arguments are the
+declared ones, the rest go through C's `...` as they are (no promotion, as legacy
+codegen passes them). The callee is declared variadic here.
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>callee</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+<tr><td><code>fixed</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+
+
 ### `milo.check_unaliased` (::milo::CheckUnaliasedOp)
 
 _Panic if two by-ref arguments are the same place_

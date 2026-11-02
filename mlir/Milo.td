@@ -954,6 +954,19 @@ def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]>
   let hasVerifier = 1;
 }
 
+def Milo_CCallOp : Milo_Op<"ccall"> {
+  let summary = "a call of a C function that is variadic";
+  let description = [{
+    `printf(fmt, ...)`, `open(path, flags, ...)`: the first `fixed` arguments are the
+    declared ones, the rest go through C's `...` as they are (no promotion, as legacy
+    codegen passes them). The callee is declared variadic here.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee, I64Attr:$fixed, Variadic<Milo_Value>:$args);
+  let results = (outs Optional<Milo_Value>:$result);
+  let assemblyFormat = "$callee `(` $args `)` `fixed` $fixed attr-dict `:` functional-type($args, $result)";
+  let hasVerifier = 1;
+}
+
 def Milo_CallPtrOp : Milo_Op<"call_ptr"> {
   let summary = "a call through a raw code pointer";
   let description = [{

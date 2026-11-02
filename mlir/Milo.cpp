@@ -511,6 +511,12 @@ LogicalResult ContractCheckOp::verify() {
   return success();
 }
 
+LogicalResult CCallOp::verify() {
+  if (getFixed() > static_cast<int64_t>(getArgs().size()))
+    return emitOpError("has more fixed arguments than arguments");
+  return success();
+}
+
 LogicalResult BitsOp::verify() {
   StringRef k = getKind();
   bool count = k == "ctpop" || k == "ctlz" || k == "cttz";

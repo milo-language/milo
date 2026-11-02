@@ -1297,6 +1297,27 @@ struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
   }
 };
 
+struct CCallLowering : ConvertOpToLLVMPattern<CCallOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(CCallOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    SmallVector<Type> fixed;
+    for (Value v : a.getArgs().take_front(op.getFixed()))
+      fixed.push_back(v.getType());
+    Type ret = op.getResult() ? getTypeConverter()->convertType(op.getResult().getType()) : LLVM::LLVMVoidType::get(rw.getContext());
+    auto module = op->getParentOfType<ModuleOp>();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, op.getCallee(), fixed, ret, /*isVarArg=*/true);
+    if (failed(fn))
+      return failure();
+    auto call = LLVM::CallOp::create(rw, op.getLoc(), *fn, a.getArgs());
+    if (op.getResult())
+      rw.replaceOp(op, call.getResult());
+    else
+      rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct CallPtrLowering : ConvertOpToLLVMPattern<CallPtrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1857,7 +1878,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, GlobalAddrLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

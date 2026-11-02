@@ -951,3 +951,25 @@ done:
 fail:
   ret ptr null
 }
+
+; @@ milo.string.cstr
+; The bytes of the string at %s as a C string for one call: an owned string (cap > 0)
+; keeps its NUL at [len] and is passed as is. A cap-0 one (a literal held in a variable,
+; or a view, which has no NUL of its own) is copied into a NUL-terminated string stored
+; at %tmp (which holds an empty string otherwise), for the caller to drop after the call.
+define internal ptr @milo.string.cstr(ptr nonnull dereferenceable(24) align 8 %s, ptr nonnull dereferenceable(24) align 8 %tmp) {
+entry:
+  %v = load %String, ptr %s
+  %d = extractvalue %String %v, 0
+  %cap = extractvalue %String %v, 2
+  %view = icmp eq i64 %cap, 0
+  br i1 %view, label %copy, label %done
+copy:
+  %len = extractvalue %String %v, 1
+  %c = call %String @milo.str.from(ptr %d, i64 %len)
+  store %String %c, ptr %tmp
+  %cd = extractvalue %String %c, 0
+  ret ptr %cd
+done:
+  ret ptr %d
+}
