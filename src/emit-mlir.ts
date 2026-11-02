@@ -4238,8 +4238,11 @@ class FnEmitter {
       let t = a.expr.type;
       while (t.tag === "ref") t = t.inner;
       const v = this.borrow(this.expr(a.expr), t);
-      // Scalar.cpp printKey spells the same names.
-      if (valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+      // Scalar.cpp printKey spells the same names. A slice is its Vec header (a view), and
+      // prints as a Vec does.
+      const slice = t.tag === "array" && t.size === null ? vecElem(this.cx, { tag: "vec", element: t.element } as TypeKind) : null;
+      const want = slice !== null ? `!milo.vecval<${slice}>` : valueType(this.cx, t);
+      if (want !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
       parts.push({ v, key: typeKey(t), type: t });
       if (!formatted && t.tag === "string" && i < args.length - 1) flush(true);
     });
