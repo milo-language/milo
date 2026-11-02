@@ -4,6 +4,9 @@
 // and the top legacy reasons. This is the ranking the coverage batches work from; it never
 // runs a binary, so it is not a correctness gate (mlir-same is).
 //
+// It runs whatever src/ holds as each file compiles, so run it from a worktree of a commit
+// (MILO_OPT pointing at a built milo-opt) when src/ may change meanwhile.
+//
 // Usage: bun scripts/mlir-census.ts [--top N] [--where reason-substring]
 //   --where prints the files whose log carries a matching reason, with counts.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -35,6 +38,7 @@ const files = [
 const tmp = mkdtempSync(join(tmpdir(), "mlir-census-"));
 const MAIN = join(REPO, "src/main.ts");
 let ok = 0, all = 0, failed = 0;
+const failures: string[] = [];
 const reasons = new Map<string, number>();
 const byFile = new Map<string, number>();
 
@@ -46,7 +50,7 @@ async function one(file: string, i: number) {
   });
   // A big example (games/flight) takes minutes; one that hangs must not hold the census.
   const timer = setTimeout(() => proc.kill(), 300_000);
-  if ((await proc.exited) !== 0) failed++;
+  if ((await proc.exited) !== 0) { failed++; failures.push(file); }
   clearTimeout(timer);
   if (!existsSync(log)) return;
   for (const line of readFileSync(log, "utf-8").split("\n")) {
@@ -66,4 +70,5 @@ await Promise.all(Array.from({ length: Math.max(1, availableParallelism() >> 1) 
 
 console.log(`census: ${ok} of ${all} (${(100 * ok / Math.max(all, 1)).toFixed(2)}%), ${all - ok} on legacy, ${files.length} files, ${failed} emit failures`);
 for (const [r, n] of [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN)) console.log(`${String(n).padStart(6)}  ${r}`);
+for (const f of failures) console.log(`emit failure: ${f}`);
 if (where) for (const [f, n] of [...byFile.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`  ${n}\t${f}`);
