@@ -141,10 +141,11 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
     // No count from a program that exits normally means the counter was not loaded.
     if (lh === null && legacyRun.code === 0) return "live blocks: scripts/livecount.c did not load";
     if (lh !== null && !/^-?\d+$/.test(lh)) return `live blocks: scripts/livecount.c counted nothing (${lh})`;
-    if (lm !== lh) return `live blocks at exit: legacy ${lh}, mlir ${lm}`;
-    // Again at -O0 (`--fast`: checks as at -O2). At -O2 LLVM deletes a malloc whose block
-    // is never read, so a heap string that is built, measured and then leaked is never
-    // allocated at all: erasing a struct's drop of its strings left both counts equal.
+    // -O0 (`--fast`: checks as at -O2) decides. At -O2 LLVM deletes a malloc whose block is
+    // never freed and never escapes, and whether it can see that depends on inlining, which
+    // differs per backend: legacy inlines string formatting, MLIR calls a helper. So the -O2
+    // counts can differ with identical drops (exitDivergesMoves: a string still owned at
+    // exit()), or agree with a drop erased (a struct's drop of its strings left both equal).
     const fast = async (mlir: boolean) => {
       const bin = `${mlir ? mlirBin : legacyBin}.fast`;
       const args = ["run", MAIN, "build", `${name}.milo`, "--fast", "-o", bin];
@@ -153,7 +154,7 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
       return b.code === 0 ? await live(bin) : `build failed: ${b.stderr.trim().split("\n")[0]}`;
     };
     const [fm, fh] = [await fast(true), await fast(false)];
-    if (fm !== fh) return `live blocks at exit at -O0: legacy ${fh}, mlir ${fm}`;
+    if (fm !== fh) return `live blocks at exit at -O0: legacy ${fh}, mlir ${fm} (at -O2: legacy ${lh}, mlir ${lm})`;
   }
   const asanBin = `${mlirBin}.asan`;
   const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", "-o", asanBin];

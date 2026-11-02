@@ -1069,7 +1069,10 @@ Landed: main through MLIR when it holds a raw pointer, a global or a fn value; n
 patterns; let-else payloads that escape the arm. Not landed: heap-env closures (work in progress
 on branch `batch11-heapenv-wip`, ungated) and enum patterns with escaping bindings. Open: C ABI
 for structs passed to or returned from externs by value (refused for now, 2af72a0c);
-`exitDivergesMoves` holds one more live block than legacy at `exit()`.
+`exitDivergesMoves`'s extra live block at `exit()` was the gate, not the drops: at -O2 LLVM
+deleted legacy's never-freed `u.clone()` (legacy inlines the `$"…"` formatting, MLIR calls a
+print helper), and at -O0 both hold 3. `mlir-same --owned` now decides on the -O0 count; a
+planted extra clone in MLIR is red at -O0 and invisible at -O2.
 
 ## Gates (every milestone, every commit)
 
