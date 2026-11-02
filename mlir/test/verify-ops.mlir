@@ -386,3 +386,19 @@ func.func @panic_if_conversion_without_value(%b: i1) {
   milo.panic_if %b, "n = %lld\n"
   milo.return
 }
+
+// -----
+
+func.func @overflows_kind(%a: si32, %b: si32) {
+  // expected-error @+1 {{checks add, sub, mul, div or rem, not shl}}
+  %0 = milo.overflows "shl", %a, %b : si32
+  milo.return
+}
+
+// -----
+
+func.func @saturating_kind(%a: ui8, %b: ui8) {
+  // expected-error @+1 {{saturates add, sub or mul, not div}}
+  %0 = milo.saturating "div", %a, %b : ui8
+  milo.return
+}

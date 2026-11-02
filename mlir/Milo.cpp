@@ -504,6 +504,20 @@ LogicalResult ContractCheckOp::verify() {
   return success();
 }
 
+LogicalResult OverflowsOp::verify() {
+  StringRef k = getKind();
+  if (k != "add" && k != "sub" && k != "mul" && k != "div" && k != "rem")
+    return emitOpError("checks add, sub, mul, div or rem, not ") << k;
+  return success();
+}
+
+LogicalResult SaturatingOp::verify() {
+  StringRef k = getKind();
+  if (k != "add" && k != "sub" && k != "mul")
+    return emitOpError("saturates add, sub or mul, not ") << k;
+  return success();
+}
+
 LogicalResult PanicIfOp::verify() {
   // printf reads one argument per conversion: the message may name exactly the value given.
   StringRef m = getMessage();

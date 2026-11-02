@@ -931,6 +931,31 @@ def Milo_ContractCheckOp : Milo_Op<"contract_check",
   let hasVerifier = 1;
 }
 
+def Milo_OverflowsOp : Milo_Op<"overflows", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "whether integer arithmetic would overflow";
+  let description = [{
+    True when `lhs <kind> rhs` has no result in the type (in its signedness): add, sub and
+    mul past the range; div and rem by zero, or signed MIN by -1. Never traps.
+    `x.checkedAdd(y)` is None when this holds, else Some of the wrapping op.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$lhs, Milo_Int:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$kind `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasVerifier = 1;
+}
+
+def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]> {
+  let summary = "integer add, sub or mul clamped to the type's range";
+  let description = [{
+    `x.saturatingAdd(y)`: the result, or the type's MIN or MAX in the direction the true
+    result lies. Never traps.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$lhs, Milo_Int:$rhs);
+  let results = (outs Milo_Int:$result);
+  let assemblyFormat = "$kind `,` $lhs `,` $rhs attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Milo_PanicIfOp : Milo_Op<"panic_if",
     [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
   let summary = "panic with a message when a condition holds";

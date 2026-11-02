@@ -2570,15 +2570,27 @@ class FnEmitter {
         return this.def(`milo.${op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
       }
       case "SaturatingArith": case "CheckedArith": {
-        // `a.saturatingAdd(b)` / `a.checkedAdd(b)` (an Option): legacy's own lowering in a
-        // helper, both operands scalars.
+        // `a.saturatingAdd(b)`: milo.saturating. `a.checkedAdd(b)`: None when the op
+        // overflows (milo.overflows), else Some of the wrapping op, which then cannot wrap;
+        // a div or rem runs only on that side, so a zero divisor never reaches it.
         const l = this.expr(e.left), r = this.expr(e.right);
-        const lt = valueType(this.cx, e.left.type), rt = valueType(this.cx, e.right.type);
-        if (l.ty !== lt || r.ty !== rt || !isScalarTy(l.ty) || !isScalarTy(r.ty)) throw new MlirUnsupported(`${e.kind} operand types`);
-        const ty = this.value(e.type, `${e.kind} result`);
-        return this.intrinsic(`${e.kind === "CheckedArith" ? "checked" : "sat"}.${e.op}`, e,
-          [{ name: "l", type: e.left.type, mode: "val", ref: l.ref }, { name: "r", type: e.right.type, mode: "val", ref: r.ref }],
-          ([x, y]) => ({ ...e, left: x, right: y }), ty, false);
+        const ty = l.ty;
+        const ops = e.kind === "CheckedArith" ? ["add", "sub", "mul", "div", "rem"] : ["add", "sub", "mul"];
+        if (!ops.includes(e.op) || r.ty !== ty || !/^[su]i\d+$/.test(ty)) throw new MlirUnsupported(`${e.kind} ${e.op} on ${ty}`);
+        if (e.kind === "SaturatingArith") return this.def(`milo.saturating "${e.op}", ${l.ref}, ${r.ref} : ${ty}`, ty);
+        const oty = this.value(e.type, "checked arithmetic result");
+        const vs = this.cx.mlirEnumLayout(e.optionEnumName)?.variants;
+        const some = vs?.find(v => v.name === "Some"), none = vs?.find(v => v.name === "None");
+        if (!some || !none) throw new MlirUnsupported("checked arithmetic Option layout");
+        const bad = this.def(`milo.overflows "${e.op}", ${l.ref}, ${r.ref} : ${ty}`, "i1");
+        const res = this.fresh();
+        this.region(`${res} = milo.if ${bad.ref} -> ${oty} {`, () => this.def(`milo.enum.new ${none.tag} -> ${oty}`, oty));
+        this.region("} else {", () => {
+          const v = this.def(`milo.${e.op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
+          return this.def(`milo.enum.new ${some.tag} (${v.ref} : ${ty}) -> ${oty}`, oty);
+        });
+        this.emit("}");
+        return { ref: res, ty: oty };
       }
       case "MemSwap": {
         // `swap(a, b)`, as legacy genMemSwap: both read before either is written (they may [MILO-O-replaceSwap]

@@ -1714,6 +1714,48 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.overflows` (::milo::OverflowsOp)
+
+_Whether integer arithmetic would overflow_
+
+Syntax:
+
+```
+operation ::= `milo.overflows` $kind `,` $lhs `,` $rhs attr-dict `:` type($lhs)
+```
+
+True when `lhs <kind> rhs` has no result in the type (in its signedness): add, sub and
+mul past the range; div and rem by zero, or signed MIN by -1. Never traps.
+`x.checkedAdd(y)` is None when this holds, else Some of the wrapping op.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `lhs` | signed integer or unsigned integer |
+| `rhs` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 1-bit signless integer |
+
+
+
 ### `milo.panic_if` (::milo::PanicIfOp)
 
 _Panic with a message when a condition holds_
@@ -2047,6 +2089,47 @@ Traits: `Terminator`
 | Operand | Description |
 | :-----: | ----------- |
 | `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+
+
+### `milo.saturating` (::milo::SaturatingOp)
+
+_Integer add, sub or mul clamped to the type's range_
+
+Syntax:
+
+```
+operation ::= `milo.saturating` $kind `,` $lhs `,` $rhs attr-dict `:` type($result)
+```
+
+`x.saturatingAdd(y)`: the result, or the type's MIN or MAX in the direction the true
+result lies. Never traps.
+
+Traits: `AlwaysSpeculatableImplTrait`, `SameOperandsAndResultType`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `lhs` | signed integer or unsigned integer |
+| `rhs` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer |
 
 
 

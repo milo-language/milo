@@ -1216,6 +1216,87 @@ struct ContractCheckLowering : ConvertOpToLLVMPattern<ContractCheckOp> {
   }
 };
 
+template <typename SOv, typename UOv>
+Value overflowFlag(ConversionPatternRewriter &rw, Location loc, bool isUnsigned, Value l, Value r) {
+  Type t = l.getType();
+  auto pairTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), {t, rw.getI1Type()});
+  Value pair = isUnsigned ? UOv::create(rw, loc, pairTy, l, r).getResult()
+                          : SOv::create(rw, loc, pairTy, l, r).getResult();
+  return LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{1});
+}
+
+struct OverflowsLowering : ConvertOpToLLVMPattern<OverflowsOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(OverflowsOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    bool u = isUnsignedInt(op.getLhs().getType());
+    Value l = a.getLhs(), r = a.getRhs();
+    StringRef k = op.getKind();
+    Value bad;
+    if (k == "add")
+      bad = overflowFlag<LLVM::SAddWithOverflowOp, LLVM::UAddWithOverflowOp>(rw, loc, u, l, r);
+    else if (k == "sub")
+      bad = overflowFlag<LLVM::SSubWithOverflowOp, LLVM::USubWithOverflowOp>(rw, loc, u, l, r);
+    else if (k == "mul")
+      bad = overflowFlag<LLVM::SMulWithOverflowOp, LLVM::UMulWithOverflowOp>(rw, loc, u, l, r);
+    else {
+      Type t = l.getType();
+      unsigned w = cast<IntegerType>(t).getWidth();
+      bad = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, r, constInt(rw, loc, t, 0));
+      if (!u) {
+        Value isMin = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, l,
+                                           constInt(rw, loc, t, APInt::getSignedMinValue(w)));
+        Value isNeg1 = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, r, constInt(rw, loc, t, -1));
+        bad = LLVM::OrOp::create(rw, loc, bad, LLVM::AndOp::create(rw, loc, isMin, isNeg1));
+      }
+    }
+    rw.replaceOp(op, bad);
+    return success();
+  }
+};
+
+// add and sub are LLVM's .sat intrinsics; there is no mul one, so mul clamps on the
+// overflow flag, toward MIN when exactly one operand is negative (the product's sign).
+struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(SaturatingOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    bool u = isUnsignedInt(op.getType());
+    Value l = a.getLhs(), r = a.getRhs();
+    StringRef k = op.getKind();
+    if (k == "add") {
+      rw.replaceOp(op, u ? LLVM::UAddSat::create(rw, loc, l, r).getResult() : LLVM::SAddSat::create(rw, loc, l, r).getResult());
+      return success();
+    }
+    if (k == "sub") {
+      rw.replaceOp(op, u ? LLVM::USubSat::create(rw, loc, l, r).getResult() : LLVM::SSubSat::create(rw, loc, l, r).getResult());
+      return success();
+    }
+    Type t = l.getType();
+    unsigned w = cast<IntegerType>(t).getWidth();
+    auto pairTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), {t, rw.getI1Type()});
+    Value pair = u ? LLVM::UMulWithOverflowOp::create(rw, loc, pairTy, l, r).getResult()
+                   : LLVM::SMulWithOverflowOp::create(rw, loc, pairTy, l, r).getResult();
+    Value prod = LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{0});
+    Value ov = LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{1});
+    Value clamp;
+    if (u) {
+      clamp = constInt(rw, loc, t, APInt::getMaxValue(w));
+    } else {
+      Value zero = constInt(rw, loc, t, 0);
+      Value lNeg = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::slt, l, zero);
+      Value rNeg = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::slt, r, zero);
+      Value neg = LLVM::XOrOp::create(rw, loc, lNeg, rNeg);
+      clamp = LLVM::SelectOp::create(rw, loc, neg, constInt(rw, loc, t, APInt::getSignedMinValue(w)),
+                                     constInt(rw, loc, t, APInt::getSignedMaxValue(w)));
+    }
+    rw.replaceOp(op, LLVM::SelectOp::create(rw, loc, ov, clamp, prod));
+    return success();
+  }
+};
+
 // The message as the format of the module's `__milo_mlir_panic(fmt)`, or with the value
 // `__milo_mlir_panic_i64(fmt, v)`, on the failing edge only.
 struct PanicIfLowering : ConvertOpToLLVMPattern<PanicIfOp> {
@@ -1735,7 +1816,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
