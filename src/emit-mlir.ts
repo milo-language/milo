@@ -1478,7 +1478,11 @@ class FnEmitter {
         }
         // A place-only result returned by value (an array, a struct holding one, under 128
         // bytes so not sret): loaded whole from its place at the return, legacy's ABI.
-        const v = this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
+        // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
+        // nothing, so its environment has no owner and leaks, as legacy leaks it (the env
+        // drop header is docs/backlog.md #23). fnAs's `leak` casts it.
+        const plainFn = this.retTy!.startsWith("!milo.fn<") && !this.retTy!.startsWith("!milo.fn<owning ");
+        const v = plainFn ? this.take(this.expr(s.value), this.retTy!, "return", true) : this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
         this.ret(`milo.return ${v.ref} : ${v.ty}`);
         return true;
       }
