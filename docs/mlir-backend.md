@@ -1063,6 +1063,14 @@ layout); build time comes from removing the text round trip between emitter and 
 (in-process, or MLIR bytecode) and from compiling std once as a library, not from a
 per-function compile cache.
 
+### Eleventh batch (partial, paused 2026-11-01)
+
+Landed: main through MLIR when it holds a raw pointer, a global or a fn value; nested match
+patterns; let-else payloads that escape the arm. Not landed: heap-env closures (work in progress
+on branch `batch11-heapenv-wip`, ungated) and enum patterns with escaping bindings. Open: C ABI
+for structs passed to or returned from externs by value (refused for now, 2af72a0c);
+`exitDivergesMoves` holds one more live block than legacy at `exit()`.
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
