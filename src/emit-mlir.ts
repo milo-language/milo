@@ -3231,7 +3231,8 @@ class FnEmitter {
       } else subj = this.borrow(v, m.subject.type);
     }
     const isEnum = bigEnum || subj.ty.startsWith("!milo.enum<");
-    if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
+    // A float subject compares every literal as a float (legacy fcmp oeq), int patterns too.
+    if (!isEnum && (/^f\d+$/.test(subj.ty) || m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float"))))
       return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy, armBody);
     const st = stripRefs(m.subject.type);
     const layout = isEnum ? this.enumLayout(st.tag === "enum" ? st.name : "") : null;
