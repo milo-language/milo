@@ -475,7 +475,9 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 // A `var` is a slot; so is a by-ref param, whose slot is the caller's (`param` is its index).
 // An `owned` var holds a value with drop glue for the scope that declared it.
 // A `vec` is a `&Vec<T>` / `&mut Vec<T>` param: the address of the caller's header.
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean }
+// `zeroOnMove`: an owned element of a consumed array, whose slot drops every element after
+// the loop: a move takes it and leaves the zero value (legacy zeroes a moved element too).
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean }
   | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string };
 
 // How one match arm makes its bindings (FnEmitter.armBinder). `view`: the binding reads
@@ -1766,8 +1768,7 @@ class FnEmitter {
     if (placeType(this.cx, stripRefs(elemKind)) !== ety) throw new MlirUnsupported("for element type");
     // Legacy moves each element of a consumed array into the binding and drops it at the
     // end of its iteration; here the array's slot drops them all after the loop. Only a
-    // user Drop can tell (the order); moving the binding out is a borrowed value's
-    // consume, which keeps the function legacy.
+    // user Drop can tell (the order). A binding moved out is zeroed in its slot (zeroOnMove).
     if (s.consume && this.runsUserDrop(ety)) throw new MlirUnsupported("consumed for over an array with a user Drop");
     const scopeStart = this.body.length;
     this.scopes.push(new Map());
@@ -1788,7 +1789,7 @@ class FnEmitter {
       this.region(`milo.for ${zero} to ${n} : si64 {`, () => {
         this.emit(`^bb0(${iv}: si64):`);
         const r = this.def(`milo.array.index ${arr}[${iv}] : !milo.ref<${aty}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`, this.loc(s.span)).ref;
-        this.bind(s.varName2 ?? s.varName, { kind: "var", ref: r, ty: ety });
+        this.bind(s.varName2 ?? s.varName, s.consume ? { kind: "var", ref: r, ty: ety, zeroOnMove: true } : { kind: "var", ref: r, ty: ety });
         if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: iv, ty: "si64" } });
         return this.stmts(s.body);
       });
@@ -1959,6 +1960,11 @@ class FnEmitter {
         if (!this.hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };
+        if (b.zeroOnMove) {
+          const v = this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
+          this.emit(`milo.store ${this.def(`milo.zero : ${b.ty}`, b.ty).ref}, ${b.ref} init : !milo.ref<${b.ty}>`);
+          return { ...v, own: "owned" };
+        }
         if (!b.owned) throw new MlirUnsupported("move out of a borrow");
         return { ...this.def(`milo.move ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "owned" };
       }
