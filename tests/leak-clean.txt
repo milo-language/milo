@@ -502,6 +502,7 @@ sliceView
 sliceViewReturn
 socketBind
 softKeywordFromIn
+sortByKeyOwnedKey
 sortByKeyString
 spawnCapturingClosureLeak
 spawnMoveClosures

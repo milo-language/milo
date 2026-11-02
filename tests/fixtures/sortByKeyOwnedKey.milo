@@ -1,0 +1,15 @@
+// A sortByKey extractor that builds its key (`p.name + "!"`) hands the sort a string it
+// owns: the sort drops each key after its comparison (std sortByKeyOwned). One that returns
+// the element's own field (`p.name`) lends it, and the sort only reads it. The keys used to
+// be forgotten in both cases, which leaked every built key.
+// @expect: a b c
+// @expect: c b a
+struct P { name: string, rank: i64 }
+
+fn main() {
+    var ps: Vec<P> = [P { name: "b" + "", rank: 2 }, P { name: "c" + "", rank: 1 }, P { name: "a" + "", rank: 3 }]
+    ps.sortByKey((p: &P) => p.name + "!")
+    print(ps[0].name, " ", ps[1].name, " ", ps[2].name)
+    ps.sortByKey((p: &P) => $"{p.rank}")
+    print(ps[0].name, " ", ps[1].name, " ", ps[2].name)
+}

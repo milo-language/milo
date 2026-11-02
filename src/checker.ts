@@ -8214,6 +8214,31 @@ export class TypeChecker {
   // when the forwarded payload is non-Copy — a Copy payload is safe to duplicate, and
   // staying non-consuming there keeps the common `Result<i64, i64>` case ergonomic
   // (same Copy gate as unwrapOr).
+  // What a sortByKey extractor's string key is: "borrowed" when every return is a place
+  // rooted at its parameter (`p.name`), "owned" when none is (a fn value, `p.name + "!"`),
+  // "mixed" otherwise. Nested closures are not this one's returns.
+  private extractorKeys(arg: Expr): "borrowed" | "owned" | "mixed" {
+    if (arg.kind !== "Closure" || arg.params.length !== 1) return "owned";
+    const param = arg.params[0]!.name;
+    const rooted = (e: Expr): boolean =>
+      e.kind === "Ident" ? e.name === param : e.kind === "FieldAccess" ? rooted(e.object) : false;
+    const values: Expr[] = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      const o = n as { kind?: string; value?: Expr | null };
+      if (o.kind === "Closure") return;
+      if (o.kind === "Return" && o.value) values.push(o.value);
+      for (const v of Object.values(o)) if (v && typeof v === "object") walk(v);
+    };
+    walk(arg.body);
+    // An expression-bodied closure's value is its last statement.
+    const last = arg.body[arg.body.length - 1];
+    if (last?.kind === "ExprStmt") values.push(last.expr);
+    const borrowed = values.filter(rooted).length;
+    return borrowed === 0 ? "owned" : borrowed === values.length ? "borrowed" : "mixed";
+  }
+
   private consumeForwardedPayload(receiver: Expr, forwarded: TypeKind) {
     if (this.isCopyType(forwarded)) return;
     this.tryMove(receiver);
@@ -13812,7 +13837,16 @@ export class TypeChecker {
           return this.setType(expr, { tag: "void" });
         }
         if (this.refuseByValueCallback(cbType, elemRef, "sortByKey", sp)) return this.setType(expr, { tag: "void" });
-        return this.bindStdVecMethod(expr, objType.element, "sortByKey", { tag: "void" }, { typeArgs: [keyType] });
+        // A string key that is the element's own field is a borrow, which sortByKey only
+        // reads and forgets; one the extractor builds is owned, and sortByKeyOwned drops
+        // it. An extractor that does both cannot be sorted by either. [MILO-O-keyExtractor]
+        const keys = keyType.tag === "string" ? this.extractorKeys(expr.args[0]!) : "borrowed";
+        if (keys === "mixed") {
+          this.error(`'sortByKey' key extractor returns the element's own field on one path and a new string on another`, sp,
+            `return a new string on every path, e.g. 'p.name.clone()' for the field`);
+          return this.setType(expr, { tag: "void" });
+        }
+        return this.bindStdVecMethod(expr, objType.element, keys === "owned" ? "sortByKeyOwned" : "sortByKey", { tag: "void" }, { typeArgs: [keyType] });
       }
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
