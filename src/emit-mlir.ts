@@ -1552,7 +1552,8 @@ class FnEmitter {
             }
             // Over a field or an element of a place, which always holds a value: the old
             // one dropped, then the new one copied in (legacy's eval, drop, memcpy).
-            const dst = s.target.kind === "IndexAccess" ? this.elemRef(s.target) : s.target.kind === "FieldAccess" ? this.fieldPlace(s.target) : null;
+            const dst = s.target.kind === "IndexAccess" ? this.elemRef(s.target) : s.target.kind === "FieldAccess" ? this.fieldPlace(s.target)
+              : s.target.kind === "HeapDeref" ? this.heapPlace(s.target) : null;
             if (!dst || dst.ty !== big) throw new MlirUnsupported("128+ byte store other than through a pointer");
             this.overwriteBig(dst.ref, big, s.target.type, src, false);
             return false;
