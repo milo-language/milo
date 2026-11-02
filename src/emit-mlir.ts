@@ -108,34 +108,47 @@ const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
 // spelling so far names by name alone.
 const spelling = new WeakMap<MlirEmitCtx, { keys: string[]; outer: number }>();
 
-const bigTypes = new WeakMap<MlirEmitCtx, Set<string>>();
+/**
+ * How a value travels, decided here and nowhere else (Clang CodeGen's evaluation kinds,
+ * Rust MIR's operand/place split), keyed by its dialect type:
+ * - `slot`: a binding of it lives in a slot (a `let`, a param, a match subject read in
+ *   place), as legacy keeps an isBigAgg value behind its address;
+ * - `ssa`: it may be an SSA operand between positions. One that may not (128+ bytes, or
+ *   holding a fixed array: SROA splits a whole-aggregate load into one op per element, so
+ *   a struct holding a big array takes -O2 forever) is built in its place (`into`), copied
+ *   place to place (milo.copy), and is an SSA value only at an ABI boundary, loaded whole
+ *   there: a by-value param or result, as legacy's ABI passes it.
+ * A 128..512 byte enum is `slot` but `ssa`: legacy passes and returns one by value (only
+ * structs get sret); a larger one is a place, the size at which SROA's split starts to cost.
+ * Every type placeType spells has an entry; anything else (a place, a vectail) is a value.
+ */
+interface Repr { slot: boolean; ssa: boolean }
+const reprs = new WeakMap<MlirEmitCtx, Map<string, Repr>>();
+const BIG_ENUM_VALUE_LIMIT = 512;
 
-/** An aggregate of 128 bytes or more: only ever a place (placeType), never an SSA value. */
-function isBig(cx: MlirEmitCtx, ty: string): boolean {
-  return bigTypes.get(cx)?.has(ty) ?? false;
+function recordRepr(cx: MlirEmitCtx, ty: string, t: TypeKind): void {
+  let m = reprs.get(cx);
+  if (!m) reprs.set(cx, m = new Map());
+  // A type met inside its own fields is spelled by name alone, which says nothing of its size.
+  if (m.has(ty) || ((t.tag === "struct" || t.tag === "enum") && ty === `!milo.${t.tag}<${quote(t.name)}>`)) return;
+  const big = t.tag === "array" || ((t.tag === "struct" || t.tag === "enum") && (cx.typeSizeOf(t) >= 128 || ty.includes("!milo.array<")));
+  m.set(ty, { slot: big, ssa: !big || (t.tag === "enum" && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT) });
 }
 
-/**
- * The dialect's type for a value of `t`: placeType, except an aggregate of 128 bytes or
- * more. Legacy never holds one as an SSA value (isBigAgg): SROA splits a whole-aggregate
- * load into one op per element, so a struct holding a big array takes -O2 forever.
- */
+function reprOf(cx: MlirEmitCtx, ty: string): Repr {
+  return reprs.get(cx)?.get(ty) ?? { slot: false, ssa: true };
+}
+
+/** A binding of `ty` lives in a slot (Repr.slot). */
+const inSlot = (cx: MlirEmitCtx, ty: string) => reprOf(cx, ty).slot;
+/** A `ty` may be an SSA operand away from an ABI boundary (Repr.ssa). */
+const isSsa = (cx: MlirEmitCtx, ty: string) => reprOf(cx, ty).ssa;
+
+/** The dialect's type for an SSA operand of `t`: placeType, unless that lives only in places. */
 function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = placeType(cx, t);
-  if (r !== null && isBig(cx, r) && r.startsWith("!milo.enum<") && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT) return r;
-  if (r === null || !isBig(cx, r)) return r;
-  if (!placeOnly.has(cx)) placeOnly.set(cx, new Set());
-  placeOnly.get(cx)!.add(r);
-  return null;
+  return r !== null && isSsa(cx, r) ? r : null;
 }
-
-// The big types valueType refused: only ever in places, copied with milo.copy.
-const placeOnly = new WeakMap<MlirEmitCtx, Set<string>>();
-
-// A 128+ byte enum below this is also a value: legacy returns and passes one by value
-// (only structs get sret), so it is an SSA aggregate there too. Larger ones stay places,
-// the size at which SROA's split of a whole-aggregate load starts to cost.
-const BIG_ENUM_VALUE_LIMIT = 512;
 
 // What a spelled type owns, decided from the checker's type it was spelled from, never
 // from its text: a type met again inside itself is spelled by name alone, which hides
@@ -213,7 +226,7 @@ function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
  */
 function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = spellPlace(cx, t);
-  if (r !== null) recordOwns(cx, r, t);
+  if (r !== null) { recordOwns(cx, r, t); recordRepr(cx, r, t); }
   return r;
 }
 
@@ -242,10 +255,7 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
     // that a slice expression makes: not yet). What it owns is its element's.
     const e = t.size === null ? null : placeType(cx, t.element);
     if (e === null) return null;
-    const r = `!milo.array<${e}, ${t.size}>`;
-    if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
-    bigTypes.get(cx)!.add(r);
-    return r;
+    return `!milo.array<${e}, ${t.size}>`;
   }
   if (m !== null || (t.tag !== "struct" && t.tag !== "enum")) return m;
   let cache = aggregates.get(cx);
@@ -269,11 +279,6 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
   // type's own, so it is not the one to reuse.
   if (sp.outer >= depth) cache.set(key, r);
   sp.outer = Math.min(saved, sp.outer);
-  // One holding an array is a place only too: the array is never an SSA value.
-  if (r !== null && (cx.typeSizeOf(t) >= 128 || r.includes("!milo.array<"))) {
-    if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
-    bigTypes.get(cx)!.add(r);
-  }
   return r;
 }
 
@@ -473,12 +478,12 @@ class FnEmitter {
         return `%p${i}: ${PTR}`;
       }
       const pt = placeType(this.cx, p.type);
-      const ty = p.isRef || p.isRefMut || (pt !== null && isBig(this.cx, pt)) ? pt! : this.value(p.type, "param");
+      const ty = p.isRef || p.isRefMut || (pt !== null && inSlot(this.cx, pt)) ? pt! : this.value(p.type, "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
       }
-      if (isBig(this.cx, ty) && !this.hasDrop(ty)) {
+      if (inSlot(this.cx, ty) && !this.hasDrop(ty)) {
         // A 128+ byte param arrives by value (legacy's ABI) and goes straight to a slot, as
         // legacy spills it; from there it is only a place.
         const slot = this.fresh();
@@ -505,7 +510,7 @@ class FnEmitter {
       this.sretOut = { ref: "%out", ty: this.place$(fn.retType, "sret result") };
       params.unshift(`%out: !milo.ref<${this.sretOut.ty}>`);
     }
-    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.abiValue(fn.retType, "return");
+    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.place$(fn.retType, "return");
     this.retPlaceOnly = ret !== null && !isMain && valueType(this.cx, fn.retType) === null;
     this.isMain = isMain;
     this.retTy = ret;
@@ -809,23 +814,17 @@ class FnEmitter {
   // value, the ABI's, stored straight into the destination.
   private abiResult = false;
 
-  /** valueType, or for a place-only type the SSA value an ABI passes (a by-value result). */
-  private abiValue(t: TypeKind, what: string): string {
-    return valueType(this.cx, t) ?? this.place$(t, what);
-  }
-
-  /** placeType, or the reason the function stays legacy. */
+  /**
+   * placeType, or the reason the function stays legacy: what a place of `t` holds, and the
+   * type of the SSA value an ABI boundary passes (a by-value param or result) whatever Repr says.
+   */
   private place$(t: TypeKind, what: string): string {
     const v = placeType(this.cx, t);
     if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
     return v;
   }
 
-  /** The type of what memory behind a pointer holds: a value's, or a 128+ byte place's. */
-  private memType(t: TypeKind, what: string): string {
-    return valueType(this.cx, t) ?? this.place$(t, what);
-  }
-
+  /** valueType, or the reason the function stays legacy: an SSA operand of `t` away from an ABI boundary. */
   private value(t: TypeKind, what: string): string {
     const v = valueType(this.cx, t);
     if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
@@ -1022,7 +1021,7 @@ class FnEmitter {
           return false;
         }
         const pt = placeType(this.cx, s.type);
-        if (pt !== null && isBig(this.cx, pt)) {
+        if (pt !== null && inSlot(this.cx, pt)) {
           const b = this.bigSlot(s.name, s.value);
           this.bind(s.name, { kind: "var", ref: b.ref, ty: b.ty, owned: b.owned });
           return false;
@@ -1108,8 +1107,8 @@ class FnEmitter {
         if (b.kind !== "var") throw new MlirUnsupported("assign to an immutable binding");
         // A lazy global of a place-only type (`let NAMES: [string; 3] = [...]`) is built
         // in place, as legacy's genStoreInto does for its first fill.
-        if (s.isInit && isBig(this.cx, b.ty)) { this.scoped(() => { this.into(s.value, b.ref, b.ty); return { ref: "", ty: "" }; }); return false; }
-        if (isBig(this.cx, b.ty)) {
+        if (s.isInit && inSlot(this.cx, b.ty)) { this.scoped(() => { this.into(s.value, b.ref, b.ty); return { ref: "", ty: "" }; }); return false; }
+        if (inSlot(this.cx, b.ty)) {
           if (this.lvalueSame(s.value, s.target)) return false;
           const src = this.bigPlace(s.value, b.ty) ?? (() => {
             const sl = this.bigSlot("tmp", s.value, true);
@@ -1227,8 +1226,8 @@ class FnEmitter {
           ({ place, elem } = this.vecPlace(s.iterable));
           // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
           // So is one holding an array, even when small enough to be a value elsewhere.
-          byPlace = (valueType(this.cx, stripRefs(elemKind)) === null || isBig(this.cx, elem)) && placeType(this.cx, stripRefs(elemKind)) === elem;
-          if (!byPlace && (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
+          byPlace = (valueType(this.cx, stripRefs(elemKind)) === null || inSlot(this.cx, elem)) && placeType(this.cx, stripRefs(elemKind)) === elem;
+          if (!byPlace && (inSlot(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
           data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
           len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
         }
@@ -1581,7 +1580,7 @@ class FnEmitter {
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
         if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
-        if (b.kind === "var" && isBig(this.cx, b.ty) && valueType(this.cx, e.type) !== b.ty) throw new MlirUnsupported("a 128+ byte aggregate as a value");
+        if (b.kind === "var" && inSlot(this.cx, b.ty) && valueType(this.cx, e.type) !== b.ty) throw new MlirUnsupported("a 128+ byte aggregate as a value");
         if (!this.hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };
@@ -1621,7 +1620,7 @@ class FnEmitter {
         }
         const er = this.elemRef(e);
         if (er) {
-          if (placeOnly.get(this.cx)?.has(er.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
+          if (!isSsa(this.cx, er.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
           if (!this.hasDrop(er.ty)) return this.def(`milo.load ${er.ref} : !milo.ref<${er.ty}>`, er.ty);
           // Legacy clones an owning element (emitDeepCloneFromPtr): `v[i]` is always an
           // independent value, and the Vec keeps its own.
@@ -2151,13 +2150,13 @@ class FnEmitter {
       // `*p`: what p points at, of any type; an owning one is a bit copy, as ptrRead says.
       const p = this.expr(e.operand);
       if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
-      return { ptr: p.ref, ty: this.memType(e.type, "load through a pointer") };
+      return { ptr: p.ref, ty: this.place$(e.type, "load through a pointer") };
     }
     if (e.kind === "IndexAccess" && stripRefs(e.object.type).tag === "ptr") {
       const p = this.expr(e.object);
       const i = this.expr(e.index);
       if (p.ty !== PTR || i.ty !== "si64") throw new MlirUnsupported("pointer index of another type");
-      const ty = this.memType(e.type, "pointer element");
+      const ty = this.place$(e.type, "pointer element");
       return { ptr: this.def(`milo.ptr.elem ${p.ref}[${i.ref}] : ${ty}`, PTR).ref, ty };
     }
     if (e.kind !== "FieldAccess") return null;
@@ -2167,7 +2166,7 @@ class FnEmitter {
     if (obj.tag === "ptr") {
       st = obj.inner;
       const p = this.expr(e.object);
-      base = { ptr: p.ref, ty: this.memType(st, "pointee") };
+      base = { ptr: p.ref, ty: this.place$(st, "pointee") };
     } else {
       base = this.ptrPlace(e.object);
       st = obj;
@@ -2176,13 +2175,13 @@ class FnEmitter {
     if (st.tag !== "struct") throw new MlirUnsupported("field through a pointer to a non-struct");
     const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
     if (index < 0) throw new MlirUnsupported("unknown field");
-    const ty = this.memType(e.type, "field");
+    const ty = this.place$(e.type, "field");
     return { ptr: this.def(`milo.ptr.field ${base.ptr}[${index}] : ${base.ty}`, PTR).ref, ty };
   }
 
   /** A read of a place through a pointer: a bit copy that, for a string or a Vec, owns. */
   private ptrRead(p: { ptr: string; ty: string }): Val {
-    if (placeOnly.get(this.cx)?.has(p.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
+    if (!isSsa(this.cx, p.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
     const v: Val = { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: this.hasDrop(p.ty) ? "owned" : undefined };
     if (v.own) this.bitCopies.add(v.ref);
     return v;
@@ -2307,7 +2306,7 @@ class FnEmitter {
     const subjPlaceTy = placeType(this.cx, m.subject.type);
     // A 128+ byte enum is matched through its place: a switch on the tag read there
     // (milo.enum.tag_at), each binding the payload field's place (milo.enum.field_ref).
-    const bigEnum = subjPlaceTy !== null && isBig(this.cx, subjPlaceTy) && subjPlaceTy.startsWith("!milo.enum<");
+    const bigEnum = subjPlaceTy !== null && inSlot(this.cx, subjPlaceTy) && subjPlaceTy.startsWith("!milo.enum<");
     const owning = this.hasDrop(bigEnum ? subjPlaceTy! : this.value(m.subject.type, "match subject"));
     // By value, the owned slot the subject lives in: an arm that binds an owning payload
     // field moves the subject out of it (milo.move), so drop elaboration sees it empty on
@@ -2336,7 +2335,7 @@ class FnEmitter {
       subj = this.def(`milo.enum.tag_at ${place.ref} : !milo.ref<${place.ty}>`, "si32");
     } else if (m.subjectIsMut) {
       place = this.fieldPlace(m.subject);
-      if (place && isBig(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
+      if (place && inSlot(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
       if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
       subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: this.hasDrop(place.ty) ? "view" : undefined };
     } else if (owning && !m.subjectIsRef) {
@@ -2430,7 +2429,7 @@ class FnEmitter {
             const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
             // Through `&mut`, and for a payload with drop glue, the binding is the payload's
             // place (legacy binds a pointer); a Copy payload under `&` is a copy.
-            if (m.subjectIsMut || this.hasDrop(a.ty) || isBig(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
+            if (m.subjectIsMut || this.hasDrop(a.ty) || inSlot(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
             const slot = this.fresh();
             this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             const v = this.def(`milo.load ${r} : !milo.ref<${a.ty}>`, a.ty).ref;
@@ -3117,11 +3116,11 @@ class FnEmitter {
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
       const elem = byRef ? vecElem(this.cx, p.type) : null;
       const pt = placeType(this.cx, p.type);
-      const ty = elem ?? (byRef || (pt !== null && isBig(this.cx, pt)) ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
+      const ty = elem ?? (byRef || (pt !== null && inSlot(this.cx, pt)) ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
-    const ret = callee.retType.tag === "void" || sret ? null : abi ? this.abiValue(callee.retType, "call result") : this.value(callee.retType, "call result");
+    const ret = callee.retType.tag === "void" || sret ? null : abi ? this.place$(callee.retType, "call result") : this.value(callee.retType, "call result");
     if (sret) paramTys.unshift(`!milo.ref<${this.place$(callee.retType, "sret result")}>`);
     else if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
@@ -3140,7 +3139,7 @@ class FnEmitter {
         return ref.ref;
       }
       if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
-      const v = this.pend(isBig(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.fnAs(this.consume(this.expr(a.expr), "argument"), paramTys[i]));
+      const v = this.pend(inSlot(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.fnAs(this.consume(this.expr(a.expr), "argument"), paramTys[i]));
       if (v.ty !== paramTys[i]) throw new MlirUnsupported("call arg type");
       provenance.push(null);
       return v.ref;
