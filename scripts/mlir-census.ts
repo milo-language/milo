@@ -12,7 +12,7 @@
 //   --probe (MILO_MLIR_PROBE) skips each refused statement and keeps going, so the ranking
 //   counts every blocker of every function, not only its first: the burn-down list. Its
 //   total is the number of (function, reason) pairs left.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir, tmpdir, availableParallelism } from "node:os";
 
@@ -40,6 +40,9 @@ const files = [
 ];
 
 const tmp = mkdtempSync(join(tmpdir(), "mlir-census-"));
+// Log i is files[i]: kept so a reason can be traced to its file after the run.
+writeFileSync(join(tmp, "files.txt"), files.join("\n") + "\n");
+console.error(`mlir-census: logs in ${tmp}`);
 const MAIN = join(REPO, "src/main.ts");
 let ok = 0, all = 0, failed = 0, blockers = 0;
 const failures: string[] = [];

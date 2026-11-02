@@ -2580,7 +2580,11 @@ class FnEmitter {
       const b = this.lookup(c.name);
       let v: Val;
       if (b.kind === "ssa") v = this.consume(b.v, "capture");
-      else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported("capture binding");
+      // A plain fn capture of an owning fn local (`let work: (T) => T = f`, the alias the
+      // checker allows): the value read through a non-owning view, as legacy copies it.
+      else if (b.kind === "var" && b.ty === cty.replace(/^!milo\.fn</, "!milo.fn<owning ") && b.ty !== cty)
+        v = this.def(`milo.fn.cast ${this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty).ref} : ${b.ty} -> ${cty}`, cty);
+      else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported(`capture binding (${b.kind === "var" ? `${b.ty} for ${cty}` : b.kind} ${c.name})`);
       else if (!this.hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
       else if (c.share && cty === STR) {
         this.cx.mlirHelper("milo.share.string", () => ({
