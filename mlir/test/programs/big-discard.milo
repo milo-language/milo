@@ -1,0 +1,39 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a discarded 128+ byte
+// value built in place (`?`, `??`, `!`): it goes to a temporary dropped at the end of its
+// statement, which the user Drop's print order shows.
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Big { pad: [i64; 16], r: Res }
+
+fn mk(i: i64): Result<Big, string> {
+    if i < 0 { return Result.Err("neg" + "") }
+    return Result.Ok(Big { pad: [i; 16], r: Res { id: i } })
+}
+
+fn opt(i: i64): Option<Big> {
+    if i < 0 { return Option.None }
+    return Option.Some(Big { pad: [i; 16], r: Res { id: i } })
+}
+
+fn run(i: i64): Result<i64, string> {
+    mk(i)?
+    print("after ?")
+    mk(i + 1)?
+    return Result.Ok(i)
+}
+
+fn main() {
+    print(run(1) ?? -1)
+    print(run(-5) ?? -1)
+    opt(7) ?? Big { pad: [0; 16], r: Res { id: 70 } }
+    print("after ??")
+    opt(-1) ?? Big { pad: [0; 16], r: Res { id: 71 } }
+    print("after ?? default")
+    opt(8)!
+    print("after !")
+}

@@ -1520,8 +1520,10 @@ class FnEmitter {
         return true;
       }
       case "ExprStmt": {
-        // A discarded 128+ byte replace drops the old value at the statement's end, as legacy.
-        if (this.isSretCall(s.expr) || (s.expr.kind === "MemReplace" && inSlot(this.cx, this.place$(s.expr.type, "replaced value")))) { this.bigSlot("tmp", s.expr, true); return false; }
+        // A discarded 128+ byte value that is built in place (`into`: an sret call, replace,
+        // `?`, `??`, `!`) goes to a temporary dropped at the statement's end, as legacy's.
+        const built = s.expr.kind === "MemReplace" || s.expr.kind === "Propagate" || s.expr.kind === "DefaultValue" || s.expr.kind === "Unwrap";
+        if (this.isSretCall(s.expr) || (built && s.expr.type.tag !== "void" && inSlot(this.cx, this.place$(s.expr.type, "discarded value")))) { this.bigSlot("tmp", s.expr, true); return false; }
         // An if or a match whose value nobody takes (void, or never: every arm jumps) is the
         // statement, whose arms may end in a jump.
         const x = s.expr;
