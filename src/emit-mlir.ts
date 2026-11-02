@@ -585,7 +585,7 @@ class FnEmitter {
     // A sortByKey extractor may hand back a field of its borrowed element (checker [MILO-O-keyExtractor]
     // keyExtractorClosures): the sort only reads the key and forgets it, so the view's bits
     // are the result, as legacy returns them.
-    if (e.keyExtractor) this.retView = ret;
+    if (e.keyExtractor) { this.retView = ret; this.keyBody = true; }
     this.retPlaceOnly = ret !== null && !isSsa(this.cx, ret);
     const jumped = this.stmts(e.body);
     this.closeScope(0, jumped, null);
@@ -1114,6 +1114,9 @@ class FnEmitter {
   private isMain = false;
   private retTy: string | null = null;
   private retView: string | null = null;
+  // A sortByKey extractor's body: its key is a borrow of the element or, when it builds
+  // one, owned (the checker then sorts with sortByKeyOwned, which drops it).
+  private keyBody = false;
   private inClosureBody = false;
   private retPlaceOnly = false;
   // Set by into() for the call it is about to emit: its place-only result may be an SSA
@@ -1593,7 +1596,7 @@ class FnEmitter {
         // bytes so not sret): loaded whole from its place at the return, legacy's ABI.
         if (this.retView) {
           const v = this.expr(s.value);
-          if (v.ty !== this.retView || v.own === "owned") throw new MlirUnsupported("returned view that is an owned value or of another type");
+          if (v.ty !== this.retView || (v.own === "owned" && !this.keyBody)) throw new MlirUnsupported("returned view that is an owned value or of another type");
           this.ret(`milo.return ${v.ref} : ${v.ty}`);
           return true;
         }

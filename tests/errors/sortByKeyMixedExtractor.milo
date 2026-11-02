@@ -1,0 +1,15 @@
+// A sortByKey extractor that returns the element's own field on one path and a new string
+// on another gives the sort keys it must forget and keys it must drop, with no way to tell
+// them apart: rejected, with the clone that makes every key owned as the fix.
+// @error: returns the element's own field on one path and a new string on another
+struct P { name: string, n: i64 }
+
+fn main() {
+    var ps: Vec<P> = [P { name: "b" + "", n: 1 }]
+    ps.sortByKey((p: &P): string => {
+        if p.n > 0 {
+            return p.name
+        }
+        return p.name + "!"
+    })
+}

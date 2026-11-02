@@ -446,6 +446,32 @@ impl Vec<T> {
     // (_vecForget, which a user fn named forget cannot shadow), never dropped. @inline for
     // the same reason as sortBy.
     @inline
+    // sortByKey for an extractor that builds its key (`p.name + "!"`): each key is this
+    // sort's own and is dropped after its comparison. sortByKey forgets them instead,
+    // because there the key is the element's own field. The checker picks which.
+    fn sortByKeyOwned<K>(self: &mut Self, f: (&T) => K) {
+        unsafe {
+            let data = self.ptr()
+            let len = self.len()
+            var i = 1
+            while i < len {
+                let tmp = *data[i].addrOf()
+                let kt = f(tmp)
+                var j = i
+                while j > 0 {
+                    let kp = f(data[j.wrappingSub(1)])
+                    if !_natLess(kt, kp) {
+                        break
+                    }
+                    data[j] = *data[j.wrappingSub(1)].addrOf()
+                    j = j.wrappingSub(1)
+                }
+                data[j] = tmp
+                i = i.wrappingAdd(1)
+            }
+        }
+    }
+
     fn sortByKey<K>(self: &mut Self, f: (&T) => K) {
         unsafe {
             let data = self.ptr()

@@ -81,8 +81,8 @@ export const OWNERSHIP_RULES: OwnershipRule[] = [
   },
   {
     id: "MILO-O-keyExtractor",
-    rule: "A `sortByKey` extractor may return a field of the element it borrows; the sort reads the key and never stores or drops it.",
-    fixtures: ["sortByKeyString"],
+    rule: "A `sortByKey` extractor may return a field of the element it borrows; the sort reads that key and never stores or drops it. A string key the extractor builds is owned by the sort, which drops it after its comparison. An extractor that returns the field on one path and a built string on another is rejected.",
+    fixtures: ["sortByKeyString", "sortByKeyOwnedKey"],
   },
   {
     id: "MILO-O-globalClosureEnv",
