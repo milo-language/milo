@@ -827,6 +827,15 @@ class FnEmitter {
     return this.consume(this.expr(x), "field");
   }
 
+  /** An i8/i16/i32 bound as i64, sign or zero extended by its type (legacy genBoundI64). */
+  private widenBound(v: Val): Val {
+    const m = /^([su])i(8|16|32)$/.exec(v.ty);
+    if (!m) return v;
+    if (m[1] === "s") return this.def(`milo.cast ${v.ref} : ${v.ty} to si64`, "si64");
+    const u = this.def(`milo.cast ${v.ref} : ${v.ty} to ui64`, "ui64");
+    return this.def(`milo.cast ${u.ref} : ui64 to si64`, "si64");
+  }
+
   /** `[T; N]` where a `*T` is wanted (a cast, a pointer argument): the array's address, as legacy. */
   private decay(e: HIRExpr): Val {
     const p = this.fieldPlace(e);
@@ -2482,7 +2491,8 @@ class FnEmitter {
           const sl = this.bigSlot("slice.of", e.vec, true, true);
           v = this.lendAs(sl.ref, `!milo.ref<${sl.ty}>`, lent).ref;
         } else v = this.place(e.vec, lent, false).ref;
-        const a = this.expr(e.start), b = this.expr(e.end);
+        // A narrower bound widens to i64 by its own signedness, as legacy genBoundI64.
+        const a = this.widenBound(this.expr(e.start)), b = this.widenBound(this.expr(e.end));
         const elem = this.place$(e.elementType, "slice element");
         if (a.ty !== "si64" || b.ty !== "si64" || vecElem(this.cx, stripRefs(e.type)) !== elem) throw new MlirUnsupported("slice operand types");
         const r = this.intrinsic("vecslice", e, [{ name: "v", type: vt, mode: "ref", ref: v },

@@ -1,0 +1,20 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: slice bounds narrower
+// than i64 widen by their own signedness (legacy genBoundI64): i32 sign extends, u8/u32
+// zero extend. The last slice's u32 bound is above i32::MAX, so a sign extension would
+// make it negative and change the out-of-range panic's text.
+
+fn main() {
+    let s = "hello wide world" + ""
+    let v: Vec<i64> = [1, 2, 3, 4, 5, 6]
+    let a: i32 = 2
+    let b: i32 = 5
+    print(s[a..b], " ", v[a..b].len())
+    let c: u8 = 1
+    let d: u8 = 4
+    print(s[c..d], " ", v[c..d][2])
+    let e: u32 = 6
+    let f: u32 = 10
+    print(s[e..f])
+    let big: u32 = 3000000000
+    print(v[e..big].len())
+}
