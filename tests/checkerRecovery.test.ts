@@ -8,9 +8,13 @@ import { test, expect } from "bun:test";
 import { Lexer } from "../src/lexer";
 import { Parser } from "../src/parser";
 import { TypeChecker } from "../src/checker";
+import { resolveImports } from "../src/resolver";
+import { getHostTarget } from "../src/target";
 
+// Through the resolver, as the compiler does: Vec/HashMap/string methods live in the std
+// prelude now, so a bare parse would report `Vec has no method 'push'` as fallout.
 function errorsOf(src: string): string[] {
-  const prog = new Parser(new Lexer(src).tokenize(), src).parse();
+  const prog = resolveImports(new Parser(new Lexer(src).tokenize(), src).parse(), process.cwd(), getHostTarget(), null);
   return new TypeChecker()
     .check({ ...prog, entryFile: "test.milo" } as any)
     .diagnostics.filter(d => d.severity === "error")
