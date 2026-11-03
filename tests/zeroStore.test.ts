@@ -13,18 +13,40 @@ function emitIr(src: string): string {
   return execSync(`bun run ${COMPILER} emit-ir ${f}`, { encoding: "utf-8" });
 }
 
-// Large zero-inits must lower to llvm.memset, not a first-class aggregate
-// `store [N x i8] zeroinitializer` — the latter makes clang's InstCombine
-// superlinear (a lone 64KB buffer pushed an -O2 build past 100s).
+// Built with ASan and run: a double free of a moved buffer aborts with a report. These
+// were IR-text checks on the legacy codegen's zero-store; the MLIR backend tracks moves
+// with drop flags instead, so the property (the moved buffer is freed once) is checked
+// where it shows. LeakSanitizer is off: a leak is not what these tests are about.
+function runSanitized(src: string): { code: number; out: string } {
+  const dir = mkdtempSync(join(tmpdir(), "milo-zs-"));
+  const f = join(dir, "t.milo");
+  writeFileSync(f, src);
+  try {
+    const out = execSync(`bun run ${COMPILER} run --sanitize ${f}`, {
+      encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ASAN_OPTIONS: "detect_leaks=0" },
+    });
+    return { code: 0, out };
+  } catch (e: any) {
+    return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+}
+
+// Large zero-inits must not lower to a first-class aggregate
+// `store [N x i8] zeroinitializer`: that makes clang's InstCombine superlinear (a lone
+// 64KB buffer pushed an -O2 build past 100s). The legacy codegen emitted llvm.memset;
+// MLIR emits a fill loop (which -O2 turns into memset). Either is fine, an aggregate
+// store or one store per byte is not.
 describe("large zero-init uses memset", () => {
-  test("64KB array literal emits memset, not an aggregate zero-store", () => {
+  test("64KB array literal is not an aggregate zero-store", () => {
     const ir = emitIr(`fn main(): i32 {
     var buf: [u8 ; 65536] = [0 ; 65536]
     buf[0] = 1
     return buf[0] as i32
 }`);
-    expect(ir).toContain("@llvm.memset.p0.i64(ptr %buf.addr, i8 0, i64 65536");
     expect(ir).not.toContain("store [65536 x i8] zeroinitializer");
+    const main = ir.slice(ir.indexOf("define i32 @main("), ir.indexOf("\n}\n", ir.indexOf("define i32 @main(")));
+    expect(main).toContain("alloca [65536 x i8]");
+    expect((main.match(/store i8 0,/g) ?? []).length).toBeLessThan(16);
   });
 
   test("small zero-init still uses a plain store", () => {
@@ -37,30 +59,33 @@ describe("large zero-init uses memset", () => {
   });
 });
 
-// A local moved out by value must zero its slot, or a reassignment drops (frees) the
-// buffer the callee already owns. Globals cannot be moved at all (checker rule,
-// tests/errors/globalMoveArg.milo), so only the local path reaches codegen.
+// A local moved out by value must not be dropped again when reassigned, or the
+// reassignment frees the buffer the callee already owns. Globals cannot be moved at all
+// (checker rule, tests/errors/globalMoveArg.milo), so only the local path reaches codegen.
+// The string is heap-built: a literal has cap 0, so its drop is a no-op and hides this.
 describe("move-out zeros the source slot", () => {
-  test("local move-out zeros its slot before reassignment", () => {
-    const ir = emitIr(`fn takeStr(s: string) { print(s) }
+  test("a moved-out local is not freed again on reassignment", () => {
+    const r = runSanitized(`fn takeStr(s: string) { print(s) }
 fn main(): i32 {
-    var l: string = "hello"
+    let base = "hel"
+    var l: string = base + "lo"
     takeStr(l)
-    l = "world"
+    l = base + "p"
     print(l)
     return 0
 }`);
-    expect(ir).toContain("store %String zeroinitializer, ptr %l.addr");
+    expect(r.out).not.toContain("AddressSanitizer");
+    expect(r.out).toBe("hello\nhelp\n");
+    expect(r.code).toBe(0);
   });
 });
 
 // `x ?? default` moves the default into the result on the None/Err branch. That
-// branch must zero the default variable's slot, or its own scope-end drop frees
-// the buffer the result now owns — a double-free (ASAN-confirmed) that only bit
-// heap defaults (a string literal has cap 0, so its drop is a no-op and hid it).
+// branch must also retire the default variable, or its own scope-end drop frees
+// the buffer the result now owns: a double free that only bit heap defaults.
 describe("?? zeros the default's slot on the none branch", () => {
-  test("heap default emits a zero-store in the none branch", () => {
-    const ir = emitIr(`fn getStr(): Result<string> { return Result.Err("e") }
+  test("a heap default is freed once on the none branch", () => {
+    const r = runSanitized(`fn getStr(): Result<string> { return Result.Err("e") }
 fn main(): i32 {
     let base = "default"
     let d = base + " heap buffer"
@@ -68,10 +93,8 @@ fn main(): i32 {
     print(s)
     return 0
 }`);
-    // the some branch (operand move-out) and none branch (default move-out) each
-    // emit one zeroinitializer store into a %String slot.
-    const zeroStores = (ir.match(/store %String zeroinitializer, ptr %/g) ?? []).length;
-    expect(zeroStores).toBeGreaterThanOrEqual(1);
-    expect(ir).toContain("default.none");
+    expect(r.out).not.toContain("AddressSanitizer");
+    expect(r.out).toBe("default heap buffer\n");
+    expect(r.code).toBe(0);
   });
 });
