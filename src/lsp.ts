@@ -415,6 +415,12 @@ function handleHover(uri: string, line: number, character: number): object | nul
       return { contents: { kind: "markdown", value: hover } };
     }
 
+    // A method call on a Vec/array receiver gets the hover specialized to its element
+    // type. Checked before the impl-method scan: Vec's methods are std impls now, and
+    // that scan matches by name alone, so it showed the generic `fn Vec.push(x: T)`.
+    const collectionMethodHover = findBuiltinMethodHover(source, word, line, exprTypes, true);
+    if (collectionMethodHover) return { contents: { kind: "markdown", value: collectionMethodHover } };
+
     // Impl methods
     for (const impl of program.impls) {
       for (const method of impl.methods) {
@@ -798,6 +804,7 @@ const BUILTIN_METHOD_HOVERS: Record<string, (recv: string, elem: string) => stri
 function findBuiltinMethodHover(
   _source: string, word: string, line: number,
   exprTypes: Map<Expr, import("./types").TypeKind>,
+  onlyCollections = false,
 ): string | null {
   const make = BUILTIN_METHOD_HOVERS[word];
   if (!make) return null;
@@ -811,6 +818,7 @@ function findBuiltinMethodHover(
     }
   }
   if (!found) return null;
+  if (onlyCollections && !(recv && (recv.tag === "vec" || recv.tag === "array"))) return null;
   const elem = recv && (recv.tag === "vec" || recv.tag === "array") ? formatTypeName(recv.element) : "T";
   const recvName = recv ? formatTypeName(recv) : "Vec<T>";
   return make(recvName, elem);
