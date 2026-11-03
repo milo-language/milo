@@ -165,8 +165,6 @@ export interface Builder {
   switch(v: Val, dflt: Block, cases: [number | bigint, Block][], multiline?: boolean): void;
   /** `ret void` with no operand, else `ret T v`. */
   ret(v?: Val): void;
-  /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
-  raw(line: string): void;
 }
 
 // Terminators as they open a line, plus the `]` that closes a multi-line switch.
@@ -404,9 +402,6 @@ export class LlvmTextBuilder implements Builder {
     this.emit(`ret ${v.ty.ll} ${v.ref}`);
   }
 
-  raw(line: string): void {
-    this.lines.push(line);
-  }
 
   // The temp is drawn before the line is checked and pushed, matching the order the
   // string code used (`const t = nextTemp(); lines.push(...)`).
