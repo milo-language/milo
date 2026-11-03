@@ -274,6 +274,12 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
 // `diagnosticsOut`, when given, receives the checker's diagnostics; the safety command
 // reads its `unused-result` findings from there, since src/safety.ts has no types.
 function parseCheckProgram(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig, diagnosticsOut?: Diagnostic[]) {
+  return parseAndCheck(src, target, filePath, warningConfig, diagnosticsOut).program;
+}
+
+// The prover reads which method each call resolved to (verify.ts MethodBindings), so it
+// needs the check result as well as the program.
+function parseAndCheck(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig, diagnosticsOut?: Diagnostic[]) {
   const sourceDir = dirname(resolve(filePath));
   try {
     const tokens = new Lexer(src).tokenize();
@@ -281,7 +287,7 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
     program = resolveImports(program, sourceDir, target, filePath);
     const result = new TypeChecker(warningConfig).check(program);
     diagnosticsOut?.push(...result.diagnostics);
-    return program;
+    return { program, check: result };
   } catch (e: any) {
     if (e instanceof ParseError) {
       console.error(formatDiagnostic(e.diagnostic, e.source ?? src, e.filePath ?? filePath));
@@ -2115,8 +2121,8 @@ async function main() {
 
   if (cmd === "prove" && rest.includes("--emit-smt")) {
     const src = readFileSync(source!, "utf-8");
-    const program = parseCheckProgram(src, target, source!, warningConfig);
-    const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
+    const { program, check } = parseAndCheck(src, target, source!, warningConfig);
+    const result = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check });
     // Rendered text, not the program: an analysis report names functions and types for a
     // reader, so the per-module pass's symbols get swapped back out on the way to stdout.
     console.log(display(program.displayNames, formatVerifyReport(result)));
@@ -2164,8 +2170,8 @@ async function main() {
 
   if (cmd === "prove") {
     const src = readFileSync(source!, "utf-8");
-    const program = parseCheckProgram(src, target, source!, warningConfig);
-    const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
+    const { program, check } = parseAndCheck(src, target, source!, warningConfig);
+    const vcs = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.
     const useZ3 = rest.includes("--solver=z3");

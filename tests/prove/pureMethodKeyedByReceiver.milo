@@ -1,0 +1,50 @@
+// @proven: 1
+// @failed: 0
+// @unknown: 1
+// Purity is the resolved method's, not its name's. `Counter.get` is @pure, so
+// `c.get()` keeps every fact about `c` and `counted` is proven. `Bag.get` shares the
+// name but takes `&mut self` and bumps `n`, so `b.get()` must still havoc `b`:
+// `bagged`'s claim is false at runtime (it returns 6) and may never be proven.
+// Keyed by bare name, the impure `Bag.get` made `c.get()` havoc too (counted unknown);
+// keyed by "some `get` is pure", `bagged` would be a false proof.
+struct Counter {
+    n: i64
+}
+
+impl Counter {
+    @pure
+    fn get(self: &Counter): i64 {
+        return self.n
+    }
+}
+
+struct Bag {
+    n: i64
+}
+
+impl Bag {
+    fn get(self: &mut Bag): i64 {
+        self.n = self.n + 1
+        return self.n
+    }
+}
+
+pub fn counted(): i64
+ensures result == 5
+{
+    var c = Counter {
+        n: 5
+    }
+    let a = c.get()
+    return c.n
+}
+
+pub fn bagged(): i64
+ensures result == 5
+{
+    var b = Bag {
+        n: 5
+    }
+    let a = b.get()
+    return b.n
+}

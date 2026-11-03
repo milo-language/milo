@@ -4,8 +4,6 @@ import type { Program, Function, Contract, Expr, Stmt, MiloType } from "./ast";
 import { must } from "./must";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
-import { resolve, sep } from "path";
-import { STDLIB_DIR } from "./stdlibBundle";
 
 interface VerificationCondition {
   fn: string;
@@ -746,15 +744,26 @@ let FN_TABLE = new Map<string, Function>();
 // Functions that provably mutate nothing: `@pure` (checker-enforced — no globals, no
 // unsafe, no I/O, no impure callee) AND no `&mut`/pointer parameter to write through.
 // A call to one cannot invalidate anything the walker knows, so it needs no havoc.
-// `PURE_METHOD_NAMES` is keyed by the bare method name because a `MethodCall` node
-// carries no receiver type here; a name is admitted only when EVERY impl method with
-// that name qualifies, so an impure `Foo.reset` keeps `bar.reset()` conservative.
 let PURE_FN_NAMES = new Set<string>();
-let PURE_METHOD_NAMES = new Set<string>();
 
-const STD_CONTAINERS = new Set(["Vec", "string", "HashMap"]);
-const STD_SOURCE_DIR = resolve(STDLIB_DIR, "std") + sep;
-const isStdSource = (file: string | undefined) => !!file?.startsWith(STD_SOURCE_DIR);
+// The method each `MethodCall` node resolved to, as the checker bound it: the node to its
+// mangled symbol (`Counter$get`, `Vec_i64$get`), and the symbol to its concrete decl.
+// Purity is read off THAT method, never off its bare name: keyed by name, a user's
+// `@pure fn get` was impure because std's `HashMap.get` is not @pure. A call the checker
+// did not bind (no check result, a closure field, a generic body it only checked as
+// clones) is not pure here and keeps its havoc.
+export interface MethodBindings {
+  resolvedMethods: ReadonlyMap<Expr, string>;
+  monomorphizedFns: readonly Function[];
+}
+let METHOD_TARGETS: ReadonlyMap<Expr, string> = new Map();
+let METHOD_DECLS = new Map<string, Function>();
+
+function isPureMethodCall(call: Expr): boolean {
+  const mangled = METHOD_TARGETS.get(call);
+  const decl = mangled === undefined ? undefined : METHOD_DECLS.get(mangled);
+  return !!decl && mutatesNothing(decl);
+}
 
 function mutatesNothing(f: Function): boolean {
   return !!f.attributes?.some(a => a.name === "pure")
@@ -1259,7 +1268,7 @@ function collectMutations(node: any, out: Map<string, string>): void {
         for (const a of n.args) { const name = target(a); if (name) out.set(name, exprSource(n)); }
       }
     }
-    if (n.kind === "MethodCall" && !PURE_METHOD_NAMES.has(n.method) && !builtinContractFor(n.method, n.object)?.attributes?.some(a => a.name === "pure")) {
+    if (n.kind === "MethodCall" && !isPureMethodCall(n) && !builtinContractFor(n.method, n.object)?.attributes?.some(a => a.name === "pure")) {
       // Havoc the FIELD PATH the method was called on, not the whole receiver: `a.data.push(v)`
       // cannot touch `a.live`, and wiping every field of `a` made a type invariant about a
       // sibling field unprovable for every function that pushes to a vec — which is most of
@@ -1438,7 +1447,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         } else breakArg(n.target);
       }
       if (n.kind === "MethodCall") {
-        if (PURE_METHOD_NAMES.has(n.method)) return;
+        if (isPureMethodCall(n)) return;
         const callee = builtinContractFor(n.method, n.object);
         if (callee?.attributes?.some((a: any) => a.name === "pure")) return;
         const place = placeOf(n.object);
@@ -2092,7 +2101,9 @@ function constructsInvariantStruct(stmts: Stmt[]): boolean {
   return found;
 }
 
-export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string }): VerifyResult {
+// methods: the checker's bindings for method calls (see MethodBindings); without them
+// every method call havocs its receiver.
+export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string; methods?: MethodBindings }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
@@ -2137,21 +2148,8 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
 
   FN_TABLE = new Map(allFns.map(f => [f.name, f]));
   PURE_FN_NAMES = new Set(allFns.filter(mutatesNothing).map(f => f.name));
-  PURE_METHOD_NAMES = new Set<string>();
-  {
-    const byBareName = new Map<string, Function[]>();
-    for (const m of implMethods) {
-      const bare = m.name.slice(m.name.indexOf(".") + 1);
-      // std's Vec/string/HashMap methods were compiler builtins until they moved into std
-      // (2026-11): a read-only one (no `&mut`/pointer param) cannot be @pure only because
-      // its body uses unsafe, and counting it would make every user `get`/`len` impure by
-      // name. One that takes `&mut` still counts, so `m.insert(..)` keeps its havoc.
-      if (STD_CONTAINERS.has(m.name.slice(0, m.name.indexOf("."))) && isStdSource(m.sourceFile)
-        && !m.params.some(p => (p.type as any)?.isRefMut || (p.type as any)?.isPtr)) continue;
-      (byBareName.get(bare) ?? byBareName.set(bare, []).get(bare)!).push(m);
-    }
-    for (const [bare, ms] of byBareName) if (ms.every(mutatesNothing)) PURE_METHOD_NAMES.add(bare);
-  }
+  METHOD_TARGETS = opts?.methods?.resolvedMethods ?? new Map();
+  METHOD_DECLS = new Map((opts?.methods?.monomorphizedFns ?? []).map(f => [f.name, f]));
   BOOL_FIELDS = collectBoolFields(program);
   FLOAT_FIELDS = collectFloatFields(program);
   STRUCT_INVARIANTS = new Map();
