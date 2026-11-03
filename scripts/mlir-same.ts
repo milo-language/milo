@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// Conformance gate for the MLIR backend (docs/mlir-backend.md): every fixture is built through
-// MLIR, the binary runs, and stdout, stderr and the exit status must equal the recorded golden in
-// tests/golden. The goldens are the frozen oracle (recorded from the legacy backend before it was
+// Conformance gate for the MLIR backend: every fixture's stdout, stderr and exit must equal its
+// golden. Each fixture is built through MLIR (docs/mlir-backend.md), the binary runs, and the
+// result is compared with the recorded golden in tests/golden. The goldens are the frozen oracle (recorded from the legacy backend before it was
 // deleted); a mismatch is a regression in the MLIR backend, not a stale file. It prints the
 // coverage number (function instances compiled through MLIR / all non-extern function
 // instances, from MILO_MLIR_LOG), the most common reasons the rest were not lowered, and the

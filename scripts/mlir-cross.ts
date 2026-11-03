@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// Cross-target gate for the MLIR backend (docs/mlir-backend.md): programs are emitted as
-// LLVM IR for each non-host target, and the module must be for the TARGET:
+// Cross-target gate for the MLIR backend: each program's LLVM IR for a non-host target must
+// be for that target. Details (docs/mlir-backend.md); the module must be for the TARGET:
 //   - its `target triple` is the target's, and its `target datalayout` is the literal
 //     layout in EXPECT below (not asked of clang, so a host layout leaking into a cross
 //     build cannot agree with itself);
