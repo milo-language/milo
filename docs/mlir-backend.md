@@ -74,8 +74,9 @@ MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it s
 
 ## Coexistence: one function at a time
 
-Every function compiles through the MLIR path (`mlirSupports(fn)` in `src/emit-mlir.ts` is the
-coverage predicate; a function it rejects is a build error naming the reason). The MLIR function's LLVM body replaces the stub `src/codegen.ts` emits, textually inside the one
+Every function compiles through the MLIR path: `emitMlirFunction` in `src/emit-mlir.ts`
+throws `MlirUnsupported` for a construct the dialect does not cover, and the build fails
+naming the reason. The MLIR function's LLVM body replaces the stub `src/codegen.ts` emits, textually inside the one
 module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
 the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
 `internal`, and internal symbols do not resolve across modules. Legacy codegen still

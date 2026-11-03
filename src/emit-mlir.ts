@@ -4,7 +4,7 @@
 // stays one op carrying its trap; every rewrite after this is a milo-opt pass.
 //
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
-// covers, so the build fails with the reason; `mlirSupports` is that test alone.
+// covers, so the build fails with the reason.
 
 import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
 type HIRStmt = HIRStmtBase | HIRContractCheck;
