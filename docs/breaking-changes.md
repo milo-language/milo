@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/https.milo, std/net.milo, std/tls.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo, std/png.milo, std/image.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-21
+last-verified: 2026-11-02
 -->
 
 # Breaking changes
@@ -20,11 +20,9 @@ added here each time a version is cut.
 
 `milo build` and `milo run` now compile the functions the MLIR backend supports through
 `milo-opt` (docs/mlir-backend.md) and need LLVM 23 plus a built `milo-opt` (`sh mlir/build.sh`,
-or the one shipped beside the `milo` binary). Set `MILO_LEGACY=1` for the old all-legacy
-codegen; that switch is temporary. `MILO_MLIR=1` is now a no-op, and `MILO_MLIR=0` is read
-as `MILO_LEGACY=1` for this one release, then ignored. Cross builds, Windows and wasm64 go
+or the one shipped beside the `milo` binary). The legacy codegen and its env switch are gone: MLIR is the only backend. Cross builds, Windows, wasm64 and Cortex-M go
 through MLIR too, with the same clang requirement (a `MILO_CC` must be of milo-opt's LLVM
-version); only Cortex-M still uses the legacy codegen. No source change is needed.
+version). No source change is needed.
 
 ## `sWaitHead` is gone from std/runtime (2026-10-21)
 

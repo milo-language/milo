@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: mlir-backend-plan
-purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
+purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the only backend (the legacy LLVM-text codegen is deleted)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (dialect hygiene: docs, region and call interfaces, verifier cases, folders, round-trip; ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
+last-verified: 2026-11-02 (legacy backend deleted, its env switch gone, mlir-same compares tests/golden; dialect hygiene: docs, region and call interfaces, verifier cases, folders, round-trip; ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
 -->
 
 # MLIR backend
@@ -80,7 +80,7 @@ codegen. The MLIR function's LLVM body replaces the legacy body textually inside
 module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
 the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
 `internal`, and internal symbols do not resolve across modules. Legacy codegen still
-generates the replaced body, because its module-wide noalias dataflow reads every body. The path is the DEFAULT build; `MILO_LEGACY=1` is a temporary escape hatch (critical deploys only, see "Deploying apps built with MLIR"). `MILO_MLIR=1` is a no-op and `MILO_MLIR=0` means `MILO_LEGACY=1`, both for one release only. MLIR is on for every hosted target (cross builds and Windows included) and wasm64; legacy codegen is only the internal per-function fallback until coverage is 100%, then it is deleted. milo-opt emits for the TARGET: the module carries `llvm.target_triple` and `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang once per build), and the splice refuses a triple or layout the two halves disagree on. The one exception is the 32-bit Cortex-M family (`arch === "arm"`, `mlirTargetOk`): legacy `typeSize` and enum layouts hardcode an 8-byte pointer, while milo-opt sizes structs with the target layout (4-byte pointers), so the halves of one module would disagree on every struct holding a pointer; it moves when legacy sizes come from the target layout. `bun scripts/mlir-cross.ts` is the gate for non-host targets. The coverage number (MLIR functions / all
+generates the replaced body, because its module-wide noalias dataflow reads every body. MLIR is the ONLY backend: there is no legacy escape hatch and no per-function fallback (src/codegen.ts now only produces the module skeleton and the `define` lines the MLIR bodies replace). It is on for every target, cross builds, Windows, wasm64 and Cortex-M included. milo-opt emits for the TARGET: the module carries `llvm.target_triple` and `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang once per build), and the splice refuses a triple or layout the two halves disagree on. Sizes come from the target layout, so 32-bit Cortex-M has 4-byte pointers. `bun scripts/mlir-cross.ts` is the gate for non-host targets. The coverage number (MLIR functions / all
 function instances over the corpus) is printed by the gate and must only go up. When it
 reaches 100% the legacy codegen is deleted and the escape hatch goes with it.
 
@@ -254,7 +254,6 @@ structs, enums.
   heap-use-after-free); field_ref index swapped on big structs (`bigstruct` stdout); the
   tag read 8 bytes in (`bigstruct` exit status); no `milo.filled` (`sret`, 14 more live
   blocks); a big by-value argument loaded instead of moved (`sret` double free).
-  `MILO_MLIR_ONLY=<regex>` limits MLIR to matching function names, for bisecting.
 
 **Fifth batch (2026-11-01): gate audit and std fixes.**
 
@@ -598,7 +597,7 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   block. Found by `httpRequestFraming` going red under `--owned` (legacy 40 live blocks
   at exit, MLIR 43): `clients()` builds a string with `a + b + c` in a `let` and ends in
   `exit(0)`, so the block end that would have dropped the concat intermediates never
-  came. A bisect with `MILO_MLIR_ONLY` named the function. Program `statement-temps`.
+  came. A bisect by function name found it. Program `statement-temps`.
   Planted bug: the statement scopes off (`statement-temps` `--owned` red: legacy 2, MLIR
   5).
 - *128+ byte owning fields built in place* (`Ctx { req: Req { ... } }`, a moved local, an
@@ -1022,9 +1021,8 @@ corpus and the milojs apps; a per-app record/replay differential (record real tr
 with the legacy build, replay it against the MLIR build, byte-diff the responses, repeat
 under ASan); a shadow run, then a canary through the existing socket-activated restart
 (`ops/restart-gate.sh`) with the legacy binary kept for rollback. Server hot paths need M6
-(tasks) before a canary is meaningful. The default is already on, so until an app's differential passes its deploy script keeps
-`MILO_LEGACY=1` (the build is the legacy codegen byte for byte); drop it per app after the
-canary.
+(tasks) before a canary is meaningful. The legacy backend is deleted, so there is no legacy build to keep for rollback: a canary
+rolls back to the previous binary.
 
 ### Batch 10: one place/operand model (done: see the tenth batch above)
 
@@ -1040,7 +1038,7 @@ Gates: `--owned` same, coverage never drops, and the `MlirUnsupported` count onl
 The self-hosted frontend later prints through the same structure. Open question it answers:
 whether the 128-byte place-only rule or the owning/plain fn split should change in the language.
 
-### Before deleting legacy: harvest the differential
+### Before deleting legacy: harvest the differential (legacy is now deleted; tests/golden holds the recorded oracle)
 
 The legacy/MLIR differential is the best correctness oracle we have, and it disappears with
 legacy. Before the deletion: a random-program fuzzer (Csmith style) generates well-typed Milo
@@ -1124,9 +1122,9 @@ raw pointer); an empty `match e {}` printed an unbalanced region.
 
 ## Gates (every milestone, every commit)
 
-- **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
-  `MILO_LEGACY=1`. `bun scripts/mlir-same.ts` builds every fixture both ways and diffs stdout, stderr
-  and exit status, and prints coverage and build time; it fails when nothing went through
+- **Corpus diff**: `bun test tests/run.test.ts` passes. `bun scripts/mlir-same.ts` builds every fixture through MLIR and compares stdout, stderr
+  and exit status with the recorded goldens in `tests/golden` (the frozen oracle; never
+  re-record from MLIR output except deliberately, with a note in the commit), and prints coverage and build time; it fails when nothing went through
   MLIR. `--programs` runs only `mlir/test/programs/` (scalar programs and one per trap,
   seconds), which `mlir/run.sh` runs too. A planted bug in an MLIR lowering must turn
   fixtures red: on M1, `slt` -> `sle` turned base32Totp and binaryVarint red (and the
@@ -1140,15 +1138,15 @@ raw pointer); an empty `match e {}` printed an unbalanced region.
 - **Ownership** from M4 on, required for any commit touching ownership lowering (owned
   slots, scopes, moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs
   --owned` before committing, the full corpus with `--owned` in the background. For every
-  program MLIR took part of, live heap blocks at exit must equal legacy's
+  program MLIR took part of, live heap blocks at exit must equal the golden's
   (`scripts/livecount.c`, a malloc/free counter injected with DYLD_INSERT_LIBRARIES; on
   Linux LeakSanitizer covers it), counted at -O2 and again on `--fast` (-O0) builds, and
   only for calls made from the executable's own code and the MLIR binary must run clean under ASan
   (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs here). The
   output diff cannot gate this: making maybe-init drops unconditional left it green
   while ASan reported a heap-use-after-free (`--owned` red), and erasing every drop
-  left 202 live blocks against legacy's 179 (`--owned` red).
-- **Compile time** of the corpus, legacy vs MLIR path, recorded from M1. A regression is a
+  left 202 live blocks against the golden's 179 (`--owned` red).
+- **Compile time** of the corpus, recorded from M1. A regression is a
   problem to fix (in-process C API, caching, parallel CGUs), not a reason to stop.
 - **Coverage** only goes up.
 
@@ -1165,7 +1163,7 @@ silent fallback. `milo-opt` is found at `mlir/build/milo-opt` in a checkout, els
 `milo` binary (what install.sh, the Homebrew formula and the deb/rpm ship; `MILO_OPT`
 overrides). Release archives carry a statically linked milo-opt (`MILO_OPT_STATIC=1 sh
 mlir/build.sh`; about 235 MB stripped, trimming the linked MLIR set is open work); the
-darwin-x64 archive has none (no x86 MLIR on the arm64 runner), so Intel macs use
-`MILO_LEGACY=1` or build it. CI builds it through `.github/actions/milo-opt` (Homebrew on
+darwin-x64 archive has none (no x86 MLIR on the arm64 runner), so Intel macs build it
+(`sh mlir/build.sh`). CI builds it through `.github/actions/milo-opt` (Homebrew on
 macOS, apt.llvm.org LLVM 23 on Linux), cached on the hash of `mlir/` sources and the LLVM
 version.
