@@ -3176,7 +3176,7 @@ export class TypeChecker {
       JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
       (_key, value) => {
       if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
-      if (value && typeof value === "object" && (value.kind === "CastExpr" || value.kind === "MethodCall" || (value.kind === "Call" && value.func === "forget"))) this.instanceNodes.add(value);
+      if (value && typeof value === "object" && (value.kind === "CastExpr" || value.kind === "MethodCall" || (value.kind === "Call" && (value.func === "forget" || value.func === "_vecForget")))) this.instanceNodes.add(value);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
@@ -12794,7 +12794,8 @@ export class TypeChecker {
   // inference types the arguments bare, then again against the signature it inferred
   // FROM them), and a cast in a generic instance's body (the target may have been `T`).
   private castsCheckedBare = new WeakSet<Expr>();
-  // Casts and `forget` calls cloned into a generic instance's body. Copy-ness and the
+  // Casts and `forget` calls (and std/vec's `_vecForget` alias, which the forget check
+  // also handles) cloned into a generic instance's body. Copy-ness and the
   // cast target are facts about the instance, not the generic source: `forget(v)` on a
   // `T` is required in the source even when one instantiation makes T an i64.
   private instanceNodes = new WeakSet<object>();
