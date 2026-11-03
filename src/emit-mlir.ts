@@ -782,9 +782,10 @@ class FnEmitter {
     for (const f of e.fields) {
       const i = layout.fields.findIndex(lf => lf.name === f.name);
       const lt = layout.fields[i]?.typeKind;
-      const pty = lt && valueType(this.cx, lt) === null ? placeType(this.cx, lt) : null;
+      // A field that is a place only (an array), or one an sret call returns (a 128+ byte
+      // enum the callee writes to memory), is built in its own place, in source order.
+      const pty = lt && (valueType(this.cx, lt) === null || this.isSretCall(f.value)) ? placeType(this.cx, lt) : null;
       if (pty === null) { given.set(f.name, this.pend(this.fieldValue(f.value, lt), f.value.type)); continue; }
-      // A field that is a place only (an array) is built in its own place, in source order.
       const fr = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref;
       this.into(f.value, fr, pty);
       // An owning one built in place is owned by nothing until the whole struct is: a

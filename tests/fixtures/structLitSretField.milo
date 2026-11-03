@@ -1,0 +1,22 @@
+// @expect: 7 q
+// @expect: 3
+// A 128+ byte struct literal whose field comes from an sret call (a derived clone of a
+// big Option field): the call writes straight into the field's place.
+struct Big { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: string }
+
+struct Holder { name: Option<string>, big: Option<Big>, n: i64 }
+
+fn mk(n: i64): Option<Big> {
+    return Some(Big { a: n, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: "q".clone() })
+}
+
+pub fn main(): i32 {
+    let h = Holder { name: Some("x".clone()), big: mk(7), n: 3 }
+    let h2 = h.clone()
+    match h2.big {
+        Some(b) => print(b.a, " ", b.q),
+        None => print("none"),
+    }
+    print(h.n)
+    return 0
+}
