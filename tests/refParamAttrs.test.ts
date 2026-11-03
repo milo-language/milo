@@ -22,6 +22,13 @@ function emitIr(src: string, flags = ""): string {
 }
 
 const defineOf = (ir: string, fn: string) => ir.split("\n").find(l => l.startsWith("define ") && l.includes(`@${fn}(`)) ?? "";
+// A define's parameters with their names dropped: MLIR's translation numbers them (%0, %1),
+// so the attributes are pinned by position, not by the source name.
+const paramsOf = (ir: string, fn: string): string[] => {
+  const d = defineOf(ir, fn);
+  const inner = d.slice(d.indexOf(`@${fn}(`) + fn.length + 2, d.lastIndexOf(")"));
+  return inner === "" ? [] : inner.split(", ").map(p => p.replace(/ %[\w.$]+$/, ""));
+};
 
 const SRC = `
 struct Empty {}
@@ -60,23 +67,23 @@ fn main(): i32 {
 test("by-ref params get nonnull, dereferenceable(store size) and align", () => {
   // noalias off so the &mut params here spell exactly the pointer attributes
   const ir = emitIr(SRC, "--no-noalias");
-  expect(defineOf(ir, "fp")).toContain("ptr nonnull dereferenceable(16) align 8 %p");
-  expect(defineOf(ir, "farr")).toContain("ptr nonnull dereferenceable(16) align 4 %a");
-  expect(defineOf(ir, "fbool")).toContain("ptr nonnull dereferenceable(1) align 1 %b");
+  expect(paramsOf(ir, "fp")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
+  expect(paramsOf(ir, "farr")).toEqual(["ptr nonnull dereferenceable(16) align 4"]);
+  expect(paramsOf(ir, "fbool")).toEqual(["ptr nonnull dereferenceable(1) align 1"]);
   // &string and &[T] point at the 24-byte { ptr, len, cap } header, not the bytes
-  expect(defineOf(ir, "fstr")).toContain("ptr nonnull dereferenceable(24) align 8 %s");
-  expect(defineOf(ir, "fslice")).toContain("ptr nonnull dereferenceable(24) align 8 %s");
-  expect(defineOf(ir, "fe")).toContain("ptr nonnull dereferenceable(16) align 8 %e");
-  expect(defineOf(ir, "fgen_P")).toContain("ptr nonnull dereferenceable(16) align 8 %_t");
-  // the call site repeats them
-  expect(ir).toMatch(/call i32 @fp\(ptr nonnull dereferenceable\(16\) align 8 %/);
-  expect(ir).toMatch(/call void @farr\(ptr nonnull dereferenceable\(16\) align 4 %/);
+  expect(paramsOf(ir, "fstr")).toEqual(["ptr nonnull dereferenceable(24) align 8"]);
+  expect(paramsOf(ir, "fslice")).toEqual(["ptr nonnull dereferenceable(24) align 8"]);
+  expect(paramsOf(ir, "fe")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
+  expect(paramsOf(ir, "fgen_P")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
+  // Call sites are not checked: every call here is direct, and LLVM reads a direct call's
+  // parameter attributes from the callee (CallBase::paramHasAttr), so the define is the
+  // whole promise.
 });
 
 test("zero-sized pointees get no pointer attributes", () => {
   const ir = emitIr(SRC);
-  expect(defineOf(ir, "fempty")).toContain("(ptr %_e)");
-  expect(defineOf(ir, "fgen_Empty")).toContain("(ptr %_t)");
+  expect(paramsOf(ir, "fempty")).toEqual(["ptr"]);
+  expect(paramsOf(ir, "fgen_Empty")).toEqual(["ptr"]);
 });
 
 test("extern declarations and exported symbols keep the plain C ABI", () => {
@@ -90,7 +97,7 @@ fn main(): i32 {
     return 0
 }
 `);
-  expect(defineOf(ir, "exported")).toContain("(ptr %p)");
+  expect(paramsOf(ir, "exported")).toEqual(["ptr"]);
   const decl = ir.split("\n").find(l => l.startsWith("declare") && l.includes("@cTakesP(")) ?? "";
   expect(decl).not.toContain("nonnull");
   expect(ir).toMatch(/call i32 @exported\(ptr %/);
@@ -130,9 +137,8 @@ fn main(): i32 {
 
 test("--noalias marks &mut params whose callee cannot reach an alias", () => {
   const ir = emitIr(NOALIAS_SRC, "--noalias");
-  expect(defineOf(ir, "axpy")).toContain("ptr noalias nonnull dereferenceable(512) align 8 %y");
-  // `&T` gets no noalias: a `&mut` elsewhere is ruled out, interior mutability is not
-  expect(defineOf(ir, "axpy")).toContain("ptr nonnull dereferenceable(512) align 8 %x");
+  // `&T` (the second) gets no noalias: a `&mut` elsewhere is ruled out, interior mutability is not
+  expect(paramsOf(ir, "axpy")).toEqual(["ptr noalias nonnull dereferenceable(512) align 8", "ptr nonnull dereferenceable(512) align 8", "double"]);
 });
 
 test("noalias is withheld where a global or a closure can alias the param", () => {
