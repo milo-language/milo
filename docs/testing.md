@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
-key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts, scripts/fuzz-drops.ts
+key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, scripts/fuzz-drops.ts
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
 last-verified: 2026-11-02 (ledger parts: part-double-drop for a field moved out of a local; fuzz:drops runs the ledger on generated programs; ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
 -->
@@ -217,96 +217,6 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `browser.test.ts` | std/browser against a real headless Chrome (viewport, color scheme, evaluate, PNG size); skipped, with the reason printed, when no Chrome is installed |
 
 Keep this table current — it's the map reviewers and the sweep skill use to reason about coverage.
-
-## Ownership ledger: codegen's drop bookkeeping, checked at compile time
-
-A leaked owned value prints the right bytes, so no fixture expectation sees it, and the
-leak ratchet only sees what `leaks` reports at -O2, where LLVM deletes small allocations
-nothing observes. The ownership ledger asks the question at compile time instead: is every
-owned value codegen creates ended exactly once on every path?
-
-```bash
-bun scripts/own-ledger.ts                     # every fixture: findings + totals
-bun scripts/own-ledger.ts --filter arrayRepeat --sites
-bun scripts/own-ledger.ts --check             # the CI gate: exit 1 on a finding not in the baseline
-MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 bun run src/main.ts emit-ir foo.milo -o foo.ll
-```
-
-The last line keeps the markers in the IR so the line numbers in a finding point at them.
-The sweep is `emit-ir` only (no clang, no run), about 75s over all fixtures (about 8% over
-the same sweep with the ledger off). CI runs `--check` next to the ASan sweep. Every
-finding is red unless `tests/own-ledger-baseline.txt` lists it: that file holds confirmed
-real bugs not fixed yet, each with its repro, and only shrinks (an entry that no longer
-reproduces is red too). `tests/ownLedger.test.ts` pins each finding kind on hand-written IR.
-
-**How it works.** With `MILO_OWN_LEDGER=1`, codegen brackets each owned value's life with
-`@__milo_own_make(ID)` and `@__milo_own_end(ID, KIND)` calls (KIND is DROP, MOVE, RETURN,
-ARG, STORE, CAPTURE, DROPZ, or DROPF/DROPZF for a local dropped field by field). A field
-whose drop runs a user Drop, moved out of a local (`take(e.value)`, `let { a, b } = s`),
-is a part of the local's ID: `@__milo_own_part(PID, FID)` marks the move, and the local's
-whole-value drop ends every part with it. `src/own-ledger.ts` runs a dataflow over each function's CFG
-and strips the markers before clang sees them, so a ledger build behaves like a normal one.
-
-**What a finding means.** It reads `fn: ID kind (made at IR line N by ORIGIN, milo line M)`:
-
-| Kind | Meaning |
-|---|---|
-| `leak-ret` | the value may still be live at a `ret`: some path never drops, moves or returns it |
-| `leak-iter` | made inside a loop and may still be live on the back-edge: one leak per iteration |
-| `double-end` | ended on a path where it may already be ended: a double drop, or a drop after a move |
-| `end-unmade` | ended on a path where it was never made |
-| `remake-live` | made again while the previous value with that ID may still be live |
-| `drop-of-view` | a view (bytes copied out of a place without a move) is dropped: a double free |
-| `own-of-view` | a view is handed to an owner (armed in a droppable slot, stored, returned, passed by value): the new owner frees bytes the source still owns |
-| `end-after-move` | ended after it was already transferred away (MOVE, STORE, RETURN, ARG, CAPTURE) |
-| `use-after-move` | a view is taken of a source that may already have been transferred away |
-| `use-after-drop` | a view is taken of a source that may already have been dropped |
-| `part-double-drop` | a local is dropped whole after a field may have been moved out of it: its drop glue visits the zeroed leftover, and a user Drop runs on it (codegen drops such a local field by field, each moved field behind its own flag) |
-
-ORIGIN names the codegen site (`Call`, `IndexAccess`, `match-subject`, ...). Write a repro,
-build it with `--debug` (at -O2 LLVM deletes the toy allocations) and confirm the leak under
-`leaks -atExit -- ./bin` before and after the fix; the fixture you add should make the drop
-observable where it can (a type with a printing `Drop`).
-
-**The rule for new codegen.** Any new codegen path that creates or consumes an owned value
-must call `ownMake`/`ownEnd` (or the helpers built on them: `ownMakeVal`, `ownEndVal`,
-`ownValToSlot`, `ownSetAlive`), or the ledger reports it. A value that becomes a frame
-slot's responsibility is moved onto the slot's ID (`ownValToSlot`) and is then ended by
-`emitDropValue` for that slot. A consumed value ends with the KIND that says where it went:
-MOVE into another owner, ARG to a by-value callee, STORE into a container or field, RETURN
-to the caller, DROP when this frame frees it.
-
-**Pending temporaries.** An owned value evaluated as an operand is pending until its
-consumer runs (`pend` in `src/codegen.ts`): `wrap(q)` in `$"{wrap(q)} {part(n)?}"`, `a()`
-in `f(a(), b()?)` or `a() + b()?`, the stored fields of a half-built literal. An early exit
-from the middle of an expression (`?`, or `return`/`break`/`continue` in an if/match arm
-used as a value) drops what is pending, then the locals. A new construct that evaluates
-several operands before consuming any joins `PENDING_PARENTS`; one that stores operands
-into storage under construction registers them with `pendStored`/`endStored`. The ledger
-ends a by-value argument (ARG) at the call and a literal's element (STORE) when the literal
-is complete, not where each was evaluated, so a missed pending drop is a `leak-ret`.
-
-**Copy intent.** Every copy of an owned type's bytes declares what it does to ownership:
-`move` (the source gives the bytes up and the destination is made), `view` (the
-destination borrows, gets an `@__milo_own_view(VID, SRC)` marker and must never be ended)
-or `clone` (a fresh value). `emitMemcpy` and `valStore` take the intent as an argument; an
-SSA value gets its intent where `genExpr` produces it (`ownDeclareRead`: a moving place
-read is a make, any other place read a view, `OWN_FRESH_KINDS` a make, `OWN_STATIC_KINDS`
-a value with nothing to free). Storing an owned value whose producer declared none, or a
-byte copy of an owned type declared `plain`, throws in ledger mode and names the codegen
-call site, so a new path that copies owned bytes has to choose before the sweep compiles.
-
-**The ledger on generated programs.** The fixture sweep only sees shapes someone wrote.
-`bun run fuzz:drops` (`scripts/fuzz-drops.ts`, also a CI step) composes the ownership
-forms behind the October 2026 memory bugs (for-in over a `next()` iterator, a Channel, a
-generic `I: Iterator`, an `if`/`match` fork and a temporary; struct update; array
-literals passed to `[T; n]` and `&[T]`; `getOrDefault`; literal matches; Heap reads and
-moves; a heapless Drop payload sent through a Channel; Option/Result combinators;
-`[v; N]`; `match v[i]`; extern `*u8` temps), nested
-three deep with `break`/`continue`/`return`/`?`, and builds every case with
-`MILO_OWN_LEDGER=1 --sanitize`. Any ledger finding is red, beside a Drop-balance count,
-ASan and a read-integrity check. Reds are reduced into `.fuzz-findings/drops/`. No
-open bug is gated out of the generator; the script's header says how to gate a new one.
 
 ## Out-of-band differential harnesses
 Not `bun test` — they need a toolchain CI supplies but a checkout may not, so run them by hand when you touch the target they cover.

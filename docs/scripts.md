@@ -93,7 +93,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend (docs/mlir-backend.md): programs are emitted as LLVM IR for each non-host target, and the module must be for the TARGET: - its `target triple` is the target's,… |
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend (docs/mlir-backend.md): every fixture is built through MLIR, the binary runs, and stdout, stderr and the exit status must equal the recorded golden in tests/gold… |
 | `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
-| `scripts/own-ledger.ts` | Ownership-ledger census: emit IR for every fixture with MILO_OWN_LEDGER=1 and report codegen's drop-bookkeeping findings (src/own-ledger.ts). |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
 | `scripts/prove-soundness-fuzz.ts` | Differential falsifier for `milo prove`. |

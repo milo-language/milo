@@ -1,4 +1,0 @@
-# Ownership-ledger findings that are confirmed real bugs, not yet fixed (scripts/own-ledger.ts).
-# One finding per line: fixture fn kind origin L<milo line>. Shrink-only: --check fails on a
-# finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
-# line. Each group names its repro and how it was confirmed.
