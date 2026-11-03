@@ -19,7 +19,6 @@ export interface DwarfHost {
   variantFieldOffsets(fieldTypes: string[]): number[];
 }
 
-
 // Used only when codegen's `emitDebug` is on. All metadata is interned here and rendered
 // as trailing `!N = ...` nodes by apply(). LLVM permits forward metadata references, so
 // mint order is irrelevant. Scope is resolved lazily in that final text pass rather than
@@ -38,7 +37,6 @@ export class DwarfEmitter {
   private diSubroutineTypeId = -1;
 
   constructor(private host: DwarfHost) {}
-
 
   diEsc(s: string): string { return s.replace(/\\/g, "\\5C").replace(/"/g, "\\22"); }
   // A DWARF display name: what a debugger shows. The per-module pass renames a private
@@ -103,14 +101,6 @@ export class DwarfEmitter {
     this.diLocations.set(key, id);
     return id;
   }
-
-
-
-
-
-
-
-
 
   // Resolve deferred ;MILODBG markers into real !dbg attachments over the assembled
   // module. Scope comes from the enclosing function's define-line subprogram, so

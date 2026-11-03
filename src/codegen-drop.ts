@@ -48,9 +48,6 @@ export interface DropCtx extends NameSource {
   needsFree: boolean;
 }
 
-
-
-
 // The drop glue proper for one value, after Codegen.emitDropValue has handled structural-mode re-entry and the ownership ledger.
 export function emitDropValueBody(ctx: DropCtx, lines: string[], allocaPtr: string, typeKind: TypeKind): void {
   const b = new LlvmTextBuilder(lines, ctx);
@@ -290,7 +287,6 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
     b.endFn();
   });
 }
-
 
 export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
   const kind = ctx.structuralDrop ? "sdrop" : "drop";

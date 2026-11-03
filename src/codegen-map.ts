@@ -4,7 +4,6 @@
 // std/hashmap.milo; for-in, drop, display and the deep clone stay in codegen.ts and its
 // siblings. std/set's HashSet is a HashMap<T, bool> underneath, so sets hash through here.
 
-
 // Field count of %HashMap, and the single source for its size. Every field is 8 bytes
 // (one ptr + four i64), so the size is just the count — but the COUNT has to come from
 // one place or the two drift, which is exactly what happened.

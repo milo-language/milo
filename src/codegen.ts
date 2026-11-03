@@ -61,7 +61,6 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
 export const GLOBAL_INIT_FN = "__milo.global_init";
 
-
 // The bounds-check message is one module-wide global, so the literal and the array length
 // in its declaration have to stay in lockstep — a mismatch is an LLVM verifier error.
 const BOUNDS_ERR_MSG = "milo: array index out of bounds: %lld/%lld at %s:%d\n";
@@ -74,8 +73,6 @@ interface ExternAbiInfo {
 }
 
 export type { StructLayout, EnumLayout, EnumVariant, EnumNiche } from "./layout";
-
-
 
 const i64c = (n: number | string) => val(String(n), Ty.i64);
 const i32c = (n: number | string) => val(String(n), Ty.i32);
@@ -91,7 +88,6 @@ const V = val;
 // newtypes make it free on the other side of the port. See docs/backlog.md.
 export type Gen = [lines: string[], value: string, type: string];
 
-
 // Attribute-group number for the `--sanitize` marker. Emitted IR carries no other
 // attribute groups, so 0 is always free.
 const SANITIZE_ATTRS = 0;
@@ -103,8 +99,6 @@ const SANITIZE_ATTRS = 0;
 export function sanitizerKind(): "address" | "thread" {
   return process.env.MILO_SANITIZE === "thread" ? "thread" : "address";
 }
-
-
 
 export class Codegen {
   public target: TargetInfo;
@@ -178,8 +172,6 @@ export class Codegen {
   set hasHashMapType(v: boolean) { this.layout.hasHashMapType = v; }
   public needsGetentropy = false;
   private needsStrtod = false;
-
-
 
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
@@ -522,7 +514,6 @@ export class Codegen {
     lines.push(`  call i32 (ptr, ptr, ...) @fprintf(ptr ${iob}, ptr ${fmtLabel}${argsStr})`);
   }
 
-
   // The dot is required: a parameter named `t0` is emitted as the LLVM value
   // `%t0` (see the param prologue), so a bare `%t${n}` counter collides with it
   // and LLVM rejects the module with "multiple definition of local value". Milo
@@ -534,7 +525,6 @@ export class Codegen {
   private emit(line: string) { this.output.push(line); }
 
   public llvmType(t: TypeKind): string { return this.layout.llvmType(t); }
-
 
   // Escape a JS string into an LLVM `c"..."` body plus its exact byte length (no null
   // terminator). Backslash MUST become \5C — a raw '\' from e.g. a Windows path (`D:\a\...`)
@@ -585,8 +575,6 @@ export class Codegen {
     return { label, length };
   }
 
-
-
   private nicheOfEnumTy(enumTy: string): EnumNiche | undefined { return this.layout.nicheOfEnumTy(enumTy); }
 
   // The tag of the enum at `addr`, as the i32 a tagged enum stores.
@@ -606,8 +594,6 @@ export class Codegen {
     lines.push(`  ${tag} = select i1 ${isNone}, i32 ${niche.noneTag}, i32 ${niche.someTag}`);
     return tag;
   }
-
-
 
   private enumStorageTy(layout: EnumLayout): string { return this.layout.enumStorageTy(layout); }
 
@@ -629,7 +615,6 @@ export class Codegen {
     lines.push(`  ${p} = getelementptr inbounds i8, ptr ${addr}, i64 ${this.variantFieldOffsets(v.fieldTypes)[k]}`);
     return p;
   }
-
 
   // Every niche-enum access must go through the three helpers above; a site that still
   // indexes the tagged shape would read the payload as a tag. This makes such a site a
@@ -739,8 +724,6 @@ export class Codegen {
 
   public mapSlotLayout(k: TypeKind, v: TypeKind): { size: number; keyOffset: number; valueOffset: number } { return this.layout.mapSlotLayout(k, v); }
 
-
-
   // Big aggregates must never become first-class SSA values: SROA rewrites any
   // whole-aggregate load/store touching an alloca into per-ELEMENT scalar ops
   // with no size cap, so one `load %Bus` of a struct holding a [61440 x i32]
@@ -751,11 +734,6 @@ export class Codegen {
   private isBigAgg(ty: string): boolean {
     return (ty.startsWith("%") || ty.startsWith("[")) && this.typeSize(ty) >= Codegen.BIG_AGG_THRESHOLD;
   }
-
-
-
-
-
 
   // Does `fnName`'s parameter `idx` outlive the call — is there anything that could still
   // reach the closure passed to it once the call returns?
@@ -835,7 +813,6 @@ export class Codegen {
   // Every closure value the program can call through a fn VALUE comes from one of two
   // places: a named function used as a value, or a closure literal. Collected once.
   private hirGlobals: unknown = [];
-
 
   public needsDropCg(t: TypeKind): boolean { return this.layout.needsDropCg(t); }
 
@@ -1908,7 +1885,6 @@ export class Codegen {
     return out;
   }
 
-
   // A record/replay engine fn (HIRFunction.replayEngine) raises its thread's engine depth
   // on entry and lowers it before every return, while the fixed heap is on: its
   // allocations then go to libc and leave the program's heap as the recording left it.
@@ -1990,8 +1966,6 @@ export class Codegen {
     const isSret = this.sretFns.has(fn.name);
     const ret = fn.name === "main" ? "i32" : isSret ? "void" : this.llvmType(fn.retType);
     const dbg = this.emitDebug ? this.dwarf.diSubprogram(fn) : undefined;
-    if (this.emitDebug) {
-    }
     if (fn.name === "main" && this.wrapMainGreen) {
       // The entry point is the wrapper (greenMainEntry); this is just its body,
       // so argc/argv and the global-init call belong there, not here.
@@ -2049,11 +2023,6 @@ export class Codegen {
     for (const line of hoisted) lines.push(line);
     for (const line of rest) lines.push(line);
   }
-
-
-
-
-
 
   // The panic routine functions compiled through MLIR call (src/mlir-backend.ts): prints
   // `msg` as the format, exactly as the inline division and shift traps do, then aborts
@@ -2159,14 +2128,6 @@ export class Codegen {
     return lines;
   }
 
-
-
-
-
-
-
-
-
   // Body of the out-of-line handler above. Emitted once per module.
   private boundsFailHelper(): string[] {
     const lines: string[] = [];
@@ -2180,11 +2141,6 @@ export class Codegen {
     return lines;
   }
 
-
-
-
-
-
   // `file:line:col` stamp baked into a runtime panic message. Prefer the span's own file
   // over the file being compiled: a panic can fire inside an imported module (a `!` in
   // std/fs), and blaming the entry file sends the reader to the wrong source line.
@@ -2195,7 +2151,6 @@ export class Codegen {
     if (!file) return null;
     return { file: this.displayPath(file), line: span?.line ?? 0, col: span?.col ?? 0 };
   }
-
 
   // The path a panic message shows. An absolute one bakes the *compiling* machine's
   // directory layout — and its username — into every binary that ships, so print the path
@@ -2211,34 +2166,12 @@ export class Codegen {
     return file;
   }
 
-
-
-
-
-
-
-
-
-
-
-
   // Alloca names live for the whole function, but a binding's NAME does not:
   // two sibling loops may both bind `line`, and since the loop scope is now
   // unwound at the loop's end, `locals.has(name)` no longer reports the earlier
   // one. Uniquing has to key off what was actually emitted, or LLVM rejects the
   // function with `multiple definition of local value named 'line.addr'`.
   private emittedAddrs = new Set<string>();
-
-
-
-
-
-
-
-
-
-
-
 
   // Naive substring search shared by every `splitView`/`lines` loop: returns the byte
   // offset of `n` in `h` at or after `from`, or -1. Emitted once per module; a Milo-level
@@ -2263,8 +2196,6 @@ export class Codegen {
     }
     return "milo.strview.step";
   }
-
-
 
   // The machinery behind lazy globals (see src/lazy-globals.ts for where reads are guarded).
   //
@@ -2494,77 +2425,10 @@ export class Codegen {
     return L;
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   // Cortex-M's bump heap (tools/cortex-m/startup.c) has no block headers, so it cannot
   // implement realloc; every other target's allocator has one (wasm's runtime.c, libc,
   // std/replay's heap).
   public get hasRealloc(): boolean { return this.target.os !== "none"; }
-
-
-
-
-
-
-
-
 
   // ── HashMap codegen (the lowering itself lives in codegen-map.ts) ──
 
@@ -2622,7 +2486,6 @@ export class Codegen {
     b.callDiscard(Ty.void, "@abort", []);
   }
 
-
   // ── Displaying a container ──────────────────────────────────────────────────
   //
   // Structs and enums render through one compile-time format string because their
@@ -2649,7 +2512,6 @@ export class Codegen {
     this.helperFnBodies.push(runtimeFn("milo.fmt.u64", { table }));
     this.helperFnBodies.push(runtimeFn("milo.fmt.i64"));
   }
-
 
   // Shared strings. A heap string buffer (cap > 0) carries an 8-byte reference count
   // immediately before its bytes, so a %String's ptr still points at the text and cstr(),
@@ -2703,10 +2565,6 @@ export class Codegen {
       return [l];
     });
   }
-
-
-
-
 
   // `@milo.str.reserve(s, extra)`: make the %String at `s` hold len + extra bytes plus
   // the NUL, growing by doubling (16-byte floor), with emitGrowBytes's realloc policy.
@@ -2870,20 +2728,6 @@ export class Codegen {
     return "@milo.str.reserve";
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   // milo.json.escape(src, len) -> %String: RFC 8259 escaping, mirroring
   // std/json's jsonEscapeStr — ", \, \n, \t, \r as 2-byte escapes, all other
   // control chars (<0x20) as \u00XX. NUL-terminated so the result's data ptr
@@ -2920,8 +2764,6 @@ export class Codegen {
     this.dropHelperBodies.push(runtimeFn(bits === 32 ? "milo.fmt.f32" : "milo.fmt.f64"));
   }
 
-
-
   // True for expression forms that yield a freshly-owned value. Place expressions
   // (Ident/FieldAccess/IndexAccess) name storage owned by someone else, so freeing
   // their result would double-free. A call can't hand back a borrow: references are
@@ -2945,8 +2787,6 @@ export class Codegen {
     if (this.isOwnedTempExpr(expr.operand)) return true;
     return this.needsDropCg(expr.type) && expr.operand.kind === "Ident";
   }
-
-
 
   // Whether an `if`/`match` used as an EXPRESSION hands back a value nobody else owns.
   //
@@ -3019,7 +2859,6 @@ export class Codegen {
     if ((tail.kind === "Ident" || tail.kind === "FieldAccess" || tail.kind === "IndexAccess" || tail.kind === "HeapDeref") && tail.isMove) return false;
     return true;
   }
-
 
   // Whether a field chain bottoms out in an rvalue nobody owns (`mk().a.b`), as opposed to
   // a place genLValue can address in situ (a local, `v[i]`, `*p`). Only the rvalue is
@@ -3154,11 +2993,6 @@ export class Codegen {
   private hirFns = new Map<string, HIRFunction>();
   private closureParamEscapeCache = new Map<string, boolean>();
 
-
-
-
-
-
   // A synthesized module-level function (drop or clone helper) is numbered from zero and has
   // its own ledger maps; the enclosing function's counters are restored after.
   public emitHelperFn(hoistAt: number | undefined, build: (body: string[]) => void): void {
@@ -3184,14 +3018,6 @@ export class Codegen {
     }
     emitDropValueBody(this, lines, allocaPtr, typeKind);
   }
-
-
-
-
-
-
-
-
 
   private usedSatIntrinsics?: Set<string>;
 
@@ -3380,11 +3206,6 @@ export class Codegen {
     return `{ ${parts.join(", ")} }`;
   }
 
-
-
-
-
-
   // ---- Field-move flags.
   //
   // Moving a field out of a local (`take(e.value)`, `let { a, b } = s`) zeroes the field,
@@ -3397,15 +3218,5 @@ export class Codegen {
   // the local (or the field) is dropped, which then goes field by field. The checker
   // rejects moving out of a struct that itself has a Drop impl, so dropping the parents
   // field by field is the same as running their glue.
-
-
-
-
-
-
-
-
-
-
 
 }

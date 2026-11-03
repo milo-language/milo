@@ -39,9 +39,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
 | `src/codegen-map.ts` | The std/hashmap intrinsics: FNV-1a hashing and key equality (_mapHash, _mapKeyEq), the structural copy of a stored value (_mapCopyOut), the seed source (_mapSeed) and the checked slot allocation (_ma… |
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
-| `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
 | `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting, map buffers), kept as IR text in src/runtime/*.ll. |
-| `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, number/bool to string), extracted to keep codegen.ts manageable. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |

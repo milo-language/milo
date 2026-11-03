@@ -2,12 +2,6 @@
 
 import type { HIRStmt, HIRExpr, HIRPattern } from "./hir";
 
-
-
-
-
-
-
 export function armTailExpr(body: HIRStmt[]): HIRExpr | null {
   const last = body[body.length - 1];
   return last && last.kind === "ExprStmt" ? last.expr : null;
