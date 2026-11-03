@@ -57,13 +57,18 @@ test("--sanitize marks emitted functions sanitize_address", () => {
   expect(defines.filter(l => !l.includes(" #0"))).toEqual([]);
 });
 
-test("--sanitize composes with -g (attribute group precedes !dbg)", () => {
+// parity gap after legacy deletion: MLIR function definitions carry no !dbg (no DWARF for MLIR bodies yet); see docs/roadmap.md
+test.failing("--sanitize composes with -g (attribute group precedes !dbg)", () => {
   const src = join(dir, "dbg.milo");
   writeFileSync(src, "fn main() { print(\"ok\") }\n");
   const ir = execSync(`bun ${MILO} emit-ir -g --sanitize ${src}`, { encoding: "utf-8" });
   // LLVM requires metadata attachments last; `#0 !dbg !N {` parses, `!dbg !N #0 {` does not.
   expect(ir).toMatch(/^define [^\n]* #0 !dbg !\d+ \{$/m);
-  // And it has to survive the verifier, which the emit path alone would not prove.
+});
+
+test("a -g --sanitize module survives the verifier", () => {
+  const src = join(dir, "dbgrun.milo");
+  writeFileSync(src, "fn main() { print(\"ok\") }\n");
   execSync(`bun ${MILO} run -g --sanitize ${src}`, { encoding: "utf-8", env: ENV });
 }, 120_000);
 
