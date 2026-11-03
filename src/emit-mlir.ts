@@ -689,6 +689,13 @@ class FnEmitter {
       this.ensures = (fn.contracts ?? []).filter(c => c.kind === "ensures");
     }
     const jumped = this.stmts(fn.body);
+    // A void body that falls off its end checks its ensures here, inside the scope of its
+    // owned params: an old() snapshot of one (`old(w.len)` of a by-value Vec) is defined
+    // in that scope's region, so a check after it closes names a value out of scope.
+    if (!jumped && !isMain && ret === null && this.ensures.length) {
+      for (const c of this.ensures) this.contractCheck("ensures", c.expr, c.span);
+      this.ensures = [];
+    }
     this.closeScope(0, jumped, null);
     if (!jumped) {
       if (isMain) this.retMain();
