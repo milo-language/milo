@@ -2057,7 +2057,7 @@ class FnEmitter {
       }
       const pa = this.addressOf(p.ref, `!milo.ref<${dty}>`).ref;
       const data = this.def(`milo.ptr.load ${pa} : ${PTR}`, PTR);
-      const it = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`, PTR);
+      const it = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 1 : si64", "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
       const fn = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${it.ref}[${this.def(`milo.const ${e.methodIndex} : si64`, "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
       const args = [data, ...ops.slice(1).map(o => o.mode !== "val"
         ? this.addressOf(o.ref, this.lent(o.type, "interface call operand"))
@@ -2856,7 +2856,7 @@ class FnEmitter {
           this.vars.push(`  ${slot} = milo.var "dyn" : !milo.ref<${ty}>`);
           const at = this.def(`milo.addr ${slot} : !milo.ref<${ty}>`, PTR).ref;
           this.emit(`milo.ptr.store ${data.ref}, ${at} : ${data.ty}`);
-          this.emit(`milo.ptr.store ${itable.ref}, ${this.def(`milo.ptr.elem ${at}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`);
+          this.emit(`milo.ptr.store ${itable.ref}, ${this.def(`milo.ptr.elem ${at}[${this.def("milo.const 1 : si64", "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`);
           return this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty);
         };
         if (e.type.tag !== "heap") {
@@ -3354,7 +3354,11 @@ class FnEmitter {
     const name = `${this.fn.name}$closure${this.closures.next++}`;
     const own = e.captures.map((c, i) => [c, i] as const).filter(([c]) => this.hasDrop(this.place$(c.type, "capture"))).map(([, i]) => i);
     const align = (n: number) => Math.ceil(n / 8) * 8;
-    const table = 8 * (1 + e.captures.length + own.length);
+    // The table is pointer-sized slots, an even count of them so the bytes after it stay
+    // 8-aligned on a 32-bit target too.
+    const pb = this.cx.typeSizeOf({ tag: "ptr", inner: { tag: "int", bits: 8, signed: false } } as TypeKind);
+    const slots = 1 + e.captures.length + own.length;
+    const table = pb * (slots + (slots % 2));
     const offs: number[] = [];
     let at = table;
     for (const c of e.captures) { offs.push(at); at += align(this.cx.typeSizeOf(c.type)); }
@@ -3363,7 +3367,7 @@ class FnEmitter {
     const env = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def("milo.const 1 : si64", "si64"), this.def(`milo.const ${at} : si64`, "si64")], PTR), e.span);
     const off = (o: number) => o === 0 ? env.ref : this.def(`milo.ptr.elem ${env.ref}[${this.def(`milo.const ${o} : si64`, "si64").ref}] : ui8`, PTR).ref;
     this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(`${name}$envdrop`)}`, PTR).ref}, ${env.ref} : ${PTR}`);
-    [...offs, ...flagOffs].forEach((o, k) => this.emit(`milo.ptr.store ${off(o)}, ${off(8 * (1 + k))} : ${PTR}`));
+    [...offs, ...flagOffs].forEach((o, k) => this.emit(`milo.ptr.store ${off(o)}, ${off(pb * (1 + k))} : ${PTR}`));
     // args[i] is capture i: its value, or for one that lives in a slot, the slot's address.
     e.captures.forEach((c, i) => {
       const pty = this.place$(c.type, "capture");
@@ -3403,7 +3407,7 @@ class FnEmitter {
     this.vars.push(`  ${pair} = milo.var "closure" : !milo.ref<${ty}>`);
     const pa = this.def(`milo.addr ${pair} : !milo.ref<${ty}>`, PTR).ref;
     this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(name)}`, PTR).ref}, ${pa} : ${PTR}`);
-    this.emit(`milo.ptr.store ${env.ref}, ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 8 : si64", "si64").ref}] : ui8`, PTR).ref} : ${PTR}`);
+    this.emit(`milo.ptr.store ${env.ref}, ${this.def(`milo.ptr.elem ${pa}[${this.def("milo.const 1 : si64", "si64").ref}] : ${PTR}`, PTR).ref} : ${PTR}`);
     this.dropGlue(ty, e.type);
     return { ...this.def(`milo.load ${pair} : !milo.ref<${ty}>`, ty), own: "owned" };
   }

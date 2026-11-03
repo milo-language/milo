@@ -17,7 +17,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
-import { MlirPlan, mlirClang, mlirTargetOk } from "./mlir-backend";
+import { MlirPlan, mlirClang } from "./mlir-backend";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -298,7 +298,6 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  if (!mlirTargetOk(target)) throw new Error(`target ${target.triple} is not supported: the MLIR backend cannot build 32-bit targets (Cortex-M)`);
   const plan = new MlirPlan(hirModule, cg, target);
   cg.mlirTake = fn => plan.take(fn);
   let ir = phase("codegen", () => cg.generate(hirModule));

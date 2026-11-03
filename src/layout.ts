@@ -46,6 +46,9 @@ export interface EnumNiche {
 }
 
 export class Layout {
+  // Bytes in a pointer on the target: 4 on 32-bit ARM (Cortex-M), 8 elsewhere. MLIR lays
+  // its structs out with the target's data layout, so these sizes and offsets must agree.
+  public ptrBytes = 8;
   public structLayouts = new Map<string, StructLayout>();
   public enumLayouts = new Map<string, EnumLayout>();
   public droppableEnums = new Set<string>();
@@ -245,16 +248,16 @@ export class Layout {
     if (ty === "i64") return 8;
     if (ty === "float") return 4;
     if (ty === "double") return 8;
-    if (ty === "ptr") return 8;
-    if (ty === "{ ptr, ptr }") return 16;
-    if (ty === "%String") return 24; // ptr + i64 + i64
-    if (ty === "%Vec") return 24; // ptr + i64 + i64
+    if (ty === "ptr") return this.ptrBytes;
+    if (ty === "{ ptr, ptr }") return 2 * this.ptrBytes;
+    // { ptr, i64, i64 }: 24 either way (a 4-byte pointer pads to the i64's alignment).
+    if (ty === "%String" || ty === "%Vec") return this.structPayloadSize(["ptr", "i64", "i64"]);
     // Derived from the struct definition rather than written out, because writing it out
     // is how it went wrong: adding the tombstone counter to %HashMap left this at 32 and
     // every struct holding a map got an 8-byte-short memcpy. Fixtures did not notice; the
     // self-hosted compiler segfaulted on its first lookup, because src-milo is full of
     // structs with HashMap fields.
-    if (ty === "%HashMap") return HASHMAP_FIELDS * 8;
+    if (ty === "%HashMap") return this.structPayloadSize(["ptr", ...Array(HASHMAP_FIELDS - 1).fill("i64")]);
     const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
     if (arrMatch) return parseInt(arrMatch[1]) * this.typeSize(arrMatch[2]);
     const structName = this.getStructName(ty);
@@ -341,8 +344,8 @@ export class Layout {
     if (ty === "i64") return 8;
     if (ty === "float") return 4;
     if (ty === "double") return 8;
-    if (ty === "ptr") return 8;
-    if (ty === "{ ptr, ptr }") return 8;
+    if (ty === "ptr") return this.ptrBytes;
+    if (ty === "{ ptr, ptr }") return this.ptrBytes;
     if (ty === "%String" || ty === "%Vec" || ty === "%HashMap") return 8;
     const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
     if (arrMatch) return this.typeAlign(arrMatch[2]);

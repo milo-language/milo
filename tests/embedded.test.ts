@@ -115,6 +115,57 @@ fn main(): i32 { return add(40, 2) }
   unlinkSync(src);
 }, COMPILE_TIMEOUT);
 
+// Layout on a 32-bit target: structs holding pointers (strings), a Vec of them, enums with
+// payloads, a deep clone and a move closure's env, folded into the exit code. On the host
+// the same program exits 136; a pointer laid out as 8 bytes on Thumb (the MLIR side lays
+// structs out with the target's 4) changes it.
+const LAYOUT32_SRC = `struct Rec { name: string, n: i64, tag: bool }
+enum Shape { Dot, Named(string, i64), Pair(i64, i64) }
+
+fn total(rs: &Vec<Rec>): i64 {
+    var t: i64 = 0
+    for r in rs {
+        t = t + r.n + r.name.len()
+        if r.tag { t = t + 1 }
+    }
+    return t
+}
+
+fn score(s: &Shape): i64 {
+    return match s {
+        Shape.Dot => 1,
+        Shape.Named(n, k) => n.len() * 100 + k,
+        Shape.Pair(a, b) => a * b,
+    }
+}
+
+fn main(): i32 {
+    var rs: Vec<Rec> = []
+    var i: i64 = 0
+    while i < 5 {
+        rs.push(Rec { name: format("r", i), n: i * 10, tag: i % 2 == 0 })
+        i = i + 1
+    }
+    let first = rs.get(1)!
+    let shapes: Vec<Shape> = [Shape.Dot, Shape.Named("xy".clone(), 7), Shape.Pair(3, 4)]
+    var sc: i64 = 0
+    for sh in shapes { sc = sc + score(sh) }
+    let copy = rs.clone()
+    let s = "cap".clone()
+    let f = move (): i64 => s.len() + 1
+    let v = total(rs) + first.n + sc + f() + copy[4].n + copy.len()
+    return (v & 255) as i32
+}
+`;
+
+test.if(hasQemu)("32-bit layout: structs, enums, clones and closures agree with the host", () => {
+  const src = join(DIR, "milo_embed_layout32.milo");
+  writeFileSync(src, LAYOUT32_SRC);
+  const r = milo(`run ${src} --target=cortex-m3`);
+  expect(r.out).toContain("exit=136");
+  unlinkSync(src);
+}, COMPILE_TIMEOUT);
+
 // A heap-using program (Vec grow → malloc) links and runs bare-metal against the
 // linker-provided heap region — no size baked into startup.c.
 const HEAP_SRC = `fn main(): i32 {

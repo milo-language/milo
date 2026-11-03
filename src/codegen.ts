@@ -287,6 +287,7 @@ export class Codegen {
 
   constructor(target: TargetInfo, filePath?: string, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false) {
     this.target = target;
+    this.layout.ptrBytes = target.arch === "arm" ? 4 : 8;
     this.filePath = filePath;
     this.trapOnOverflow = trapOnOverflow;
     this.emitDebug = emitDebug;
@@ -501,7 +502,9 @@ export class Codegen {
     // everything else rather than referencing a dprintf nothing defines.
     if (this.target.os === "none") {
       this.needsPrintf = true;
-      lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtLabel}${argsStr})`);
+      // nobuiltin: a message that reaches here as a constant would otherwise become a
+      // puts call (LLVM's libcall simplification), and the embedded runtime has none.
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtLabel}${argsStr}) nobuiltin`);
       return;
     }
     this.needsDprintf = true;
@@ -2600,10 +2603,11 @@ export class Codegen {
     lines.push(`define internal void @${name}(ptr nonnull dereferenceable(24) align 8 %s) {`, "entry:");
     lines.push("  %v = load %String, ptr %s", "  %d = extractvalue %String %v, 0", "  %n = extractvalue %String %v, 1", "  %c = extractvalue %String %v, 2");
     if (this.target.os === "none") {
-      // Freestanding: one printf sink and no stdio buffer to share; drain it, then write.
-      this.needsFflush = true;
-      lines.push("  call i32 @fflush(ptr null)");
-      this.emitFdWrite(lines, stderr ? 2 : 1, "%d", "%n");
+      // Freestanding: the embedded runtime's one sink is printf (no fds, no fwrite). By
+      // length, so a NUL in the text is written too; a C int's worth at a time is plenty.
+      this.needsPrintf = true;
+      const fmt = this.addString("%.*s");
+      lines.push("  %n32 = trunc i64 %n to i32", `  call i32 (ptr, ...) @printf(ptr ${fmt.label}, i32 %n32, ptr %d) nobuiltin`);
     } else if (stderr) this.emitStderrWrite(lines, "%d", "%n");
     else this.emitStdoutWrite(lines, "%d", "%n");
     lines.push("  %heap = icmp sgt i64 %c, 0", "  br i1 %heap, label %free, label %done", "free:", "  call void @milo.str.free(ptr %d)", "  br label %done", "done:", "  ret void", "}");

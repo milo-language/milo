@@ -20,16 +20,6 @@ import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
 
-/**
- * Whether builds for `target` go through MLIR: every hosted target (cross builds and
- * Windows included) and wasm64. A 32-bit target (the Cortex-M family) cannot: scaffold
- * typeSize/enum layout hardcode an 8-byte pointer, while milo-opt lays structs out with the
- * target's data layout (4-byte pointer on thumb), so the two halves of one module would
- * disagree about every struct holding a pointer.
- */
-export function mlirTargetOk(target: TargetInfo): boolean {
-  return target.arch !== "arm";
-}
 
 // The data layout clang uses for `triple` (the one source of truth for it: legacy codegen
 // emits no `target datalayout` and lets clang pick). Asked of the clang of milo-opt's LLVM,
