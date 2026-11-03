@@ -1,0 +1,8 @@
+// runDetachedClosure calls through whatever (fn, env) pair it is handed, so from safe
+// code `0 as *u8` twice was a call to address zero. It is @unsafe like rtReadI64.
+from "std/runtime" import { runDetachedClosure }
+
+fn main(): i32 {
+    runDetachedClosure(0 as *u8, 0 as *u8) // @error: calling 'runDetachedClosure' requires an unsafe block
+    return 0
+}
