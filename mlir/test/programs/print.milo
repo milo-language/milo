@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): main, print and
+// Golden program for scripts/mlir-same.ts (--programs): main, print and
 // eprint of every scalar type, string literals (escapes, UTF-8, an embedded NUL) and
 // interpolation, from main and from another function, in a loop, then an early return.
 

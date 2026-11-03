@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// Golden program for scripts/mlir-same.ts (--programs) and an ownership
 // target: an owning enum matched by value (the arm that binds the payload owns it, the
 // others leave the subject to be dropped), from a local and from a temporary; a `&mut`
 // subject whose bindings write the payload; string and float literal patterns.

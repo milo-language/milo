@@ -1,6 +1,6 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): every helper is
-// in M1 scope, so it compiles through the milo dialect, and its output must match legacy
-// codegen's byte for byte. main stays legacy and only prints.
+// Golden program for scripts/mlir-same.ts (--programs): every helper is
+// in M1 scope, so it compiles through the milo dialect, and its output must match its recorded
+// golden byte for byte. main stays legacy and only prints.
 
 fn lt(a: i32, b: i32): bool { return a < b }
 

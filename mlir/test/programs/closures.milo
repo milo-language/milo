@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): non-owning fn
+// Golden program for scripts/mlir-same.ts (--programs): non-owning fn
 // values. Closure literals capturing by reference (a `let`, a `var` written by the body,
 // a by-ref param, a string read in place, a Vec param), fn-typed params called and
 // forwarded, a named fn as a value, a fn stored in a struct, nested closures, a closure

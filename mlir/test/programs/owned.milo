@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs), and a leak and
+// Golden program for scripts/mlir-same.ts (--programs), and a leak and
 // ASan target: owned strings and Vecs as locals, params, results and temporaries; moves,
 // shares, reassignment (also through `&mut`), drops at scope ends, on break, continue
 // and early return, and a drop that needs a flag (moved on one path only).

@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// Golden program for scripts/mlir-same.ts (--programs) and an ownership
 // target: sret functions (lib/bigs.milo) built from struct literals, forwarding another
 // sret call, called into a `let`, into a discarded temporary, and in a loop; a 128+ byte
 // struct passed by value, from an sret call and moved out of a local.

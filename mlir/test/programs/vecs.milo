@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): `&Vec<T>` and
+// Golden program for scripts/mlir-same.ts (--programs): `&Vec<T>` and
 // `&mut Vec<T>` params of scalars: v[i], v[i] = x, v.len(), passed on to other fns.
 
 fn sum(v: &Vec<i64>): i64 {

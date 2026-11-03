@@ -1,4 +1,4 @@
-// Differential panic program (scripts/mlir-same.ts --programs): `x!` (legacy's
+// Golden panic program (scripts/mlir-same.ts --programs): `x!` (legacy's
 // genUnwrap in a helper per site) on Some, Ok with an owned payload, then on an Err whose
 // message is printed.
 fn find(k: i64): Option<string> {

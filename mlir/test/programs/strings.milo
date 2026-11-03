@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs --owned): string
+// Golden program for scripts/mlir-same.ts (--programs --owned): string
 // comparison and concatenation (literals, owned locals, temporaries, `&string` params),
 // including the accumulate-in-a-loop shape.
 

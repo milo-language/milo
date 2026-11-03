@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): structs and
+// Golden program for scripts/mlir-same.ts (--programs): structs and
 // enums of scalars by value (construction, field reads and writes through a var and a
 // `&mut` param, struct update, nesting), enum payloads of every alignment, match as a
 // statement and an expression (bindings, `_`, literals, a wildcard first, arms that

@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// Golden program for scripts/mlir-same.ts (--programs) and an ownership
 // target for milo-append-in-place: `s = s + x` on locals, a field, a `&mut` param and a
 // global, with temporaries and views on the right, plus the forms it must leave alone
 // (`s = s + s`, the right side reading `s`, a shared buffer that must not change).

@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs, --owned): std's
+// Golden program for scripts/mlir-same.ts (--programs, --owned): std's
 // Vec methods written in Milo (raw pointer places, addrOf, ptr(), wrapping arithmetic,
 // sizeOf) on Vecs of ints and of strings, and string byte indexing.
 

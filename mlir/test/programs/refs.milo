@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): by-ref scalar
+// Golden program for scripts/mlir-same.ts (--programs): by-ref scalar
 // params (`&T`, `&mut T`) as !milo.ref values, passed on, read, written, and lent from a
 // `var`, a by-ref param and an immutable value.
 

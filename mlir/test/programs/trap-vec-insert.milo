@@ -1,6 +1,6 @@
-// Differential panic program (scripts/mlir-same.ts --programs): std's Vec.insert past
+// Golden panic program (scripts/mlir-same.ts --programs): std's Vec.insert past
 // the length panics through _vecPanic (a legacy helper per site); @trackCaller names
-// this line. stderr and exit status must match legacy codegen.
+// this line. stderr and exit status must match the recorded golden.
 fn main() {
     var v: Vec<string> = Vec.new()
     v.push("a")

@@ -1,5 +1,5 @@
-// Differential panic program (scripts/mlir-same.ts --programs): the trap fires in a
-// helper compiled through MLIR; stderr and exit status must match legacy codegen.
+// Golden panic program (scripts/mlir-same.ts --programs): the trap fires in a
+// helper compiled through MLIR; stderr and exit status must match the recorded golden.
 fn f(a: i32): i32 { return -a }
 
 fn main() {

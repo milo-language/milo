@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): module globals
+// Golden program for scripts/mlir-same.ts (--programs): module globals
 // read and written from MLIR functions, constant and lazy (an initializer that runs code),
 // scalars, a string reassigned (its old value dropped), a struct field written in place.
 

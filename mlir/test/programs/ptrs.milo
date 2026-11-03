@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): raw `*T`
+// Golden program for scripts/mlir-same.ts (--programs): raw `*T`
 // params and results, loads and stores through them, pointer casts and comparisons.
 
 fn readI64(p: *i64): i64 {

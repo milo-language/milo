@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// Golden program for scripts/mlir-same.ts (--programs) and an ownership
 // target: a struct of 128+ bytes, which MLIR holds only as a place. Its by-ref params read
 // and write fields (strings among them, so a store drops the old value), lend fields
 // `&mut`, pass the whole struct on by reference, and walk a Vec of them.

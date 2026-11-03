@@ -2,7 +2,7 @@
 //
 // `milo-opt --emit-llvmir <passes...> < in.mlir` runs the passes and prints LLVM IR, what
 // `milo-opt <passes> | mlir-translate --mlir-to-llvmir` prints, in one process: a build
-// under MILO_MLIR=1 spends most of its extra time starting processes.
+// through MLIR spends most of its extra time starting processes.
 #include "Milo.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"

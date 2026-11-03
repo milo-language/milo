@@ -1,4 +1,4 @@
-// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs --owned): structs
+// Golden program for scripts/mlir-same.ts (--programs --owned): structs
 // and enums holding strings and Vecs under drop elaboration: built, returned, moved into
 // callees, read through `&`, fields reassigned through `&mut` and in a local, enums with
 // owning payloads matched by reference, and printed.

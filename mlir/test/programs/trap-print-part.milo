@@ -1,4 +1,4 @@
-// Differential panic program (scripts/mlir-same.ts --programs): a print part panics after
+// Golden panic program (scripts/mlir-same.ts --programs): a print part panics after
 // a string part has already been written, which legacy flushes before the panic message.
 fn at(v: &Vec<i64>, i: i64): i64 {
     return v[i]

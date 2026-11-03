@@ -1,5 +1,5 @@
-// Trap program for MILO_MLIR=1: a substring past the end panics with legacy's message and
-// this call's line, through the per-site helper.
+// Golden trap program for scripts/mlir-same.ts --programs: a substring past the end panics with
+// the message and this call's line, through the per-site helper.
 fn cut(s: &string, a: i64, b: i64): string { return s.substr(a, b) }
 
 fn main() {

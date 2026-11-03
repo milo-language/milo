@@ -1,6 +1,6 @@
-// Differential panic program (scripts/mlir-same.ts --programs): std's string truncate
+// Golden panic program (scripts/mlir-same.ts --programs): std's string truncate
 // inside a multibyte character panics through _strPanic with the length in its message
-// (a legacy helper per site). stderr and exit status must match legacy codegen.
+// (a legacy helper per site). stderr and exit status must match the recorded golden.
 fn main() {
     var s = "héllo"
     s.truncate(1)
