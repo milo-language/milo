@@ -1598,6 +1598,17 @@ export class Codegen {
     }
   }
 
+  /**
+   * replayHeapCalls again over the final module: the MLIR bodies are spliced in after
+   * generate() ran it, and a libc free of a replay-heap block aborts. The pass is
+   * idempotent; the allocator define headers it marks only match codegen's own (named
+   * params), so they keep the marks from the first run.
+   */
+  public replayHeapOnFinal(ir: string): string {
+    if (!this.fnSigs.has("replayHeapMalloc")) return ir;
+    return this.replayHeapCalls(ir.split("\n")).join("\n");
+  }
+
   // Record/replay's fixed-address heap (std/replay): every allocation Milo code makes goes
   // through std/replay's malloc/realloc/free, which hand them to libc unless the heap is
   // on, and every free goes to whichever heap the block came from. std/replay's own code

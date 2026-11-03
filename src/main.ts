@@ -301,7 +301,7 @@ function compileWithGuards(source: string, target: TargetInfo, filePath?: string
   const plan = new MlirPlan(hirModule, cg, target);
   cg.mlirTake = fn => plan.take(fn);
   let ir = phase("codegen", () => cg.generate(hirModule));
-  ir = phase("mlir", () => cg.sanitizeOnFinal(cg.noaliasOnFinal(plan.compile(ir), plan.closureBodies())));
+  ir = phase("mlir", () => cg.sanitizeOnFinal(cg.noaliasOnFinal(cg.replayHeapOnFinal(plan.compile(ir)), plan.closureBodies())));
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
