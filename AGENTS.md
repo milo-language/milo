@@ -3,7 +3,7 @@ system: agent-router
 purpose: single agent entry point: the hard operational rules, then routes to the right skill, doc, script, or convention
 key-files: CONVENTIONS.md, docs/, scripts/
 update-when: an operational rule changes, a new skill/doc/script/convention is added, or a routing entry goes stale
-last-verified: 2026-10-07 (operational rules merged in; earlier: milo explain + the generated language reference; earlier: milo fix route, the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
+last-verified: 2026-11-03 (architecture pipeline: MLIR is the only backend; earlier: operational rules merged in; earlier: milo explain + the generated language reference; earlier: milo fix route, the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
 -->
 
 # AGENTS.md: Milo Compiler
@@ -60,7 +60,7 @@ Add a new test by dropping a `.milo` file with the appropriate annotation in the
 ### Architecture
 
 ```
-Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → Codegen → LLVM IR → clang → Binary
+Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → emit-mlir (milo dialect) → milo-opt passes → LLVM IR → clang → Binary
 ```
 
 | File | Purpose |
@@ -74,7 +74,8 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/checker.ts` | Type checking, move checking, scope validation → `CheckResult` |
 | `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering |
-| `src/codegen.ts` | HIR → LLVM IR emission |
+| `src/emit-mlir.ts` | HIR → milo MLIR dialect text (milo-opt then lowers it to LLVM IR; `src/mlir-backend.ts` drives it) |
+| `src/codegen.ts` | Module scaffold around the MLIR bodies: stubs, drop glue, ABI, globals, LLVM text |
 | `src/diagnostics.ts` | Elm-style error formatting with source context and carets |
 | `src/target.ts` | Host platform detection, target triple resolution |
 | `src/lsp.ts` | LSP server (diagnostics, hover, go-to-definition) |
