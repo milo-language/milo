@@ -21,9 +21,7 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { Lexer } from "../src/lexer";
-import { Parser } from "../src/parser";
-import { TypeChecker } from "../src/checker";
+import { errorsFor as checkSource } from "./checkSource";
 
 const dir = mkdtempSync(join(tmpdir(), "milo-annot-"));
 let n = 0;
@@ -31,15 +29,7 @@ let n = 0;
 function errorsFor(src: string): string[] {
   const entry = join(dir, `a${n++}.milo`);
   writeFileSync(entry, src);
-  try {
-    const prog = new Parser(new Lexer(src).tokenize(), src, entry).parse();
-    return new TypeChecker().check(prog).diagnostics
-      .filter(d => d.severity === "error").map(d => d.message);
-  } catch (e) {
-    // A parse error is a refusal, which is a legitimate answer for an unrepresentable
-    // annotation. Surface it as one rather than letting the throw fail the test.
-    return [String((e as { message?: string }).message ?? e)];
-  }
+  return checkSource(src, entry);
 }
 
 // Annotations that ARE representable, with a value of the right shape. These must compile:

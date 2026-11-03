@@ -22,9 +22,7 @@ import { mkdtempSync } from "fs";
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { Lexer } from "../src/lexer";
-import { Parser } from "../src/parser";
-import { TypeChecker } from "../src/checker";
+import { errorsFor as checkSource } from "./checkSource";
 
 const dir = mkdtempSync(join(tmpdir(), "milo-alias-"));
 let n = 0;
@@ -32,9 +30,7 @@ let n = 0;
 function errorsFor(src: string): string[] {
   const entry = join(dir, `m${n++}.milo`);
   writeFileSync(entry, src);
-  const prog = new Parser(new Lexer(src).tokenize(), src, entry).parse();
-  return new TypeChecker().check(prog).diagnostics
-    .filter(d => d.severity === "error").map(d => d.message);
+  return checkSource(src, entry);
 }
 
 type Container = {
