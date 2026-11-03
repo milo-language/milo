@@ -81,5 +81,6 @@ test("there is exactly one grammar file, and the docs site reads it", () => {
   expect(grammar).toContain("editors/vscode/syntaxes/milo.tmLanguage.json");
   const config = readFileSync(join(ROOT, "docs/site/.vitepress/config.mts"), "utf-8");
   expect(config).toContain("import { miloGrammar } from './miloGrammar'");
-  expect(config).toContain("languages: [miloGrammar]");
+  // Other grammars (mlirGrammar) may sit beside it in the list.
+  expect(config).toMatch(/languages: \[[^\]]*\bmiloGrammar\b[^\]]*\]/);
 });
