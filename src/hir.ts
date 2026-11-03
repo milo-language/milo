@@ -111,15 +111,15 @@ export type HIRExpr =
   | { kind: "NatLess"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
   // std/vec `_vecPanic("msg")`: prints "msg at <location>" and aborts.
   | { kind: "VecPanic"; message: string; type: TypeKind; span?: Span }
-  // An owned deep copy of the value at a place (emitDeepCloneFromPtr).
+  // An owned deep copy of the value at a place (structural: never runs a user Clone).
   | { kind: "MapCopyOut"; value: HIRExpr; type: TypeKind; span?: Span }
   // A fresh seed from HASH_SEED_FN (record/replay fixes its sequence); it may be 0.
   | { kind: "MapSeed"; type: TypeKind; span?: Span }
-  // count * size zeroed bytes through emitAllocBytes (overflow and null checked).
+  // count * size zeroed bytes (overflow and null checked).
   | { kind: "MapAlloc"; count: HIRExpr; size: HIRExpr; type: TypeKind; span?: Span }
   // `value` (an i64), after panicking "negative <what>" at span when it is below zero.
   | { kind: "NonNegative"; value: HIRExpr; what: string; type: TypeKind; span?: Span }
-  // std/vec `_vecGrowBuf(data, len, cap)`: the buffer moved to `cap` slots (emitGrowBytes).
+  // std/vec `_vecGrowBuf(data, len, cap)`: the buffer moved to `cap` slots.
   | { kind: "VecGrowBuf"; data: HIRExpr; len: HIRExpr; cap: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }

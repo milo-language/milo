@@ -262,7 +262,7 @@ class GlueFn {
       return;
     }
     if (t.tag !== "struct" && t.tag !== "enum" && t.tag !== "vec" && t.tag !== "array" && t.tag !== "hashmap") {
-      // A closure, a box, an interface: no text, shown as legacy codegen shows one.
+      // A closure, a box, an interface: no text, just a placeholder.
       this.text("<unprintable>", dst);
       return;
     }
@@ -553,7 +553,7 @@ class GlueFn {
   }
 
   /**
-   * The user's `Drop.drop` on the struct at `p`, as legacy ensureStructDropHelper runs it:
+   * The user's `Drop.drop` on the struct at `p`, :
    * skipped when every heap field (and then every int or bool) is zero, the shape a
    * moved-out struct is left in. A live struct of that shape is skipped too: a known hole
    * (docs/plans/core-hir.md), kept until drops stop visiting moved-out places.

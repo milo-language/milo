@@ -147,13 +147,13 @@ export function isHashMapModule(file: string | undefined): boolean {
   return posix === "std/hashmap.milo" || posix.endsWith("/std/hashmap.milo");
 }
 
-// std/vec's natural order, `_natLess(a, b)`: the comparison the builtin min/max/sort emit
-// (emitElemOrd), including `false < true`, which the language's `<` does not have on bool.
+// std/vec's natural order, `_natLess(a, b)`: the comparison the builtin min/max/sort emit,
+// including `false < true`, which the language's `<` does not have on bool.
 // `_vecPanic("msg")` prints "msg at file:line:col" and aborts, the wording of the
 // builtins' own bounds panics (remove, insert), which a plain panic() would not keep.
 // `_vecCopyOut(place)` is _mapCopyOut under its std/vec name: the one structural copy.
 // `_vecGrowBuf(data, len, cap): *T` moves a full buffer of `len` elements to one of `cap`
-// (emitGrowBytes, the checked allocation push used); `_vecNonNegative(n)` is n after
+// (the checked allocation push used); `_vecNonNegative(n)` is n after
 // the "negative capacity" check, at the caller's line under @trackCaller.
 // `_vecForget(x)` is `forget(x)`, which a user fn named forget would shadow in std.
 export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut", "_vecGrowBuf", "_vecNonNegative", "_vecForget"]);
@@ -164,7 +164,7 @@ export function isVecModule(file: string | undefined): boolean {
 }
 
 // std/string's `_strRangeCheck(s, start, end)`: the builtin substr's range panic,
-// "substr range out of bounds: a..b (len n) at file:line:col" (emitStringRangeCheck).
+// "substr range out of bounds: a..b (len n) at file:line:col".
 // `_strReserve(&mut s, extra): *u8` is s's data pointer with room for `extra` more bytes and
 // the NUL, held by s alone (the builtin push's inline fast path, else @milo.str.reserve);
 // `_strUnique(&mut s)` makes s the only handle to its buffer (@milo.str.unique), so the
@@ -1544,7 +1544,7 @@ export class TypeChecker {
   // A value whose duplication has a MEANING beyond copying bytes: a struct with a Drop
   // impl that releases something, `@noCopy` on a handle, or a raw pointer field without
   // `@copy`, anywhere inside the type.
-  // The index path's deep clone (codegen emitDeepCloneFromPtr) is structural: it copies
+  // The index path's deep clone is structural: it copies
   // strings and Vecs buffer by buffer but never consults a Drop impl, so a resource
   // nested in an `Option<Fd>` or a `Vec<Fd>` element is duplicated just as surely as a
   // bare `Fd`. Returns which mechanism and the type that carries it, for the diagnostic.
@@ -9507,7 +9507,7 @@ export class TypeChecker {
   // tryMove a let initializer makes, so a fork's place tails (`if c { v } else { w }`)
   // end up moved or maybe-moved just as they would there, and a Vec/array value is then
   // consumed. A field of an rvalue (`mk().items`) stays on the place side: codegen owns
-  // its whole temporary (genForEachIterableAddr).
+  // its whole temporary.
   private isPlaceIterable(e: Expr): boolean {
     return e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" ||
       (e.kind === "UnaryOp" && e.op === "*");
@@ -12587,7 +12587,7 @@ export class TypeChecker {
   }
 
   // `_mapCopyOut(place): T`, std/hashmap only: a copy of a stored value, made the way the
-  // builtin get always made it (emitDeepCloneFromPtr: structural, never a user Clone), so
+  // builtin get always made it (structural, never a user Clone), so
   // a moved get returns the same value.
   //
   // A resource has no such copy, but that is refused at the user's call (the copy-out
@@ -12596,7 +12596,7 @@ export class TypeChecker {
   // call get. `@copyOut` would withhold get for a Drop KEY too, which the builtin allowed.
   // `_mapSeed(): i64` (codegen's HASH_SEED_FN, so record/replay still fixes the seed
   // sequence) and `_mapAlloc(count, size): *u8` (count * size zeroed bytes through
-  // emitAllocBytes, the overflow- and null-checked allocation the builtin table used).
+  // the overflow- and null-checked allocation the builtin table used).
   private checkMapTableIntrinsic(expr: ExprOf<"Call">): TypeKind {
     const i64: TypeKind = { tag: "int", bits: 64, signed: true };
     const isSeed = expr.func === "_mapSeed";

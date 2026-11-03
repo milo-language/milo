@@ -1,13 +1,13 @@
 // MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go
 // HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
-// replace the legacy codegen's in the one LLVM module clang sees.
+// replace the stubs src/codegen.ts leaves in the one LLVM module clang sees.
 //
-// Linking is a textual splice, not llvm-link. Legacy codegen makes every non-exported fn
+// Linking is a textual splice, not llvm-link. src/codegen.ts makes every non-exported fn
 // `internal`, and two modules cannot reference each other's internal symbols, so llvm-link
 // would need every cross-module callee promoted and re-internalized afterwards. In one
-// module the names simply resolve. Legacy codegen emits only a stub for a taken function
+// module the names simply resolve. src/codegen.ts emits only a stub for a taken function
 // (MlirPlan.take), with its real `define` line and its call edges.
-// The `define` line is the legacy one (linkage, attributes, ABI), with params renumbered
+// The `define` line is codegen.ts's (linkage, attributes, ABI), with params renumbered
 // to the MLIR body's `%0..%n-1`; DWARF for these functions is M6, so -g drops their `!dbg`.
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
@@ -21,7 +21,7 @@ import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction }
 import { MlirGlue } from "./mlir-glue";
 
 
-// The data layout clang uses for `triple` (the one source of truth for it: legacy codegen
+// The data layout clang uses for `triple` (the one source of truth for it: codegen.ts
 // emits no `target datalayout` and lets clang pick). Asked of the clang of milo-opt's LLVM,
 // the same one that later compiles the module, so both halves of the module agree by
 // construction.
@@ -173,9 +173,9 @@ const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
 
 /**
- * Which functions go through MLIR, decided by legacy codegen as it reaches each one
+ * Which functions go through MLIR, decided by codegen.ts as it reaches each one
  * (`take`, called from genFunction once signatures are known). A taken function gets a stub
- * body there instead of its legacy one; `compileThroughMlir` replaces the stub.
+ * body there; `compileThroughMlir` replaces the stub.
  */
 export class MlirPlan {
   private taken: MlirFunction[] = [];
@@ -201,7 +201,7 @@ export class MlirPlan {
     if (typeof r === "string") {
       const [first, ...more] = r.split("\n");
       this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
-      // No legacy body to fall back to: the dialect must cover every function.
+      // There is no other backend to fall back to: the dialect must cover every function.
       throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
     }
     // A lazy global's init function is codegen's own, not in the HIR module.
@@ -243,12 +243,12 @@ export class MlirPlan {
     const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText([...this.taken, ...glueFn])}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
-    // A per-module extern is one more typed view of a C symbol: legacy codegen renames its
+    // A per-module extern is one more typed view of a C symbol: codegen.ts renames its
     // calls to that symbol at the end of generate(), so the MLIR side is renamed the same way.
     const links = new Map([...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name).map(f => [f.name, f.linkName!]));
     const llText = run(optPath, ["--emit-llvmir", MLIR_PIPELINE], text);
     const ll = (links.size ? mapSymbols(llText, n => links.get(n)) : llText).split("\n");
-    // The bodies are spliced into the legacy module: a triple or layout the two disagree on
+    // The bodies are spliced into codegen.ts's module: a triple or layout the two disagree on
     // would size a struct differently on each side of a call.
     if (!ll.includes(`target triple = "${triple}"`) || !ll.includes(`target datalayout = "${dl}"`)) throw new Error(`mlir: milo-opt did not emit for ${triple}`);
     if (!ir.split("\n").includes(`target triple = "${triple}"`)) throw new Error(`mlir: the legacy module is not for ${triple}`);
@@ -277,7 +277,7 @@ export class MlirPlan {
 
     const lines = ir.split("\n");
     const known = new Set<string>();
-    // MLIR's metadata ids start at 0, as legacy's do: shift them past the legacy ones.
+    // MLIR's metadata ids start at 0, as codegen.ts's do: shift them past those.
     let mdBase = 0;
     for (const l of lines) { const m = /^!(\d+) = /.exec(l); if (m) mdBase = Math.max(mdBase, Number(m[1]) + 1); }
     const renumber = (s: string) => s.replace(/!(\d+)\b/g, (_, n: string) => `!${Number(n) + mdBase}`);
@@ -314,20 +314,20 @@ export class MlirPlan {
         header = header.replace(re, ` %${k}`);
         renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
       });
-      // Legacy lines ahead of the stub (main's prologue: argc/argv globals, stdout
+      // Lines ahead of the stub (main's prologue: argc/argv globals, stdout
       // buffering, global init) run first, at the top of the MLIR entry block. They are
       // calls and stores of params and globals, so they number no values of their own.
       const prologue: string[] = [];
       for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
         if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
-        // The legacy entry label goes; the MLIR body brings its own entry block.
+        // The entry label goes; the MLIR body brings its own entry block.
         if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
         let p = lines[j].replace(/, !dbg !\d+/, "");
         for (const [re, to] of renames) p = p.replace(re, to);
         if (/^\s*%\d+ = |^\S.*:$/.test(p)) throw new Error(`mlir: ${name} prologue defines a value or a block: ${p}`);
         prologue.push(p);
       }
-      // Return type and param types; param attributes (nonnull, noalias, ...) are legacy's.
+      // Return type and param types; param attributes (nonnull, noalias, ...) are codegen.ts's.
       // MLIR quotes a type name with `$` in it (`%"a$B"`); unquoted it is the same name.
       const sig = (h: string) => {
         h = h.replace(/%"([-\w$.]+)"/g, "%$1");
@@ -347,18 +347,17 @@ export class MlirPlan {
     // A stub that ships would be an `unreachable` where a function body belongs.
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
-    // Closure bodies are functions legacy never defined (it made its own, now dead, for
-    // the bodies it generated): appended whole, MLIR's `define internal` line and all.
+    // Closure bodies are functions codegen.ts never defined: appended whole, MLIR's `define internal` line and all.
     for (const name of [...this.taken, ...glueFn].flatMap(f => f.closures)) {
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
       for (const b of got.body) if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
       out.push(got.header.replace(/ #\d+/g, ""), ...got.body.map(renumber), "}");
     }
-    // A global MLIR only declares (the recorder's counters) is the legacy module's own.
+    // A global MLIR only declares (the recorder's counters) is codegen.ts's module's own.
     out.push(...metadata.map(renumber));
     const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
-    // Legacy names no data layout (clang picks it from the triple); name the one the bodies
+    // codegen.ts names no data layout (clang picks it from the triple); name the one the bodies
     // were lowered with.
     const tripleAt = out.indexOf(`target triple = "${triple}"`);
     out.splice(tripleAt, 0, `target datalayout = "${dl}"`);

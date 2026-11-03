@@ -1,6 +1,6 @@
 // Type layout: struct and enum registration, sizes, alignments, field offsets, niches and
 // which types need drop glue. Pure functions of the HIRModule's types, split out of
-// codegen.ts so layouts outlive the legacy emitter. llvmType also records which builtin
+// codegen.ts so layouts are independent of the emitter. llvmType also records which builtin
 // struct types (%String, %Vec, %HashMap) were mentioned, because the emitter has to
 // define exactly those.
 
@@ -285,8 +285,8 @@ export class Layout {
     const ka = this.typeAlign(kt), va = this.typeAlign(vt);
     const up = (n: number, a: number) => Math.ceil(n / a) * a;
     const keyOffset = up(1, ka), valueOffset = up(keyOffset + this.typeSize(kt), va);
-    // The offsets of the literal struct legacy's for-in GEPs through, by the same rules
-    // (structPayloadSize) every legacy struct size comes from.
+    // The offsets of the literal slot struct a for-in GEPs through, by the same rules
+    // (structPayloadSize) every struct size comes from.
     return { size: this.structPayloadSize(["i8", kt, vt]), keyOffset, valueOffset };
   }
 

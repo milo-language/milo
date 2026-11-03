@@ -1532,7 +1532,7 @@ class LowerCtx {
               lowered = { kind: "HeapDeref", operand: lowered, type: inner, isMove: !borrowed, span: a.span };
             }
             // A std Vec method bound by bindStdVecMethod takes an i64 index where the
-            // builtin rules accepted any int, as genBoundI64 widened it.
+            // builtin rules accepted any int, widened by its own signedness.
             const pt = sig?.params[i]?.type;
             if (pt?.tag === "int" && lowered.type.tag === "int" && !borrowed
                 && (pt.bits !== lowered.type.bits || pt.signed !== lowered.type.signed)) {
