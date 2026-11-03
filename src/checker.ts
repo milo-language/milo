@@ -5958,9 +5958,14 @@ export class TypeChecker {
         const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
         const ret = this.resolve(concreteFn.retType);
         if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
+        // A method redefined in a later impl (the program's own over std's, which merges
+        // first) wins with its body as well as its signature, as a redefined fn does: two
+        // bodies under one symbol would reach the backend as a redefinition.
+        const prior = methods.has(m.name) ? this.monomorphizedFns.findIndex(f => f.name === mangled) : -1;
         this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
         methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
-        this.monomorphizedFns.push(concreteFn);
+        if (prior >= 0) this.monomorphizedFns[prior] = concreteFn;
+        else this.monomorphizedFns.push(concreteFn);
         implFnsToCheck.push(concreteFn);
       }
       if (!existing) this.inherentImpls.set(typeName, { traitName: null, typeName, methods });
