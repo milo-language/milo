@@ -1573,10 +1573,22 @@ export class Codegen {
   // fire, so double-free and invalid-free are still reported, and only use-after-free
   // READS pass unnoticed. Every function needs it; ASan skips any function without it.
   private applySanitizeAttribute(): void {
-    const out = this.output;
+    Codegen.markSanitized(this.output);
+    this.output.push("", `attributes #${SANITIZE_ATTRS} = { sanitize_${sanitizerKind()} }`);
+  }
+
+  /** The sanitize marking over the final module: the functions MLIR appends after the splice (closure bodies, drop glue) need it too. */
+  public sanitizeOnFinal(ir: string): string {
+    if (!this.sanitize) return ir;
+    const lines = ir.split("\n");
+    Codegen.markSanitized(lines);
+    return lines.join("\n");
+  }
+
+  private static markSanitized(out: string[]): void {
     for (let i = 0; i < out.length; i++) {
       const l = out[i];
-      if (!l.startsWith("define ") || !l.endsWith("{")) continue;
+      if (!l.startsWith("define ") || !l.endsWith("{") || / #\d+[ {]/.test(l)) continue;
       // An attribute group reference must precede any metadata attachment, so a
       // `-g --sanitize` build has to insert before ` !dbg !N`, not at end of line.
       const dbg = l.indexOf(" !dbg ");
@@ -1584,7 +1596,6 @@ export class Codegen {
         ? `${l.slice(0, dbg)} #${SANITIZE_ATTRS}${l.slice(dbg)}`
         : `${l.slice(0, -1).trimEnd()} #${SANITIZE_ATTRS} {`;
     }
-    out.push("", `attributes #${SANITIZE_ATTRS} = { sanitize_${sanitizerKind()} }`);
   }
 
   // Record/replay's fixed-address heap (std/replay): every allocation Milo code makes goes
