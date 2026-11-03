@@ -75,6 +75,6 @@ export const EXPECTED: Record<string, Expected> = {
   "std/pty.darwin.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.windows.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/sort.milo": { proven: 4, unknown: 0, errors: 0 },
-  "std/string.milo": { proven: 9, unknown: 21, errors: 0 },
+  "std/string.milo": { proven: 13, unknown: 21, errors: 0 },
   "std/sync.milo": { proven: 0, unknown: 0, errors: 0 },
 };

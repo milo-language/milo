@@ -823,6 +823,13 @@ impl string {
     // indexOf starting at byte offset `from`. A negative `from` finds nothing; an empty
     // needle is found at `from`, even past the end.
     fn indexOfFrom(self: &Self, needle: &string, from: i64): Option<i64> {
+        // The method takes any `from`, but strIndexOfFrom requires `pos >= 0` (an empty
+        // needle answers `pos` itself, so a negative one would break its `ensures`).
+        // Without this guard a negative `from` failed that `requires` in a debug build,
+        // a precondition the caller was never shown.
+        if from < 0 {
+            return Option.None
+        }
         return strFound(strIndexOfFrom(self, needle, from))
     }
 

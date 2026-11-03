@@ -19572,6 +19572,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `5 none`
 - `2 none`
 - `4 9`
+- `none none`
 - `0 0 3`
 - `1 1 0`
 - `3 1`

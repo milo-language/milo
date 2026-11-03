@@ -658,3 +658,7 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   comparisons, cstr. `codegen-string.ts` 534 -> 298 lines; `runtime/str.ll` unchanged at
   348 (std reaches its alloc/unique/reserve through the intrinsics; nothing in it lost
   its last caller).
+- 2026-11-03: `string.indexOfFrom` passed any `from` to strIndexOfFrom, whose `requires
+  pos >= 0` it never declared, so `milo prove` refuted it (verify-contracts red) and a
+  negative `from` panicked in a debug build. The method now answers None for a negative
+  `from` in every build, as its doc says (fixture strIndexOfStd covers it).
