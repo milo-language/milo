@@ -1,59 +1,95 @@
 <!-- doc-meta
-system: mlir-backend-plan
-purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the only backend (the legacy LLVM-text codegen is deleted)
-key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
-update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-02 (legacy backend deleted, its env switch gone, mlir-same compares tests/golden; dialect hygiene: docs, region and call interfaces, verifier cases, folders, round-trip; ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
+system: mlir-backend
+purpose: design reference for the backend: HIR -> milo MLIR dialect -> LLVM, the only backend (the legacy LLVM-text codegen is deleted)
+key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
+update-when: the pass pipeline, the gates or the dialect's design rules change
+last-verified: 2026-11-03 (rewritten from the migration log as a current design reference; pipeline checked against src/mlir-backend.ts)
 -->
 
 # MLIR backend
 
-Decided 2026-11-01: the backend moves to MLIR, committed rather than contingent. The
-prototype (`mlir/README.md`) showed why: today's codegen cannot tell LLVM two facts Milo
-knows (an element store never changes a Vec header; a panic is recoverable, so checks need
-versioning, not hoisting), and the dialect expresses both, so axpy ran 2.9x faster.
+The backend is MLIR. The prototype (`mlir/README.md`) showed why: a text-IR codegen cannot
+tell LLVM two facts Milo knows (an element store never changes a Vec header; a panic is
+recoverable, so checks need versioning, not hoisting), and the dialect expresses both, so
+axpy ran 2.9x faster.
 
 ## Shape
 
 ```
 Source -> Lexer -> Parser -> Resolver -> Checker -> HIR  (TypeScript)
 HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
-    -> milo-opt (C++, mlir/): verify -> milo-scope-drops -> expand-index, raise-to-scf
-       -> milo-lower-structured-cf -> milo-elaborate-drops -> loop passes
-       -> convert-milo-to-llvm -> mem2reg, canonicalize -> LLVM IR (--emit-llvmir)
+    -> milo-opt (C++, mlir/): the passes below
+    -> LLVM IR (--emit-llvmir)
     -> spliced into the module scaffold src/codegen.ts emits (src/mlir-backend.ts) -> clang
 ```
 
-- **Everything after the checker moves into MLIR**, JSIR/ClangIR style. The goal is to
-  delete `src/lower.ts`, `src/hir.ts`, `src/codegen*.ts` and `src/ir.ts`. The TypeScript MIR
-  (`src/mir*.ts`, `src/codegen-mir.ts`, `MILO_MIR`) went first, once MLIR took more function
-  instances than MIR lowered without fallback (69078 against 61668 over the fixtures).
-  The TypeScript side becomes a thin printer of a **high-level `milo` dialect that mirrors
-  the language**; every transformation is a C++ pass.
-- **Source-level ops** (`mlir/Milo.td`): structured control flow as region ops
-  (`milo.if`, `milo.while`, `milo.loop` with `milo.break`/`milo.continue`/`milo.return`),
-  mutable locals as `milo.var` slots with `milo.load`/`milo.store`, Milo's checked
-  arithmetic as one op per operator carrying its trap (`wrapping` selects @wrapping), casts
-  as `milo.cast`. Every op has a verifier: catching an emitter bug at the IR boundary is
-  the point of the dialect. Models: ClangIR (`cir.if`, `cir.while`, `cir.break`, the
-  `cir.alloca` slot model; llvm-project `clang/include/clang/CIR/Dialect/IR/CIROps.td`),
-  JSIR (github.com/google/jsir: a JS AST mirrored as ops with regions) and Mojo's `lit`
-  dialect (open source since Aug 2026; `Mojo/docs/compiler/MojoCompilerWalkthrough.md`:
-  the parser emits `lit.fn`, `lit.var.decl`, `lit.ref.load/store`, control flow as
-  `hlcf`/`lit.loop` region ops, and the LowerSemanticCF pass turns them into terminators,
-  then CheckLifetimes and ElaborateGenerators run as passes; Milo keeps borrow checking
-  and monomorphization in the TS checker for now).
-- **The emitter reads HIR today**, and later reads the checker's output directly, once the
-  desugaring `src/lower.ts` does moves into passes. The legacy LLVM-text backend is deleted;
-  MLIR is the only backend.
-- **Analyses as MLIR passes**: drop elaboration (which drops run, where drop flags are
-  needed) is a dataflow pass on the dialect, using MLIR's dataflow framework rather than a
-  hand-written analysis.
-- **Textual MLIR first.** The emitter prints MLIR text and `milo-opt` runs as a
-  subprocess. If compile time demands it, switch to the MLIR C API over `bun:ffi`; the
+- **The TypeScript side is a thin printer** of a high-level `milo` dialect that mirrors the
+  language; every transformation is a C++ pass. The emitter reads HIR (`src/lower.ts`,
+  `src/hir.ts`). Moving the desugaring in `src/lower.ts` into passes, so the emitter reads
+  the checker's output directly, is future work.
+- **Source-level ops** (`mlir/Milo.td`): structured control flow as region ops (`milo.if`,
+  `milo.while`, `milo.loop` with `milo.break`/`milo.continue`/`milo.return`), mutable locals
+  as `milo.var` slots with `milo.load`/`milo.store`, Milo's checked arithmetic as one op per
+  operator carrying its trap (`wrapping` selects @wrapping), casts as `milo.cast`. Every op
+  has a verifier: catching an emitter bug at the IR boundary is the point of the dialect.
+  Models: ClangIR (`cir.if`, `cir.while`, the `cir.alloca` slot model), JSIR (a JS AST
+  mirrored as ops with regions) and Mojo's `lit` dialect (region control flow lowered to
+  terminators by a pass). Borrow checking and monomorphization stay in the TS checker.
+- **Analyses are passes**: drop elaboration (which drops run, where drop flags are needed)
+  is a dataflow pass on the dialect, using MLIR's dataflow framework.
+- **Textual MLIR.** The emitter prints MLIR text and `milo-opt` runs as a subprocess. If
+  compile time demands it, switch to the MLIR C API over `bun:ffi` or to bytecode; the
   emitter's output does not change.
+- **Splice.** Every function compiles through MLIR: `emitMlirFunction` in `src/emit-mlir.ts`
+  throws `MlirUnsupported` for a construct the dialect does not cover, and the build fails
+  naming the reason (no per-function fallback). The MLIR function's LLVM body replaces the
+  stub `src/codegen.ts` emits, textually inside one module (`src/mlir-backend.ts`), under
+  the `define` line from the scaffold, so linkage, attributes and the ABI come from the
+  scaffold. Not llvm-link: non-exported fns are `internal`, and internal symbols do not
+  resolve across modules.
+- **Targets.** MLIR is on for every target (cross builds, Windows, wasm64, Cortex-M).
+  milo-opt emits for the target: the module carries `llvm.target_triple` and
+  `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang
+  once per build), and the splice refuses a triple or layout the two halves disagree on.
+  Sizes come from the target layout, so 32-bit Cortex-M has 4-byte pointers.
+  `bun scripts/mlir-cross.ts` is the gate for non-host targets.
 
-## Leverage beyond the port
+## Passes
+
+In `milo-opt` pipeline order (`MLIR_PIPELINE` in `src/mlir-backend.ts`). The passes under
+`func.func(...)` see one function at a time, so MLIR's pass manager runs them in parallel.
+
+1. `milo-verify` (`mlir/Scalar.cpp`): checks the rules of the source-level dialect that span ops.
+2. `milo-append-in-place` (`mlir/Drops.cpp`): rewrites `s = s + x` on strings to an in-place
+   append. It runs before scope-drops, whose drop of the old value would name the place and
+   stop the rewrite.
+3. `milo-scope-drops` (`mlir/Drops.cpp`): drops owned slots where control leaves their scope,
+   and old values before stores, while scopes are still regions. Which drops run is decided later.
+4. `milo-expand-index` (`mlir/Scalar.cpp`): lowers source-level Vec indexing to `len`,
+   `bounds_check` and `vec.load`/`vec.store`.
+5. `milo-raise-to-scf` (`mlir/Scalar.cpp`): raises `milo.for` loops without early exits (and
+   their ifs) to `scf`, where the Vec passes work.
+6. `milo-lower-structured-cf` (`mlir/Scalar.cpp`): lowers the remaining `milo.if`/`while`/`loop`/`for`
+   and their jumps to `cf` branches, before any generic pass. Break, continue and return are
+   not region-branch terminators, so CSE would otherwise reuse a load from before a
+   `milo.while` inside its body.
+7. `milo-elaborate-drops` (`mlir/Drops.cpp`): keeps, erases or flags each drop of an owned
+   slot by whether it is initialized (dense dataflow over the CFG), before any generic pass
+   can move a store or a drop.
+8. `canonicalize`, with `SelectToExtUI` disabled: it would turn a select with Milo's si32 type
+   into a signless-only op that fails to verify.
+9. `milo-hoist-vec-reads` (`mlir/Passes.cpp`): hoists `vec.len` out of loops that never write a Vec header.
+10. `loop-invariant-code-motion`.
+11. `milo-version-bounds-checks` (`mlir/Passes.cpp`): runs a copy of a loop without bounds
+    checks when one up-front range test proves every check passes, the original otherwise.
+12. `cse`, `canonicalize`, `convert-scf-to-cf`.
+13. `convert-milo-to-llvm` (`mlir/Passes.cpp`): lowers milo, func, arith and cf to the LLVM dialect.
+14. `reconcile-unrealized-casts`, then `llvm.func(mem2reg, canonicalize)`.
+
+`milo-expand-checks` (`mlir/Passes.cpp`: `bounds_check` to a compare and a call to the panic
+routine) is defined and exercised by `mlir/run.sh`, but is not in the driver pipeline.
+
+## Leverage
 
 What the move buys after coverage is complete, in order of payoff. Each one is upstream
 MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it ships.
@@ -63,861 +99,18 @@ MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it s
 | Cheaper safety | `IntegerRangeAnalysis`, dataflow framework | prove overflow and bounds checks dead and delete them; checked arithmetic costs less | partly: bounds-check versioning ships; the region ops describe their control flow (RegionBranchOpInterface, LoopLikeOpInterface) and milo.const/milo.cmp their ranges, so `--int-range-optimizations` proves ranges through them (`mlir/test/region-branch.mlir`); not in the pipeline |
 | Correctness tooling | crash reproducers (`--mlir-pass-pipeline-crash-reproducer`), `mlir-reduce`, `--mlir-print-ir-after-all`, debug counters | a compiler crash becomes a one-file repro, reduced automatically; bisect a miscompile to one pass application | available, not wired into the driver |
 | Compile time | multithreaded pass manager | function passes run in parallel for free; the fix for the current build-time regression | not measured |
-| Contracts | `smt` dialect | `requires`/`ensures` checked by a solver from the same IR the compiler lowers | decided (see Verification) |
+| Contracts | `smt` dialect | `requires`/`ensures` checked by a solver from the same IR the compiler lowers | decided (see Verification from the compiled IR) |
 | Loop optimization | `memref`, `affine`, `linalg`, `vector` | scalar Vec and array loops lower through `memref` (everything else stays milo to llvm), gaining tiling, fusion and vectorization of array and Vec loops, which hand-written IR never had | prototype only (axpy 2.9x) |
-| Portable C | `emitc` | emit C source for targets with a C compiler but no good LLVM backend (odd MCUs, certified toolchains); a path off legacy for Cortex-M | not started |
-| Async | `async` dialect, LLVM coroutines | M6 tasks lower through upstream coroutine passes instead of hand-built state machines | M6 |
-| Debug info | `Location` plus LLVM dialect debug attributes | DWARF follows every op through every pass | M7 (DWARF parity) |
+| Portable C | `emitc` | emit C source for targets with a C compiler but no good LLVM backend (odd MCUs, certified toolchains); an alternative path for Cortex-M | not started |
+| Async | `async` dialect, LLVM coroutines | tasks lower through upstream coroutine passes instead of hand-built state machines | not started |
+| Debug info | `Location` plus LLVM dialect debug attributes | DWARF follows every op through every pass | open (see Open items) |
 | Caching | MLIR bytecode | stable serialized modules: incremental builds, prechecked packages | not started |
 | Other clients | the dialect itself, C API | another frontend (a self-hosted Milo frontend, ChadScript) targets `milo` and inherits drops, checks and lowering | self-hosting plan |
 | New targets | `gpu`, NVVM, ROCDL, SPIR-V | Milo kernels on GPUs, later | not planned |
 
-## Coexistence: one function at a time
+## Next: modularity
 
-Every function compiles through the MLIR path: `emitMlirFunction` in `src/emit-mlir.ts`
-throws `MlirUnsupported` for a construct the dialect does not cover, and the build fails
-naming the reason. The MLIR function's LLVM body replaces the stub `src/codegen.ts` emits, textually inside the one
-module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
-the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
-`internal`, and internal symbols do not resolve across modules. Legacy codegen still
-generates the replaced body, because its module-wide noalias dataflow reads every body. MLIR is the ONLY backend: there is no legacy escape hatch and no per-function fallback (src/codegen.ts now only produces the module skeleton and the `define` lines the MLIR bodies replace). It is on for every target, cross builds, Windows, wasm64 and Cortex-M included. milo-opt emits for the TARGET: the module carries `llvm.target_triple` and `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang once per build), and the splice refuses a triple or layout the two halves disagree on. Sizes come from the target layout, so 32-bit Cortex-M has 4-byte pointers. `bun scripts/mlir-cross.ts` is the gate for non-host targets. The coverage number (MLIR functions / all
-function instances over the corpus) is printed by the gate and must only go up. When it
-reaches 100% the legacy codegen is deleted and the escape hatch goes with it.
-
-## Milestones
-
-| | Covers | Gate adds |
-|---|---|---|
-| M1 | scalar functions: ints, floats, bool, Milo's arithmetic traps (overflow, div by zero, shifts) with identical messages and lines, if/while/loop/break/continue/return, direct calls | coexistence and linking; compile-time number vs legacy |
-| M2 | Vec access and bounds checks (`milo.vec.*`, `milo.bounds_check`), the versioning pass from the prototype | benchmarks: axpy and friends |
-| M3 | strings, structs, enums, Option/Result | |
-| M4 | owned values, moves, drops: drop elaboration pass | leak and ASan sweep (`mlir-same.ts --owned`) |
-| M5 | closures, interfaces, match | |
-| M6 | tasks, contracts, globals, debug info (DWARF via MLIR locations) | lldb smoke test |
-| M7 | default on; delete legacy codegen (done 2026-11-02) | |
-
-**M1 progress (2026-11-01).** In: functions whose params, result and locals are ints of
-any width (no declared range), f32/f64 or bool; literals, `let`/`var`/assign, every
-arithmetic, bitwise, comparison and logical operator, unary `- ! ~`, scalar casts,
-if/else, while, `while true` (`milo.loop`), `for i in a..b` (`milo.for`), break, continue,
-return, and direct calls to any Milo or extern fn with scalar args. Traps match legacy byte
-for byte: overflow (`__milo_overflow_fail`, file and line), division by zero, MIN / -1,
-shift range, @wrapping and `--no-overflow-checks`, float to int saturation, NaN and -0.
-Out, staying legacy: `main`, by-ref params (the largest reason by far), every non-scalar
-type, globals, contracts when contract checks are on (-O0), replay-engine fns, if-expressions,
-matches, builtins (print and friends), and a `for` whose bounds have another type than its
-variable. `-g` builds work; MLIR functions carry no DWARF yet. Numbers: `bun test
-tests/run.test.ts` under `MILO_MLIR=1` is 1797 pass, 0 fail, with 51234 of 262577 function
-instances (19.5%) through MLIR; `scripts/mlir-same.ts` build time is 12 to 29% more on the
-slices measured (two extra subprocesses per build, and the legacy body is still generated).
-
-**Since M1 (2026-11-01).** Legacy codegen now emits only a stub for a function MLIR takes
-(its `define` line and one dead call per callee, which is what the noalias analysis reads;
-a function with a raw pointer keeps its legacy body for that analysis). The dialect gained
-by-ref scalar params as second-class `!milo.ref` values (`milo-verify` rejects one that
-outlives its call; `milo.check_unaliased` is legacy's runtime `&mut` aliasing guard),
-by-ref params of other types that the body never names, raw pointers (`!milo.ptr`,
-`milo.ptr.load/store`, pointer casts and compares), replay-engine functions
-(`milo.replay.enter/exit`), and the first of M2: `&Vec<T>`/`&mut Vec<T>` params of scalars
-(`milo.index`, `milo.index.store`, `milo.len`; `milo-expand-index` lowers them to the
-prototype's `vec.len`/`bounds_check`/`vec.load`). `milo-raise-to-scf` moves loops without
-early exits to scf.for, where `milo-hoist-vec-reads` and `milo-version-bounds-checks`
-run: axpy compiled from Milo source under `MILO_MLIR=1` vectorizes (0.095 ns/elem against
-0.278 for legacy, `mlir/run.sh`), grid stays at parity. Corpus under `MILO_MLIR=1` with
-the Vec ops in: 1805 pass, 0 fail, 71962 of 263941 instances (27.3%). Still legacy:
-`main` and the print builtins, by-value non-scalar params (they need drops, M4), strings,
-structs, enums.
-
-**Third batch (2026-11-01): main, print, aggregates, drop elaboration.**
-
-- *main and print.* `main` goes through MLIR unless a green-task wrapper owns it
-  (`mlirMainOk`): it is `i32 @main(i32, ptr)`, and the splice moves legacy's prologue
-  (argc/argv globals, stdout buffering, global init) to the top of the MLIR entry block. A
-  main with a raw pointer stays legacy (its body would be kept for the noalias analysis, and
-  then there is no stub to find the prologue in). `milo.print` (`stderr` for eprint) takes
-  every part; `print($"...")` is `print(format(parts))` in HIR and prints the parts. It
-  lowers to one call of a legacy function generated for exactly that sequence of part
-  types (codegen `mlirHelper`/`mlirPrintHelper`, named by `typeKey`), so the formatting is
-  legacy's by construction instead of a second copy of it in C++.
-- *Aggregates.* `!milo.struct<"Name", fields...>` and `!milo.enum<"Name", size, align,
-  [tag: (T at offset, ...)]>` lower to LLVM's identified structs of legacy's names, so a
-  spliced body uses the module's own `%Name`. The enum spells out legacy's `EnumLayout`
-  (codegen `mlirEnumLayout`): nothing in C++ recomputes it, the tag and payload go through
-  an entry-block slot at those byte offsets as in `enumFieldPtr`. Niche-packed enums
-  (ranged ints) and aggregates of 128 bytes or more (`isBigAgg`) stay legacy. Ops:
-  `struct.new/get`, `field_ref` (a field's place, for loads, stores and by-ref args),
-  `enum.new/tag/payload`, and `milo.match`: a region per arm, an enum arm's payload as its
-  entry block's arguments (read at the arm's entry by milo-lower-structured-cf, which
-  switches on the tag), literal cases on ints and bools, `default` for `_`. If-expressions
-  are `milo.if` with results. `&mut` match subjects, nested patterns and float or string
-  literal patterns stay legacy.
-- *Owned values (M4 foundation).* `!milo.string` and `!milo.vecval<T>` (Vec of scalars by
-  value; its place is the M2 `!milo.vec<T>`, via `vec.place`) live only in `milo.var
-  owned` slots, listed by the `milo.scope` that owns them. The emitter states facts:
-  `milo.store` (init or overwrite), `milo.move` (the checker's `isMove` last use),
-  `milo.load` (a view, for borrows), `string.share` (HIR StringClone). milo-scope-drops
-  puts a `milo.drop` at every scope exit (end, break, continue, return) and before every
-  store over a value with drop glue, then inlines the scopes. milo-elaborate-drops runs
-  MLIR's dense forward dataflow (DeadCodeAnalysis + a definitely/maybe-init lattice per
-  owned slot) over the CFG: a drop of a slot empty on every path goes, one full on every
-  path stays, the rest get the slot's drop flag (`milo.drop %s if %flag`, the flag kept
-  in step at every store, move and drop), and a read of a slot that may be empty is a
-  compile error. A drop calls `milo.drop.<key>(ptr)`, legacy's drop glue
-  (`mlirDropHelper`); string share calls a legacy-generated function too. Owned
-  temporaries in a borrow position (print, `&T` args, len) go into a slot of the
-  innermost block. Structs and enums holding strings or Vecs are not taken yet.
-- *After step 3, by coverage.* std's Vec methods (written in Milo since collections-in-std)
-  are the most common functions: raw-pointer places (`milo.ptr.elem`, `milo.ptr.field`,
-  read and written with ptr.load/store so a header write through one is never mistaken
-  for slot traffic), `milo.addr` (addrOf), `milo.vec.data` (ptr()), wrapping arithmetic,
-  sizeOf, and `_vecGrowBuf` through a legacy helper. Vec places take any element type;
-  only indexing needs scalars (legacy clones an owning element). `milo.string.byte` is
-  `s[i]` with legacy's bounds panic. Structs and enums holding strings and Vecs are owned
-  values (needsDrop is structural); still legacy: types with a user `Drop` (its timing is
-  observable, and temporaries die at block end here, at statement end there), moving an
-  owning field out, matching an owning enum by value, struct update of an owning struct.
-  String `== != < <= > >= +`, substr and push call legacy helpers; the ones that panic are
-  generated per call site, with the call's span, so the panic names the same line.
-- *Gates.* Programs `print`, `aggregates`, `owned`, `stdvec`, `owning-aggregates`,
-  `strings`, `trap-string-index-oob`, `trap-substr-oob` under `mlir/test/programs`; FileCheck
-  `print.mlir`, `aggregates.mlir`, `drops.mlir`, verifier cases in `verify.mlir`. Planted
-  bugs: string literal length - 1 turned `print` red; payload read at field 0's offset
-  turned `aggregates` red (`area(Rect(2, 3))` printed 4); making maybe-init drops
-  unconditional left `mlir-same` green but ASan reported a heap-use-after-free in
-  `owned`; erasing every drop left 23 more live heap blocks at exit; both turn `--owned` red.
-  Later: `ptr.elem` at index 0 turned `stdvec` and `owned` red; no drop before a store
-  through a field place left one more live block in `owning-aggregates` (`--owned` red);
-  swapped string operands turned `strings` red; a substr helper without the call's span
-  turned `trap-substr-oob` red (stderr). FileCheck adds `pointers.mlir`.
-- *Leaks on this machine.* `leaks -atExit` (scripts/leak-check.ts) and lldb never get the
-  task port here and hang, on legacy binaries too: the lldb replay test ("a breakpoint on
-  miloReplayStop stops at the record") fails the same way on legacy, so it is the
-  machine. ASan's symbolizer (atos) hangs the same way on a report; run with
-  `ASAN_OPTIONS=symbolize=0`. The leak check used instead is `mlir-same --owned` (Gates).
-- *One process.* `milo-opt --emit-llvmir <passes>` runs the pipeline and prints LLVM IR
-  (byte-identical to piping into mlir-translate); the milo-opt stage went from about 40
-  to 26 ms on the `owned` program.
-
-**Fourth batch (2026-11-01): M5 start, globals, big aggregates, the first dialect rewrite.**
-
-- *Globals.* `milo.global "name"` is the place of a module global (declared external, the
-  splice keeps the module's definition); not an owned slot, so a store over it drops the
-  old value as through a `&mut`. `milo.global.init` calls legacy's guarded entry
-  (`__milo.lazy.<G>`) for a `LazyGlobalInit`, and `milo.store ... init` is a lazy global's
-  first fill (HIR `isInit`: nothing to drop), so the `__milo.lazyinit.*` functions go
-  through MLIR too. Thread-local globals stay legacy. A function naming a global keeps its
-  legacy body for the noalias analysis (it reads `touches` from the text), as one with a
-  raw pointer does; so does `main`, which therefore stays legacy when it names one.
-- *Fn values and closures.* `!milo.fn<(params) -> ret>` is a non-owning fn value
-  (`{ ptr fn, ptr env }`). `milo.closure @body(captures)` builds a by-reference closure:
-  its body is a `func.func` of its own (internal, `(!milo.ptr env, params...)`), and the
-  env is an entry-block slot of the creating frame with a null drop header and the
-  captures' addresses (`milo.env.capture %env[i]` reads one back inside the body).
-  `milo.closure.call` calls through the pair with the env first. A named fn as a value is
-  legacy's trampoline, through a helper (`milo.fnval.<f>`). Closure bodies are appended
-  to the module whole; the creating function keeps its legacy body for the analysis
-  (byRefClosures, indirect calls). Still legacy: `move` closures and every owning fn type
-  (their heap env has drop glue: next), heap-env and key-extractor closures, a closure
-  with captures in a global initializer (legacy gives that env a static slot), slice
-  params. The HIR type of a fn-typed field has lost its params; the struct layout's is used.
-- *Matches.* An owning enum matched by value: an arm that binds an owning payload field
-  moves the subject out of its owned slot (`milo.move`) and binds owned slots, so drop
-  elaboration sees the subject empty on that path only (legacy's alive flag); an arm that
-  leaves an owning field unbound stays legacy (legacy leaks it). A `&mut` subject binds
-  payload places (`milo.enum.field_ref`). String and float literal patterns are a chain of
-  `==` tests in nested `milo.if`s. A niche-packed enum (legacy EnumNiche) is
-  `!milo.enum<"N", niche = V : iN, [...]>`: legacy's `{ P }` with no tag word, its tag read
-  as a compare of the payload's leading integer with V (program `niche-enums`, FileCheck
-  `niche.mlir`). Still legacy: nested patterns, a 128+ byte enum matched by value.
-- *128+ byte aggregates* are places, never SSA values (legacy's isBigAgg: SROA splits a
-  whole-aggregate load per element). `placeType` admits them, `valueType` does not: by-ref
-  params and args, field places, a by-value param (stored to its slot on entry, as legacy
-  spills it), a by-value argument (loaded whole at the call, as legacy does), a big enum
-  matched through `&`/`&mut` (`milo.enum.tag_at`, payload places). sret functions take
-  legacy's hidden out pointer first; `return` writes a struct literal field by field
-  (`init` stores) or forwards an sret call, and `let x = f()` gives the call `x`'s slot;
-  `milo.filled` tells drop elaboration an owned slot was filled in place.
-- *`s = s + x`.* `milo.string.concat` replaced the helper call, and
-  `milo-append-in-place` (before scope-drops) rewrites `%l = load %s; ...; %r = concat %l,
-  %x; store %r, %s` to `milo.string.append %s, %x` (legacy's pushStr) when nothing in
-  between names `%s` and `%x` is not a view of it. 200000 appends: 2.13 s before, 0.01 s
-  after, the same as legacy (`mlir/bench/append.milo`). The first optimization the
-  dialect does that legacy did by matching its own Assign.
-- *Canonicalize* runs with arith's `SelectToExtUI` off: it folded a select of Milo's si32
-  (an if-expression `if b { 1 } else { 0 }`) into an `extui`, which only takes signless ints.
-- *Gates.* Programs `globals`, `closures`, `append`, `match-forms`, `bigstruct`, `sret`
-  (with `lib/bigs.milo`); FileCheck `globals.mlir`, `closures.mlir`, `append.mlir`,
-  `match-mut.mlir`, verifier cases for the new ops. Planted bugs, each red: no drop before a
-  store over a global (`globals`, one more live block); captures stored in reverse
-  (`closures` ran away to the 4 GB guard); `append` with the left operand (`append`
-  stdout); `milo.load` instead of `milo.move` in a consuming match arm (`match-forms`, ASan
-  heap-use-after-free); field_ref index swapped on big structs (`bigstruct` stdout); the
-  tag read 8 bytes in (`bigstruct` exit status); no `milo.filled` (`sret`, 14 more live
-  blocks); a big by-value argument loaded instead of moved (`sret` double free).
-
-**Fifth batch (2026-11-01): gate audit and std fixes.**
-
-- *Vec.map to a fixed array.* `vecMapStd` reported a heap-buffer-overflow under ASan in
-  both backends. Not map, not `@inline`: the checker substituted a type argument into a
-  use site with the use site's array flags, so `*T` with T = [i64; 2] became `*i64`, and
-  vecWithCapacity's `_vecGrowBuf(0 as *T, ...)` sized the buffer at 8 bytes a slot
-  (`wrapTypeArg`). The reverse, T = `*[i64; 2]`, spelled the pointee as a struct name.
-  Regression fixtures `vecMapFixedArrayStd` (ASan red without the fix, both backends) and
-  `genericPtrToArrayArg`. The other 42 `vec*Std`, `str*Std` and `hashMap*Std` fixtures
-  ran clean under ASan on both backends.
-- *Live-block counter.* Erasing every drop of a struct of strings left the count equal to
-  legacy's, for two reasons. At -O2 LLVM deletes a malloc whose block is never read, so a
-  string that is built, measured and leaked is never allocated: the count now also runs
-  on `--fast` builds of both sides. And libSystem's own allocations (stdio, locale) varied
-  with the binary's layout, one block apart between legacy and MLIR at -O0 on six
-  programs that allocate nothing different: only calls from the executable's `__TEXT`
-  count now, and a counter that found no executable fails the gate. Planted bug: a no-op
-  struct drop helper (`emitMlirDropFn`) turned the new program `string-fields` red only
-  through the -O0 count ("legacy 0, mlir 15"), and `append`, `owning-aggregates` and
-  `sret` red at -O2 as before.
-- *StrReserve* (`_strReserve`, std's `string.push`): a call of a legacy function per call
-  line taking the string's place (`milo.str.reserve.<line>.<file hash>`), so the room test,
-  the copy out of a shared or static buffer and the out-of-memory panic's line are
-  legacy's. Program `str-push`; planted bug: reserving 0 bytes instead of `n` turned it
-  red (ASan heap-buffer-overflow). Tahoe Roads api: 2705 to 2997 of 5263 function
-  instances (51.4% to 56.9%).
-- *User `impl Drop`.* A struct or enum with its own Drop is marked after its name
-  (`!milo.struct<"Noisy" drop, si64>`): it has drop glue whatever its fields hold, and
-  the glue is legacy's (`milo.drop.<key>`), which runs the user's drop first. Named
-  locals, params, moves, overwrites, results and scope exits drop where legacy drops them
-  (last declared first, the old value after the new one is computed). Temporaries do not:
-  legacy drops an argument temporary right after its call and others at the end of the
-  statement, this backend at the end of the block, so a temporary of such a type keeps
-  its function legacy (`tempSlot`), except a discarded result (`mk(1)` as a statement),
-  which gets a scope of its own that closes at the end of the statement. Found on the
-  way, for every owning type: an owned operand still pending when a later operand jumps
-  out (`take(tok(), match o { None => return 0, ... })`) was an SSA value no scope drops,
-  so it leaked (a Drop that did not run in `propagatePendingExits`); such a jump now keeps
-  the function legacy (`noPending`). Program `user-drop`, FileCheck `user-drop.mlir`.
-  Planted bugs, each red on stdout: the discarded result dropped at the end of its block
-  ("after" printed before "drop 70"); the pending-operand check off (the Drop of `mk(90)`
-  missing). Tahoe Roads api: 2997 to 3149 (59.8%).
-- *Print order.* `print("a ", f(1))` evaluated every part before printing any, where
-  legacy writes each string part once it is evaluated (after the scalar parts before it):
-  a part that prints, or panics, landed in a different place. Found by `user-drop`. Each
-  string part that is not the last now ends a `milo.print partial` (no newline, the
-  `.part` helper; the verifier requires the string at the end); an interpolated string
-  still evaluates every part first, as `format` does. Programs `print-order`,
-  `trap-print-part` (stdout before the panic); FileCheck in `print.mlir`, verifier case
-  in `verify.mlir`. Planted bug: never splitting turned both red (stdout).
-- *`move` closures.* `!milo.fn<owning (T) -> R>` is an owned value (needsDrop; its glue
-  is legacy's for owning closures, `milo.drop.ownfn`, which calls the env's header). A
-  `move` closure literal is a call of a legacy function made for it
-  (`milo.mkclosure.<fn>.<k>`) taking each capture by value, whose body is legacy's
-  genClosure: the heap env, its drop glue, the liveness flags, the run-once check and the
-  closure body are legacy's. A capture moves out of its owned slot; a shared string
-  capture passes `milo.string.share`. `milo.closure` refuses an owning type (verifier).
-  Still legacy: a capture of a reference or of a type with a user Drop, heap-env
-  (task) and key-extractor closures. Program `move-closures`, FileCheck
-  `owning-fn.mlir`, verifier case. Planted bug: passing a capture with `milo.load`
-  instead of `milo.move` crashed the -O0 build (`live blocks at exit at -O0: legacy 0,
-  mlir null`, a double free). The 142 fixtures with a `move` closure: 141 same, 2
-  nondeterministic on legacy too (http timing). Tahoe Roads api: 3190 of 5327 (59.9%;
-  its function count moved from 5263 under me, the app is being edited).
-- *std intrinsics* (`intrinsic` in emit-mlir): StrReserve, StrAlloc, StrRangeCheck,
-  StrUnique, StringCstr, NumberToString and NonNegative are each a call of a legacy
-  function doing exactly it, one per intrinsic, operand types and call site (line and
-  column: the panics print both; StringCstr, which cannot panic, is one per type). A
-  helper made inside a @trackCaller copy carries its `trackedCaller`, and `loc` now
-  honours it too, so a panic names the caller as legacy's panicAt does. Found on the way:
-  an owning element read through a raw pointer and only lent (`f(src[i])` with a `&T`
-  param, a print part) went into an owned temporary slot and was dropped, freeing the
-  Vec's strings under Vec.map (`vecMapStd` SIGBUS once map went through MLIR); such
-  reads are bit copies now (`bitCopies`), lent from a slot that drops nothing. Programs
-  `str-intrinsics`, `trap-negative-capacity`, `ptr-borrow`. Planted bugs: a helper
-  without the trackCaller span (`trap-negative-capacity` stderr named std/vec.milo:542);
-  StrRangeCheck with start and end swapped (`strings`, `str-intrinsics`,
-  `trap-substr-oob` red); bit copies not recorded (`ptr-borrow` exit 0 -> 1). Programs
-  coverage 66.2% to 94.6%. Tahoe Roads api: 3190 to 3611 of 5330 (67.7%).
-- *`for x in v`* over a Vec param, local or field (not consumed, not `&mut` elements):
-  data and len read once as legacy does, a `milo.while` on an index slot that moves on
-  before the body (so `continue` cannot skip it), the element read through
-  `milo.ptr.elem`/`ptr.load` at the top of each iteration and bound as a view. Program
-  `for-each`; planted bug: `le` for `lt` in the condition (`for-each` exit 0 -> 1, a read
-  past the end). Tahoe Roads api: 3706 of 5350 (69.3%); left: element types without a
-  value type (28), strings (18), consumed Vecs (11).
-- *MapCopyOut* (`_vecCopyOut`/`_mapCopyOut`, behind Vec.clone, filter and HashMap.get):
-  the same `intrinsic` call, the place lent (a Vec's as its header, `refOf`), the result
-  owned. Program `copy-out`; planted bug: a shallow copy instead of the deep one
-  (`copy-out` exit 0 -> 1). Tahoe Roads api: 3801 of 5350 (71.0%).
-- *A 128+ byte enum matched by value*: through its place, as by reference: a local's
-  slot, or a slot of the block the subject is built in. An arm that binds an owning
-  payload reads the bound fields out of the place, empties the subject's slot
-  (`milo.move`, the value unused) and stores each owning field into a binding of its own;
-  a 128+ byte field passes through one SSA value on the way, as a big argument does. Other
-  arms bind places and leave the subject to its scope's drop. Program `big-match`;
-  planted bug: no `milo.move` (`big-match`: the -O2 build crashed, a double free). Tahoe
-  Roads api: 3869 of 5350 (72.3%).
-- *128+ byte enums below 512 bytes are values too* (`BIG_ENUM_VALUE_LIMIT`): legacy
-  returns and passes an enum by value (only structs get sret), so it is an SSA aggregate
-  there as well; larger ones, and every 128+ byte struct, stay places. `into` stores such
-  a value whole into its slot. Program `big-match` (`wrap`, `viaLocal`); planted bug:
-  the value not stored (`big-match` exit 0 -> 1). Tahoe Roads api: 3889 of 5350 (72.7%).
-- *An arm's own binding as its value* (`let Some(v) = f() else { ... }`, `Some(v) => v` on
-  an owned subject): moved out of the arm's slot (`milo.move`), as legacy moves an
-  arm-local tail; it was "block value copies a borrowed value" (144 in Tahoe Roads).
-  Copying a view out of a place at a tail (legacy's cloneViewValue) is not needed by
-  anything measured: strings arrive as `StringClone`, and the checker refuses moving an
-  owning struct out of a borrow. Program `tail-views`; planted bug: `milo.load` for the
-  move (`tail-views` stdout, a use after free). Tahoe Roads api: 3992 of 5350 (74.6%).
-- *Fields as `&T` arguments*: a Vec field of a place is lent as its header
-  (`milo.vec.place`); a field of a value (an immutable binding) from a slot of its own that
-  drops nothing. Program `field-args`; planted bug: the spill slot never written
-  (`field-args` stdout). Tahoe Roads api: 4051 of 5350 (75.7%).
-- *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
-  function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
-  the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
-  temporaries: 13 instances over the 80 Drop fixtures, none in Tahoe Roads; legacy's
-  timing differs per construct (an argument temporary dies after its call, a print part
-  after the print), so it is a scope per consuming op, not per statement, when it is done.
-
-**Sixth batch (2026-11-01): Tahoe Roads' top legacy reasons, by count.**
-
-- *128+ byte values between places* (`milo.copy %src, %dst : <ref or ptr>, <ref or ptr>
-  of T`, one memcpy of T's size, as legacy's emitMemcpy): std's `push`/`insert` store a
-  big element through a raw pointer, `let v = w` and `return w` copy a big local, a big
-  element is read out of a pointer into a slot. The value never becomes SSA. An owned
-  source given up is emptied by an unused `milo.move`, which now lowers to nothing (a
-  dead whole load of a big aggregate is still split per element by SROA). Program
-  `big-elems` (with `lib/wides.milo`: functions of the entry file keep a by-value
-  result, so the sret ones live in a module), FileCheck `copy.mlir`, three verifier
-  cases. Planted bug: no `milo.move` after the copy into the element (`big-elems` exit
-  0 -> 1, a double free of the pushed Row). Tahoe Roads api: 4051 to 4151 (77.6%).
-- *`?`* is the match it means, built as HIR and emitted by `match`: `Ok(v) => v` (tag 0;
-  Some), `Err(e) => return Err(e)` in the function's result enum, wrapped in the From
-  variant first for a conversion. The return is a return statement's, so scope drops run
-  before it and a pending owned operand keeps the function legacy, as for any return.
-  Still legacy: a `?` boxing its error into `Heap<Iface>` and one turning it into a
-  message. Program `propagate`; planted bug: the early return built with the result
-  enum's Ok variant (`propagate` stdout). Tahoe Roads api: 4169 (77.9%): of the 78
-  functions it blocked, most now stop on what comes next (variadic calls, user-Drop
-  temporaries).
-- *A Vec of non-scalars indexed* (`milo.index.ref %v[%i] : !milo.vec<T> -> !milo.ref<T>`,
-  the element's place after legacy's bounds check; milo-expand-index makes it len,
-  bounds_check and `milo.vec.elem_ref`): lent to `&T`/`&mut T` arguments as legacy's
-  genLValueForArg lends it, read and written field by field, stored over (milo-scope-drops
-  drops the old element first), a Vec element lent as its header, `grid[i][j]`. Read as
-  a value, an owning element is legacy's deep copy of the place (the MapCopyOut helper,
-  now `copyOut`); a 128+ byte one is copied with milo.copy when it owns nothing. A
-  `!milo.ref` into Vec element memory does not break the Slot resource's promise in
-  practice: vec.load and vec.store only ever touch Vecs of scalars, and those elements
-  are never reached through one. Programs `vec-elems`, `trap-index-struct-oob`;
-  FileCheck `index-ref.mlir`, a verifier case. Planted bug: the element read as a bit
-  copy instead of the deep copy (`vec-elems` exit 0 -> 1, a double free). Tahoe Roads
-  api: 4235 (79.2%).
-- *Fixed-size arrays* (`!milo.array<T, N>`, LLVM's `[N x T]`) of elements that own
-  nothing: places only at any size, as 128+ byte aggregates are, and so is any struct
-  or enum holding one; an SSA array exists only at the ABI. `[v; n]` stores `v` in a
-  `milo.for` (LLVM makes the memset of a zero one), `[a, b]` stores each element as it
-  is evaluated; `a[i]` is `milo.array.index` (legacy's bounds check against N, then
-  `milo.array.elem_ref`, a GEP); an array decays to its address for a `*T` argument or a
-  cast, as legacy; a struct literal builds an array field in its own place. Helper names
-  spell an array `arr<N>.<elem>` on both sides (Vec<[i64; 3]>'s growth and drop). Vec
-  literals are a legacy function per element type and count (`milo.veclit.<key>.<n>`,
-  genArrayLit's one malloc of exactly n), the elements evaluated in order and moved into
-  it; `[]` is `milo.vec.new`. Still legacy: slices, arrays of owning elements, a small
-  struct holding an array returned by value, `for x in` an array. Programs `arrays`,
-  `trap-array-oob`; FileCheck `arrays.mlir`, two verifier cases. Planted bug: array
-  literal elements stored in reverse (`arrays` stdout). Tahoe Roads api: 4364 (81.6%).
-- *Branches yielding a place-only value* (a match, an if, a let-else, a `?` whose value
-  is a 128+ byte struct): `into` fills the destination from each arm (`tailInto`: the
-  arm's statements, then its last expression built in the place, or the arm's own owned
-  binding copied and emptied), as legacy's genStoreInto; the match is a statement
-  milo.match, and an arm that returns leaves the place unfilled on that path. Program
-  `big-branches` (with `lib/branches.milo`). Planted bug: the arm's binding copied out
-  but not emptied (`big-branches` exit 0 -> 1, a double free). Tahoe Roads api: 4415
-  (82.5%).
-- *Ranking by the whole corpus.* From here the order is the corpus-wide count of blocked
-  function instances (a compile-only census: emit-ir with MILO_MLIR_LOG over every
-  fixture, every example with a main and milojs's two entry points), not one app's.
-  After the branches above: 397979 of 483984 (82.2%); fixtures 82.4%, examples 81.7%,
-  milojs 79.0%. Top reasons: thread-local global 6946, load through a pointer of a
-  struct 6432, `pushStr` 4720, argument copying a borrowed value 4337, variadic call
-  3926, StrPanic 3405, the atomic builtins about 12000 together.
-- *Thread-local globals* (`milo.global "g" thread_local`, declared `thread_local` in the
-  MLIR module; the address is a plain use of the symbol, as legacy takes it) and globals
-  that are places only (fixed-size arrays, 128+ byte structs): a global is now bound by
-  its place type. Program `tls-globals`, a FileCheck case in `globals.mlir`. Planted bug:
-  a thread-local scalar read and written through a fresh slot instead of its global
-  (`tls-globals` stdout). The full `--owned` corpus run on the first commit of this
-  batch was 1092 of 1093 same: `channelCrossThreadPark` had 13 live blocks at exit on
-  legacy and 0 on MLIR once, same on two reruns (threads still alive at exit). Corpus:
-  405026 (83.7%); Tahoe Roads api: 4441 of 5351 (83.0%).
-- *`*p` of any type* is a place reached through a pointer (ptrPlace): read whole as a bit
-  copy that owns what the memory owns (as `p[i]` already was), written whole with
-  nothing dropped, `(*p).f` read and written in place, a 128+ byte one copied with
-  milo.copy. Program `ptr-structs` (in a function of its own: a main naming a raw pointer
-  keeps its legacy body). Planted bug: `*p` addressing the element after p (`ptr-structs`
-  stdout the same, `--owned` red: ASan heap-buffer-overflow). Tahoe Roads api: 4472
-  (83.6%).
-- *`s.pushStr(x)`* is `milo.string.append` (legacy's pushStr through the helper that
-  milo-append-in-place already used), onto any string place; a temporary `x` dies at
-  the end of the block. Program `push-str`. Planted bug: the temporary not put in a slot
-  (`push-str` `--owned` red: 5 more live blocks at exit). Taking pushStr put more of
-  the string fixtures' mains through MLIR and found a bug from the third batch:
-  `milo.string.share` declared only a read of its slot, so CSE folded the two shares of
-  `pair(s, s)` into one value passed twice (one count for two owners: a use after free,
-  `valueStringUseAfterPass` stdout, `valueStringStruct` ASan). It writes the count now;
-  FileCheck `share.mlir`. Corpus: 413391 (85.4%); Tahoe Roads api: 4497 (84.0%).
-- *Extern calls with C strings, and variadic calls* (`milo.ffi.<fn>.<shape>.<site>`): the
-  call itself is legacy's genCall in a legacy function, so the string to `*u8`
-  conversion (a static or view string copied to a NUL-terminated temporary for the
-  call) and the variadic promotion are legacy's. A string goes to it by reference; one
-  this function owns outright (a local, a field of one, a temporary) is first made the
-  only handle to its buffer, as legacy's emitCStrUniquePlace does (C may write through
-  the pointer), with the StrUnique helper. A temporary given to a libc call that keeps
-  its pointer stays legacy (legacy leaks it). Program `ffi-strings`. Found on the way: an
-  intrinsic helper takes its result type from the expression it stands for, so a
-  unique made for a call returning i64 fell off the end of an i64 function (a trap at
-  -O2 only). Planted bug: the temporary in a slot that drops nothing (`ffi-strings`
-  `--owned` red: one more live block). `s.cstr()` through MLIR (the
-  fifth batch's StringCstr helper takes the place by reference) never made an owned
-  local unique first, where legacy does; it does now (program `cstr-unique`, stdout red
-  without it: C's write reached the shared copy). Corpus: 417093 (86.2%); Tahoe Roads
-  api: 4525 (84.6%).
-- *Builtins that only read their operands* (atomics, exit, flush, `_cstrToString`,
-  `_bytesToString`, `_strDataPtr`, `_miloArgAt` and the other byte and scheduler
-  accessors; `HELPER_BUILTINS`): legacy's code for each in a legacy function per
-  builtin, operand shape and call site (`milo.builtin.*`), a by-ref operand as its
-  place. Program `builtins`; its prints are in a function of their own because a
-  temporary in this backend dies at the end of its block, and `exit` before the end of
-  main's block leaves one more live block at exit than legacy, which drops it at the
-  end of the statement (only the live-block count can see it). Planted bug: a string
-  result not owned (`builtins` `--owned` red at -O0: one more live block). `exit` ends
-  its path as a jump does (HIR types it void): `take(s); exit(1)` on one branch then
-  `print(s)` failed drop elaboration ("may be empty"), caught by `exitDivergesMoves`.
-- *std's panics* (`_strPanic`, `_vecPanic`: HIR StrPanic, VecPanic) are intrinsic helpers
-  per message and site, and end their path as exit does. *addrOf* of an immutable SSA
-  binding moves it to a slot from there on (legacy's alloca: a write through the
-  address is seen by later reads), and of a place behind a pointer is that pointer
-  (`data[i].addrOf()` in std's insert and remove). Programs `trap-vec-insert`,
-  `trap-str-truncate`, `addr-of`. Planted bugs: the binding spilled but not rebound
-  (`addr-of` stdout: 40 for 41); the panic's value replaced by 0 (`trap-str-truncate`
-  stderr).
-- *`x ?? d`* is the match it means (`Some(v) => v`, `_ => d`), also into a place for a
-  128+ byte result. A `??` over a Result whose Err owns something stays legacy: legacy
-  never drops that payload (one more live block at exit than this backend, which
-  drops it), so taking it would change the leak count. Program `default-value`.
-  Planted bug: the Some arm yielding the default (`default-value` stdout).
-- *`zeroed<T>()`* is `milo.zero : T` (LLVM's zero of the type; for a string or a Vec
-  the empty one), stored whole into the place of a place-only T. A fn value has no zero
-  (verifier). Program `zeroed`, FileCheck in `scalar-to-llvm.mlir`, a verifier case.
-  Planted bug: an i64 zero emitted as 1 (`zeroed` stdout).
-- *Interpolated strings as values* (`format`): the builtin helper with every string part
-  lent from its place (print already printed the parts without building the string).
-  Program `format`. Planted bug: the result not owned (`format` `--owned` red: 4 more
-  live blocks).
-- *A 128+ byte temporary lent as `&T`* (`show(picked(p))`, an sret call or any
-  place-only value) is built in a slot of the block, which drops it. `big-branches`'s
-  main goes through MLIR now. Planted bug: that slot not owned (`big-branches`
-  `--owned` red: 8 more live blocks).
-- *`for x in v` over place-only elements* (128+ byte structs, arrays) binds `x` as the
-  element's place (`milo.index.ref`, in bounds by the loop condition). Program
-  `big-for`. Planted bug: every iteration bound to element 0 (`big-for` stdout).
-- *A string given to a `*u8` param of a Milo function* gets the same C string
-  conversion as for an extern (legacy keys it on the signature, not on extern), so it
-  goes through the `milo.ffi.*` helper too (`plen` in `ffi-strings`; the temporary
-  plant above turns it red the same way).
-- *A 128+ byte payload of an enum that is a value* (`Some(row(i))`, a derived clone of
-  `Result<Row, E>`) passes from its slot through one SSA value, as a big argument does
-  (bigArg). `maybeRow` in `big-branches`. Planted bug: the temporary loaded instead of
-  moved out of its slot (`big-branches` stdout, a use after free).
-- *A call is a scope of its own* (callScope): the temporaries its by-ref arguments lend
-  from die right after it, before its result is used, as legacy's argTempDrops; so an
-  argument temporary with a user Drop (`peek(mk(1))`) is taken, its drop where legacy
-  prints it. Other user-Drop temporaries (a field of one, a print part) stay legacy.
-  Found on the way: a store over an owning field never registered the old value's drop
-  glue, so `self.items = Vec.new()` linked only when something else had (`arenaDropElements`
-  at -O0). Program `drop-args`. Planted bug: calls not scoped (`drop-args` stdout: the
-  drops after the statement). A match subject temporary with a user Drop is taken when
-  every arm binds every owning payload field (`let f = File.openRead(p)?`): every path
-  empties its slot, so no drop of it ever runs. Planted bug: any subject taken (the
-  legacy-only `other` in `drop-args` then drops after "after": stdout).
-- *An owning field moved out of a local* (`take(r.name)`, nested, a Vec field, a 128+
-  byte one by milo.copy): read out, then the field zeroed in place by an `init` store,
-  as legacy zeroes it, so the struct's drop finds an empty one; not when a struct on
-  the way runs a user Drop. Program `move-field`. Planted bug: no zeroing (`move-field`
-  exit 0 -> 1, a double free).
-- *`for b in s` and `s as *u8`* read the string's data pointer (`milo.string.data`,
-  field 0) and its len once, as legacy's genForEach and genCast. Program
-  `string-bytes`, FileCheck in `pointers.mlir`. Planted bug: the walk starting one byte
-  in (`string-bytes` stdout).
-- *`x!`* is legacy's genUnwrap in a helper per enum and site, the operand moved into
-  it; *`forget(x)`* takes x into an SSA value nothing drops. Programs `trap-unwrap`,
-  `forget` (the ownership counts skip a program that panics, so forget has its own).
-  Planted bugs: the forgotten value dropped (`forget` `--owned`: legacy 2 live blocks,
-  MLIR 0); the unwrapped payload not owned (legacy 2, MLIR 3).
-- *isSome/isNone/isOk/isErr* are tag tests (`enum.tag`, or `tag_at` of a place-only
-  enum's place) and *unwrapOr* is `??`; the closure-taking ops (map, andThen, orElse,
-  unwrapOrElse) stay legacy. Program `option-ops`. Planted bug: the test inverted
-  (`option-ops` stdout).
-
-**Seventh batch (2026-11-01): Tahoe Roads' next reasons.** `mlir/build.sh` prints the
-cmake or ninja log when a step fails (it went to /dev/null, so a broken milo-opt build
-was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
-
-- *`for x in makeVec()`* (a consuming for-in over a Vec, value-typed elements): the Vec
-  moves into an owned slot of `!milo.vectail<T>`, legacy's `{ %Vec, i64 cursor }`
-  (genConsumedIterable), in a block around the loop (`milo.vectail.init`, then
-  `milo.filled`). `milo.vectail.take %slot[%i]` moves element i out into the binding (an
-  owned slot of the body when it has drop glue) and sets the cursor past it; the slot's
-  drop glue is legacy's tail drop (`milo.drop.vectail.<elem>`, emitConsumedTailDrop): the
-  elements from the cursor on, then the buffer, so a break or a return frees exactly what
-  no iteration took, after the binding. Still legacy: place-only elements, consumed
-  arrays. Program `consumed-for`, FileCheck `vectail.mlir`, two verifier cases. Planted
-  bug: take storing the cursor at i instead of i + 1 (`consumed-for` stdout: the element
-  a break stopped at dropped twice). Tahoe Roads api: 4988 (93.2%).
-- *Types that hold themselves through a Vec* (a JSON value, `JsonVal` in std/json, a
-  tree): `!milo.struct` and `!milo.enum` are identified by name now, as LLVM's identified
-  structs (mutable storage, the body set once; Milo.h `StructTypeStorage`), so inside its
-  own body a type is spelled by name alone (`!milo.enum<"Val">`) and is the same type. A
-  body spelled again inside itself must be the same body, and a second, different body for
-  a name is a parse error. placeType spells the back reference and does not cache a
-  spelling that names an enclosing type, so every spelling it hands out is complete. The
-  legacy reasons now say what blocks a Vec (`vec (struct (fn))`) and name recursion.
-  Program `recursive-types`, FileCheck `recursive.mlir` (round trip), two verifier cases.
-  Planted bug: a bare name inside its own body read as the empty struct (`recursive-types`
-  red: the build fails). Tahoe Roads api: 5069 (94.7%).
-- *fn values over 128+ byte structs* (std/http's `(&mut Context) => Response` handlers in
-  `Route`, `Router`): a `&T` param of a fn type is the place of T (placeType), so a
-  place-only T is lent by its address as in any by-ref param. `milo.fn.cast` retypes a fn
-  value between owning and plain (same bits): a named fn or a frame closure given to a
-  `move` param, and a `move` closure stored into a plain fn field, where nobody drops it
-  (legacy leaks its env the same way; the live-block count agrees). Program `fn-fields`
-  (with `lib/ctx.milo`), FileCheck in `owning-fn.mlir`, a verifier case. Planted bug: the
-  cast's lowering nulling the env (`fn-fields` red: the capturing handler crashed). Tahoe
-  Roads api: 5117 (95.6%).
-- *Temporaries die at the end of their statement* (a `let`'s value, an assignment, an
-  expression statement: a scope each), as legacy drops them, no longer at the end of the
-  block. Found by `httpRequestFraming` going red under `--owned` (legacy 40 live blocks
-  at exit, MLIR 43): `clients()` builds a string with `a + b + c` in a `let` and ends in
-  `exit(0)`, so the block end that would have dropped the concat intermediates never
-  came. A bisect by function name found it. Program `statement-temps`.
-  Planted bug: the statement scopes off (`statement-temps` `--owned` red: legacy 2, MLIR
-  5).
-- *128+ byte owning fields built in place* (`Ctx { req: Req { ... } }`, a moved local, an
-  sret call, an if): into the field's place as any place-only field; until the enclosing
-  struct is filled nothing owns it, so it counts as a pending operand and a jump out of a
-  later field keeps the function legacy. Program `big-owning-fields` (with
-  `lib/reqs.milo`). Planted bug: the moved local not emptied after its copy into the field
-  (`big-owning-fields` exit 0 -> 1, a double free). Tahoe Roads api: 5139 (96.0%).
-- *Literals of place-only enums* (`Ok(row)` of a Result holding a 128+ byte struct with an
-  array, the derived `fromJson`/`clone` of big rows): built where they live,
-  `milo.enum.set_tag` then each payload field through `milo.enum.field_ref`, a place-only
-  one built in its place; filled owning fields count as pending, as above. Program
-  `big-enum-lits` (with `lib/shapes.milo`), FileCheck in `aggregates.mlir`, a verifier
-  case. Planted bug: every tag written as 0 (`big-enum-lits` stdout). Tahoe Roads api:
-  5154 (96.3%).
-- *Place-only results returned by value* (`fn initH(): [i64; 8]` in std/sha256, a small
-  struct holding an array, an entry-file function's 128+ byte struct, which legacy does
-  not make sret): the function's result is the ABI's SSA value, loaded whole from its
-  place at the return (`bigArg`, moved out when it owns something), and a call's result
-  goes straight into the caller's place with an `init` store (`into`, the `abiResult`
-  flag, for that call only). Program `array-results`. Planted bug: the call's result not
-  stored into the place (`array-results` exit 0 -> 1). Tahoe Roads api: 5172 (96.7%).
-- *Consuming for-in over place-only elements*: `milo.vectail.take_place` gives the
-  element's place with the cursor moved past it, and the element is copied into the
-  binding's slot (`milo.copy`, then `milo.filled` when it owns something), as legacy's
-  emitConsumeElement memcpys it. `consumed-for` gains a 128+ byte owning element and one
-  holding an array; FileCheck in `vectail.mlir`. Planted bug: no `milo.filled` (the build
-  fails: drop elaboration finds the binding read while it may be empty). Tahoe Roads api:
-  5179 (96.8%).
-- *HashMap* as `!milo.map<K, V>`, legacy's `%HashMap` (codegen-map.ts), opaque: its
-  methods are std/hashmap's Milo code reading it through a raw pointer, so only lets,
-  params, fields, results, `zeroed`, its drop (legacy's glue, `milo.drop.map.<k>.<v>`)
-  and `m.len()` (`milo.map.len`) are needed. std's map intrinsics (`_mapHash`,
-  `_mapKeyEq`, `_natLess`, `_mapSeed`, `_mapAlloc`) are `intrinsic` helpers, the key
-  operands lent as places. Program `hashmaps`, FileCheck in `aggregates.mlir`. Planted
-  bugs: key equality done as `_natLess` (`hashmaps` stdout); `hasDrop` not seeing a map
-  (`hashmaps` `--owned`: legacy 0 live blocks, MLIR 1, from the `HashMap<i64, i64>`:
-  hasDrop matches type text, and a map with a string in its key or value type passed
-  for owning without the fix). Tahoe Roads api: 5222 (97.6%); 65 HashMap fixtures same
-  under `--owned`.
-- *`replace(p, v)` and `opt.take()`* (HIR MemReplace), values only: the old value read
-  out of the place as the owned result, `v` evaluated (the old value pending meanwhile,
-  so a jump keeps the function legacy), then stored `init`, nothing dropped, as legacy's
-  genMemReplace. Program `replace`. Planted bug: the store without `init`, so the moved-out
-  old value is dropped too (`replace` stdout: a use after free). Tahoe Roads api: 5230
-  (97.7%).
-- *`Heap<T>`* as `!milo.heap<T>` (legacy's malloc'd pointer; owned, its drop glue
-  legacy's `milo.drop.heap.<t>`; a Heap of an interface, a fat pair, stays legacy).
-  `Heap(v)` is `milo.heap.new` (malloc of T's LLVM size, the value stored), `*h` of a
-  place's box is the place `milo.heap.place` gives (reads, field reads and writes, `&T`
-  arguments, through fieldPlace), and a type can hold itself through a Heap
-  (`enum Expr { Add(Heap<Expr>, ...) }`, the named-type spelling above). A move out of a
-  box (`let x = *h` of an owning T, `*mk()`, `*Heap(x)`) is legacy's genHeapMoveOut: the
-  payload out, `milo.heap.free` (no drop), and the box's place left empty (an owned
-  local's slot moved from, a field of a local set to null), so no drop of the leftover
-  runs. Found on the way, a legacy leak, kept: `*h = v` never drops the value it
-  overwrites (legacy's Assign drops only through an Ident, a field or an element), so a
-  store over an owning boxed value stays legacy rather than change the leak count.
-  Program `heaps`, FileCheck `heap.mlir`, a verifier case. Planted bugs: a moved-out
-  payload's box zeroed in place instead of freed (`heaps` `--owned`: ASan
-  heap-use-after-free, before genHeapMoveOut was mirrored, and `heapMoveOutSkipsDrop`
-  stdout: a spurious `drop 0`); the owned local loaded instead of moved before the free
-  (`heaps` exit 0 -> 1, `heapMoveOutSkipsDrop` stdout: a double free).
-- *View lets* (`let w = ws[i]` of an owning element the checker lets alias the element,
-  viewLets): the binding is the element's place (elemRef), as legacy binds its address:
-  no copy, nothing dropped. Program `view-lets`. Planted bug: the element bit-copied into
-  an owned slot of its own (`view-lets` exit 0 -> 1, a double free). Tahoe Roads api: 5236
-  of 5351 (97.9%).
-- *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
-  of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
-  statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.
-
-**Eighth batch (2026-11-01): ownership from the checker's types, then the corpus' top
-reasons.** Tahoe Roads api at the start: 5236 of 5351 (97.9%); corpus 98.3%
-(388883/395597), 1128 of 1128 same under `--owned`. The order followed the corpus counts,
-which beat Tahoe Roads' (each std function counts once per fixture that pulls it in).
-
-- *What owns something is decided from the checker's type, not the dialect text.* Every
-  type placeType spells records, from its TypeKind, whether it has drop glue (Milo.cpp
-  needsDrop over the checker's type) and whether a user Drop runs inside it; hasDrop and
-  runsUserDrop look the text up, and a text not spelled from a checker type (other than a
-  place or a consumed Vec's tail) keeps the function legacy. The text hid ownership in one
-  place: inside its own body a type is spelled by name alone, so the array branch read
-  `[Tree; 2]` inside `struct Tree { name: string, kids: Vec<[Tree; 2]> }` as an array that
-  owns nothing and spelled a type the dialect has no drops for. It also disagreed with
-  legacy in one: legacy computes droppable enums in a single pass, so an enum holding one
-  declared after it (`enum W { Wrap(Option<string>) }`) never gets drop glue, a legacy
-  leak (every `W` built leaks its string). Where the structural answer and legacy's
-  needsDropCg differ the type now stays legacy ("a type legacy's drop glue does not
-  drop"), so both sides leak alike; the legacy bug is not fixed here. A sweep that ran
-  both checks over every fixture found `borrowedEnumPayloadViews` (that `W`) as the only
-  disagreement. Program `drop-structure`. Planted bug: a Vec read as owning nothing
-  (`for-each`, `hashmaps`, `vec-elems`, `view-lets` `--owned` red, `move-field` exit
-  0 -> 1); a planted mismatch with needsDropCg instead only moved functions to legacy,
-  which is the check working.
-- *Helpers keyed by a plain fn type* (`Vec<(i64) => bool>`'s grow and drop glue): typeKey
-  spells a non-owning fn by signature, `fn<n>.<params>.<result or v>`, a `&T` param as
-  `r<T>`, the same in Scalar.cpp. Program `fn-helpers`. Planted bug: the result left out
-  of the key (`fn-helpers` red: the drop glue's symbol undefined at link). Found on the
-  way, a legacy bug, kept: a Vec of `(&Vec<i64>) => i64` does not link on legacy either
-  (`vec$vecGrowOne_fn_ref_Vec<i64>_ret_i64` is not a valid LLVM name).
-- *`move` closures capturing a user Drop*: the refusal is gone; the closure's env drop
-  runs where legacy runs it now that temporaries die at their statement's end. Program
-  `drop-captures` (scope end, early return, overwrite, loop, moved into a callee,
-  returned, a temporary). Planted bug: the capture loaded instead of moved (stdout: a
-  second `drop`).
-- *for-in over fixed arrays of plain elements*: a consumed one (`for i in [0, 1, 5]`, a
-  call's result) evaluated into a slot first, a place borrowed where it is; `milo.for`
-  over the indices, the binding the element's place. Program `array-for`. Planted bug:
-  one iteration short (stdout).
-- *`f as *u8`*: a named function's own symbol in a legacy helper per function
-  (`milo.fnaddr.<f>`), any other fn value's code pointer through an intrinsic helper, as
-  genCast does. Program `fn-addr`. Planted bug: one helper for every function (stdout:
-  two functions' addresses equal).
-- *`assert(c, msg)`*: `c`, then in its `else` legacy's failure path in a helper
-  (`assert(false, msg)`), so the message is evaluated only when the assert fails.
-  Program `trap-assert`. Planted bug: the condition negated.
-- *for-range bounds of another type*: legacy extends a bound by the loop variable's
-  signedness (a u8 bound of an i32 loop is sign extended: 200 reads as -56), so the
-  bound's bits are read as that signedness, then extended. Program `for-bounds`. Planted
-  bug: extended by the bound's own signedness (stdout).
-- *By-ref arguments of C string and variadic extern calls* (std's recorded calls,
-  `__rrx_getsockname`): lent as the helper's `&T` param. Program `ffi-refs`. Planted bug:
-  a copy lent instead of the place (stdout: strtol's end pointer never written).
-- *main behind the green-task wrapper*: main's body is `__milo_main_body` (codegen's
-  MAIN_BODY_FN), no params, its i32 the exit code; no prologue to keep, so a body naming
-  globals or fn values is taken too. Program `green-main`. Planted bug: the body returns
-  1 (exit status).
-- *String slices* (`s[a..b]`, a `&string` view): legacy's genStringSlice in a helper, of
-  a place's string only, the view never dropped. A slice lent to a `&string` param stays
-  legacy (it reaches the C-string path). Program `str-slices`. Planted bug: the end bound
-  passed as the start (stdout).
-- *`Heap<I>` of an interface* as `!milo.dyn<"I">`, opaque, legacy's `{ ptr, ptr }`, owned
-  (drop glue `milo.drop.dyn.<I>`); a method call through a box held in a place is
-  legacy's itable dispatch in a helper per interface, method and operand shape. This
-  takes std's `ErrorContext.message`, the corpus' top reason. Boxing (InterfaceCoerce)
-  and a `&I` receiver stay legacy. Program `dyn-heaps`, FileCheck `dyn.mlir`. Planted
-  bug: every call dispatched to method 0 (stdout).
-- *`return f()` of a void f* (and expression-bodied `(x): void => f(x)` closures): the
-  call as a statement, then the return. Program `void-returns`. Planted bug: the call
-  dropped (stdout).
-- *A string field copied out of a value read in place* (`Some(p.value)` for a for-in
-  element): the field's bits into a slot that drops nothing, shared from there. Program
-  `view-copies`. Planted bug: a bit copy instead of a share (`--owned`: a double free).
-- *for-in over Vec elements holding an array* (std/net's IpAddr, under 128 bytes):
-  bound as the element's place. Program `array-elems-for`. Planted bug: every iteration
-  bound to element 0 (`array-elems-for`, `big-for` stdout).
-- *`==` / `!=` on payload-free enums*: the tags compared, as legacy. Program `enum-eq`.
-  Planted bug: `!=` compared as `==` (stdout).
-- *Where it stands*: Tahoe Roads api 5280 of 5351 (98.7%); `--programs --owned` 97 of 97
-  same. The full corpus was not rerun at the end of the batch. Tahoe Roads' next reasons:
-  arrays of owning elements (`[string; N]` lets, globals, indexing and for-in: 22
-  functions together, the largest piece left), enum patterns whose bindings escape (a
-  `let ... else`, 5), nested patterns (4), temporaries with a user Drop (4), a Vec that is
-  not a param, a local or a field (4), sret calls as values (3), `&T` lets (3), fn values
-  given to externs (3). A `&string` slice lent to a `&string` param goes the C-string
-  path and stays legacy.
-
-**Ninth batch (2026-11-01): two legacy leaks fixed, arrays of owning elements, an i32
-main.** Tahoe Roads api at the start: 5280 of 5351 (98.7%); compile-only census (emit-ir
-with MILO_MLIR_LOG over every fixture and every example with a main, std counted once per
-program that pulls it in) 389464 of 391725 (99.42%). Leaks in legacy are fixed rather
-than mirrored now (fewer leaks is strictly safer for deployed apps), and MLIR then takes
-the function with the same drops.
-
-- *Legacy enum drop glue to a fixpoint*: droppableEnums was one pass in declaration
-  order, so an enum holding one declared after it (`enum W { Wrap(Option<string>) }`,
-  Option being std's) never got glue and every `W` leaked its payload. The pass repeats
-  until nothing changes, clearing the struct drop cache each round (it memoizes answers
-  that read droppableEnums). The "a type legacy's drop glue does not drop" reason is gone:
-  the structural answer is the only one. Fixture `enumHoldsLaterEnumDrop`, with
-  `borrowedEnumPayloadViews` still same. Planted bug: the single pass back (`--fast`
-  legacy build of the fixture: 5 live blocks at exit instead of 0).
-- *`*h = v` drops what it overwrites*: legacy's Assign dropped the old value only through
-  an Ident, a field or an element, so every store into a box of an owning type leaked;
-  a HeapDeref target is an lvalue there now, and MLIR's milo.store over the box's place
-  drops it through milo-scope-drops like any field (the refusal "store over an owning
-  boxed value" is gone). Program `heap-store` (strings, a struct holding a Vec, an array
-  of structs in a box). Legacy before the fix: 19 live blocks at exit, 0 after, MLIR 0.
-  Planted bug: the MLIR store over a box marked `init` (`heap-store` `--owned`: live
-  blocks differ). 36 Heap fixtures same under `--owned`.
-- *Arrays of owning elements* (`[string; N]`, `[Row; 2]`, `Vec<[string; 2]>`, nested
-  arrays): placeType spells them (the needsDropCg refusal is gone), ownsStructurally and
-  Milo.cpp needsDrop see through an array to its element, and legacy's drop glue
-  (`milo.drop.arr<n>.<elem>`) drops one. They are place-only, so the existing big-value
-  paths carry them: lets, params, results, fields, enum payloads, indexing, borrowed and
-  consumed for-in. New here, general rather than per type: a lazy global's first fill of
-  a place-only type is built in place (`into`), as legacy's genStoreInto; a store over a
-  place-only value that holds one (an owned local, a field, an element) evaluates the
-  value into a slot, drops the old one (`milo.drop`, elaborated on an owned slot), copies,
-  and marks an owned slot filled (overwriteBig, legacy's big Assign); `p = p` is skipped
-  as legacy does; array literal elements may be place-only themselves and count as
-  pending while the literal is built (a `?` in a later element keeps the function
-  legacy). Stays legacy: an array repeat of an owning value (legacy deep clones N-1
-  copies), and a consumed for-in over elements with a user Drop (legacy drops each element
-  at the end of its iteration, MLIR after the loop: `forInIfIterable` printed the drops in
-  another order before this refusal). Moving a binding out of an array for-in is a
-  borrowed value's consume and stays legacy. Programs `owning-arrays`,
-  `owning-array-stores`; FileCheck `owning_array` in `drops.mlir`. Planted bugs:
-  overwriteBig without its drop (`owning-array-stores` `--owned`: legacy 0 live blocks,
-  MLIR 12); ownsStructurally reading an array as owning nothing (both programs `--owned`:
-  13 and 25 live blocks). 62 fixtures with owning arrays same under `--owned`. Tahoe
-  Roads api: 5301 (99.1%).
-- *`fn main(): i32`* (740 fixtures): its return value is the exit code, as legacy's.
-  Program `main-i32` (an early `return 3` with an owned string in scope). Planted bug:
-  every return of main giving 0 (`main-i32` exit 3 -> 0). 41 i32-main fixtures and 15
-  green-task ones (channels, spawn) same under `--owned`. Most of the 742 "main" instances
-  are taken; 190 now stop at mlir-backend's main restriction instead ("fn value in main"
-  97, "raw pointer in main" 60, "global in main" 33).
-- *Tried and backed out*: temporaries with a user Drop (the `tempSlot` refusal lifted)
-  turned `cacheTtl`, `dropElementBorrowForms` and `matchIndexSubjectDrop` red on stdout
-  (drop order: legacy drops an argument temporary after its call, a statement's at the
-  statement's end, MLIR at the end of the statement scope). That is a per-position timing
-  decision, left for the Place/Operand rework of emit-mlir.ts (batch 10).
-- *Where it stands*: Tahoe Roads api 5302 of 5351 (99.1%); census 389998 of 391725
-  (99.56%); `--programs --owned` 102 of 102 same. Next reasons by census count: param of
-  type fn 97 (std/http serveExchange), fn value in main 97, `&T` lets 85
-  (Mime.isTextual, url), call arg of type fn 62, nested patterns 61 (std/http wsPump,
-  streamPump), heap-env closures 61, raw pointer in main 60, store through a pointer of
-  another type 58 (a Vec of fn values' push), a Vec that is not a param, a local or a field
-  58, extern argument of type fn 57, by-ref arg / param of a slice 55 + 51
-  (std/unicode caseFind), if-expression without a value 50, enum patterns whose bindings
-  escape 47, callee link name 44 (string.substr), temporaries with a user Drop 38. Most of
-  these are one type in one position, which the batch 10 rework covers in one place
-  rather than one case each; nested patterns (a decision tree, not a switch) and
-  interfaces (boxing into one, `&I` receivers) are features of their own.
-
-**Tenth batch (2026-11-01): one place/operand model.** Tahoe Roads api at the start: 5302
-of 5351 (99.1%); census 389998 of 391725 (99.56%); 239 `MlirUnsupported` sites in
-`src/emit-mlir.ts`. The emitter was rebuilt incrementally, not rewritten: each commit kept
-`--programs --owned` same, and a refactor commit was checked by a byte diff of the MLIR it
-prints for every third fixture (349 modules, paths and path hashes normalized) against its
-parent: zero differences, or only the functions the commit meant to take.
-
-- *One decision per type* (Clang CodeGen's evaluation kind): every dialect type is interned
-  once per context and its decisions are flag bits on its id, set when a checker type
-  spells it (`recordType`): F_DROP and F_USER_DROP (what it owns, from the checker's type),
-  F_SLOT (a binding of it lives in a slot) and F_MEMORY (it is never an SSA operand except
-  at an ABI boundary: 128+ bytes or holding a fixed array, but a 128..512 byte enum is
-  F_SLOT without F_MEMORY, as legacy passes it by value). This replaced the placeOnly and
-  bigTypes sets, the owners and per-type maps, `abiValue`, `memType` and the per-position
-  `isBig` / `valueType(...) === null` mixtures. `lentType` is the one answer to what a
-  by-ref argument of a type is lent as (a Vec's or a slice's header, anything else's ref).
-- *One operand helper, one lend helper*: every by-value position (argument, return, let,
-  assignment, field and element stores, payloads, Vec literal elements, a box's value,
-  `replace`) takes its operand through `operand` / `take`: consumed, a fn value cast across
-  owning (fnAs), of exactly the position's type, loaded whole from its place at an ABI
-  boundary. Every by-ref position (direct, closure, interface, extern and builtin calls,
-  intrinsics) lends through `place` / `lendAs`: a place where it is, a Vec as its header,
-  a value spilled to a slot (owned by the call's frame when it is a temporary). Legacy
-  helpers take any operand that owns nothing (`helperOperand`). Twenty-odd "X of another
-  type" refusals became one, and the 239 sites are 210.
-- *One place for temporaries, at legacy's drop points* (`tempSlot`, its comment the rule):
-  a temporary an operator only reads (`.len`, a tag test, a string byte, a Copy field)
-  dies right after it (`peek`, legacy's dropOwnedTemp); a by-ref argument's right after
-  its call (`callScope`, also around closure calls now; legacy's argTempDrops); a match
-  subject's when the match ends (a match statement opens a frame); an `if` condition's
-  before either branch; a discarded result's at its statement's end; a `let`
-  initializer's at the `let`'s end; a temporary array a slice is taken of when its block
-  ends (`block`, `arrayLitSliceArgDrops` found it). Batch 9's red fixtures were not a
-  timing problem: lifting the refusal for every temporary but a clone left all 80
-  user-Drop fixtures same. They were *clones*: legacy frees a `v[i]` match subject's
-  structural clone structurally, running no user Drop (`structuralDropTypes`, "a clone of
-  a resource shares its handle"). That is now dialect: `milo.var ... owned structural`,
-  whose drop calls legacy's `milo.sdrop.<key>` glue (Drops.cpp; codegen
-  `mlirDropHelper(.., structural)`); its bindings only borrow. FileCheck `@clone` in
-  `user-drop.mlir`, a verifier case. Planted bug: the `structural` marker not printed
-  (`matchIndexSubjectDrop`, `dropElementBorrowForms`, `cacheTtl` stdout: extra drops).
-- *Lifted, each general rather than one type in one position*: fn types whose params or
-  results live in memory, as the ABI's SSA value (`bindParam`, one binding rule for
-  function and closure params; program `fn-abi`; planted: the param's spill store left
-  out); slices as Vec headers (`&[T]` params, ArrayLen, VecSlice in a helper, for-in, a
-  slice in a fn type; program `slices`; planted: the slice bounds swapped); `&mut v[i]` of a
-  Vec of scalars (milo.index.ref; program `mut-elems`; planted: index 0 for every element,
-  the alias check fires); `&T` and slice lets bound as views, a copy of a view or of a
-  temporary string, void if and match expressions taken as statements (program
-  `view-binds`; planted: the view binding replaced by another string); owning fn values
-  stored through a raw pointer (`Vec<(i64) => i64>.push`: a generic body sees an owning T
-  as plain behind `*T`; planted: the cast left out, milo-opt rejects the store); a Vec that
-  is a value (`s.split(";")[0]`, a call's result, a slice let) read from a slot of its own
-  (program `vec-temps`; planted: the temporary's slot not owned, `--owned` 5 live blocks);
-  per-module externs (`string.substr`'s memcpy), which the backend now renames in the MLIR
-  module's LLVM IR the way legacy renames its own calls (planted: no rename, an undefined
-  symbol at link); an sret result read in place (`regionByKey(s).isNone()`, `mk().field`;
-  program `sret-reads`; planted: the read from an unfilled slot).
-- *Bugs found*: MLIR string literals spelled a `\xNN` escape as the UTF-8 of the lexer's
-  sentinel (U+F7NN, three bytes) instead of the raw byte; `unicodeCase` went red once the
-  slice commit let `main` reach MLIR. Fixed (`literalBytes`), program `byte-literals`
-  (planted: the old spelling, stdout). Two vecval-of-a-slice views reached `hasDrop`
-  before their `own` was checked, which kept functions legacy ("ownership of a type not
-  spelled"); fixed. `tests/runtime-errors/stringWithCapacityNegative` pinned 11:9, a
-  location neither backend produced even at the commit that added it (both say 12:5, the
-  call); the annotation is fixed.
-- *The language questions*. The 128-byte rule should not change at the language level:
-  it is a backend representation choice (SROA's cost of whole-aggregate loads), and with
-  F_MEMORY as one flag every position handles a memory type the same way; what is left
-  of it in the census is emitter gaps (an Unwrap's result built in place, a Vec literal of
-  128+ byte elements), not language friction. The owning/plain fn split should change, or
-  at least stop leaking: a generic body sees an owning `T` as plain behind `*T` (the
-  "store through a pointer of another type" reason, 58 in the census, was exactly that:
-  legacy stores the bits either way), heap-env closures remain a reason of their own, and
-  fnAs exists only to cast between two spellings of one ABI value (`{ ptr, ptr }`). One
-  fn type whose drop is "free the env if the closure owns one" (the env pointer says it)
-  would erase the cast, the leak-on-store rule and the typeKey `ownfn` split.
-- *Where it stands*: Tahoe Roads api 5327 of 5352 (99.5%); census 390652 of 391725 (99.73%; the functions left on legacy went from 1727 to 1073); 210
-  `MlirUnsupported` sites. Next reasons by census count: fn value in main 120 and raw pointer in main 63 and global in
-  main 38 (mlir-backend's main restriction: the noalias analysis reads main's legacy body,
-  which the prologue splice cannot keep; more mains reach it now that their callees do),
-  nested patterns 62, heap-env closures 61, enum patterns whose bindings escape 48,
-  ownership of a type not spelled 42 (std/fs setMode, makeDir), VecGetOpt 38, an Unwrap's
-  128+ byte result built in place 36, for over a HashMap 33, a field moved out of a
-  temporary 26 (legacy's dropStructFieldsExcept), `&mut` of a field of a value 18. The full
-  corpus `--owned` was started in the background at the last commit and not waited on.
-
-Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
-moves into std becomes ordinary Milo, which this backend handles without special cases.
-
-### After M7: modularity
-
-Once every function goes through the dialect, std can write `milo` and upstream ops
+Not built. Every function goes through the dialect, so std could write `milo` and upstream ops
 inline (std-only or `unsafe`-gated, the way Mojo's std spells `__mlir_op.`). Then Vec,
 HashMap and string become plain std structs whose methods are Milo plus a few inline ops,
 with no type tags in the checker. The checker shrinks to the core rules: ownership,
@@ -925,26 +118,22 @@ second-class references, generics, traits. Collection-specific rules (a Vec elem
 never moves the header, bounds checks are panic points) become attributes on those std
 types, checked and exploited by generic passes rather than by special cases. SIMD and GPU
 become opt-in std modules over upstream dialects (`vector`, `gpu`), not compiler features.
+See `docs/collections-in-std.md`.
 
-### Verification from the compiled IR (decided)
+## Verification from the compiled IR
 
-Contracts (`requires`, `ensures`, loop invariants) lower to the upstream `smt` dialect
-from the same milo IR that is compiled, so what is proven is what runs, rather than a
-separate model of the source (`src/verify.ts` today). The `smt` ops export through
-upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver (`std/smt`), which
-`src/prove-milo.ts` already drives from SMT-LIB text.
+Decided, not built. Contracts (`requires`, `ensures`, loop invariants) lower to the
+upstream `smt` dialect from the same milo IR that is compiled, so what is proven is what
+runs, rather than a separate model of the source (`src/verify.ts` today). The `smt` ops
+export through upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver
+(`std/smt.milo`), which `src/prove-milo.ts` already drives from SMT-LIB text.
 
-### Raising: modernize and harden source through the dialect
+## Raising
 
-Order (decided 2026-11-01): raising comes after the self-hosted frontend, not before. The
-source-faithful top layer it needs (comments, spelling, layout) is frontend work, so it is
-built once, in the Milo frontend, instead of in TypeScript and then again in Milo. The full
-sequence: 100% coverage, parity (Cortex-M 32-bit, DWARF, compile time, CI), delete legacy,
-quick wins (crash reproducers, parallel passes, range-analysis check removal), self-host the
-frontend, raising, then `smt` contracts and the `memref` loop path.
-
-JSIR's defining trait is that it round-trips: source goes up into the dialect, passes
-transform it, and it prints back as source. Milo gets the same:
+Not built. Raising comes after the self-hosted frontend: the source-faithful top layer it
+needs (comments, spelling, layout) is frontend work, so it is built once, in the Milo
+frontend. JSIR's defining trait is that it round-trips: source goes up into the dialect,
+passes transform it, and it prints back as source. Milo gets the same:
 
 - The top layer stays source-faithful (for-in, `?`, interpolation kept as ops; desugaring is
   a pass), and the emitter reads the checker's output rather than desugared HIR.
@@ -952,22 +141,20 @@ transform it, and it prints back as source. Milo gets the same:
 - Proof gate per rewrite: the printed source re-parses to the identical top-layer dialect,
   and a pure refactor lowers to identical normalized IR.
 - Rewrites: `var` to `let`; unwritten `&mut T` to `&T`; read-only owned private params to
-  `&T`; last-use clone to move; string clone removal; ranged-type inference; dead
-  `@wrapping`; unsafe pointer loops to slices; contract inference and static proof;
-  `@pure` and effect inference; index loops to for-in; match on Result to `?`; loops to
-  fold/any/find; `isSome` plus unwrap to `if let`; std API migration; dead code. First
-  proof of concept: `var` to `let` and `&mut` to `&`.
+  `&T`; last-use clone to move; dead `@wrapping`; index loops to for-in; match on Result to
+  `?`; `isSome` plus unwrap to `if let`; contract inference; dead code. First proof of
+  concept: `var` to `let` and `&mut` to `&`.
 
-### The dialect as a product
+## The dialect as a product
 
 Anything that emits valid milo dialect gets Milo's semantics and lowering; the first such
 client is the self-hosted frontend. The reference is generated from `Milo.td`: every op,
 type and attribute carries a summary and a description, and `sh mlir/build.sh` writes
 [docs/dialect/milo.md](dialect/milo.md) with `mlir-tblgen -gen-dialect-doc` (never edited by
-hand). Still needed: a `libMiloDialect` library and C API, and a versioned format after M7 (MLIR bytecode dialect versioning). The
-verifiers are the contract a client codes against.
+hand). Still needed: a `libMiloDialect` library and C API, and a versioned format (MLIR
+bytecode dialect versioning). The verifiers are the contract a client codes against.
 
-### Dialect hygiene
+## Dialect hygiene
 
 `bun scripts/dialect-hygiene.ts` (run by `mlir/run.sh`) reads `Milo.td` through
 `llvm-tblgen --dump-json`, so class inheritance and trait lists are resolved by TableGen,
@@ -975,81 +162,36 @@ and fails when any op, type or attribute lacks a summary or a description, when 
 an op verifier in `Milo.cpp` can emit has no `expected-error` case (`--uncovered` lists them;
 `verify.mlir` and `verify-ops.mlir` hold the cases), when
 [docs/dialect/milo.md](dialect/milo.md) is not what `Milo.td` generates, or when a count drops
-below `scripts/dialect-hygiene.baseline.json`: ops with verifiers, declared effects, Pure,
-op interfaces, folders, canonicalizers, verify-diagnostics cases, and the op-verifier errors
-in `Milo.cpp` that some `expected-error` names. `--ops` prints one row per op; `--update`
-rewrites the baseline after a count went up. Deleting one summary or one `expected-error`
-turns it red.
+below `scripts/dialect-hygiene.baseline.json` (ops with verifiers, declared effects, Pure,
+op interfaces, folders, canonicalizers, verify-diagnostics cases). `--ops` prints one row per
+op; `--update` rewrites the baseline after a count went up.
 
 Control flow: milo.if, milo.match and milo.scope yield to their parent, milo.while goes
-cond to body or out, milo.for runs its body zero or more times (a signed one names its
-induction variable and bounds; an unsigned one cannot, since upstream reads loop bounds as
-signed), and milo.yield and milo.condition are the region branch terminators. break,
-continue and return are not: they leave any number of regions at once, which
-RegionBranchOpInterface cannot express. Sparse analyses stay sound (no value travels along
-those jumps, and liveness is per block); dense analyses would not, so none runs before
-`--milo-lower-structured-cf`.
+cond to body or out, milo.for runs its body zero or more times, and milo.yield and
+milo.condition are the region branch terminators. break, continue and return are not: they
+leave any number of regions at once, which RegionBranchOpInterface cannot express. Sparse
+analyses stay sound (no value travels along those jumps, and liveness is per block); dense
+analyses would not, so none runs before `milo-lower-structured-cf`.
 
-Symbols and calls: milo.closure is a SymbolUserOpInterface, its body checked once through
-the verifier's symbol table; milo.closure.call is a CallOpInterface (indirect: the callee is
-the fn value), so the dataflow framework takes it through its call path
-(`mlir/test/call-interface.mlir`). milo.global and milo.global.init are neither: they name a
-global the legacy module defines, so the MLIR module holds no symbol to define or check. That
-needs the emitter to declare each global at module level (a `milo.global.decl` symbol that
-milo.global then uses), which is a change to `src/emit-mlir.ts`.
+Symbols and calls: milo.closure is a SymbolUserOpInterface; milo.closure.call is a
+CallOpInterface (indirect: the callee is the fn value), so the dataflow framework takes it
+through its call path (`mlir/test/call-interface.mlir`). milo.global and milo.global.init
+name a global the scaffold module defines, so the MLIR module holds no symbol to check. A
+`milo.global.decl` symbol declared by `src/emit-mlir.ts` would fix that.
 
-Folders (`mlir/test/fold.mlir`): checked add, sub, mul, div, rem, shl, shr and neg fold
-constant int operands only when the result cannot trap (in the type's signedness; a zero
-divisor never folds, signed MIN / -1 only under `wrapping`), so a program still panics
-where Milo panics; and, or, xor, not (and `not` of `not`), cmp of constants or of a value
-with itself (ints only: NaN), int-to-int casts (a constant, a cast to the same type, a cast
-back from a type at least as wide), struct.get of a struct.new and enum.tag of an
-enum.new. A milo.if on a constant becomes the region it takes when that region ends in
-milo.yield. Floats fold in LLVM. The dialect conversion folds too, so these also run inside
-`--convert-milo-to-llvm`.
+Folders (`mlir/test/fold.mlir`): checked arithmetic folds constant int operands only when the
+result cannot trap, so a program still panics where Milo panics (a zero divisor never
+folds, signed MIN / -1 only under `wrapping`). Bitwise ops, int compares, int casts,
+struct.get of a struct.new, enum.tag of an enum.new and milo.if on a constant fold too.
+Floats fold in LLVM. The dialect conversion folds as well, so these also run inside
+`convert-milo-to-llvm`.
 
 Round-trip: `mlir/run.sh` runs MlirOptMain's `--verify-roundtrip` (print in generic form and
 as bytecode, parse back, print again, compare) over every test file of valid IR and over the
 module the emitter prints for every `mlir/test/programs` program (`MILO_MLIR_DUMP`), so a
-type printer and parser that disagree (`!milo.fn<owning ...>`, the identified
-`!milo.struct`/`!milo.enum` bodies) fail there before any frontend meets them.
+type printer and parser that disagree fail there before any frontend meets them.
 
-### Deploying apps built with MLIR
-
-Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the
-corpus and the milojs apps; a per-app record/replay differential (record real traffic
-with the legacy build, replay it against the MLIR build, byte-diff the responses, repeat
-under ASan); a shadow run, then a canary through the existing socket-activated restart
-(`ops/restart-gate.sh`) with the legacy binary kept for rollback. Server hot paths need M6
-(tasks) before a canary is meaningful. The legacy backend is deleted, so there is no legacy build to keep for rollback: a canary
-rolls back to the previous binary.
-
-### Batch 10: one place/operand model (done: see the tenth batch above)
-
-The tail of legacy reasons is mostly one shape: a type in a position (by-ref param of a Heap
-struct, string copy of a temporary, a Vec that is not a param/local/field, sret call as a
-value, `&T` lets, a 128+ byte aggregate as a value). `src/emit-mlir.ts` handles each pairing
-on its own and has 236 `MlirUnsupported` sites, because it grew in coverage order and mirrored
-legacy special cases. Batch 10 rebuilds it on the Rust MIR / Clang codegen model: every
-expression lowers to a place (address) or an operand (value); one function decides per type
-whether it travels as a value or lives in memory; one decides copy, move or share; every
-position (argument, return, let, field, element, temporary, loop binding) goes through them.
-Gates: `--owned` same, coverage never drops, and the `MlirUnsupported` count only goes down.
-The self-hosted frontend later prints through the same structure. Open question it answers:
-whether the 128-byte place-only rule or the owning/plain fn split should change in the language.
-
-### Before deleting legacy: harvest the differential (legacy is now deleted; tests/golden holds the recorded oracle)
-
-The legacy/MLIR differential is the best correctness oracle we have, and it disappears with
-legacy. Before the deletion: a random-program fuzzer (Csmith style) generates well-typed Milo
-programs, builds each with both backends at -O0 and -O2 under ASan, and compares output and
-live heap blocks; every disagreement becomes a fixture. A second generator emits programs the
-checker must reject (use after move, borrow conflicts, escaping refs) and requires every one to
-be rejected, since the differential cannot see frontend bugs both backends share. Runs after
-batch 10. After legacy is gone the remaining oracles are -O0 vs -O2, passes on vs off, and the
-harvested fixtures.
-
-### Design rule: data-oriented, no caches
+## Design rule: data-oriented, no caches
 
 Decided 2026-11-01. Everything written from here on (the emitter, passes, the self-hosted
 frontend, std) answers these: flat arrays instead of hash tables; indices instead of
@@ -1063,107 +205,59 @@ layout); build time comes from removing the text round trip between emitter and 
 (in-process, or MLIR bytecode) and from compiling std once as a library, not from a
 per-function compile cache.
 
-### Eleventh batch (partial, paused 2026-11-01)
+## Open items
 
-Landed: main through MLIR when it holds a raw pointer, a global or a fn value; nested match
-patterns; let-else payloads that escape the arm. Not landed: heap-env closures (work in progress
-on branch `batch11-heapenv-wip`, ungated) and enum patterns with escaping bindings. Open: C ABI
-for structs passed to or returned from externs by value (refused for now, 2af72a0c);
-`exitDivergesMoves`'s extra live block at `exit()` was the gate, not the drops: at -O2 LLVM
-deleted legacy's never-freed `u.clone()` (legacy inlines the `$"…"` formatting, MLIR calls a
-print helper), and at -O0 both hold 3. `mlir-same --owned` now decides on the -O0 count; a
-planted extra clone in MLIR is red at -O0 and invisible at -O2.
+- DWARF for MLIR function bodies: with `-g`, no `define` carries `!dbg` (`tests/sanitize.test.ts`).
+- `!range`/`!noundef` on loads of ranged ints (`tests/refParamAttrs.test.ts`).
 
-### Twelfth batch (2026-11-01, overnight)
+Both are tracked under "MLIR parity gaps" in `docs/roadmap.md`.
 
-`bun scripts/mlir-census.ts` is now the one command for the compile-only census (fixtures and
-examples with a main, milojs's two entry points; it lists files that fail to compile). Run it
-from a worktree of a commit (with `MILO_OPT`) when `src/` may change meanwhile: every compile
-loads `src/` afresh. Start: census 492019 of 494182 (99.56%), 2163 on legacy.
+## Gates
 
-Landed, each with a gate program in `mlir/test/programs/` and, where a plant could tell, a
-planted bug proven red: scoped tasks' heap-env closures; cast-only scalars' ownership; Vecs of
-raw pointers (`Vec<*T>`; one refusal in vecElem was 1146 census functions, which the census
-had mislabelled "128+ bytes" until placeBlocker named the real field); `get`/`first`/`last`;
-repr enum casts; deep copies of 128+ byte owning elements; owning fields moved out of
-temporaries; 128+ byte unwraps built in place; field addresses of SSA bindings; places behind
-raw pointers lent to calls (`milo.ptr.lend`, verified to have only call users); Vecs as print
-parts (non-scalar parts by address, as legacy's helper takes them); iterator for-in (as a
-loop over `next`); ranged ints (stored as their width; RangeCheck through legacy's text);
-foreign raw slices; adopt; builtin queries (capacity, HeapPtr, tryFrom, bit ops, JSON);
-C fn pointers; addresses of scalar elements; `??` over an owning Err.
-
-Found on the way: legacy's `??` leaked a consumed owning Err (now dropped in both backends);
-legacy genUnwrap zeroes an Ident operand through localAddr, which for a by-ref param is the
-slot holding its address (the first big-unwrap helper smashed its -O0 frame; it now takes a
-raw pointer); an empty `match e {}` printed an unbalanced region.
-
-- *Later the same night*: HashMap for-in (entries bound as views, slots addressed by
-  legacy's byte layout), owning array repeats, box-to-interface coercion, offsetOf, closure-taking
-  Option/Result ops (non-owning receivers), temporaries lent to builtin queries, saturating and
-  checked arithmetic. Census 484170 of 484487 (99.93%, 317 on legacy) at db7a7095; full corpus
-  `--owned` at e0e8aa8b 1172 of 1172 same (3 nondeterministic), 284 fixture functions on legacy.
-  The census's 4 emit failures were the game examples hitting its 5-minute timeout under load.
-  What is left is mostly pass work: niche-packed enums (~55), per-field drop flags for moves out
-  of a struct whose field type has a user Drop (30, legacy's field-move flags), jumps out of an
-  expression with an owned operand pending (14).
-- *Niche-packed enums*: `!milo.enum` gained the niche form, so the 71 fixture functions it
-  kept on legacy (enumNicheInt 59, enumNicheIntOps 10, vecMinMaxStd 2) go through MLIR;
-  one left (enumNicheIntOps main: `unwrapOrElse`, its own refusal). Planted bug: the
-  fieldless variant stored as the niche value minus one turned program `niche-enums` red.
-- *Where it stands*: census 484098 of 484487 (99.92%, 389 on legacy) one commit before the
-  `??` and C fn pointer fixes; full corpus `--owned` at 0c4d1317 1173 of 1173 same (1
-  nondeterministic), 336 fixture functions on legacy; milojs runtime 5763 of 5774, its full
-  suite green on the MLIR build. `MlirUnsupported` sites 229 (new handlers carry narrower
-  refusals of their own). Next by count: niche-packed enums (~60: `!milo.enum` has no niche
-  form yet; needs the type, its parser and the enum lowerings), for over a HashMap (34: needs
-  a binding for places behind pointers), moves out of fields (22), jumps out of an expression
-  with an owned operand pending (16).
-
-## Gates (every milestone, every commit)
-
-- **Corpus diff**: `bun test tests/run.test.ts` passes. `bun scripts/mlir-same.ts` builds every fixture through MLIR and compares stdout, stderr
-  and exit status with the recorded goldens in `tests/golden` (the frozen oracle; never
-  re-record from MLIR output except deliberately, with a note in the commit), and prints coverage and build time; it fails when nothing went through
-  MLIR. `--programs` runs only `mlir/test/programs/` (scalar programs and one per trap,
-  seconds), which `mlir/run.sh` runs too. A planted bug in an MLIR lowering must turn
-  fixtures red: on M1, `slt` -> `sle` turned base32Totp and binaryVarint red (and the
-  scalar program); swapping the panic branch turned 11 of the 12 trap programs red
-  (loop-overflow then panics on the first multiply instead of the overflowing one, with
-  the same message and line) and the scalar program too.
+- **Corpus diff**: `bun test tests/run.test.ts` passes. `bun scripts/mlir-same.ts` builds
+  every fixture through MLIR and compares stdout, stderr and exit status with the recorded
+  goldens in `tests/golden` (the frozen oracle; never re-record from MLIR output except
+  deliberately, with a note in the commit), and prints coverage and build time; it fails when
+  nothing went through MLIR. `--programs` runs only `mlir/test/programs/` (scalar programs and
+  one per trap, seconds), which `mlir/run.sh` runs too.
 - **FileCheck tests** per pass and per lowering, in `mlir/test/`, each run by its own
   `RUN:` line from `mlir/run.sh`; `verify.mlir` covers the op verifiers.
 - **Dialect hygiene**: `bun scripts/dialect-hygiene.ts` green, and every test file and emitted
   program module round-trips (`mlir/run.sh`; see Dialect hygiene).
-- **Ownership** from M4 on, required for any commit touching ownership lowering (owned
-  slots, scopes, moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs
-  --owned` before committing, the full corpus with `--owned` in the background. For every
-  program MLIR took part of, live heap blocks at exit must equal the golden's
-  (`scripts/livecount.c`, a malloc/free counter injected with DYLD_INSERT_LIBRARIES; on
-  Linux LeakSanitizer covers it), counted at -O2 and again on `--fast` (-O0) builds, and
-  only for calls made from the executable's own code and the MLIR binary must run clean under ASan
-  (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs here). The
-  output diff cannot gate this: making maybe-init drops unconditional left it green
-  while ASan reported a heap-use-after-free (`--owned` red), and erasing every drop
-  left 202 live blocks against the golden's 179 (`--owned` red).
-- **Compile time** of the corpus, recorded from M1. A regression is a
-  problem to fix (in-process C API, caching, parallel CGUs), not a reason to stop.
-- **Coverage** only goes up.
+- **Ownership**, required for any commit touching ownership lowering (owned slots, scopes,
+  moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs --owned` before
+  committing, the full corpus with `--owned` in the background. For every program, live heap
+  blocks at exit must equal the golden's (`scripts/livecount.c`, a malloc/free counter
+  injected with DYLD_INSERT_LIBRARIES; on Linux LeakSanitizer covers it), at -O2 and on
+  `--fast` (-O0) builds, and the binary must run clean under ASan
+  (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs on macOS). The
+  output diff cannot gate this: an output-identical build can still free twice or leak.
+- **Cross targets**: `bun scripts/mlir-cross.ts`.
+- **Compile time** of the corpus is recorded by the gate. A regression is a problem to fix
+  (in-process C API, bytecode, compiling std once), not a reason to stop.
 
 ## Toolchain
 
 `mlir/` builds `milo-opt` against an installed MLIR (Homebrew LLVM 23.1.3 today) with one
-CMake configure: `sh mlir/build.sh`. A default build compiles the whole module with
-the clang of that same LLVM (`/opt/homebrew/opt/llvm/bin/clang`), never Apple's: LLVM 23 IR
-fed to clang 21 is version skew (it already rejects LLVM 23's float constant syntax), and
-a `MILO_CC` of another version is an error, cross builds included: a cross toolchain's clang (`MILO_CC`, with `MILO_SYSROOT` and lld, as ~/git/digitalocean/milo-cross.mk sets them) only compiles and links, but it consumes milo-opt's IR, so it must be Homebrew LLVM 23's too. The wasm64 build uses the same clang. MLIR's C++
-API changes every release, so the LLVM version is pinned and bumped on purpose.
+CMake configure: `sh mlir/build.sh`. A default build compiles the whole module with the
+clang of that same LLVM (`/opt/homebrew/opt/llvm/bin/clang`), never Apple's: LLVM 23 IR fed
+to clang 21 is version skew, and a `MILO_CC` of another version is an error, cross builds
+included. A cross toolchain's clang (`MILO_CC`, with `MILO_SYSROOT` and lld) only compiles
+and links, but it consumes milo-opt's IR, so it must be Homebrew LLVM 23's too. The wasm64
+build uses the same clang. MLIR's C++ API changes every release, so the LLVM version is
+pinned and bumped on purpose.
+
 A default build without a built `milo-opt` is an error naming the build command, never a
 silent fallback. `milo-opt` is found at `mlir/build/milo-opt` in a checkout, else next to the
 `milo` binary (what install.sh, the Homebrew formula and the deb/rpm ship; `MILO_OPT`
 overrides). Release archives carry a statically linked milo-opt (`MILO_OPT_STATIC=1 sh
 mlir/build.sh`; about 235 MB stripped, trimming the linked MLIR set is open work); the
-darwin-x64 archive has none (no x86 MLIR on the arm64 runner), so Intel macs build it
-(`sh mlir/build.sh`). CI builds it through `.github/actions/milo-opt` (Homebrew on
-macOS, apt.llvm.org LLVM 23 on Linux), cached on the hash of `mlir/` sources and the LLVM
-version.
+darwin-x64 archive has none (no x86 MLIR on the arm64 runner), so Intel macs build it. CI
+builds it through `.github/actions/milo-opt` (Homebrew on macOS, apt.llvm.org LLVM 23 on
+Linux), cached on the hash of `mlir/` sources and the LLVM version.
+
+## History
+
+The migration ran in milestones M0 to M7 from 2026-10-31 to 2026-11-02. The legacy LLVM-text
+backend was deleted at 7d2dd24c; `tests/golden` is the recorded oracle that replaced the
+legacy/MLIR differential. The full log is in git history: `git log -p -- docs/mlir-backend.md`.
