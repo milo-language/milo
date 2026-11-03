@@ -3918,16 +3918,26 @@ class FnEmitter {
   /**
    * How an arm of `p` makes its bindings: in the arm's scope, or, for one that escapes the
    * arm (let-else's), in the block the match sits in, whose end drops an owning one (those are
-   * left to the enclosing scope's drops). An escaping view must read a subject
-   * that outlives the match, one rooted at a binding (`subjLives`), never a temporary the
-   * match's statement drops.
+   * left to the enclosing scope's drops). An escaping view reads a subject that outlives the
+   * match, one rooted at a binding (`subjLives`). A temporary subject (`v[i].f`, a clone of
+   * the element, or a call's result) dies with the match's statement, so a binding that
+   * escapes it owns a copy, taken while the subject still lives.
    */
   private armBinder(p: HIRPattern, outer: MatchOuter, subjLives: boolean): ArmBinder {
     const esc = new Set(p.kind === "EnumPattern" ? p.bindings.filter(b => b.escapes).map(b => b.name) : []);
     return {
       bind: (name, b, view) => {
         if (!esc.has(name)) { this.bind(name, b); return; }
-        if (view && !subjLives) throw new MlirUnsupported("escaping view of a temporary subject");
+        if (view && !subjLives) {
+          const t = p.kind === "EnumPattern" ? p.bindings.find(x => x.name === name)?.type : undefined;
+          if (!t || b.kind !== "var") throw new MlirUnsupported("escaping view of a temporary subject");
+          const c = this.cloneTo(stripRefs(t), b.ref, `!milo.ref<${b.ty}>`, b.ty);
+          if (!c) throw new MlirUnsupported("escaping view of a temporary subject that has no clone glue");
+          const slot = this.ownedSlot(name, b.ty, stripRefs(t), false, outer.frame);
+          this.emit(`milo.store ${c.ref}, ${slot} init : !milo.ref<${b.ty}>`);
+          outer.scope.set(name, { kind: "var", ref: slot, ty: b.ty, owned: true });
+          return;
+        }
         outer.scope.set(name, b);
       },
       owned: (name, ty, t) => this.ownedSlot(name, ty, t, false, esc.has(name) ? outer.frame : false),

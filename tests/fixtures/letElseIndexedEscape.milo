@@ -1,0 +1,20 @@
+// @expect: open! none
+// A let-else binding out of an indexed element escapes the statement that cloned the
+// element, so it owns a copy taken before that clone is dropped.
+struct C { status: Option<string>, n: i64 }
+
+fn pick(cs: &Vec<C>, i: i64): string {
+    let Some(raw) = cs[i].status else {
+        return "none".clone()
+    }
+    let up = raw + "!"
+    return up
+}
+
+pub fn main(): i32 {
+    var cs: Vec<C> = []
+    cs.push(C { status: Some("open".clone()), n: 1 })
+    cs.push(C { status: None, n: 2 })
+    print(pick(cs, 0), " ", pick(cs, 1))
+    return 0
+}
