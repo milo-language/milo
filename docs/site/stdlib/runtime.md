@@ -383,7 +383,7 @@ pub fn runDetachedClosure(fnPtr: *u8, envPtr: *u8): void
 
 Run a `move () => void` closure handed over as its raw (fn, env) pair, then release the
 environment.
-Also std/dbpool's job runner.
+Also std/dbpool's job runner. @unsafe: it calls through whatever pair it is handed.
 
 #### `schedStructSize`
 

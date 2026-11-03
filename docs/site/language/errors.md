@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 586 distinct messages across 752 programs the compiler must reject.
+Every error message the test suite pins: 587 distinct messages across 753 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -204,6 +204,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`calling 'Random.fillRaw' requires an unsafe block`](#calling-random-fillraw-requires-an-unsafe-block)
 - [`calling 'rawFd' requires an unsafe block`](#calling-rawfd-requires-an-unsafe-block)
 - [`calling 'rtWriteI64' requires an unsafe block`](#calling-rtwritei64-requires-an-unsafe-block)
+- [`calling 'runDetachedClosure' requires an unsafe block`](#calling-rundetachedclosure-requires-an-unsafe-block)
 - [`calling 'withRaw' requires an unsafe block`](#calling-withraw-requires-an-unsafe-block)
 - [`calling a C function pointer requires 'unsafe' block`](#calling-a-c-function-pointer-requires-unsafe-block)
 - [`can only be used as a pointer`](#can-only-be-used-as-a-pointer)
@@ -5175,6 +5176,21 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/stdRawPointerFnNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stdRawPointerFnNeedsUnsafe.milo)</sub>
+
+## `calling 'runDetachedClosure' requires an unsafe block` {#calling-rundetachedclosure-requires-an-unsafe-block}
+
+runDetachedClosure calls through whatever (fn, env) pair it is handed, so from safe code `0 as *u8` twice was a call to address zero. It is @unsafe like rtReadI64.
+
+```milo skip
+from "std/runtime" import { runDetachedClosure }
+
+fn main(): i32 {
+    runDetachedClosure(0 as *u8, 0 as *u8) // @error: calling 'runDetachedClosure' requires an unsafe block
+    return 0
+}
+```
+
+<sub>[tests/errors/runDetachedClosureNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/runDetachedClosureNeedsUnsafe.milo)</sub>
 
 ## `calling 'withRaw' requires an unsafe block` {#calling-withraw-requires-an-unsafe-block}
 
