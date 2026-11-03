@@ -41,6 +41,7 @@ const opt = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? ar
 const filter = opt("--filter");
 const RECORD = argv.includes("--record-golden");
 const GOLDEN = argv.includes("--golden");
+if (!GOLDEN) { console.error("mlir-same: the legacy backend is gone; only --golden (compare against tests/golden) is supported"); process.exit(1); }
 if (RECORD && GOLDEN) { console.error("mlir-same: --record-golden and --golden are exclusive"); process.exit(1); }
 const GOLDEN_DIR = join(ROOT, "tests", "golden");
 const jobs = Number(opt("--jobs") ?? 2);

@@ -1,4 +1,4 @@
-// MLIR driver (default build path; MILO_LEGACY=1 turns it off) (docs/mlir-backend.md): the functions the milo dialect covers go
+// MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go
 // HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
 // replace the legacy codegen's in the one LLVM module clang sees.
 //
@@ -20,16 +20,12 @@ import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
 
-// On unless MILO_LEGACY=1 (temporary escape hatch for critical deploys; docs/mlir-backend.md).
-// MILO_MLIR=0 is the old opt-out spelling, accepted for one release; MILO_MLIR=1 is a no-op.
-export const MLIR_MODE = process.env.MILO_LEGACY !== "1" && process.env.MILO_MLIR !== "0";
-
 /**
  * Whether builds for `target` go through MLIR: every hosted target (cross builds and
- * Windows included) and wasm64. A 32-bit target (the Cortex-M family) stays legacy:
- * legacy codegen's typeSize/enum layout hardcode an 8-byte pointer, while milo-opt lays
- * structs out with the target's data layout (4-byte pointer on thumb), so the two halves
- * of one module would disagree about every struct holding a pointer.
+ * Windows included) and wasm64. A 32-bit target (the Cortex-M family) cannot: scaffold
+ * typeSize/enum layout hardcode an 8-byte pointer, while milo-opt lays structs out with the
+ * target's data layout (4-byte pointer on thumb), so the two halves of one module would
+ * disagree about every struct holding a pointer.
  */
 export function mlirTargetOk(target: TargetInfo): boolean {
   return target.arch !== "arm";
@@ -150,7 +146,7 @@ export function mlirClang(): { path: string; id: string } {
 }
 function tool(path: string, what: string): string {
   if (!existsSync(path)) {
-    console.error(`error: missing ${what} at ${path}; ${BUILD_HINT} (or MILO_LEGACY=1 for the legacy code generator)`);
+    console.error(`error: missing ${what} at ${path}; ${BUILD_HINT}`);
     process.exit(1);
   }
   return path;
@@ -183,7 +179,6 @@ function run(cmd: string, args: string[], input: string): string {
   return r.stdout;
 }
 
-const ONLY = process.env.MILO_MLIR_ONLY ? new RegExp(process.env.MILO_MLIR_ONLY) : null;
 const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
 
@@ -212,15 +207,12 @@ export class MlirPlan {
    */
   take(fn: HIRFunction): string[] | null {
     if (fn.isExtern) return null;
-    // Bisecting a miscompile: only functions whose name matches go through MLIR.
-    if (ONLY && !ONLY.test(fn.name)) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns, this.glue);
     if (typeof r === "string") {
       const [first, ...more] = r.split("\n");
       this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
       // No legacy body to fall back to: the dialect must cover every function.
-      if (process.env.MILO_MLIR_FALLBACK !== "1") throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
-      return null;
+      throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
     }
     // A lazy global's init function is codegen's own, not in the HIR module.
     if (!this.fns.has(r.name)) this.fns.set(r.name, fn);
