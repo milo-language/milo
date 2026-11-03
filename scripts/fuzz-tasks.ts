@@ -668,9 +668,11 @@ const SHAPES: Shape[] = [
       }
       if (withState) p.fn(`struct ${Env} {\n    n: i64,\n}`);
       p.fn(`fn ${f}(w: Shard<${elem}>${withState ? `, e: &mut ${Env}` : ""}): Shard<${elem}> {
-    let first = w.get(0)
-    w.set(0, first)
-    return w
+    // A by-value param is immutable; rebinding keeps the owned shard flowing through.
+    var s = w
+    let first = s.get(0)
+    s.set(0, first)
+    return s
 }`);
       p.body.push(`var ${d}: Vec<${elem}> = []`);
       for (let i = 0; i < 3; i++) p.body.push(`${d}.push(${make(i)})`);
