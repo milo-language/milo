@@ -136,7 +136,9 @@ test("a program the guard kills still delivers what it printed", async () => {
   try {
     const src = join(dir, "hang.milo");
     const bin = join(dir, "hang");
-    writeFileSync(src, 'fn main() {\n  print("printed before the hang")\n  var i = 0\n  while true { i = i + 1 }\n}\n');
+    // The counter must not overflow: with a bare `i + 1`, LLVM proves the loop's only exit
+    // is the overflow trap and jumps straight to it, so the program ends before any kill.
+    writeFileSync(src, 'fn main() {\n  print("printed before the hang")\n  var i = 0\n  while true { i = (i + 1) % 7 }\n}\n');
     execFileSync("bun", ["run", join(import.meta.dir, "..", "src", "main.ts"), "build", src, "-o", bin],
       { cwd: join(import.meta.dir, ".."), stdio: ["pipe", "pipe", "pipe"] });
 
