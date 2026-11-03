@@ -92,6 +92,7 @@ function skipped(file: string): string | null {
 }
 
 const manifest: Manifest = [];
+const packageSkips: string[] = [];
 const files = RUN_DIR ? [] : readdirSync(FIXTURES).filter(f => f.endsWith(".milo") && f.includes(filter));
 const skippedFiles = files.filter(f => skipped(f));
 const active = files.filter(f => !skipped(f));
@@ -104,6 +105,15 @@ async function sweep(file: string, record: (o: Outcome) => void) {
   if (existsSync(companionC)) args.push(companionC);
 
   const build = await guardedRun(MILOC, args, { env: { ...process.env, MILO_ROOT: ROOT }, virtualMemMb: 8192 });
+  // Same rule as tests/run.test.ts: a fixture that reaches an external package is an
+  // announced skip naming it when the package is not installed, never a silent drop and
+  // never a failure. Any other build error still fails.
+  const pkg = readFileSync(src, "utf-8").match(/\/\/\s*@requires-package:\s*(\S+)/)?.[1];
+  const out = build.stderr + build.stdout;
+  if (build.code !== 0 && pkg && /cannot open|which does not exist|does not support windows/.test(out)) {
+    packageSkips.push(`${file} (package '${pkg}' not installed or not for windows)`);
+    return;
+  }
   if (build.code !== 0) {
     record({
       file,
@@ -187,9 +197,10 @@ results.sort((a, b) => a.file.localeCompare(b.file));
 const failed = results.filter(r => r.stage !== "ok" && !r.guardKilled);
 for (const r of failed) console.log(`${r.stage.toUpperCase().padEnd(5)} ${r.file}\n      ${r.detail}`);
 
+for (const p of packageSkips) console.log(`SKIP  ${p}`);
 const passed = results.filter(r => r.stage === "ok").length;
 const graded = passed + failed.length;
-console.log(`\n${passed}/${graded} pass (${((passed / graded) * 100).toFixed(1)}%), ${skippedCount} skipped via @skip-os: win32${stillKilled.length ? `, ${stillKilled.length} ungraded (guard-killed)` : ""}`);
+console.log(`\n${passed}/${graded} pass (${((passed / graded) * 100).toFixed(1)}%), ${skippedCount} skipped via @skip-os: win32${packageSkips.length ? `, ${packageSkips.length} skipped for a missing package` : ""}${stillKilled.length ? `, ${stillKilled.length} ungraded (guard-killed)` : ""}`);
 if (OUT_DIR) {
   // Not written on failure: a manifest from a failed sweep must not pass for a complete one.
   if (failed.length === 0) writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest.sort((a, b) => a.name.localeCompare(b.name)), null, 1));
