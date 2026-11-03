@@ -21,7 +21,7 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
     -> milo-opt (C++, mlir/): verify -> milo-scope-drops -> expand-index, raise-to-scf
        -> milo-lower-structured-cf -> milo-elaborate-drops -> loop passes
        -> convert-milo-to-llvm -> mem2reg, canonicalize -> LLVM IR (--emit-llvmir)
-    -> spliced into the legacy module (src/mlir-backend.ts) -> clang
+    -> spliced into the module scaffold src/codegen.ts emits (src/mlir-backend.ts) -> clang
 ```
 
 - **Everything after the checker moves into MLIR**, JSIR/ClangIR style. The goal is to
@@ -44,8 +44,8 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
   then CheckLifetimes and ElaborateGenerators run as passes; Milo keeps borrow checking
   and monomorphization in the TS checker for now).
 - **The emitter reads HIR today**, and later reads the checker's output directly, once the
-  desugaring `src/lower.ts` does moves into passes. The legacy backend is frozen; the
-  default flips when coverage allows.
+  desugaring `src/lower.ts` does moves into passes. The legacy LLVM-text backend is deleted;
+  MLIR is the only backend.
 - **Analyses as MLIR passes**: drop elaboration (which drops run, where drop flags are
   needed) is a dataflow pass on the dialect, using MLIR's dataflow framework rather than a
   hand-written analysis.
@@ -74,9 +74,8 @@ MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it s
 
 ## Coexistence: one function at a time
 
-A function compiles through the MLIR path when every HIR node in it is supported (one
-predicate, `mlirSupports(fn)` in `src/emit-mlir.ts`), otherwise through the legacy
-codegen. The MLIR function's LLVM body replaces the legacy body textually inside the one
+Every function compiles through the MLIR path (`mlirSupports(fn)` in `src/emit-mlir.ts` is the
+coverage predicate; a function it rejects is a build error naming the reason). The MLIR function's LLVM body replaces the stub `src/codegen.ts` emits, textually inside the one
 module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
 the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
 `internal`, and internal symbols do not resolve across modules. Legacy codegen still
@@ -91,10 +90,10 @@ reaches 100% the legacy codegen is deleted and the escape hatch goes with it.
 | M1 | scalar functions: ints, floats, bool, Milo's arithmetic traps (overflow, div by zero, shifts) with identical messages and lines, if/while/loop/break/continue/return, direct calls | coexistence and linking; compile-time number vs legacy |
 | M2 | Vec access and bounds checks (`milo.vec.*`, `milo.bounds_check`), the versioning pass from the prototype | benchmarks: axpy and friends |
 | M3 | strings, structs, enums, Option/Result | |
-| M4 | owned values, moves, drops: drop elaboration pass | leak and ASan sweep under MILO_MLIR=1 |
+| M4 | owned values, moves, drops: drop elaboration pass | leak and ASan sweep (`mlir-same.ts --owned`) |
 | M5 | closures, interfaces, match | |
 | M6 | tasks, contracts, globals, debug info (DWARF via MLIR locations) | lldb smoke test |
-| M7 | default on; delete legacy codegen | |
+| M7 | default on; delete legacy codegen (done 2026-11-02) | |
 
 **M1 progress (2026-11-01).** In: functions whose params, result and locals are ints of
 any width (no declared range), f32/f64 or bool; literals, `let`/`var`/assign, every
