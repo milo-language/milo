@@ -1,15 +1,13 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRStruct, HIRGlobal } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRStruct, HIRGlobal, HIRPattern } from "./hir";
 import { LlvmTextBuilder, asGen, Ty, val, type Block, type Param, type Val } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind } from "./types";
 import type { TargetInfo } from "./target";
 import { Layout, type EnumLayout, type EnumVariant, type EnumNiche } from "./layout";
 import type { Span } from "./ast";
-import { REALLOC_MIN_BYTES } from "./codegen-vec";
 import { runtimeFn } from "./codegen-runtime";
-import { armTailExpr, matchArmLocals } from "./codegen-match";
 import {
   HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
@@ -23,6 +21,27 @@ import {
   DropGlueSeen, emitDropValueBody, ensureStructDropHelper, } from "./codegen-drop";
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
+
+// Below this many live bytes a grow is malloc + memcpy + free rather than realloc. A
+// small block cannot be remapped, so realloc saves no memory there, and macOS's realloc
+// first looks the pointer's zone and size up: respond's string building (buffers of a
+// few hundred bytes) ran 13% slower on realloc than on the copy. At a page and above
+// the remap is what keeps peak RSS at the new size (vec_grow: 132 MB -> 68 MB).
+const REALLOC_MIN_BYTES = 4096;
+
+function armTailExpr(body: HIRStmt[]): HIRExpr | null {
+  const last = body[body.length - 1];
+  return last && last.kind === "ExprStmt" ? last.expr : null;
+}
+
+// The names a match arm declares itself: its pattern's bindings (owned unless the
+// subject is matched by reference) and its top-level `let`s.
+function matchArmLocals(arm: { pattern: HIRPattern; body: HIRStmt[] }, subjectIsRef: boolean): Set<string> {
+  const out = new Set<string>();
+  if (arm.pattern.kind === "EnumPattern" && !subjectIsRef) for (const b of arm.pattern.bindings) out.add(b.name);
+  for (const st of arm.body) if (st.kind === "Let") out.add(st.name);
+  return out;
+}
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
