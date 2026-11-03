@@ -1531,10 +1531,13 @@ export class Codegen {
       for (const line of body) this.emit(line);
     }
 
-    // append shared runtime helpers (substring search, ...)
+    // append shared runtime helpers (substring search, ...). Some src/runtime sections
+    // spell `noalias` on their string param; --no-noalias must rule out every noalias in
+    // the module, theirs included, or it cannot clear one as a miscompile's cause.
+    const keepNoalias = noaliasEnabled();
     for (const body of this.helperFnBodies) {
       this.emit("");
-      for (const line of body) this.emit(line);
+      for (const line of body) this.emit(keepNoalias || !line.startsWith("define ") ? line : line.replaceAll("ptr noalias ", "ptr "));
     }
 
     // append closure function bodies
