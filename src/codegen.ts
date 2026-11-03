@@ -109,7 +109,7 @@ export class Codegen {
   private labelCounter = 0;
   public fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[]; refAttrs?: string[] }>();
   // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
-  // first param (see genStoreInto). Excludes main and exported fns (C ABI).
+  // first param. Excludes main and exported fns (C ABI).
   public sretFns = new Set<string>();
   // extern fns that pass/return a struct by value need native-ABI lowering (byval/sret/coerce)
   private externAbi = new Map<string, ExternAbiInfo>();
@@ -138,8 +138,8 @@ export class Codegen {
   private needsContractFail = false;
   public trapOnOverflow = false;
   // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
-  // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
-  public mlirTake: ((fn: HIRFunction) => string[] | null) | null = null;
+  // compiles, which genFunction emits in place of a body.
+  public mlirTake!: (fn: HIRFunction) => string[] | null;
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -182,7 +182,7 @@ export class Codegen {
   // Droppable locals are identified by their slot ADDRESS. A function can hold
   // several locals with the same name in different scopes, so re-resolving a
   // name through the current scope picks an unrelated slot.
-  // `consumeCursor`: the temporary a consuming for-in owns (genConsumedIterable). Its
+  // `consumeCursor`: the temporary a consuming for-in owns. Its
   // elements before the cursor were moved into the loop binding, so dropping it destroys
   // only [cursor, len) and then frees the buffer.
   get droppableEnums() { return this.layout.droppableEnums; }
@@ -193,7 +193,7 @@ export class Codegen {
   private generatedF32FormatHelper = false;
   private needsStrtof = false;
   // Structural drop: free a value's heap storage without running any user Drop impl, the
-  // exact inverse of emitDeepCloneFromPtr (which never runs a user Clone). A structural
+  // exact inverse of the structural deep clone (which never runs a user Clone). A structural
   // clone of a resource shares its handle with the original, so releasing it would release
   // the original's. A TypeKind object in this set is dropped structurally wherever it is
   // dropped (scope exit, early return, break), so the mode travels with the local.
@@ -1134,7 +1134,7 @@ export class Codegen {
         variadic: fn.isVariadic,
         // `&string` and `*u8` both lower to `ptr`, but they want different things — the
         // address of the %String struct vs. the character buffer. The LLVM type can't
-        // tell them apart, so record it here; see the String coercion in genCall.
+        // tell them apart, so record it here for the call's String coercion.
         wantsStringAddr: fn.params.map(p => (p.isRef || p.isRefMut) && p.type.tag === "string"),
         // Repeated on the call so the caller's optimizer sees them before the callee is
         // inlined or analysed.
@@ -1244,10 +1244,8 @@ export class Codegen {
     // Generated with the bodies, not after them: it sets the needs* flags its printf and
     // abort declarations hang off.
     // The overflow and bounds routines too: MLIR bodies call them, and stubs set no flag.
-    if (this.mlirTake) {
-      fnBodies.push(this.mlirPanicFn());
-      this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
-    }
+    fnBodies.push(this.mlirPanicFn());
+    this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
 
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.linkName ?? e.name));
@@ -1536,9 +1534,6 @@ export class Codegen {
     if (this.sanitize) this.applySanitizeAttribute();
 
     if (this.fnSigs.has("replayHeapMalloc")) this.output = this.replayHeapCalls(this.output);
-    // Last: it reads the final call graph, the replay heap's calls included.
-    // The MLIR path runs it on the module its bodies are spliced into (noaliasOnFinal).
-    if (noaliasEnabled() && (!this.mlirTake || process.env.MILO_NOALIAS_STUBS === "1")) this.output = this.applyNoalias(this.output);
     const externLinks = new Map(externs.filter(e => e.linkName).map(e => [e.name, e.linkName!]));
     let ir = this.output.join("\n") + "\n";
     if (externLinks.size > 0) ir = mapSymbols(ir, n => externLinks.get(n));
@@ -1599,7 +1594,7 @@ export class Codegen {
 
   // `noalias` on a `&mut` parameter promises LLVM that, for the whole call, the pointee is
   // reached only through that parameter. The checker's call-site exclusivity check (every
-  // call form, receivers and moved arguments included) plus emitAliasGuards rule out a
+  // call form, receivers and moved arguments included) plus the runtime alias guards rule out a
   // second PARAMETER naming the storage. Two routes remain in safe code, and this pass
   // withholds the attribute wherever either can occur. It runs on the final IR, so every
   // codegen path, builtins and the replay heap included, is seen:
@@ -1643,9 +1638,9 @@ export class Codegen {
     if (!fn) return false; // declared by codegen itself (printf, malloc, abort, ...)
     return !(fn.sourceFile ?? "").startsWith(resolve(STDLIB_DIR, "std") + "/");
   }
-  /** MLIR path: the noalias pass over the final module, every body MLIR's (no stubs). */
+  /** The noalias pass over the final module, every body MLIR's (no stubs). It runs last: it reads the final call graph, the replay heap's calls included. */
   public noaliasOnFinal(ir: string, closureBodies: string[]): string {
-    if (!noaliasEnabled() || process.env.MILO_NOALIAS_STUBS === "1") return ir;
+    if (!noaliasEnabled()) return ir;
     // MLIR's closure bodies are what may write a caller's locals (the pass seeds that from
     // byRefClosures). A move closure's are counted too: conservative, never unsound.
     for (const c of closureBodies) this.byRefClosures.add(c);
@@ -1874,7 +1869,7 @@ export class Codegen {
           : clash.length ? `reaches and touches ${clash.slice(0, 3).join(",")}` : "";
         if (debug) console.error(`noalias ${name} %${p}: ${why ? `withheld (${why})` : "applied"}`);
         if (why) continue;
-        // The k-th param of the define line, by position: legacy names it %p, MLIR %k.
+        // The k-th param of the define line, by position: the stub names it %p, MLIR %k.
         const open = l.indexOf("(", l.indexOf("@"));
         const ps = splitArgs(l.slice(open + 1));
         if (k < ps.length && /^\s*ptr nonnull dereferenceable\(\d+\) align \d+ %/.test(ps[k])) {
@@ -1943,7 +1938,7 @@ export class Codegen {
   }
 
   private genFunction(fn: HIRFunction): string[] {
-    const mlirStub = this.mlirTake?.(fn);
+    const mlirStub = this.mlirTake(fn);
     if (!mlirStub) throw new Error(`codegen: no MLIR body for ${fn.name}`);
     this.tempCounter = 0;
     this.labelCounter = 0;
@@ -2104,8 +2099,8 @@ export class Codegen {
     return name;
   }
 
-  // The out-of-line handler MLIR's milo.contract_check calls: legacy's contract message
-  // (emitContractCheck) and panic tail. Moves with its siblings in the scaffold step.
+  // The out-of-line handler MLIR's milo.contract_check calls: the contract message
+  // and panic tail. Moves with its siblings in the scaffold step.
   private contractFailHelper(): string[] {
     const lines: string[] = [];
     const b = new LlvmTextBuilder(lines, this);
@@ -2148,7 +2143,7 @@ export class Codegen {
   // over the file being compiled: a panic can fire inside an imported module (a `!` in
   // std/fs), and blaming the entry file sends the reader to the wrong source line.
   // A check's location as panic messages print it, or null when there is no file to name
-  // (panicAt and emitCheckFilePtr then disagree, so the MLIR path declines).
+  // (the panic location and the check's file pointer then disagree, so the MLIR path declines).
   public checkLocation(span?: Span): { file: string; line: number; col: number } | null {
     const file = span?.file ?? this.filePath;
     if (!file) return null;
@@ -2494,7 +2489,7 @@ export class Codegen {
   // Structs and enums render through one compile-time format string because their
   // shape is fixed. A Vec's length and a HashMap's occupancy are not, so these
   // build the text at runtime into a grown-on-demand buffer instead. The result is
-  // a malloc'd NUL-terminated C string, the same contract emitStructDisplay has,
+  // a malloc'd NUL-terminated C string, the same contract the struct display has,
   // so the caller frees it out of `tempBufs` exactly the same way.
 
   // ── Integer formatting ─────────────────────────────────────────────────────
@@ -2570,7 +2565,7 @@ export class Codegen {
   }
 
   // `@milo.str.reserve(s, extra)`: make the %String at `s` hold len + extra bytes plus
-  // the NUL, growing by doubling (16-byte floor), with emitGrowBytes's realloc policy.
+  // the NUL, growing by doubling (16-byte floor), with the checked-allocation realloc policy.
   // Returns the data pointer, or null when the allocation failed (the caller aborts with
   // its own source location). The string is made unique first (see strRt), so the
   // returned buffer is this handle's alone. A cap-0 buffer is a static literal or a view
@@ -2633,7 +2628,7 @@ export class Codegen {
   }
 
   /**
-   * MLIR path: the symbol of a process global legacy's module defines (argc/argv, the
+   * MLIR path: the symbol of a process global this module defines (argc/argv, the
    * scheduler, the panic hook), marked used so it is emitted.
    */
   public mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string {
@@ -2642,7 +2637,7 @@ export class Codegen {
     return { argc: "_milo_argc_global", argv: "_milo_argv_global", scheduler: "_milo_scheduler", panicHook: "_milo_panic_hook" }[which];
   }
 
-  /** MLIR path: the itable global of type `from` as interface `iface` (genInterfaceCoerce). */
+  /** MLIR path: the itable global of type `from` as interface `iface`. */
   public mlirItable(from: string, iface: string): string {
     return (this.itableLayouts.get(`${from}.${iface}`)?.globalName ?? `@itable.${from}.${iface}`).slice(1);
   }
@@ -2660,7 +2655,7 @@ export class Codegen {
     return name;
   }
 
-  /** MLIR path: offsetOf(S, f), the byte offset legacy lays the field at (0 when unknown, as legacy). */
+  /** MLIR path: offsetOf(S, f), the byte offset of the field (0 when unknown). */
   public mlirFieldOffset(struct: string, field: string): number {
     const layout = this.structLayouts.get(struct);
     const idx = layout ? layout.fields.findIndex(f => f.name === field) : -1;
@@ -2784,7 +2779,7 @@ export class Codegen {
 
   // `opt!` / `res?` hand back a payload nobody else will free: a temp operand dies
   // with the expression, and an Ident operand has its slot zeroed in the ok branch
-  // (see genUnwrap/genPropagate) precisely because the payload moved out. A place
+  // (unwrap and `?` do it) precisely because the payload moved out. A place
   // operand that is NOT zeroed — a struct field — still owns its payload, so
   // freeing the result there would double-free.
   private unwrapMovesPayload(expr: HIRExpr & { kind: "Unwrap" | "Propagate" }): boolean {
@@ -2795,7 +2790,7 @@ export class Codegen {
   // Whether an `if`/`match` used as an EXPRESSION hands back a value nobody else owns.
   //
   // It does when some arm yields an owned value: a temporary, a place the checker moved
-  // (isMove: genExpr zeroes it), or a match arm's own binding (the yield moves it). An
+  // (isMove: the expression zeroes it), or a match arm's own binding (the yield moves it). An
   // arm that yields a place it does not consume (`if c { a } else { mk() }` read in place)
   // then stores a clone (ForkSlot.cloneViews), so whichever arm ran, the consumer drops
   // exactly one value it owns. For a resource type the checker moves such a place instead
@@ -2865,8 +2860,8 @@ export class Codegen {
   }
 
   // Whether a field chain bottoms out in an rvalue nobody owns (`mk().a.b`), as opposed to
-  // a place genLValue can address in situ (a local, `v[i]`, `*p`). Only the rvalue is
-  // materialized by genFieldPtr, so only it can die with the expression.
+  // a place that can be addressed in situ (a local, `v[i]`, `*p`). Only the rvalue is
+  // materialized into a temporary, so only it can die with the expression.
   private receiverIsRvalueTemp(expr: HIRExpr & { kind: "FieldAccess" }): boolean {
     const obj = expr.object;
     if (obj.type.tag === "ptr") return false;
@@ -2878,7 +2873,7 @@ export class Codegen {
 
   // `*mk()` / `*Heap(x)`: a deref of a box nobody else owns. Even a read through it has
   // to free the box and drop the payload once the read is done, so codegen treats every
-  // such deref as a move out of the box (genHeapMoveOut) yielding an owned temporary.
+  // such deref as a move out of the box yielding an owned temporary.
   // Reading it in place leaked the box and never ran the payload's Drop.
   private isTempBoxDeref(expr: HIRExpr): boolean {
     if (expr.kind !== "HeapDeref") return false;
@@ -2896,7 +2891,7 @@ export class Codegen {
 
   public isOwnedTempExpr(expr: HIRExpr): boolean {
     // A discarded small-type `replace(...)` result is dropped here (SSA path). A big-agg
-    // replace drops its own moved-out value inside genExpr, so it must NOT double-drop here.
+    // replace drops its own moved-out value inside the expression, so it must NOT double-drop here.
     if (expr.kind === "MemReplace") return !this.isBigAgg(this.llvmType(expr.type));
     if (expr.kind === "Call" || expr.kind === "ClosureCall" || expr.kind === "InterfaceMethodCall") return true;
     // An Option/Result combinator that yields an enum owns it: map/andThen build a fresh
@@ -2966,7 +2961,7 @@ export class Codegen {
 
   // Whether a `??` result is a value nobody else owns. Both branches DO move — the Some
   // branch loads the payload and zeroes the source enum, the None branch stores the
-  // default and zeroes its source (genDefaultValue) — so an unbound `(maybe(i) ?? "x").len`
+  // default and zeroes its source — so an unbound `(maybe(i) ?? "x").len`
   // leaked one payload per evaluation with nothing left to free it.
   //
   // Deliberately narrower than "both branches move": the zeroing that makes a moved
@@ -2976,7 +2971,7 @@ export class Codegen {
   // so its drop is a no-op — those two are safe unconditionally. Everything else, Idents
   // included, stays false and keeps leaking rather than risking a double free.
   private defaultValueOwnsResult(expr: HIRExpr & { kind: "DefaultValue" }): boolean {
-    // An Ident counts, for the same reason it does in unwrapMovesPayload: genDefaultValue
+    // An Ident counts, for the same reason it does in unwrapMovesPayload: the default-value form
     // MOVES out of whichever branch it takes, zeroing the source, so the named variable is
     // not going to be dropped by its scope either. Requiring a literal or a temporary here
     // missed the commonest shape by far —

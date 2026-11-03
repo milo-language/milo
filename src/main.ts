@@ -383,14 +383,13 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
     return;
   }
   const tc = detectToolchain();
-  const cc = tc.kind === "clang" ? tc.path : "cc";
+  const cc = tc.path;
   const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}`
     : sysroot ? `--target=${target.triple} --sysroot="${sysroot}"` : "";
   // The host's pkg-config describes the host's prefix (Homebrew's -I on a mac), which
   // would shadow the sysroot's headers; the sysroot's /usr/include already has them.
   const libFlags = sysroot ? "" : pkgConfigCflags(linkLibs);
-  // The llc+cc fallback has no toolchain id to key on, so it is never cached.
-  const cacheKey = tc.kind === "clang" && cdeclCacheEnabled()
+  const cacheKey = cdeclCacheEnabled()
     ? cdeclCacheKey(cGuards, tc.id, `${crossFlags}\0${libFlags}`) : null;
   if (cacheKey && cdeclCacheHit(cacheKey)) {
     if (process.env.MILO_VERBOSE === "1") console.error(`cdeclcache: hit ${cacheKey.slice(0, 12)}`);
@@ -558,13 +557,13 @@ function emitHir(sourcePath: string, outputPath: string | null, target: TargetIn
 // The clang that compiles every build is the one of milo-opt's LLVM (mlirClang).
 // `id` is the object cache's view of the compiler: its path and version line, so an
 // upgraded clang never serves objects built by the old one.
-type Toolchain = { kind: "clang"; path: string; id: string } | { kind: "llc+cc" };
+type Toolchain = { path: string; id: string };
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
   // Every build hands the IR of milo-opt's LLVM to its clang, so a MILO_CC (a cross
   // toolchain's clang included) must be of that LLVM's version: mlirClang() checks.
-  cachedToolchain = { kind: "clang", ...mlirClang() };
+  cachedToolchain = { ...mlirClang() };
   return cachedToolchain;
 }
 
@@ -618,10 +617,6 @@ function embeddedDir(): string {
 // Produces a statically-linked ELF runnable under QEMU (-semihosting).
 function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optFlag: string, heapSize: number | null = null) {
   const tc = detectToolchain();
-  if (tc.kind !== "clang") {
-    console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
-    process.exit(1);
-  }
   const ed = embeddedDir();
   const startup = join(ed, "startup.c");
   const ldScript = join(ed, "mps2.ld");
@@ -885,73 +880,57 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   // rather than a harmless no-op the way it is on macOS.
   const mathLink = targetIsWindows ? "" : " -lm";
   const sysrootFlags = target ? windowsSysrootFlags(target) + crossSysrootFlags(target) : "";
-  if (tc.kind === "clang") {
-    const opt = optFlag ? ` ${optFlag}` : "";
-    // Mach-O keeps DWARF in the .o and references it from the executable via a debug
-    // map (N_OSO); the DWARF is never copied into the linked binary. The default
-    // single-step `clang x.ll -o out` deletes its internal .o, dangling that map. So on
-    // a Mach-O target with debug info, persist the .o, link it, then dsymutil the debug
-    // map into out.dSYM (which lldb/hades auto-load). ELF embeds DWARF in the binary
-    // directly, so it needs none of this.
-    // Host-darwin is not enough: cross-linking to Windows from a mac produces COFF/PDB,
-    // which has no debug map and no dsymutil step. Gate on the TARGET's object format.
-    if (emitDebug && process.platform === "darwin" && !targetIsWindows) {
-      const obj = `${outFile}.dbg.o`;
-      try {
-        execSync(`${tc.path}${tgt}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
-        execSync(`${tc.path}${tgt}${opt}${san} ${obj} -o ${outFile}${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
-        execSync(`dsymutil ${outFile}`, { stdio: ["pipe", "pipe", "pipe"] });
-      } finally {
-        try { unlinkSync(obj); } catch {}
-      }
-    } else {
-      const linkFlags = `-o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
-      const ccFlags = `${tgt}${sysrootFlags}${opt}${san}`;
-      if (compileSplit(tc.path, tc.id, llFile, ccFlags, linkFlags, optFlag, emitDebug, programId)) return;
-      // -lm: numToStr and other std math call floor/pow from libm. macOS folds
-      // libm into libSystem so clang links it implicitly; Linux does not, so
-      // without this the link fails with `undefined reference to 'floor'` for
-      // any program that reaches those paths (the llc+cc branch already passes
-      // it). Harmless on macOS where libm is always present.
-      //
-      // Object first, then link, so an unchanged program (a fixture on the suite's
-      // next run, `milo run` of the same file) takes its object from the cache and
-      // skips clang; the link of one object is milliseconds.
-      // Next to the IR in the temp dir, not next to the output: `-o /dev/null` is a
-      // real build (the error fixtures use it) and `/dev/null.o` cannot be created.
-      const obj = llFile.replace(/\.ll$/, ".o");
-      const pending: { key: string; obj: string }[] = [];
-      try {
-        const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), obj,
-          `${tc.path}${ccFlags} -c ${llFile} -o ${obj} -Wno-override-module`, pending);
-        phase("clang", () => {
-          if (compile !== null) {
-            execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
-            for (const p of pending) objCacheStore(p.key, p.obj);
-          }
-        });
-        phaseNote("clang", `${compile === null ? 0 : 1}/1 units compiled, ${compile === null ? 1 : 0} from objcache`);
-        const cmd = `${tc.path}${ccFlags} ${obj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
-        // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
-        // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
-        if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
-        phase("link", () => execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }));
-      } finally {
-        try { unlinkSync(obj); } catch {}
-      }
+  const opt = optFlag ? ` ${optFlag}` : "";
+  // Mach-O keeps DWARF in the .o and references it from the executable via a debug
+  // map (N_OSO); the DWARF is never copied into the linked binary. The default
+  // single-step `clang x.ll -o out` deletes its internal .o, dangling that map. So on
+  // a Mach-O target with debug info, persist the .o, link it, then dsymutil the debug
+  // map into out.dSYM (which lldb/hades auto-load). ELF embeds DWARF in the binary
+  // directly, so it needs none of this.
+  // Host-darwin is not enough: cross-linking to Windows from a mac produces COFF/PDB,
+  // which has no debug map and no dsymutil step. Gate on the TARGET's object format.
+  if (emitDebug && process.platform === "darwin" && !targetIsWindows) {
+    const obj = `${outFile}.dbg.o`;
+    try {
+      execSync(`${tc.path}${tgt}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path}${tgt}${opt}${san} ${obj} -o ${outFile}${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`dsymutil ${outFile}`, { stdio: ["pipe", "pipe", "pipe"] });
+    } finally {
+      try { unlinkSync(obj); } catch {}
     }
   } else {
-    if (sanitize) {
-      console.error("error: --sanitize requires clang (not llc+cc)");
-      process.exit(1);
-    }
-    const tmpObj = llFile.replace(/\.ll$/, ".o");
-    const opt = optFlag || "-O2";
+    const linkFlags = `-o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
+    const ccFlags = `${tgt}${sysrootFlags}${opt}${san}`;
+    if (compileSplit(tc.path, tc.id, llFile, ccFlags, linkFlags, optFlag, emitDebug, programId)) return;
+    // -lm: numToStr and other std math call floor/pow from libm. macOS folds
+    // libm into libSystem so clang links it implicitly; Linux does not, so
+    // without this the link fails with `undefined reference to 'floor'` for
+    // any program that reaches those paths. Harmless on macOS where libm is always present.
+    //
+    // Object first, then link, so an unchanged program (a fixture on the suite's
+    // next run, `milo run` of the same file) takes its object from the cache and
+    // skips clang; the link of one object is milliseconds.
+    // Next to the IR in the temp dir, not next to the output: `-o /dev/null` is a
+    // real build (the error fixtures use it) and `/dev/null.o` cannot be created.
+    const obj = llFile.replace(/\.ll$/, ".o");
+    const pending: { key: string; obj: string }[] = [];
     try {
-      execSync(`llc -filetype=obj ${opt} ${llFile} -o ${tmpObj}`, { stdio: ["pipe", "pipe", "pipe"] });
-      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`, { stdio: ["pipe", "pipe", "pipe"] });
+      const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), obj,
+        `${tc.path}${ccFlags} -c ${llFile} -o ${obj} -Wno-override-module`, pending);
+      phase("clang", () => {
+        if (compile !== null) {
+          execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
+          for (const p of pending) objCacheStore(p.key, p.obj);
+        }
+      });
+      phaseNote("clang", `${compile === null ? 0 : 1}/1 units compiled, ${compile === null ? 1 : 0} from objcache`);
+      const cmd = `${tc.path}${ccFlags} ${obj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
+      // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
+      // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
+      if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
+      phase("link", () => execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }));
     } finally {
-      try { unlinkSync(tmpObj); } catch {}
+      try { unlinkSync(obj); } catch {}
     }
   }
 }
@@ -1004,15 +983,7 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
     const tc = detectToolchain();
     const opt = optFlag || "-O2";
     const tgt = clangTargetFlags(target);
-    if (tc.kind === "clang") {
-      execSync(`${tc.path} -c${tgt} ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
-    } else {
-      if (tgt) {
-        console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
-        process.exit(1);
-      }
-      execSync(`llc -filetype=obj ${opt} ${tmpLl} -o ${out}`, { stdio: ["pipe", "pipe", "pipe"] });
-    }
+    execSync(`${tc.path} -c${tgt} ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[emit-obj]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
@@ -1682,7 +1653,6 @@ async function runFile(sourcePath: string, extraArgs: string[], target: TargetIn
 // host's for reasons that are not the edit.
 async function hotCommand(sourcePath: string, args: string[], target: TargetInfo, warningConfig: WarningConfig, overflowChecks: boolean | null, contractChecks: boolean | null): Promise<number> {
   const tc = detectToolchain();
-  if (tc.kind !== "clang") { console.error("error: milo hot requires clang"); return 1; }
   cguOverride = 1;
   const trap = overflowChecks ?? true;
   const contracts = contractChecks ?? true;
