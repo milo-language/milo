@@ -2373,7 +2373,8 @@ export class Codegen {
   }
 
   private genFunction(fn: HIRFunction): string[] {
-    const mlirStub = this.mlirTake?.(fn) ?? null;
+    const mlirStub = this.mlirTake?.(fn);
+    if (!mlirStub) throw new Error(`codegen: no MLIR body for ${fn.name}`);
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.locals.clear();
@@ -2435,111 +2436,9 @@ export class Codegen {
       if (this.needsGlobalInit) b.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
     }
     // main's prologue above stays: the splice moves it into the MLIR body's entry block.
-    if (Array.isArray(mlirStub)) {
-      lines.push(...mlirStub);
-      b.endFn();
-      this.currentSubprogramId = null;
-      return lines;
-    }
-
-    const paramSpillStart = lines.length;
-    for (let pi = 0; pi < fn.params.length; pi++) {
-      const p = fn.params[pi];
-      if (p.isRef || p.isRefMut) {
-        const innerTy = this.llvmType(p.type);
-        const slot = b.alloca(Ty.ptr, `%${p.name}.addr`);
-        b.store(V(`%${p.name}`, Ty.ptr), slot);
-        this.locals.set(p.name, { type: innerTy, typeKind: p.type, mutable: p.isRefMut, isRef: true });
-        // .addr holds a pointer to the pointee → describe the param as ptr-to-T
-        this.dbgDeclare(lines, p.name, `%${p.name}.addr`, { tag: "ptr", inner: p.type }, fn.line ?? 0, pi + 1);
-      } else {
-        const lt = this.llvmType(p.type);
-        const slot = b.alloca(Ty.of(lt), `%${p.name}.addr`);
-        b.store(V(`%${p.name}`, Ty.of(lt)), slot);
-        this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
-        this.dbgDeclare(lines, p.name, `%${p.name}.addr`, p.type, fn.line ?? 0, pi + 1);
-        if (this.needsDropCg(p.type)) {
-          const aliveFlag = `%${p.name}.alive`;
-          b.alloca(Ty.i1, aliveFlag);
-          this.registerFieldFlags(lines, `%${p.name}.addr`, p.name, p.type);
-          this.own.setAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
-          this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
-        }
-      }
-    }
-
-    // Attribute the parameter spill to line 0 (the DWARF "compiler-generated"
-    // convention for prologue code). Left on the scopeLine, LLVM places
-    // prologue_end before the by-value struct store completes, so a breakpoint
-    // at the first statement reads a half-copied argument (garbage len/cap for
-    // string/struct params). Line 0 pushes prologue_end past the whole spill.
-    if (this.emitDebug && lines.length > paramSpillStart) {
-      const spill = lines.slice(paramSpillStart);
-      markDbg(spill, 0, 0);
-      for (let i = 0; i < spill.length; i++) lines[paramSpillStart + i] = spill[i];
-    }
-
-    const allocaInsertPoint = lines.length;
-
-    this.currentEnsures = [];
-    for (const g of fn.entryGuards ?? []) b.callDiscard(Ty.void, `@"${LAZY_GUARD_PREFIX}${g}"`, []);
-    if (this.contractChecks && fn.oldSnapshots) {
-      // Before any `requires` runs, and certainly before the body: `old(e)` names the value
-      // at entry, so the snapshot must be taken while that state is still the current one.
-      for (const snap of fn.oldSnapshots) {
-        const [snapLines] = this.genStmt(snap);
-        lines.push(...snapLines);
-      }
-    }
-    if (this.contractChecks && fn.contracts) {
-      const ensures = fn.contracts.filter(c => c.kind === "ensures");
-      if (ensures.length > 0) {
-        this.currentEnsures = ensures;
-        // return-value slot for `result` in ensures clauses; hoisted to entry
-        if (this.llvmType(fn.retType) !== "void") {
-          b.entryAlloca("%__contract_result.addr", Ty.of(this.llvmType(fn.retType)));
-        }
-      }
-      for (const c of fn.contracts) {
-        if (c.kind !== "requires") continue;
-        const condVal = this.genVal(c.expr, lines);
-        this.emitContractCheck(lines, condVal.ref, "requires", c.span);
-      }
-    }
-
-    let hasTerminator = false;
-    for (const stmt of fn.body) {
-      const [stmtLines, terminated] = this.genStmt(stmt);
-      lines.push(...stmtLines);
-      // Anything past a terminator would land in an already-closed block and make
-      // the module unparseable. The checker rejects unreachable code before we get
-      // here; this just guarantees we can never emit malformed IR if it doesn't.
-      if (terminated) { hasTerminator = true; break; }
-    }
-
-    if (!hasTerminator) {
-      // fall-off end is only reachable in void fns (and main's implicit 0), so no `result` binding
-      this.emitEnsuresChecks(lines);
-      this.emitDropGlue(lines);
-      // Go exit semantics: when main returns the process exits and any
-      // outstanding green tasks die. Waiting is explicit (Task.join/WaitGroup).
-      if (ret === "void") b.ret();
-      else if (this.currentFnName === "main") b.ret(val("0", Ty.i32));
-      // The checker rejects any other non-void fn that can fall off, so this end is
-      // only reached past a `while true` with no break: a block that needs a
-      // terminator and can never execute. A trap rather than bare `unreachable`, so a
-      // shape the checker misses aborts instead of running past the end of the function.
-      else { b.callDiscard(Ty.void, "@llvm.trap", []); b.unreachable(); }
-    }
-
-    // hoist body allocas to entry block
-    if (this.entryAllocas.length > 0) {
-      lines.splice(allocaInsertPoint, 0, ...this.entryAllocas);
-    }
-    this.hoistAllocas(lines, allocaInsertPoint);
-
+    lines.push(...mlirStub);
     b.endFn();
-    this.currentSubprogramId = null; // scope closes with the function
+    this.currentSubprogramId = null;
     return lines;
   }
 
