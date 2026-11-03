@@ -67,8 +67,10 @@ test("typeSize agrees with the emitted type for %String, %Vec and %HashMap", () 
     // way a program does: the stride between consecutive elements of a Vec<T> IS
     // sizeof(T), and `getelementptr %T, ptr null, i32 1` is how codegen computes it.
     // Simpler and just as decisive: assert the sizes the compiler's own table claims.
-    const { Codegen } = require(join(ROOT, "src", "codegen.ts"));
-    const cg = Object.create(Codegen.prototype);
+    // Codegen.typeSize delegates to its Layout now, so ask the Layout directly (an
+    // unconstructed Codegen has no layout to delegate to).
+    const { Layout } = require(join(ROOT, "src", "layout.ts"));
+    const cg = new Layout();
     for (const [ty, want] of Object.entries(emitted)) {
       const got = cg.typeSize(ty);
       expect(got, `${ty}: typeSize says ${got}, emitted type is ${want} bytes`).toBe(want);
