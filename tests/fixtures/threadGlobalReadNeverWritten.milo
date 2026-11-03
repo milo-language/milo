@@ -1,0 +1,23 @@
+// Pins: a `var` global that is only initialized, never written after, is effectively
+// immutable, so a thread may read it: the read-races-with-a-write rule must not fire.
+// The `let` global with a non-constant initializer is the lazy-static form of the same.
+from "std/runtime" import { Promise }
+
+fn build(): Vec<i64> {
+    return [1, 2, 3]
+}
+
+var counts: Vec<i64> = [4, 5]
+let table: Vec<i64> = build()
+
+fn readTable(): i64 {
+    return table.len
+}
+
+fn main() {
+    let p = Promise<i64>.blocking(move(): i64 => counts.len + readTable())
+    print(p.await())
+    print(counts.len)
+}
+// @expect: Ok(5)
+// @expect: 2

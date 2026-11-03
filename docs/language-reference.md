@@ -729,7 +729,11 @@ A data race can only enter a program somewhere, and `@thread` marks that somewhe
 function that hands a closure to a **real OS thread**. Two functions in `std` carry it,
 `spawnOsThreadDetached` and `Promise.blocking`. The checker reads the annotation rather
 than keeping its own list of entry points, and holds any closure crossing one to `Send`,
-rejecting unsynchronized mutable globals reached from its body.
+rejecting unsynchronized mutable globals reached from its body: one it writes, and one it
+only reads when the program writes that global anywhere else (main included) outside a
+critical section. A `var` global never written after its initializer stays readable. The
+fill-once-at-startup global is a `let` with an initializer that builds it, which runs on
+first read, exactly once (see [Once and lazy statics](#once-and-lazy-statics)).
 
 Written `@thread` on the line above the function, as `std/runtime` does for
 `spawnOsThreadDetached` and `Promise.blocking`.

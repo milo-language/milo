@@ -1,0 +1,17 @@
+// @error: 'counts' is a mutable global, and this code runs on a real OS thread
+// Pins: the read-races-with-a-write rule follows static calls, so a read hidden in a
+// helper the thread calls is reported the same as a read in the closure body.
+from "std/runtime" import { Promise }
+
+var counts: Vec<i64> = []
+
+fn readCounts(): i64 {
+    return counts.len
+}
+
+fn main() {
+    counts.push(1)
+    let p = Promise<i64>.blocking(move(): i64 => readCounts())
+    counts.push(2)
+    print(p.await())
+}

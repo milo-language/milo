@@ -326,9 +326,20 @@ fn radiance(ro0: Vec3, rd0: Vec3, s: &mut u64): Vec3 {
     return color
 }
 
-var W: i64 = 1600
-var H: i64 = 900
-var SPP: i64 = 128
+// `render W H SPP` overrides all three. Immutable globals with initializers rather than
+// `var`s main assigns: the bands read them on worker threads, and a global written
+// anywhere may not be read on a thread.
+fn argOr(i: i64, fallback: i64): i64 {
+    let argv = args()
+    if argv.len > 3 {
+        return parseInt(argv[i]) ?? fallback
+    }
+    return fallback
+}
+
+let W: i64 = argOr(1, 1600)
+let H: i64 = argOr(2, 900)
+let SPP: i64 = argOr(3, 128)
 
 // ACES filmic curve (Narkowicz fit): keeps highlights from clipping to flat white.
 fn aces(x: f64): f64 {
@@ -385,12 +396,6 @@ fn renderBand(window: Shard<u32>): Shard<u32> {
 }
 
 pub fn main(): i32 {
-    let argv = args()
-    if argv.len > 3 {
-        W = parseInt(argv[1]) ?? 1600
-        H = parseInt(argv[2]) ?? 900
-        SPP = parseInt(argv[3]) ?? 128
-    }
     var pixels: Vec<u32> = Vec.withCapacity(W * H)
     for _ in 0..W * H {
         pixels.push(0)

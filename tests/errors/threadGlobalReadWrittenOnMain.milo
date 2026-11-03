@@ -1,0 +1,14 @@
+// @error: 'counts' is a mutable global, and this code runs on a real OS thread
+// Pins: a thread that only READS a `var` global races with main's write of it. `push`
+// may realloc the buffer while the thread reads `counts.len`, so a read-only thread is
+// not enough: the global must also never be written anywhere for the read to be safe.
+from "std/runtime" import { Promise }
+
+var counts: Vec<i64> = []
+
+fn main() {
+    counts.push(1)
+    let p = Promise<i64>.blocking(move(): i64 => counts.len)
+    counts.push(2)
+    print(p.await())
+}

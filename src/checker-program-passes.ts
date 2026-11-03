@@ -981,6 +981,63 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
   for (const f of fns.values()) findCritical(f.body);
   for (const g of program.globals) findCritical(g.value);
 
+  // The globals a node writes: an assignment's root, a mutating method's receiver, and
+  // an argument passed to a `&mut` parameter (the `&mut` marker is already stripped, so
+  // the argument roots directly). A method's receiver is params[0], so its args shift by
+  // one when the signature has one more param than the call has args.
+  const writeRoots = (n: Record<string, unknown> & { kind?: string }): (string | undefined)[] => {
+    const out: (string | undefined)[] = [];
+    if (n.kind === "Assign") out.push(rootOf(n.target));
+    if (n.kind === "MethodCall" && mutatesReceiver(host, n as unknown as Expr)) out.push(rootOf(n.object));
+    if (n.kind === "Call" || n.kind === "MethodCall") {
+      const t = target(n as unknown as Expr);
+      const params = t ? host.functions.get(t)?.params : undefined;
+      const args = (n.args as Expr[] | undefined) ?? [];
+      if (params) {
+        const shift = n.kind === "MethodCall" && params.length === args.length + 1 ? 1 : 0;
+        args.forEach((a, i) => {
+          const p = params[i + shift]?.type;
+          if (p?.tag === "ref" && p.mutable) out.push(rootOf(a));
+        });
+      }
+    }
+    return out;
+  };
+
+  // Every mutable global some live code writes outside a critical section, on any thread
+  // (main included). A thread's READ of such a global races with that write; a global
+  // written only by its initializer is effectively immutable and stays readable. Writes
+  // inside a `@synchronized` closure (`Once.run`) are excluded: the primitive publishes
+  // them, which is the existing reason a read after `Once.run` is not flagged. This does
+  // not order main's writes before the thread start (a spawn is a happens-before edge),
+  // on purpose: "filled at startup, read on threads" is what an initialized `let` global
+  // says without the checker having to prove the order.
+  //
+  // std's own globals are left to the write rule alone. Its runtime state (rrMode,
+  // rrHeapOn, the scheduler's config) is written at boot, before any thread exists, then
+  // only read; that order is real but invisible to this pass, and std's cross-thread
+  // state is audited by hand (atomics, ReplayLock). User code cannot write std's globals.
+  const stdGlobals = new Set(program.globals.filter(g => g.span?.file?.includes("/std/")).map(g => g.name));
+  // Global -> the first write found, named in the read-only diagnostic.
+  const writtenAnywhere = new Map<string, Span | undefined>();
+  const noteWrites = (node: unknown, bound: Set<string>) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const x of node) noteWrites(x, bound); return; }
+    const n = node as Record<string, unknown> & { kind?: string; name?: unknown };
+    if (n.kind === "Closure" && criticalArgs.has(n as unknown as Expr)) return;
+    if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") bound.add(n.name);
+    // Flat scoping as in `scan`: a closure param shadowing a global hides it for the
+    // rest of the enclosing body too, which can only miss a write, never invent one.
+    if (n.kind === "Closure") for (const p of (n as unknown as ClosureLit).params) bound.add(p.name);
+    for (const r of writeRoots(n)) {
+      if (r && mutableGlobals.has(r) && !stdGlobals.has(r) && !bound.has(r) && !writtenAnywhere.has(r)) writtenAnywhere.set(r, n.span as Span | undefined);
+    }
+    for (const k of Object.keys(n)) if (k !== "span") noteWrites(n[k], bound);
+  };
+  const live = implicit.reachable();
+  for (const f of fns.values()) if (f.body && live.has(f.name)) noteWrites(f.body, new Set(f.params.map(p => p.name)));
+  for (const g of program.globals) noteWrites(g.value, new Set());
+
   const reported = new Set<string>();
 
   // Reports every unsynchronized global reachable from `closure`, following static calls
@@ -1027,12 +1084,11 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
         if (!name || !mutableGlobals.has(name) || bound.has(name)) return;
         touches.push({ name, span, chain, write });
       };
-      if (n.kind === "Assign") hit(rootOf(n.target), true);
       // `G.push(x)` is a write that never appears as an Assign. A `&self` method is not
       // — `gOnce.run(...)` is the Once synchronizing itself, and `Sync` is the wrong
       // question to ask here anyway: `Vec<i64>` is perfectly Sync and `push` still
       // reallocs it.
-      if (n.kind === "MethodCall") hit(rootOf(n.object), mutatesReceiver(host, n as unknown as Expr));
+      for (const r of writeRoots(n)) hit(r, true);
       if (n.kind === "Ident" && typeof n.name === "string") hit(n.name, false);
 
       // A call through a value (closure, fn-typed param, C function pointer) has no static
@@ -1085,7 +1141,9 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
     const lit = closure as ClosureLit;
     walk(lit.body, new Set(), [], implicit.closureIds.has(lit) ? implicit.closureScope(lit) : { shadow: new Set() });
 
-    const racy = new Set(touches.filter(t => t.write).map(t => t.name));
+    // A read races with a write on any thread, so a global the program writes anywhere
+    // (outside a critical section) is racy here even when this thread only reads it.
+    const racy = new Set(touches.filter(t => t.write || writtenAnywhere.has(t.name)).map(t => t.name));
     const at = (t: Touch) => `${t.name}@${t.span?.file ?? ""}:${t.span?.line ?? 0}:${t.span?.col ?? 0}`;
     for (const t of touches) {
       if (!racy.has(t.name)) continue;
@@ -1102,12 +1160,21 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
       for (const u of mine) reported.add(at(u));
       if (seen) continue;
       const where = t.chain.length ? ` (via ${t.chain.map(c => sayCallee(view, c, implicit)).join(" → ")})` : "";
+      const readOnly = !mine.some(u => u.write);
+      const w = writtenAnywhere.get(t.name);
       host.error(
         `'${t.name}' is a mutable global, and this code runs on a real OS thread${where}`,
         t.span,
-        `two threads touching one unsynchronized global is a data race — make '${t.name}' an ` +
-        `atomic from 'std/sync' (AtomicI64/AtomicBool/AtomicI32/AtomicU64), do the mutation inside ` +
-        `'Once.run', or write 'thread_local var ${t.name}' if each thread should get its own copy`,
+        readOnly
+          ? `this thread only reads '${t.name}', but the program writes it` +
+            `${w ? ` (${w.file?.split("/").pop() ?? ""}:${w.line})` : ""}, and a read racing a write is a ` +
+            `data race (a push can realloc the buffer under the reader). If it is filled once, make it ` +
+            `'let ${t.name}' with an initializer that builds it (a non-constant initializer runs on ` +
+            `first read, exactly once); otherwise pass the value into the closure, use an atomic from ` +
+            `'std/sync', or do every write inside one 'Once.run' that the thread also calls first`
+          : `two threads touching one unsynchronized global is a data race — make '${t.name}' an ` +
+            `atomic from 'std/sync' (AtomicI64/AtomicBool/AtomicI32/AtomicU64), do the mutation inside ` +
+            `'Once.run', or write 'thread_local var ${t.name}' if each thread should get its own copy`,
       );
     }
   };
@@ -1160,8 +1227,7 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
     }
     for (const k of Object.keys(n)) if (k !== "span") findCalls(n[k]);
   };
-  // Only fns that can run: an unused generic instance spawns nothing (see reachable).
-  const live = implicit.reachable();
+  // Only fns that can run: an unused generic instance spawns nothing (see `live`).
   for (const f of fns.values()) if (f.body && live.has(f.name)) findCalls(f.body);
   for (const g of program.globals) findCalls(g.value);
 }

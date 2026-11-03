@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 584 distinct messages across 749 programs the compiler must reject.
+Every error message the test suite pins: 586 distinct messages across 752 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -47,6 +47,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'addr' declared as i64 but got PoolBlock`](#addr-declared-as-i64-but-got-poolblock)
 - [`'andThen': callback must return an Option, got i64`](#andthen-callback-must-return-an-option-got-i64)
 - [`'andThen': callback's error type must be string, got i64`](#andthen-callback-s-error-type-must-be-string-got-i64)
+- [`'answers' is a mutable global, and this code runs on a real OS thread`](#answers-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread)
 - [`'area' in 'impl Shape for Sq' returns 'i64'; the trait 'Shape' declares 'f64'`](#area-in-impl-shape-for-sq-returns-i64-the-trait-shape-declares-f64)
 - [`'arenaGet<Res>' is not allowed: 'arenaGet' copies its element out, and 'Res' carries Drop`](#arenaget-res-is-not-allowed-arenaget-copies-its-element-out-and-res-carries-drop)
 - [`'asciiIsDigit' is defined as a function in 'std/string.milo' and as a global in`](#asciiisdigit-is-defined-as-a-function-in-std-string-milo-and-as-a-global-in)
@@ -63,6 +64,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'contains' requires a Vec of a comparable type (int, float, string, bool), got Vec<Point>`](#contains-requires-a-vec-of-a-comparable-type-int-float-string-bool-got-vec-point)
 - [`'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))`](#context-error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self)
 - [`'continue' outside of loop`](#continue-outside-of-loop)
+- [`'counts' is a mutable global, and this code runs on a real OS thread`](#counts-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread)
 - [`'dangle' cannot return a reference`](#dangle-cannot-return-a-reference)
 - [`'e' shadows an outer binding`](#e-shadows-an-outer-binding)
 - [`'extern fn abs' is defined twice in this file`](#extern-fn-abs-is-defined-twice-in-this-file)
@@ -1165,6 +1167,25 @@ fn main() {
 
 <sub>[tests/errors/resultAndThenErrMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/resultAndThenErrMismatch.milo)</sub>
 
+## `'answers' is a mutable global, and this code runs on a real OS thread` {#answers-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread}
+
+Pins: dbPoolRun's closure runs on a pool thread, so a read-only use of a `var` global there is an error once main writes that global ("filled at startup, read in pool jobs"). The fix is a `let` global whose initializer fills it.
+
+```milo skip
+from "std/sqlite" import { Database }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+var answers: Vec<string> = []
+
+fn main(): void {
+    answers.push("yes")
+    let pool = DbPool.open("app.db", 1)!
+    let _n = dbPoolRun(pool, move(db: &Database): i64 => answers.len).await()!
+}
+```
+
+<sub>[tests/errors/dbPoolGlobalReadWritten.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolGlobalReadWritten.milo)</sub>
+
 ## `'area' in 'impl Shape for Sq' returns 'i64'; the trait 'Shape' declares 'f64'` {#area-in-impl-shape-for-sq-returns-i64-the-trait-shape-declares-f64}
 
 ```milo skip
@@ -1585,6 +1606,46 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/continueOutsideLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/continueOutsideLoop.milo)</sub>
+
+## `'counts' is a mutable global, and this code runs on a real OS thread` {#counts-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread}
+
+Pins: the read-races-with-a-write rule follows static calls, so a read hidden in a helper the thread calls is reported the same as a read in the closure body.
+
+```milo skip
+from "std/runtime" import { Promise }
+
+var counts: Vec<i64> = []
+
+fn readCounts(): i64 {
+    return counts.len
+}
+
+fn main() {
+    counts.push(1)
+    let p = Promise<i64>.blocking(move(): i64 => readCounts())
+    counts.push(2)
+    print(p.await())
+}
+```
+
+<sub>[tests/errors/threadGlobalReadViaHelper.milo](https://github.com/milo-language/milo/blob/main/tests/errors/threadGlobalReadViaHelper.milo)</sub>
+
+Pins: a thread that only READS a `var` global races with main's write of it. `push` may realloc the buffer while the thread reads `counts.len`, so a read-only thread is not enough: the global must also never be written anywhere for the read to be safe.
+
+```milo skip
+from "std/runtime" import { Promise }
+
+var counts: Vec<i64> = []
+
+fn main() {
+    counts.push(1)
+    let p = Promise<i64>.blocking(move(): i64 => counts.len)
+    counts.push(2)
+    print(p.await())
+}
+```
+
+<sub>[tests/errors/threadGlobalReadWrittenOnMain.milo](https://github.com/milo-language/milo/blob/main/tests/errors/threadGlobalReadWrittenOnMain.milo)</sub>
 
 ## `'dangle' cannot return a reference` {#dangle-cannot-return-a-reference}
 
