@@ -378,35 +378,6 @@ done:
   ret ptr %old
 }
 
-; @@ milo.bufappend
-define internal void @milo.bufappend(ptr %bufSlot, ptr %lenSlot, ptr %capSlot, ptr %src, i64 %n) {
-entry:
-  %len = load i64, ptr %lenSlot
-  %cap = load i64, ptr %capSlot
-  %end = add i64 %len, %n
-  ; +1 so the NUL written below always has room
-  %need = add i64 %end, 1
-  %fits = icmp ule i64 %need, %cap
-  br i1 %fits, label %copy, label %grow
-grow:
-  %dbl = shl i64 %cap, 1
-  %small = icmp ult i64 %dbl, %need
-  %newcap = select i1 %small, i64 %need, i64 %dbl
-  %old = load ptr, ptr %bufSlot
-  %nb = call ptr @realloc(ptr %old, i64 %newcap)
-  store ptr %nb, ptr %bufSlot
-  store i64 %newcap, ptr %capSlot
-  br label %copy
-copy:
-  %buf = load ptr, ptr %bufSlot
-  %dst = getelementptr i8, ptr %buf, i64 %len
-  call ptr @memcpy(ptr %dst, ptr %src, i64 %n)
-  store i64 %end, ptr %lenSlot
-  %term = getelementptr i8, ptr %buf, i64 %end
-  store i8 0, ptr %term
-  ret void
-}
-
 ; @@ milo.fmt.g
 ; The "%.*g" format both float formatters hand snprintf.
 @milo.fmt.g = private unnamed_addr constant [5 x i8] c"%.*g\00"
