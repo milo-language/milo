@@ -237,7 +237,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; each one's test is `test.failing` until it lands.
 
 - [ ] `!range`/`!noundef` on loads of ranged ints: `llvm.load` has no range attribute, so it needs a milo-opt translation hook (`tests/refParamAttrs.test.ts`)
-- [ ] DWARF for MLIR function bodies: with `-g`, no `define` carries `!dbg` (`tests/sanitize.test.ts`)
+- [ ] DWARF for MLIR function bodies: with `-g`, no `define` carries `!dbg`, so there is no line table, no local variables and no type DIEs (enum tag/payload, HashMap, niche Option) for a debugger to read (`tests/sanitize.test.ts`, `tests/debugInfo.test.ts`, the DWARF-name test in `tests/modules.test.ts`)
 
 ### Platform Coverage — the linux-arm64 hole
 
