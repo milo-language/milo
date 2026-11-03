@@ -116,7 +116,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |
 | `scripts/verify-contracts.ts` | Static contract gate: run `milo prove` over every contract-bearing .milo in std/ and examples/ and FAIL if any contract is *refuted* (the solver found a counterexample proving it false). |
-| `scripts/windows-sweep.ts` | Cross-compiles every tests/fixtures/*.milo to windows-x64 and runs the PE under Wine, comparing stdout to the fixture's `// @expect:` lines. |
+| `scripts/windows-sweep.ts` | Cross-compiles every tests/fixtures/*.milo to windows-x64 and runs the PE, comparing stdout to the fixture's `// @expect:` lines. |
 | `.githooks/commit-msg` | Reject commit subjects that read like changelog paragraphs. |
 | `.githooks/pre-commit` | Format staged .milo files with bin/milo-fmt (built on demand by `milo fmt`). |
 <!-- END GENERATED INDEX -->
