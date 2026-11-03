@@ -30,7 +30,6 @@ import {
 } from "./codegen-drop";
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
-import { MlirUnsupported } from "./emit-mlir";
 import { OwnLedger, type CopyDecl } from "./codegen-own";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
@@ -176,8 +175,6 @@ export class Codegen {
   // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | null) | null = null;
-  // Legacy functions MLIR bodies call (mlirHelper), by symbol.
-  private mlirHelpers = new Map<string, HIRFunction>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1677,11 +1674,6 @@ export class Codegen {
     // The overflow and bounds routines too: MLIR bodies call them, and stubs set no flag.
     if (this.mlirTake) {
       fnBodies.push(this.mlirPanicFn());
-      // Ordinary legacy functions; offering them to MLIR again would recurse.
-      const take = this.mlirTake;
-      this.mlirTake = null;
-      for (const fn of this.mlirHelpers.values()) fnBodies.push(this.genFunction(fn));
-      this.mlirTake = take;
       this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
 
@@ -3022,19 +3014,6 @@ export class Codegen {
 
   /** MLIR path: main goes through MLIR only when it is the process entry itself. */
   public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
-
-  /**
-   * A legacy function named `name`, generated with the module from the HIR `make` builds,
-   * for an MLIR body to call: the dialect's bridge to what only legacy codegen knows how
-   * to emit yet (print formatting, Vec growth, string sharing). The C++ lowering names
-   * the same symbol from MLIR types (Milo.h typeKey).
-   */
-  public mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string {
-    // MILO_MLIR_NO_HELPERS=1: refuse instead, so the census lists what still needs one.
-    if (process.env.MILO_MLIR_NO_HELPERS === "1") throw new MlirUnsupported(`legacy helper ${name.split(".").slice(0, 3).join(".")}`);
-    if (!this.mlirHelpers.has(name)) this.mlirHelpers.set(name, { name, isExtern: false, isVariadic: false, ...make() });
-    return name;
-  }
 
   private mlirPanicFn(): string[] {
     this.tempCounter = 0;

@@ -46,7 +46,6 @@ export interface MlirEmitCtx {
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   hasStringType: boolean;
   hasVecType: boolean;
-  mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string;
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
   mlirEnumLayout(name: string): { size: number; align: number; niche?: { intTy: string; value: string }; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
   needsDropCg(t: TypeKind): boolean;
@@ -97,12 +96,11 @@ function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
   return e;
 }
 
-const I64: TypeKind = { tag: "int", bits: 64, signed: true };
 /** The place type of a `ty`: a Vec's is its header (!milo.vec), anything else's a !milo.ref. */
 const refOf = (ty: string) => { const m = /^!milo\.vecval<(.*)>$/.exec(ty); return m ? `!milo.vec<${m[1]}>` : `!milo.ref<${ty}>`; };
 const isScalarTy = (ty: string) => /^([su]i\d+|i1|f32|f64)$/.test(ty);
 
-/** How the symbol of a legacy helper spells a type: Milo.h typeKey of its dialect type. */
+/** How a glue or runtime symbol spells a type: Milo.h typeKey of its dialect type. */
 function typeKey(t: TypeKind): string {
   t = stripRefs(t);
   switch (t.tag) {
@@ -448,12 +446,6 @@ function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0, seen: string[] = []): 
 }
 
 /** MLIR string literal (symbol names, file names in locations). */
-function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (const ch of Buffer.from(s, "utf-8")) h = Math.imul(h ^ ch, 0x01000193) >>> 0;
-  return h.toString(16).padStart(8, "0");
-}
-
 /**
  * A literal pattern's value as the expression it is compared with, of the payload's type
  * `ty`. An int pattern on a float payload (`A(3)` with an f64 field) is a float, as legacy
@@ -970,15 +962,6 @@ class FnEmitter {
   }
 
   /**
-   * `o.map(f)` and the other closure-taking Option/Result ops: legacy's genOptionOp (the
-   * tag test, the conditional call, the result enum) in a helper, the receiver lent by its
-   * place and the closure passed as its value. The checker consumes a receiver exactly
-   * when the op forwards a payload that owns something (consumeForwardedPayload; context [MILO-O-combinatorReceiver]
-   * always): such a receiver moves into the helper and the op there takes it (`isMove`).
-   * A named one it did not consume is lent; a temporary one goes in by value unmoved, so
-   * the helper drops it after the op, as legacy drops a temporary receiver.
-   */
-  /**
    * `o.map(f)` and the other callback combinators as the match each one means, so no
    * helper is needed: the receiver is the subject (a temporary or a moved one is consumed,
    * a named one the checker did not consume is matched in place), its payload binding is
@@ -1047,42 +1030,7 @@ class FnEmitter {
   private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
     if (e.op === "resultContext") return this.resultContext(e);
     { const m = this.combinatorMatch(e); if (m) return m; }
-    const st = stripRefs(e.value.type);
-    const rt = this.place$(st, "option receiver");
-    if (!e.default) throw new MlirUnsupported(`option op ${e.op} without a callback`);
-    const fty = this.value(e.default.type, "option callback");
-    const ty = this.value(e.type, "option result");
-    const named = e.value.kind === "Ident" || e.value.kind === "FieldAccess";
-    const consumed = this.combinatorConsumes(e.op, st);
-    if (named && !!(e.value as { isMove?: boolean }).isMove !== consumed && this.hasDrop(rt))
-      throw new MlirUnsupported(`option op ${e.op} whose receiver move disagrees with the checker's rule`);
-    if (this.hasDrop(rt) && !(named && !consumed)) {
-      if (inSlot(this.cx, rt)) throw new MlirUnsupported(`option op ${e.op} on a 128+ byte owning receiver`);
-      const mark = this.pending.length;
-      const v = this.pend(this.operand(e.value, rt, "option receiver"), st);
-      const f = this.consume(this.expr(e.default), "option callback");
-      this.pending.length = mark;
-      if (f.ty !== fty) throw new MlirUnsupported("option callback type");
-      const r = this.intrinsic(`opt.${consumed ? "own" : "tmp"}.${e.op}`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
-        ([x, y]) => ({ ...e, value: { ...x, isMove: consumed } as HIRExpr, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
-      return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
-    }
-    const o = this.place(e.value, this.lent(st, "option receiver"), false).ref;
-    const f = this.consume(this.expr(e.default), "option callback");
-    if (f.ty !== fty) throw new MlirUnsupported("option callback type");
-    const r = this.intrinsic(`opt.${e.op}`, e, [{ name: "o", type: st, mode: "ref", ref: o }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
-      ([x, y]) => ({ ...e, value: x, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
-    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
-  }
-
-  /** Whether the checker's consumeForwardedPayload consumes the receiver of `op` on `st`. */
-  private combinatorConsumes(op: string, st: TypeKind): boolean {
-    if (op === "resultContext") return true;
-    const fwd = ({ optionOrElse: "Some", resultMap: "Err", resultAndThen: "Err", resultMapErr: "Ok", resultOrElse: "Ok" } as Record<string, string>)[op];
-    if (!fwd || st.tag !== "enum") return false;
-    const v = this.cx.mlirEnumLayout(st.name)?.variants.find(x => x.name === fwd);
-    if (!v) throw new MlirUnsupported(`option op ${op} receiver layout`);
-    return v.fields.some(t => this.hasDrop(this.place$(t, "forwarded payload")));
+    throw new MlirUnsupported(`option op ${e.op}`);
   }
 
   /** `clone(&*slot)` through the type's own Clone fn: an owned value of `ty`. */
@@ -1134,9 +1082,9 @@ class FnEmitter {
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
-      // A Vec element: legacy deep-copies an owning one (emitDeepCloneFromPtr), here into
-      // a fresh slot by a legacy helper. The slot owns nothing: every bigPlace consumer
-      // takes what the place holds, so the clone passes to it whole.
+      // A Vec element: an owning one is deep-copied (its clone glue), into a fresh slot
+      // that owns nothing: every bigPlace consumer takes what the place holds, so the
+      // clone passes to it whole.
       const er = this.elemRef(e);
       if (er && er.ty === ty && this.hasDrop(ty)) {
         const tmp = this.fresh();
@@ -1148,19 +1096,7 @@ class FnEmitter {
           this.rtCall(glue, [{ ref: er.ref, ty: `!milo.ref<${ty}>` }, { ref: tmp, ty: `!milo.ref<${ty}>` }], null);
           return { ref: tmp, refTy: `!milo.ref<${ty}>`, done: none };
         }
-        const name = `milo.intr.elemcopy.${typeKey(t)}`;
-        this.cx.mlirHelper(name, () => {
-          const id = (n: string): HIRExpr => ({ kind: "Ident", name: n, type: t, isMove: false });
-          return {
-            params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "s", type: t, isRef: true, isRefMut: false }],
-            retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
-            body: [{ kind: "Assign", target: id("d"), value: { kind: "MapCopyOut", type: t, value: id("s") }, isInit: true }],
-          };
-        });
-        const fnTy = `(!milo.ref<${ty}>, !milo.ref<${ty}>) -> ()`;
-        this.callees.set(name, fnTy);
-        this.emit(`func.call @${quote(name)}(${tmp}, ${er.ref}) : ${fnTy}`);
-        return { ref: tmp, refTy: `!milo.ref<${ty}>`, done: none };
+        throw new MlirUnsupported("copy of an element that has no clone glue");
       }
       return er && er.ty === ty ? { ref: er.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
@@ -1589,10 +1525,10 @@ class FnEmitter {
   }
 
   /**
-   * An operand a legacy helper takes by value (an extern's, a builtin's, an itable
-   * dispatch's): any SSA value that owns nothing (a scalar, a pointer, a plain fn value, a
-   * struct or enum of those), typed as the helper's own param. One that owns would leave
-   * the helper to drop it, which only a direct call's callee does.
+   * An operand taken by value where nothing drops it (an extern's, an itable dispatch's):
+   * any SSA value that owns nothing (a scalar, a pointer, a plain fn value, a struct or
+   * enum of those). One that owns would leave the callee to drop it, which only a direct
+   * call's callee does.
    */
   private helperOperand(e: HIRExpr, what: string): { v: Val; type: TypeKind } {
     const type = stripRefs(this.fieldType(e));
@@ -2611,8 +2547,7 @@ class FnEmitter {
         const keep = this.def(`milo.mul ${l.ref}, ${size.ref} wrapping : si64`, "si64");
         return this.allocCheck(this.rtCall(this.cx.mlirVecGrow(es), [d, keep, c, size], PTR), e.span);
       }
-      // std/string's intrinsics, each a legacy function doing exactly it (genStrReserve,
-      // emitStrAlloc, emitStringRangeCheck, emitStrUnique, genNumberToString).
+      // std/string's intrinsics: runtime sections (src/runtime/str.ll) and range checks.
       case "StrReserve": {
         if (scalar(e.type, "reserved buffer") !== PTR) throw new MlirUnsupported("string reserve type");
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
@@ -2940,7 +2875,7 @@ class FnEmitter {
         // The header's third word.
         const vt = stripRefs(e.object.type);
         const lent = this.lent(vt, "vec of capacity");
-        if (!lent.startsWith("!milo.vec<")) return this.builtinOf(e, "object", false);
+        if (!lent.startsWith("!milo.vec<")) throw new MlirUnsupported("capacity of a non-Vec place");
         const at = this.addressOf(this.place(e.object, lent, false).ref, lent).ref;
         return this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${at}[2] : !milo.struct<"Vec", ${PTR}, si64, si64>`, PTR).ref} : si64`, "si64");
       }
@@ -2948,7 +2883,7 @@ class FnEmitter {
         // `h.ptr()`: the box's address, read from the Heap's place (legacy: the Heap IS the
         // pointer). The Heap keeps owning it.
         const ht = stripRefs(e.object.type);
-        if (ht.tag !== "heap" || ht.inner.tag === "interface" || scalar(e.type, "heap pointer") !== PTR) return this.builtinOf(e, "object", false);
+        if (ht.tag !== "heap" || ht.inner.tag === "interface" || scalar(e.type, "heap pointer") !== PTR) throw new MlirUnsupported("ptr of a box of an interface");
         const lt = this.lent(ht, "heap of ptr");
         const at = this.addressOf(this.place(e.object, lt, false).ref, lt).ref;
         return this.def(`milo.ptr.load ${at} : ${PTR}`, PTR);
@@ -3068,10 +3003,7 @@ class FnEmitter {
           this.emit("}");
           return { ref: res, ty, own: this.hasDrop(ty) ? "owned" : undefined };
         }
-        const r = this.intrinsic("vecget", e, [{ name: "v", type: vt, mode: "ref", ref: v },
-          { name: "i", type: I64, mode: "val", ref: i.ref }],
-        ([x, y]) => ({ ...e, object: x, index: y }), ty, false);
-        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+        throw new MlirUnsupported("get of a Vec of another shape");
       }
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);
@@ -3190,7 +3122,7 @@ class FnEmitter {
       }
       case "OptionOp": {
         // isSome/isNone (isOk/isErr): a test of the tag, Some and Ok being tag 0; unwrapOr
-        // is `??`. The closure-taking ones go through legacy in a helper (optionCallback).
+        // is `??`. The closure-taking ones are the match they mean (combinatorMatch).
         if (e.op === "unwrapOr" && e.default)
           return this.defaultValue({ kind: "DefaultValue", operand: e.value, default: e.default, enumName: e.enumName, type: e.type, span: e.span });
         if (CALLBACK_OPS.has(e.op)) return this.optionCallback(e);
@@ -3230,7 +3162,7 @@ class FnEmitter {
         if (ty.startsWith("!milo.fn<")) throw new MlirUnsupported("zeroed fn value");
         return { ...this.def(`milo.zero : ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
-      // std's panics with a message: legacy's text and abort in a helper per site.
+      // std's panics with a message: legacy's text, through milo.panic_if.
       case "StrPanic": {
         const v = this.expr(e.value);
         if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("panic value type");
@@ -3334,14 +3266,9 @@ class FnEmitter {
    * `ty`. A Vec in a slot is lent as its header.
    */
   private copyOut(e: HIRExpr, src: string, ty: string, slot = false): Val {
-    const vm = /^!milo\.vecval<(.*)>$/.exec(ty);
     const native = this.cloneTo(stripRefs(e.type), src, slot ? `!milo.ref<${ty}>` : refOf(ty), ty);
     if (native) return native;
-    if (vm && slot) src = this.def(`milo.vec.place ${src} : !milo.ref<${ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref;
-    const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
-      ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
-    this.clones.add(r.ref);
-    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+    throw new MlirUnsupported(`copy of a ${stripRefs(e.type).tag} that has no clone glue`);
   }
 
   /**
@@ -3359,40 +3286,12 @@ class FnEmitter {
     return { ...v, own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
-  /**
-   * `e`, an intrinsic, as a call of a legacy function whose body is `make` applied to its
-   * params: one per intrinsic, param types and call site, since its panics name the line and column.
-   * `ops` are the operands as already evaluated, in legacy's order; a `ref`/`mut` one is a place.
-   */
-  private intrinsic(kind: string, e: HIRExpr, ops: { name: string; type: TypeKind; mode: "val" | "ref" | "mut"; ref: string }[],
-    make: (idents: HIRExpr[]) => HIRExpr, ret: string | null, panics = true): Val {
-    const l = panics ? this.site(e.span) : { line: 0, col: 0, file: "" };
-    const tys = ops.map(o => o.mode === "val" ? this.value(o.type, "intrinsic operand") : this.lent(o.type, "intrinsic operand"));
-    const site = panics ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
-    const name = `milo.intr.${kind}.${ops.map(o => typeKey(o.type)).join(".")}${site}`;
-    const retType = e.type;
-    this.cx.mlirHelper(name, () => {
-      const idents = ops.map(o => ({ kind: "Ident" as const, name: o.name, type: o.type, isMove: false }));
-      const value = make(idents);
-      return {
-        params: ops.map(o => ({ name: o.name, type: o.type, isRef: o.mode === "ref", isRefMut: o.mode === "mut" })),
-        retType, trackedCaller: this.fn.trackedCaller,
-        body: [ret === null ? { kind: "ExprStmt", expr: value } : { kind: "Return", retType, value }],
-      };
-    });
-    const fnTy = `(${tys.join(", ")})${ret === null ? " -> ()" : ` -> ${ret}`}`;
-    this.callees.set(name, fnTy);
-    const call = `func.call @${quote(name)}(${ops.map(o => o.ref).join(", ")}) : ${fnTy}`;
-    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
-    return this.def(call, ret);
-  }
 
   /**
-   * A `move` closure: legacy's genClosure inside a legacy function of its own
-   * (`milo.mkclosure.<fn>.<k>`) taking each capture by value, so the heap env, its drop
-   * glue, the liveness flags and the run-once check are legacy's, and so is the body. A
-   * capture moves out of its owned slot into the call; a shared string capture
-   * (`share`) passes a new owner of the same buffer and the binding stays live.
+   * A `move` closure (legacy genClosure): its captures moved into a heap env with their
+   * liveness flags and a drop function, the body a function of its own. A capture moves
+   * out of its owned slot; a shared string capture (`share`) passes a new owner of the
+   * same buffer and the binding stays live.
    */
   private moveClosure(e: HIRExpr & { kind: "Closure" }): Val {
     const ty = this.value(e.type, "move closure");
@@ -4367,7 +4266,7 @@ class FnEmitter {
     return { done: r, v: { ref: "", ty: "" } };
   }
 
-  /** A call of a legacy helper; `args` are `value : type`. */
+  /** A call of a module function by symbol (a runtime section); `args` are `value : type`. */
   private callHelper(name: string, args: string[], ret: string | null): Val {
     const refs = args.map(a => a.split(" : ")[0]);
     const tys = args.map(a => a.slice(a.indexOf(" : ") + 3));
@@ -4465,35 +4364,6 @@ class FnEmitter {
     return this.def(`milo.${op} ${l.ref}, ${r.ref}${wrapping ? " wrapping" : ""} : ${ty}`, ty, isInt ? this.loc(e.span) : "");
   }
 
-  /**
-   * A builtin whose operands are `e[field]` (and BitIntrinsic's `amount`) as legacy's own
-   * codegen of it, in a helper: a scalar operand by value, any other lent by its place
-   * (a temporary in a slot of the statement). The result
-   * is a value of `e.type`, owned when it has drop glue (JsonStringify's string).
-   */
-  private builtinOf(e: HIRExpr, field: "object" | "value", panics: boolean): Val {
-    const rec = e as unknown as Record<string, HIRExpr | undefined>;
-    const names = [field, ...(e.kind === "BitIntrinsic" && rec.amount ? ["amount"] : [])];
-    const ops = names.map((n, k) => {
-      const x = rec[n]!;
-      const t = stripRefs(x.type);
-      const vt = valueType(this.cx, t);
-      if (vt !== null && isScalarTy(vt)) {
-        const v = this.expr(x);
-        if (v.ty !== vt) throw new MlirUnsupported(`${e.kind} operand type`);
-        return { name: `a${k}`, type: t, mode: "val" as const, ref: v.ref };
-      }
-      // A temporary goes to a slot that dies with the statement (legacy: right after the
-      // read, which only a user Drop could tell apart).
-      if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "IndexAccess" && this.runsUserDrop(this.place$(t, `${e.kind} operand`))) throw new MlirUnsupported(`${e.kind} of a temporary with a user Drop`);
-      return { name: `a${k}`, type: t, mode: "ref" as const, ref: this.place(x, this.lent(t, `${e.kind} operand`), false).ref };
-    });
-    const ty = this.value(e.type, `${e.kind} result`);
-    const key = e.kind === "BitIntrinsic" ? `bit.${(e as { intrinsic: string }).intrinsic}`
-      : e.kind === "EnumTryFrom" ? `tryfrom.${(e as { enumName: string }).enumName}` : e.kind.toLowerCase();
-    const r = this.intrinsic(key, e, ops, xs => ({ ...e, ...Object.fromEntries(names.map((n, k) => [n, xs[k]])) } as HIRExpr), ty, panics);
-    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
-  }
 
   /**
    * `for x in it` over an iterator (legacy genForIterator), as the loop it means:
@@ -5035,70 +4905,7 @@ class FnEmitter {
   private ffiCall(e: HIRExpr & { kind: "Call" }, _stmt: boolean): Val {
     const native = this.nativeFfi(e, _stmt);
     if (native) return native;
-    const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
-    const args: string[] = [];
-    const keys: string[] = [];
-    const mark = this.pending.length;
-    e.args.forEach((a, k) => {
-      const t = a.expr.type;
-      const name = `a${k}`;
-      if (a.passByRef) {
-        // C gets the place's address, as legacy passes it; the helper's param is that place.
-        const st = stripRefs(t);
-        // A fixed array goes as its address, as legacy passes it; a slice or Vec is a header.
-        if (st.tag === "string" || st.tag === "vec" || (st.tag === "array" && st.size === null)) throw new MlirUnsupported(`by-ref ${st.tag} argument of an extern call`);
-        const ty = this.lent(st, "extern by-ref operand");
-        const r = this.place(a.expr, ty, a.refMut).ref;
-        params.push({ name, type: st, isRef: !a.refMut, isRefMut: !!a.refMut });
-        args.push(`${r} : ${ty}`);
-        keys.push(`r${typeKey(st)}`);
-        return;
-      }
-      if (t.tag === "string") {
-        let ref: string;
-        const local = this.ownedLocal(a.expr);
-        if (a.expr.kind === "StringLit" || a.expr.kind === "Ident" || a.expr.kind === "FieldAccess") {
-          ref = this.place(a.expr, `!milo.ref<${STR}>`, false).ref;
-        } else {
-          // C borrows a temporary only for the call; a callee that keeps the pointer would
-          // need it leaked, as legacy does.
-          if (this.cx.retainingLibc.has(e.func)) throw new MlirUnsupported("temporary string kept by C");
-          const v = this.expr(a.expr);
-          if (v.ty !== STR || v.own !== "owned" || this.bitCopies.has(v.ref)) throw new MlirUnsupported("C string of a view");
-          ref = this.tempSlot("cstr", STR, t, v);
-          this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
-        }
-        if (local || a.expr.kind !== "StringLit" && a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")
-          { this.stringHelpers(); this.rtCall("milo.str.unique", [{ ref, ty: `!milo.ref<${STR}>` }], null); }
-        params.push({ name, type: t, isRef: true, isRefMut: false });
-        args.push(`${ref} : !milo.ref<${STR}>`);
-        keys.push("rstring");
-        return;
-      }
-      if (t.tag === "array") {
-        params.push({ name, type: { tag: "ptr", inner: t.element }, isRef: false, isRefMut: false });
-        args.push(`${this.decay(a.expr).ref} : ${PTR}`);
-        keys.push("ptr");
-        return;
-      }
-      const { v, type } = this.helperOperand(a.expr, "extern argument");
-      params.push({ name, type, isRef: false, isRefMut: false });
-      args.push(`${v.ref} : ${v.ty}`);
-      keys.push(typeKey(type));
-    });
-    this.pending.length = mark;
-    const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
-    // A plain struct result comes back from the helper as an LLVM struct value; a 128+
-    // byte one would make the helper sret, and one that owns would need a drop here.
-    if (ret !== null && !isScalarTy(ret) && ret !== PTR && (e.type.tag !== "struct" || this.hasDrop(ret) || this.cx.typeSizeOf(e.type) >= 128))
-      throw new MlirUnsupported("extern call result type");
-    const l = this.site(e.span);
-    const name = this.cx.mlirHelper(`milo.ffi.${e.func}.${keys.join(".")}.${l.line}.${l.col}.${fnv1a(l.file)}`, () => {
-      const call: HIRExpr = { ...e, args: e.args.map((a, k) => ({ ...a, expr: { kind: "Ident", name: params[k].name, type: params[k].type, isMove: false } })) };
-      return { params, retType: e.type, trackedCaller: this.fn.trackedCaller,
-        body: [ret === null ? { kind: "ExprStmt", expr: call } : { kind: "Return", retType: e.type, value: call }] };
-    });
-    return this.callHelper(name, args, ret);
+    throw new MlirUnsupported(`extern call ${e.func}`);
   }
 
   /**
@@ -5151,12 +4958,9 @@ class FnEmitter {
    * struct's own drop later finds an empty one there and frees nothing twice.
    */
   /**
-   * `o!` with a 128+ byte payload, written into `dst`: legacy's genUnwrap (its panic text
-   * and location) in a helper per site that init-assigns `d = (*o)!`. The
-   * enum goes in as a raw pointer and the helper unwraps `*o`: legacy genUnwrap zeroes the
-   * operand when it is an Ident, through localAddr, which for a by-ref param is the 8-byte
-   * slot holding its address (a 168-byte store there smashed the -O0 frame). The payload
-   * is bit-copied out and the caller marks its slot moved.
+   * `o!` with a 128+ byte payload, written into `dst`: the check of unwrapCheck on the
+   * enum's place, then the payload's bits copied out; an owning source's slot is then
+   * marked moved.
    */
   private unwrapInto(e: HIRExpr & { kind: "Unwrap" }, dst: string, ty: string): void {
     const o = e.operand, st = stripRefs(o.type);
@@ -5337,9 +5141,8 @@ class FnEmitter {
     // backend maps both modules' symbols to the C one (mlir-backend compile).
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
     // A struct passed to or returned from C by value goes through the platform ABI's
-    // register coercion (src/abi.ts), which only legacy's genCall applies: an MLIR call
-    // would pass the LLVM struct as-is and C would read the wrong registers. So the call
-    // is legacy's, in a helper (ffiCall) that Milo code calls with plain LLVM structs.
+    // register coercion (src/abi.ts): an MLIR call would pass the LLVM struct as-is and C
+    // would read the wrong registers, so ffiCall calls the module's ABI shim instead.
     if (callee.isExtern && [callee.retType, ...callee.params.filter(p => !p.isRef && !p.isRefMut).map(p => p.type)].some(t => t.tag === "struct" || t.tag === "array"))
       return this.ffiCall(e, stmt);
     // A `&string` value (a slice `s[a..b]`) given to a `&string` param: the view goes in
