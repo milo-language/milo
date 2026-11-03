@@ -22,7 +22,14 @@ runs:
       if: runner.os == 'Linux'
       shell: sh
       run: |
-        wget -q --tries=5 --waitretry=10 --retry-connrefused -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+        # wget's --tries does not retry a failed DNS lookup (exit 4 in under a second when
+        # llvm.org's resolution flaps), so the fetch is retried here with backoff.
+        for i in 1 2 3 4 5; do
+          wget -q -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh && break
+          [ "$i" = 5 ] && exit 1
+          sleep $((i * 20))
+        done
+        echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
         sudo bash /tmp/llvm.sh 23
         sudo apt-get install -y llvm-23-dev libmlir-23-dev mlir-23-tools cmake ninja-build libzstd-dev zlib1g-dev
         echo "MILO_LLVM_BIN=/usr/lib/llvm-23/bin" >> "$GITHUB_ENV"
