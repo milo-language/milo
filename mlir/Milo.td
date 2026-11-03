@@ -17,22 +17,33 @@ include "mlir/IR/SymbolInterfaces.td"
 def Milo_Dialect : Dialect {
   let name = "milo";
   let cppNamespace = "::milo";
-  let summary = "Milo's source-level semantics: ownership, checks and Vec facts as IR";
+  let summary = "Milo's own MLIR dialect: ownership, checks and Vec memory as IR";
   let description = [{
-    The milo dialect is what the Milo compiler's frontend (src/emit-mlir.ts) prints from
-    typed HIR, and what milo-opt lowers to the LLVM dialect. It keeps the facts LLVM IR
-    cannot carry: a Vec header is never written by an element store; a bounds check or a
-    checked arithmetic op is a panic point ordered against element writes; a slot owns a
-    value with drop glue, and drop elaboration decides from the IR where it dies.
+    Milo compiles through MLIR, and this is its dialect. The Milo compiler type-checks the
+    source and emits milo dialect IR (`src/emit-mlir.ts`); `milo-opt`, a C++ tool built on
+    upstream MLIR, runs Milo's passes on it and lowers it to the LLVM dialect.
 
-    Ints carry their signedness in the type (si32, ui8), never in an attribute; bool is i1.
-    A `!milo.ref` is a second-class place, a `!milo.ptr` a raw pointer. Control flow is
-    region ops (milo.if, milo.while, milo.loop, milo.for, milo.match, milo.scope) until
-    milo-lower-structured-cf turns it into cf branches; break, continue and return may
-    leave any depth of them.
+    The dialect exists to keep facts that are lost in LLVM IR:
 
-    Any frontend that emits valid milo IR gets Milo's semantics and lowering: the op
-    verifiers are the contract it codes against.
+    - Ownership: a slot owns a value with drop glue, and the `milo-elaborate-drops` pass
+      decides from the IR where each value is dropped.
+    - Checks: a bounds check or a checked arithmetic op is a panic point ordered against
+      element writes, so `milo-version-bounds-checks` can version a loop instead of hoisting
+      the check out of it.
+    - Vec memory: a Vec's header (ptr, len, cap) and its elements are separate memory, so an
+      element store never invalidates a loaded length or data pointer.
+
+    Types: ints carry their signedness in the type (si32, ui8), never in an attribute; bool is
+    i1; `!milo.ref` is a second-class reference (a place that is never stored), `!milo.ptr`
+    a raw pointer.
+
+    Control flow stays structured (milo.if, milo.while, milo.loop, milo.for, milo.match,
+    milo.scope) until `milo-lower-structured-cf` lowers it to cf branches; break, continue
+    and return may exit any number of them.
+
+    The op verifiers define valid milo IR. A complete program also needs the module the Milo
+    compiler emits around it (runtime, globals, the main wrapper), so the dialect is not yet a
+    standalone target for other frontends.
   }];
   let useDefaultTypePrinterParser = 1;
   let hasConstantMaterializer = 1;
