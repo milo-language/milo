@@ -1744,7 +1744,12 @@ class FnEmitter {
           return false;
         }
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
-        const b = this.lookup(s.target.name);
+        const found = this.lookup(s.target.name);
+        // `v = w` on a `&mut Vec` param (the checker allows no other Vec binding here):
+        // a store into the caller's slot behind the header, the old Vec dropped first.
+        const b = found.kind === "vec" && found.param !== undefined
+          ? { kind: "var" as const, ...this.lendAs(found.ref, `!milo.vec<${found.elem}>`, `!milo.ref<!milo.vecval<${found.elem}>>`), ty: `!milo.vecval<${found.elem}>` }
+          : found;
         if (b.kind !== "var") throw new MlirUnsupported("assign to an immutable binding");
         // A lazy global of a place-only type (`let NAMES: [string; 3] = [...]`) is built
         // in place for its first fill.

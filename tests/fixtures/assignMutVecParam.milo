@@ -1,0 +1,19 @@
+// @expect: 3 bb z
+// Assigning a whole Vec through a '&mut Vec' param stores into the caller's slot and drops the old Vec.
+fn reset(v: &mut Vec<string>) {
+    var kept: Vec<string> = []
+    for s in v {
+        if s.len() > 1 {
+            kept.push(s.clone())
+        }
+    }
+    kept.push("z")
+    v = kept
+}
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["a", "bb", "ccc"]
+    reset(&mut v)
+    print($"{v.len()} {v[0]} {v[2]}")
+    return 0
+}
