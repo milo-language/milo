@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "Hello|World|HELLO, WORLD|hello, world\nabababab abababab! axyaxyaxyaxy\n4 bb ccc\n007 x... t\n-128 18446744073709551615 2147483647 -42\n3.25 0.30000000000000004\n1 true\n"
+}

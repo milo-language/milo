@@ -1,0 +1,8 @@
+fn main() {
+    let a = "abc".clone()
+    let b = "abd".clone()
+    let c = "ab".clone()
+    let x: string = ""
+    print(a == b, a != b, a < b, a <= a, b > a, a >= b, c<a, a> c, x < c, x == "", a == "abc")
+    print("\xff" > "a")
+}

@@ -1,0 +1,27 @@
+// milo.overflows and milo.saturating at the edges of each width and signedness.
+fn show(o: Option<i64>) {
+    match o {
+        Some(v) => print("Some ", v),
+        None => print("None"),
+    }
+}
+
+pub fn main(): i32 {
+    let big: i64 = 9223372036854775807
+    let min: i64 = 0 - 9223372036854775807 - 1
+    show(big.checkedAdd(1))
+    show(min.checkedSub(1))
+    show(big.checkedMul(2))
+    show(min.checkedDiv(0 - 1))
+    show(min.checkedRem(0 - 1))
+    show(big.checkedDiv(0))
+    show(big.checkedRem(7))
+    show((0 - 7).checkedDiv(2))
+    let a: i8 = 0 - 2
+    print(a.saturatingMul(100), a.saturatingMul(0 - 100), a.saturatingAdd(0 - 127), a.saturatingSub(127))
+    let u: u8 = 200
+    print(u.saturatingAdd(100), u.saturatingSub(201), u.saturatingMul(2))
+    let ux: u32 = 4000000000
+    print(ux.checkedAdd(ux).isNone(), ux.checkedSub(1).isSome())
+    return 0
+}

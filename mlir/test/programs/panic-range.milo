@@ -1,0 +1,13 @@
+// milo.panic_if: a ranged int out of range panics with legacy's text, line only.
+
+pub type Altitude = i32(0..50000)
+
+pub fn getAltitude(): i32 {
+    return 60000
+}
+
+pub fn main(): i32 {
+    let alt: Altitude = getAltitude()
+    print(alt)
+    return 0
+}

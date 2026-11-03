@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "empty: no content-type, length 0\nset: Content-Type: text/plain\nhandler: Content-Type: x/y\n"
+}

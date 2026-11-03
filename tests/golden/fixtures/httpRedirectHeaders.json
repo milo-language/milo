@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "HTTP/1.1 302 Found\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 6\\r\\nLocation: /login\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n/login\nHTTP/1.1 301 Moved Permanently\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 20\\r\\nLocation: https://example.com/\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\nhttps://example.com/\nHTTP/1.1 302 Found\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 14\\r\\nX-Note: a  Set-Cookie: session=stolen\\r\\nLocation: /x    <script>\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n/x\\r\\n\\r\\n<script>\n"
+}

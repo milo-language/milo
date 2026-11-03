@@ -39,9 +39,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
 | `src/codegen-map.ts` | The std/hashmap intrinsics: FNV-1a hashing and key equality (_mapHash, _mapKeyEq), the structural copy of a stored value (_mapCopyOut), the seed source (_mapSeed) and the checked slot allocation (_ma… |
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
-| `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
-| `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting), kept as IR text in src/runtime/str.ll. |
-| `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, number/bool to string), extracted to keep codegen.ts manageable. |
+| `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting, map buffers), kept as IR text in src/runtime/*.ll. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
@@ -61,6 +59,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/ir.ts` | Typed IR builder: codegen describes instructions as typed values, and a backend prints them. |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
+| `src/layout.ts` | Type layout: struct and enum registration, sizes, alignments, field offsets, niches and which types need drop glue. |
 | `src/lazy-globals.ts` | Lazy module globals: the HIR pass that puts a first-use guard in front of every read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering pass. |
@@ -68,7 +67,8 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
-| `src/mlir-backend.ts` | MLIR driver (default build path; MILO_LEGACY=1 turns it off) (docs/mlir-backend.md): the functions the milo dialect covers go HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), a… |
+| `src/mlir-backend.ts` | MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies replace the lega… |
+| `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/own-ledger.ts` | Ownership ledger verifier: checks codegen's drop bookkeeping against itself on the textual IR (MILO_OWN_LEDGER=1). |

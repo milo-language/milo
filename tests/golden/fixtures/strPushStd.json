@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "A 1 abc ab 3\nworld! world hello world\nxyz! xy xyz\nmno mn 2\né日 5 true\n01ab pq?\n100000 10949956 100000 abcdezabcd\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "{\"limits\":{\"a\":1,\"b\":2,\"c\":3},\"name\":\"n\",\"tags\":[\"x\",\"y\"]}\nrt={\"limits\":{\"a\":1,\"b\":2,\"c\":3},\"name\":\"n\",\"tags\":[\"x\",\"y\"]}\na=1\nnested={\"lists\":{\"nums\":[1,2]},\"objs\":{\"k\":{\"v\":7}},\"opt\":{\"z\":\"zz\"}}\n"
+}

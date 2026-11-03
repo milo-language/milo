@@ -17,7 +17,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
-import { MLIR_MODE, MlirPlan, mlirClang, mlirTargetOk } from "./mlir-backend";
+import { MlirPlan, mlirClang } from "./mlir-backend";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -298,10 +298,10 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  const plan = MLIR_MODE && mlirTargetOk(target) ? new MlirPlan(hirModule, cg, target) : null;
-  if (plan) cg.mlirTake = fn => plan.take(fn);
+  const plan = new MlirPlan(hirModule, cg, target);
+  cg.mlirTake = fn => plan.take(fn);
   let ir = phase("codegen", () => cg.generate(hirModule));
-  if (plan) ir = phase("mlir", () => plan.compile(ir));
+  ir = phase("mlir", () => cg.noaliasOnFinal(plan.compile(ir), plan.closureBodies()));
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
@@ -555,79 +555,16 @@ function emitHir(sourcePath: string, outputPath: string | null, target: TargetIn
   emitText(dumpJson(view, spans), outputPath);
 }
 
-// detect clang: prefer /usr/bin/clang (Apple) which is more stable, then PATH clang, then llc+cc
-// Two separate LLVM-version requirements, both verified against real toolchains:
-//   14 and below — rejects opaque pointers outright: `declare i32 @memcmp(ptr, ...)`
-//                  fails with "expected type".
-//   15           — accepts `ptr` as a type but still mangles pointer intrinsics with
-//                  the element type, so our `@llvm.memcpy.p0.p0.i64` is an
-//                  "undefined value". The p0i8 -> p0 change landed in LLVM 16.
-// Both errors point at our IR and read like a codegen bug rather than a stale
-// toolchain. Reachable on current distros: Debian bookworm defaults to clang 14 and
-// Ubuntu 22.04 ships no newer than 15. Confirmed: 16 and 17 build clean.
-const MIN_CLANG_MAJOR = 16;
-
-function clangMajor(versionOutput: string): number | null {
-  // "Debian clang version 14.0.6", "Apple clang version 17.0.0", "clang version 18.1.3"
-  const m = versionOutput.match(/clang version (\d+)/);
-  return m ? Number(m[1]) : null;
-}
-
+// The clang that compiles every build is the one of milo-opt's LLVM (mlirClang).
 // `id` is the object cache's view of the compiler: its path and version line, so an
 // upgraded clang never serves objects built by the old one.
 type Toolchain = { kind: "clang"; path: string; id: string } | { kind: "llc+cc" };
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
-  // MILO_CC names the one clang to use. Without it /usr/bin/clang always wins, and on a
-  // mac that is Apple's, whose codegen differs from upstream LLVM (it splits hot/cold
-  // paths into `.cold.N` functions by default): a cross build meant to match what a
-  // Linux box's clang produces needs a way to pick Homebrew's instead.
-  // An MLIR build (every target) hands the IR of milo-opt's LLVM to this clang, so a MILO_CC
-  // (a cross toolchain's clang included) must be of that LLVM's version: mlirClang() checks.
-  if (MLIR_MODE) {
-    cachedToolchain = { kind: "clang", ...mlirClang() };
-    return cachedToolchain;
-  }
-  const candidates = process.env.MILO_CC ? [process.env.MILO_CC] : ["/usr/bin/clang", "clang"];
-  let tooOld: { path: string; major: number } | null = null;
-  for (const cc of candidates) {
-    try {
-      const out = execSync(`${cc} --version`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
-      const major = clangMajor(out);
-      // An unparseable version string is not a reason to reject a working clang.
-      if (major !== null && major < MIN_CLANG_MAJOR) {
-        tooOld ??= { path: cc, major };
-        continue;
-      }
-      cachedToolchain = { kind: "clang", path: cc, id: `${cc}\n${out.split("\n")[0] ?? ""}` };
-      return cachedToolchain;
-    } catch {}
-  }
-  // A MILO_CC that doesn't run is a typo, not a request for the llc+cc fallback.
-  if (process.env.MILO_CC && !tooOld) throw new Error(`MILO_CC=${process.env.MILO_CC} is not a working clang ('${process.env.MILO_CC} --version' failed)`);
-  try {
-    execSync("llc --version", { stdio: ["pipe", "pipe", "pipe"] });
-    execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
-    cachedToolchain = { kind: "llc+cc" };
-  } catch {
-    if (tooOld) {
-      throw new Error(
-        `clang ${tooOld.major} is too old: milo emits LLVM IR that needs clang ${MIN_CLANG_MAJOR}+\n` +
-        `  found: ${tooOld.path}\n` +
-        `  fix:   macOS  xcode-select --install   (or: brew install llvm)\n` +
-        `         Debian/Ubuntu  apt install clang-${MIN_CLANG_MAJOR}  (bookworm ships 14, jammy ships 15)\n` +
-        `                       or use https://apt.llvm.org/llvm.sh\n` +
-        `         then put the newer clang first on PATH`
-      );
-    }
-    throw new Error(
-      "no C compiler found: need either 'clang' or 'llc'+'cc' on PATH\n" +
-      "  fix: macOS  xcode-select --install\n" +
-      "       Debian/Ubuntu  apt install clang\n" +
-      "       Fedora  dnf install clang"
-    );
-  }
+  // Every build hands the IR of milo-opt's LLVM to its clang, so a MILO_CC (a cross
+  // toolchain's clang included) must be of that LLVM's version: mlirClang() checks.
+  cachedToolchain = { kind: "clang", ...mlirClang() };
   return cachedToolchain;
 }
 
@@ -643,26 +580,10 @@ function detectToolchain(): Toolchain {
 let cachedWasmClang: string | null | undefined;
 function detectWasmClang(): string | null {
   if (cachedWasmClang !== undefined) return cachedWasmClang;
-  // Its IR may come from milo-opt: the compiling clang is then the one of milo-opt's LLVM.
-  if (MLIR_MODE) {
-    const cc = mlirClang().path;
-    const targets = spawnSync(cc, ["--print-targets"], { encoding: "utf-8" }).stdout ?? "";
-    return (cachedWasmClang = /\bwasm64\b/.test(targets) ? cc : null);
-  }
-  const candidates = ["clang", "/opt/homebrew/opt/llvm/bin/clang", "/usr/local/opt/llvm/bin/clang"];
-  for (const cc of candidates) {
-    try {
-      const targets = execSync(`${cc} --print-targets`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
-      if (!/\bwasm(32|64)\b/.test(targets)) continue;
-      const ver = execSync(`${cc} --version`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
-      const major = clangMajor(ver);
-      if (major !== null && major < MIN_CLANG_MAJOR) continue; // same IR-compatibility floor as detectToolchain
-      cachedWasmClang = cc;
-      return cachedWasmClang;
-    } catch {}
-  }
-  cachedWasmClang = null;
-  return null;
+  // The compiling clang is the one of milo-opt's LLVM.
+  const cc = mlirClang().path;
+  const targets = spawnSync(cc, ["--print-targets"], { encoding: "utf-8" }).stdout ?? "";
+  return (cachedWasmClang = /\bwasm64\b/.test(targets) ? cc : null);
 }
 
 // clang codegen flags for a cross-compilation target. Empty for the host

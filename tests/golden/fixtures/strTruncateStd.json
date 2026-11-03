@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "[] he hello [] 0\n[] abcdefghij abcd 0\nhé 3 héllo\nh 1\nhello hello wo 123! 4\n10 again 5\n[] 0\n"
+}

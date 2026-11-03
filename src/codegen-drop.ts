@@ -1,10 +1,8 @@
 // Drop and clone glue: per-type drop sequences, deep clone, and the generated drop/clone helper functions.
 
 import type { TypeKind } from "./types";
-import type { Span } from "./ast";
 import { LlvmTextBuilder, Ty, val, type Block, type NameSource, type Val } from "./ir";
 import type { StructLayout, EnumLayout, EnumVariant } from "./codegen";
-import { HM_TOMBS } from "./codegen-map";
 import { must } from "./must";
 
 const STRING = Ty.of("%String");
@@ -20,8 +18,6 @@ const I32_1 = val("1", Ty.i32);
 
 // Which helper functions have been generated, so each is emitted once per module.
 export class DropGlueSeen {
-  readonly enumClone = new Set<string>();
-  readonly structClone = new Set<string>();
   readonly enumDrop = new Set<string>();
   readonly structDrop = new Set<string>();
 }
@@ -36,8 +32,6 @@ export interface DropCtx extends NameSource {
   structNeedsDrop(name: string): boolean;
   // Re-enters Codegen's wrapper, which owns structural-mode switching and the ownership ledger.
   emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind): void;
-  emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
-  emitStrShare(lines: string[], val: string): string;
   strRt(): void;
   enumFieldPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number, k: number): string;
   loadEnumTag(lines: string[], enumTy: string, addr: string): string;
@@ -51,269 +45,7 @@ export interface DropCtx extends NameSource {
   structuralDrop: boolean;
   dropGlueSeen: DropGlueSeen;
   hasVecType: boolean;
-  hasHashMapType: boolean;
-  needsMalloc: boolean;
-  needsMemcpy: boolean;
   needsFree: boolean;
-}
-
-// emitDeepCloneFromPtr: given a pointer to a value of type `typeKind`,
-// produce a fully-cloned value (deep copy of all heap-owned data).
-// Used for auto-clone on Vec[i] reads so the source Vec stays intact.
-export function emitDeepCloneFromPtr(ctx: DropCtx, lines: string[], srcPtr: string, typeKind: TypeKind): string {
-  const lt = ctx.llvmType(typeKind);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const src = val(srcPtr, Ty.ptr);
-
-  // Copy types: just load
-  if (!ctx.needsDropCg(typeKind)) return b.load(Ty.of(lt), src).ref;
-
-  // The one switch for every implicit string copy (`v[i]`, a field read out of a
-  // borrow, a struct or Vec clone): a heap buffer is shared by count, not copied.
-  if (typeKind.tag === "string") {
-    const orig = b.load(STRING, src);
-    return ctx.emitStrShare(lines, orig.ref);
-  }
-
-  if (typeKind.tag === "vec") {
-    ctx.hasVecType = true;
-    ctx.needsMalloc = true;
-    ctx.needsMemcpy = true;
-    const orig = b.load(VEC, src);
-    const srcData = b.extractvalue(orig, 0, Ty.ptr);
-    const vecLen = b.extractvalue(orig, 1, Ty.i64);
-    const elemSize = ctx.typeSizeOf(typeKind.element);
-    const elemTy = Ty.of(ctx.llvmType(typeKind.element));
-
-    // result buf pointer (set conditionally below)
-    const newBufAddr = b.alloca(Ty.ptr);
-    b.store(NULL, newBufAddr);
-
-    const isEmpty = b.icmp("eq", vecLen, I64_0);
-    const allocLabel = b.newBlock("vec.clone.alloc");
-    const endLabel = b.newBlock("vec.clone.end");
-    b.condBr(isEmpty, endLabel, allocLabel);
-
-    b.position(allocLabel);
-    const { buf, bytes } = ctx.emitAllocBytes(lines, vecLen.ref, elemSize, "vecclone", undefined);
-    const newBuf = val(buf, Ty.ptr);
-    b.store(newBuf, newBufAddr);
-
-    if (ctx.needsDropCg(typeKind.element)) {
-      // deep-clone each element
-      const loopCond = b.newBlock("vec.clone.cond");
-      const loopBody = b.newBlock("vec.clone.body");
-      const iAddr = b.alloca(Ty.i64);
-      b.store(I64_0, iAddr);
-      b.br(loopCond);
-      b.position(loopCond);
-      const iVal = b.load(Ty.i64, iAddr);
-      const cmp = b.icmp("ult", iVal, vecLen);
-      b.condBr(cmp, loopBody, endLabel);
-      b.position(loopBody);
-      const srcElemPtr = b.gep(elemTy, srcData, [iVal]);
-      const clonedElem = emitDeepCloneFromPtr(ctx, lines, srcElemPtr.ref, typeKind.element);
-      const dstElemPtr = b.gep(elemTy, newBuf, [iVal]);
-      b.store(val(clonedElem, elemTy), dstElemPtr);
-      const nextI = b.binop("add", iVal, I64_1);
-      b.store(nextI, iAddr);
-      b.br(loopCond);
-    } else {
-      // Copy element: just memcpy
-      b.callDiscard(Ty.ptr, "@memcpy", [newBuf, srcData, val(bytes, Ty.i64)]);
-      b.br(endLabel);
-    }
-
-    b.position(endLabel);
-    const finalPtr = b.load(Ty.ptr, newBufAddr);
-    const v0 = b.insertvalue(val("undef", VEC), finalPtr, 0);
-    const v1 = b.insertvalue(v0, vecLen, 1);
-    return b.insertvalue(v1, vecLen, 2).ref;
-  }
-
-  if (typeKind.tag === "heap") {
-    ctx.needsMalloc = true;
-    const inner = typeKind.inner;
-    const innerTy = Ty.of(ctx.llvmType(inner));
-    const innerSize = ctx.typeSizeOf(inner);
-    const origPtr = b.load(Ty.ptr, src);
-    const newHeap = b.call(Ty.ptr, "@malloc", [val(String(innerSize), Ty.i64)]);
-    const clonedInner = emitDeepCloneFromPtr(ctx, lines, origPtr.ref, inner);
-    b.store(val(clonedInner, innerTy), newHeap);
-    return newHeap.ref;
-  }
-
-  if (typeKind.tag === "struct") {
-    const layout = ctx.structLayouts.get(typeKind.name);
-    if (!layout) return b.load(Ty.of(lt), src).ref;
-    const structTy = Ty.of(`%${typeKind.name}`);
-    if (ctx.needsDropCg(typeKind)) {
-      ensureStructCloneHelper(ctx, typeKind.name);
-      const helperName = `milo.clone.struct.${typeKind.name}`;
-      const dstAlloca = b.alloca(structTy);
-      b.callDiscard(Ty.void, `@${helperName}`, [src, dstAlloca]);
-      return b.load(structTy, dstAlloca).ref;
-    }
-    const newAlloca = b.alloca(structTy);
-    for (let i = 0; i < layout.fields.length; i++) {
-      const f = layout.fields[i];
-      const srcFieldPtr = b.gep(structTy, src, [I32_0, val(String(i), Ty.i32)]);
-      const clonedField = emitDeepCloneFromPtr(ctx, lines, srcFieldPtr.ref, f.typeKind);
-      const dstFieldPtr = b.gep(structTy, newAlloca, [I32_0, val(String(i), Ty.i32)]);
-      b.store(val(clonedField, Ty.of(f.type)), dstFieldPtr);
-    }
-    return b.load(structTy, newAlloca).ref;
-  }
-
-  if (typeKind.tag === "enum" && ctx.needsDropCg(typeKind) && ctx.enumLayouts.has(typeKind.name)) {
-    ensureEnumCloneHelper(ctx, typeKind.name);
-    const enumTy = Ty.of(lt);
-    const dstAlloca = b.alloca(enumTy);
-    b.callDiscard(Ty.void, `@milo.clone.${typeKind.name}`, [src, dstAlloca]);
-    return b.load(enumTy, dstAlloca).ref;
-  }
-
-  if (typeKind.tag === "hashmap") {
-    // A shallow load here shares the entry buffer; the clone's drop then
-    // frees it under the original, and the next probe loop walks freed
-    // memory forever (found via self-hosting: milo-self checking any enum
-    // match ran away on a cloned EnumInfo's variants map).
-    ctx.hasHashMapType = true;
-    ctx.needsMalloc = true;
-    ctx.needsMemcpy = true;
-    const keyType = typeKind.key;
-    const valueType = typeKind.value;
-    const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
-    const orig = b.load(HASHMAP, src);
-    const srcData = b.extractvalue(orig, 0, Ty.ptr);
-    const len = b.extractvalue(orig, 1, Ty.i64);
-    const cap = b.extractvalue(orig, 2, Ty.i64);
-    const seed = b.extractvalue(orig, 3, Ty.i64);
-    const entrySizePtr = b.gep(entryTy, NULL, [I32_1]);
-    const entrySize = b.cast("ptrtoint", entrySizePtr, Ty.i64);
-    const { buf, bytes } = ctx.emitAllocBytes(lines, cap.ref, entrySize.ref, "hmclone", undefined);
-    const newBuf = val(buf, Ty.ptr);
-    b.callDiscard(Ty.ptr, "@memcpy", [newBuf, srcData, val(bytes, Ty.i64)]);
-
-    if (ctx.needsDropCg(keyType) || ctx.needsDropCg(valueType)) {
-      // memcpy covered states and Copy fields; re-clone owned K/V in
-      // occupied slots so the two maps share no heap data
-      const condLbl = b.newBlock("hm.clone.cond");
-      const bodyLbl = b.newBlock("hm.clone.body");
-      const skipLbl = b.newBlock("hm.clone.skip");
-      const endLbl = b.newBlock("hm.clone.end");
-      const iAddr = b.alloca(Ty.i64);
-      b.store(I64_0, iAddr);
-      b.br(condLbl);
-      b.position(condLbl);
-      const iVal = b.load(Ty.i64, iAddr);
-      const cmp = b.icmp("ult", iVal, cap);
-      b.condBr(cmp, bodyLbl, endLbl);
-      b.position(bodyLbl);
-      const statePtr = b.gep(entryTy, newBuf, [iVal, I32_0]);
-      const state = b.load(Ty.i8, statePtr);
-      const occupied = b.icmp("eq", state, val("1", Ty.i8));
-      const cloneLbl = b.newBlock("hm.clone.slot");
-      b.condBr(occupied, cloneLbl, skipLbl);
-      b.position(cloneLbl);
-      if (ctx.needsDropCg(keyType)) {
-        const srcKeyPtr = b.gep(entryTy, srcData, [iVal, I32_1]);
-        const clonedKey = emitDeepCloneFromPtr(ctx, lines, srcKeyPtr.ref, keyType);
-        const dstKeyPtr = b.gep(entryTy, newBuf, [iVal, I32_1]);
-        b.store(val(clonedKey, Ty.of(ctx.llvmType(keyType))), dstKeyPtr);
-      }
-      if (ctx.needsDropCg(valueType)) {
-        const srcValPtr = b.gep(entryTy, srcData, [iVal, val("2", Ty.i32)]);
-        const clonedVal = emitDeepCloneFromPtr(ctx, lines, srcValPtr.ref, valueType);
-        const dstValPtr = b.gep(entryTy, newBuf, [iVal, val("2", Ty.i32)]);
-        b.store(val(clonedVal, Ty.of(ctx.llvmType(valueType))), dstValPtr);
-      }
-      b.br(skipLbl);
-      b.position(skipLbl);
-      const nextI = b.binop("add", iVal, I64_1);
-      b.store(nextI, iAddr);
-      b.br(condLbl);
-      b.position(endLbl);
-    }
-
-    const h0 = b.insertvalue(val("undef", HASHMAP), newBuf, 0);
-    const h1 = b.insertvalue(h0, len, 1);
-    const h2 = b.insertvalue(h1, cap, 2);
-    const h3 = b.insertvalue(h2, seed, 3);
-    // The buffer is memcpy'd verbatim, tombstone slots and all, so the clone starts
-    // life with exactly the source's deleted-slot count — not zero.
-    const srcTombs = b.extractvalue(orig, HM_TOMBS, Ty.i64);
-    return b.insertvalue(h3, srcTombs, HM_TOMBS).ref;
-  }
-
-  // array — fall back to shallow load
-  return b.load(Ty.of(lt), src).ref;
-}
-
-// Deep-clone an enum by tag: shallow-copy first (tag + Copy payload fields), then
-// overwrite each droppable payload field with a deep clone. Mirrors
-// ensureDropHelper. Recursive enums terminate because the recursion goes through
-// `Heap`, and the memo set stops re-entrant generation.
-export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
-  if (ctx.dropGlueSeen.enumClone.has(enumName)) return;
-  ctx.dropGlueSeen.enumClone.add(enumName);
-
-  const layout = must(ctx.enumLayouts, enumName, "enum layouts");
-  const enumTy = `%${enumName}`;
-  const helperName = `milo.clone.${enumName}`;
-  ctx.emitHelperFn(2, (body) => {
-    const b = new LlvmTextBuilder(body, ctx);
-    const [src, dst] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "src", ty: Ty.ptr }, { name: "dst", ty: Ty.ptr }] });
-    const shallow = b.load(Ty.of(enumTy), src);
-    b.store(shallow, dst);
-    const tag = ctx.loadEnumTag(body, enumTy, src.ref);
-
-    const doneLabel = b.newBlock("clone.done");
-    const cases: [number, Block][] = [];
-    const variantBodies: string[][] = [];
-
-    for (const [vName, variant] of layout.variants) {
-      if (!variant.fieldTypeKinds.some(f => ctx.needsDropCg(f))) continue;
-
-      const label = b.newBlock(`clone.${vName}`);
-      cases.push([variant.tag, label]);
-
-      const vLines: string[] = [];
-      const vb = new LlvmTextBuilder(vLines, ctx);
-      vb.position(label);
-      // Copy fields were carried over by the shallow whole-enum copy above.
-      for (let i = 0; i < variant.fieldTypes.length; i++) {
-        if (!ctx.needsDropCg(variant.fieldTypeKinds[i])) continue;
-        const srcFieldPtr = ctx.enumFieldPtr(vLines, enumTy, src.ref, variant, i);
-        const cloned = emitDeepCloneFromPtr(ctx, vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
-        const dstFieldPtr = ctx.enumFieldPtr(vLines, enumTy, dst.ref, variant, i);
-        vb.store(val(cloned, Ty.of(variant.fieldTypes[i])), val(dstFieldPtr, Ty.ptr));
-      }
-      vb.br(doneLabel);
-      variantBodies.push(vLines);
-    }
-
-    if (cases.length > 0) {
-      b.switch(val(tag, Ty.i32), doneLabel, cases, true);
-      for (const vBody of variantBodies) body.push(...vBody);
-    } else {
-      b.br(doneLabel);
-    }
-    b.position(doneLabel);
-    b.ret();
-    b.endFn();
-  });
-}
-
-// Drop every owning field of the struct at `addr` except `skip`, which has been moved out.
-export function dropStructFieldsExcept(ctx: DropCtx, lines: string[], addr: string, structName: string, skip: string) {
-  const layout = must(ctx.structLayouts, structName, "struct layouts");
-  const b = new LlvmTextBuilder(lines, ctx);
-  layout.fields.forEach((f, i) => {
-    if (f.name === skip || !ctx.needsDropCg(f.typeKind)) return;
-    const fp = b.gep(Ty.of(`%${structName}`), val(addr, Ty.ptr), [I32_0, val(String(i), Ty.i32)]);
-    ctx.emitDropValue(lines, fp.ref, f.typeKind);
-  });
 }
 
 // The drop glue proper for one value, after Codegen.emitDropValue has handled structural-mode re-entry and the ownership ledger.
@@ -551,28 +283,6 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
     }
 
     b.position(doneLabel);
-    b.ret();
-    b.endFn();
-  });
-}
-
-export function ensureStructCloneHelper(ctx: DropCtx, structName: string) {
-  if (ctx.dropGlueSeen.structClone.has(structName)) return;
-  ctx.dropGlueSeen.structClone.add(structName);
-
-  const layout = must(ctx.structLayouts, structName, "struct layouts");
-  const structTy = Ty.of(`%${structName}`);
-  const helperName = `milo.clone.struct.${structName}`;
-  ctx.emitHelperFn(2, (body) => {
-    const b = new LlvmTextBuilder(body, ctx);
-    const [src, dst] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "src", ty: Ty.ptr }, { name: "dst", ty: Ty.ptr }] });
-    for (let i = 0; i < layout.fields.length; i++) {
-      const f = layout.fields[i];
-      const srcFieldPtr = b.gep(structTy, src, [I32_0, val(String(i), Ty.i32)]);
-      const clonedField = emitDeepCloneFromPtr(ctx, body, srcFieldPtr.ref, f.typeKind);
-      const dstFieldPtr = b.gep(structTy, dst, [I32_0, val(String(i), Ty.i32)]);
-      b.store(val(clonedField, Ty.of(f.type)), dstFieldPtr);
-    }
     b.ret();
     b.endFn();
   });

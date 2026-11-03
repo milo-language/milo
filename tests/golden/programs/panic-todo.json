@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "todo: 'later' is not implemented (mlir/test/programs/panic-todo.milo:4:9): big inputs\n",
+  "stdout": "1\n"
+}

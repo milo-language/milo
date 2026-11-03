@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "fresh: 0 -> 3 applied [1, 2, 3] adopted false\nrows 2 emails 2\nagain: 3 -> 3 applied []\nedited: changed after it was applied\nnewer: which this program does not know\nfailed: no such table: nope\nrolled back: t4 0 history 3\nfk: foreign key names no row of 'users'\ngap: older than applied migration 3\nadopt: 0 -> 2 applied [2] adopted true\nadopted columns: email,id,login,nick\nmismatch: missing: table users: column bio TEXT default none pk 0\nunknown db: no migration history\nbackup rows 2\nbackup again: already exists\n"
+}

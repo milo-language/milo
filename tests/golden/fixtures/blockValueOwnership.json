@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "if-temps 1244000\nmatch-temps 1240000\nmixed 620040\nlocals 1244000\nscalar 280\n"
+}

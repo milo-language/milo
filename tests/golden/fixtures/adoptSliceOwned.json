@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "len=4 cap=4\n11 22 33 44\nsum=110\nlen=5 last=55\nextended=4 7 8\nempty len=0\n"
+}

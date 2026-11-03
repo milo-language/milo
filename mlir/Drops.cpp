@@ -532,37 +532,50 @@ struct ElaborateDropsPass
 // Ownership ops -> LLVM
 //===----------------------------------------------------------------------===//
 
-LLVM::LLVMFuncOp legacyFn(ConversionPatternRewriter &rw, Operation *op, StringRef name,
+LLVM::LLVMFuncOp runtimeFn(ConversionPatternRewriter &rw, Operation *op, StringRef name,
                           ArrayRef<Type> args, Type ret) {
   auto module = op->getParentOfType<ModuleOp>();
   auto fn = LLVM::lookupOrCreateFn(rw, module, name, args, ret);
   return failed(fn) ? LLVM::LLVMFuncOp() : *fn;
 }
 
-// A drop is a call of the legacy module's drop glue for the type, `milo.drop.<key>(ptr)`
-// (codegen mlirDropHelper), or `milo.sdrop.<key>` for a structural slot; with a flag, only
-// when the flag is set.
+// A void call of `name(args)`. The module's own drop glue (src/mlir-glue.ts) is a func.func
+// not converted yet, so it is called by symbol; anything else is declared as an llvm.func.
+static LogicalResult callVoid(ConversionPatternRewriter &rw, Operation *op, StringRef name, ValueRange args) {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (isa_and_nonnull<func::FuncOp>(module.lookupSymbol(name))) {
+    LLVM::CallOp::create(rw, op->getLoc(), TypeRange{}, name, args);
+    return success();
+  }
+  SmallVector<Type> tys(args.getTypes());
+  auto fn = runtimeFn(rw, op, name, tys, LLVM::LLVMVoidType::get(rw.getContext()));
+  if (!fn)
+    return failure();
+  LLVM::CallOp::create(rw, op->getLoc(), fn, args);
+  return success();
+}
+
+// A drop is a call of the type's drop glue, `milo.drop.<key>(ptr)` (src/mlir-glue.ts), or
+// `milo.sdrop.<key>` for a structural slot; with a flag, only when the flag is set.
 struct DropLowering : ConvertOpToLLVMPattern<DropOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(DropOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
     Location loc = op.getLoc();
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     auto var = op.getRef().getDefiningOp<VarOp>();
-    auto fn = legacyFn(rw, op, (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee()),
-                       {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
-    if (!fn)
-      return failure();
+    std::string name = (var && var.getStructural() ? "milo.sdrop." : "milo.drop.") + typeKey(op.getRef().getType().getPointee());
     if (!a.getFlag()) {
-      LLVM::CallOp::create(rw, loc, fn, ValueRange{a.getRef()});
+      if (failed(callVoid(rw, op, name, ValueRange{a.getRef()})))
+        return failure();
       rw.eraseOp(op);
       return success();
     }
     Block *cur = rw.getInsertionBlock();
     Block *cont = rw.splitBlock(cur, rw.getInsertionPoint());
     Block *drop = rw.createBlock(cont);
-    LLVM::CallOp::create(rw, loc, fn, ValueRange{a.getRef()});
+    if (failed(callVoid(rw, op, name, ValueRange{a.getRef()})))
+      return failure();
     LLVM::BrOp::create(rw, loc, ValueRange{}, cont);
     rw.setInsertionPointToEnd(cur);
     LLVM::CondBrOp::create(rw, loc, a.getFlag(), drop, cont);
@@ -604,6 +617,15 @@ struct VecPlaceLowering : ConvertOpToLLVMPattern<VecPlaceOp> {
   matchAndRewrite(VecPlaceOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
     rw.replaceOp(op, a.getRef());
+    return success();
+  }
+};
+
+struct VecSlotLowering : ConvertOpToLLVMPattern<VecSlotOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecSlotOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getVec());
     return success();
   }
 };
@@ -770,18 +792,18 @@ struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   }
 };
 
-// legacy's string share, a function of the legacy module (codegen mlirHelper).
+// The runtime's `@milo.str.share` (src/runtime/str.ll): a new handle to the same buffer.
 struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(StringShareOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Type st = getTypeConverter()->convertType(op.getType());
-    auto fn = legacyFn(rw, op, "milo.share.string", {ptrTy}, st);
+    Value s = LLVM::LoadOp::create(rw, op.getLoc(), st, a.getRef());
+    auto fn = runtimeFn(rw, op, "milo.str.share", {st}, st);
     if (!fn)
       return failure();
-    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{a.getRef()});
+    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{s});
     return success();
   }
 };
@@ -797,7 +819,7 @@ struct StringConcatLowering : ConvertOpToLLVMPattern<StringConcatOp> {
     Value l = entrySlot(rw, op, st), r = entrySlot(rw, op, st);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getLhs(), l);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getRhs(), r);
-    auto fn = legacyFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
+    auto fn = runtimeFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
     if (!fn)
       return failure();
     rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{l, r});
@@ -813,7 +835,7 @@ struct StringAppendLowering : ConvertOpToLLVMPattern<StringAppendOp> {
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Value v = entrySlot(rw, op, a.getValue().getType());
     LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), v);
-    auto fn = legacyFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
+    auto fn = runtimeFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
                        LLVM::LLVMVoidType::get(rw.getContext()));
     if (!fn)
       return failure();
@@ -851,7 +873,7 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
   });
   patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering, MapLenLowering>(tc);
   patterns.add<ArrayTailArrayLowering, ArrayTailStartLowering, ArrayTailTakeLowering, ArrayTailTakePlaceLowering>(tc);
-  patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
+  patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecSlotLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }
 

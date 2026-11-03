@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: division by zero at mlir/test/programs/trap-wrapping-div-zero.milo:4:36\n",
+  "stdout": ""
+}

@@ -1,0 +1,32 @@
+// Key glue: struct keys hash and compare field by field; min/max/sort order natively.
+struct K { a: i64, s: string, f: bool }
+
+pub fn main(): i32 {
+    var m: HashMap<K, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 200 {
+        m.insert(K { a: i % 50, s: format("k", i % 7), f: i % 2 == 0 }, i)
+        i = i + 1
+    }
+    print(m.len())
+    print(m.get(K { a: 3, s: "k3".clone(), f: false })!)
+    print(m.contains(K { a: 3, s: "k3".clone(), f: true }))
+    var b: HashMap<bool, i64> = HashMap.new()
+    b.insert(true, 1)
+    b.insert(false, 2)
+    print(b.get(true)!, b.get(false)!)
+    var u: HashMap<u8, i64> = HashMap.new()
+    u.insert(200, 9)
+    print(u.get(200)!)
+    var v: Vec<f64> = [3.5, 0.0 - 1.0, 2.25]
+    v.sort()
+    print(v)
+    var w: Vec<string> = ["pear".clone(), "apple".clone(), "app".clone()]
+    w.sort()
+    print(w)
+    let bs: Vec<bool> = [true, false, true]
+    print(bs.min()!, bs.max()!)
+    let us: Vec<u64> = [18446744073709551615, 1]
+    print(us.min()!)
+    return 0
+}

@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "milo: array index out of bounds: 3/3 at mlir/test/programs/ptr-array-index.milo:15\n",
+  "stdout": "2 6\n4\n5\n6\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "rt=Hello\nempty=[]\nupper=foo\nbadchar=hex: invalid digit at byte 0\nbadsecond=hex: invalid digit at byte 3\nodd=hex: odd input length 3\nspace=hex: odd input length 5\nprefix=hex: invalid digit at byte 1\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "root 1\nleaf 2\nlen=2\nholds=true\nforeign=false\nrefused: freed\nok after refusal: 7\n"
+}

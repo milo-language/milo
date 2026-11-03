@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "hello\nlocal world\n3 30\n42\nbob 7\nbad input\ninner nested\nunchanged\n3:cs\nnot a pair\n9:mid:2\nnot three\n9 mid 2\nloop 0 p0\nloop 1 p1\nloop 2 p2\n"
+}

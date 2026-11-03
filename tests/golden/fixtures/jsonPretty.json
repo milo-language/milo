@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "|{\n|  \"type\": \"stopped\",\n|  \"line\": 8,\n|  \"frames\": [\n|    {\n|      \"name\": \"main\"\n|    }\n|  ],\n|  \"locals\": [],\n|  \"meta\": {}\n|}\n|{\n|    \"a\": {\n|        \"b\": 1\n|    }\n|}\n{\"type\":\"stopped\",\"line\":8,\"frames\":[{\"name\":\"main\"}],\"locals\":[],\"meta\":{}}\n|{\n|  \"s\": \"a{\\\"b\\\": [1,2] }c\"\n|}\n{\"id\":9007199254740993,\"f\":-0.0,\"e\":1e3}\nno server on port 8791\n"
+}

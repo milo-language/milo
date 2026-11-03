@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "{\"a\":null,\"b\":null,\"c\":[null,2.5],\"d\":null}\ntrue\n{\"a\":1.5,\"b\":null,\"c\":[],\"d\":0.1}\n{\"n\":null,\"i\":null,\"xs\":[null,0.25]}\ntrue\n"
+}

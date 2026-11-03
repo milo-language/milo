@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "200\n3\nfalse\n12\n9\n[-1, 2.25, 3.5]\n[\"app\", \"apple\", \"pear\"]\nfalsetrue\n1\n"
+}

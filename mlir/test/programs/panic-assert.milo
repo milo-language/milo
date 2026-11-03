@@ -1,0 +1,12 @@
+// assert's message: built only when the assert fails, written whole to stderr.
+fn check(n: i64): i64 {
+    assert(n > 0, format("n was ", n))
+    return n * 2
+}
+
+pub fn main(): i32 {
+    print(check(4))
+    assert(true)
+    print(check(0 - 1))
+    return 0
+}

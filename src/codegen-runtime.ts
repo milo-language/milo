@@ -1,11 +1,14 @@
-// Fixed LLVM IR runtime helpers (string buffers, int formatting), kept as IR text in src/runtime/str.ll.
+// Fixed LLVM IR runtime helpers (string buffers, int formatting, map buffers), kept as IR
+// text in src/runtime/*.ll.
 //
 // Their text never varies per program apart from a few interpolated globals, so the typed
 // builder would add no checking to them, only lines. The text import is embedded by
 // `bun build --compile`, so a shipped binary carries it like the bundled stdlib.
 import STR_LL from "./runtime/str.ll" with { type: "text" };
+import MAP_LL from "./runtime/map.ll" with { type: "text" };
+import ATOMIC_LL from "./runtime/atomic.ll" with { type: "text" };
 
-const FILE = "src/runtime/str.ll";
+const FILE = "src/runtime/*.ll";
 
 // `; @@ key` starts a section, which runs to the next marker. Every other whole-line `;`
 // comment is documentation and is dropped, as is a section's trailing blank space, so a
@@ -30,7 +33,13 @@ export function parseSections(text: string): Map<string, readonly string[]> {
   return sections;
 }
 
-const SECTIONS = parseSections(STR_LL);
+const SECTIONS = new Map<string, readonly string[]>();
+for (const text of [STR_LL, MAP_LL, ATOMIC_LL]) {
+  for (const [k, body] of parseSections(text)) {
+    if (SECTIONS.has(k)) throw new Error(`${FILE}: section ${k} defined twice`);
+    SECTIONS.set(k, body);
+  }
+}
 export const runtimeSectionKeys = (): string[] => [...SECTIONS.keys()];
 
 /**

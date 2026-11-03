@@ -1,0 +1,24 @@
+// Native slice views: string, Vec, fixed-array and nested slices, then a slice past the end.
+fn sum(xs: &[i64]): i64 {
+    var t: i64 = 0
+    for x in xs {
+        t = t + x
+    }
+    return t
+}
+
+pub fn main(): i32 {
+    let s = "hello world".clone()
+    let w = s[6..11]
+    print(w, " ", w.len(), " ", s[0..0].len())
+    let v: Vec<i64> = [1, 2, 3, 4, 5]
+    let mid = v[1..4]
+    print(sum(mid), " ", mid.len(), " ", sum(mid[1..3]))
+    let a = [10, 20, 30]
+    print(sum(a[0..2]), " ", sum(a[3..3]))
+    let i: i32 = 2
+    print(sum(v[i..5]))
+    let n = v.len() + 1
+    print(sum(v[2..n]))
+    return 0
+}

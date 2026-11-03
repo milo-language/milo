@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "200\nhello world\n404\nxyz\ntext/plain\n200\nchunkedish\n"
+}

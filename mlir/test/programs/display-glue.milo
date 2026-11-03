@@ -1,0 +1,20 @@
+// Native print: display glue for structs, enums, Vecs, arrays and scalars, stdout and stderr.
+struct P { x: i64, name: string, f: f64 }
+
+enum Shape { Circle(f64), Rect(i64, i64), Dot, Named(string) }
+
+pub fn main(): i32 {
+    let p = P { x: 3, name: "a".clone(), f: 1.5 }
+    print(p)
+    print("p = ", p, " and ", 7, true)
+    let v: Vec<i64> = [1, 2, 3]
+    let ss: Vec<string> = ["x".clone(), "y".clone()]
+    print(v, ss)
+    print(Shape.Circle(2.5), Shape.Rect(1, 2), Shape.Dot, Shape.Named("n".clone()))
+    let arr = [4, 5, 6]
+    print(arr)
+    let shapes: Vec<Shape> = [Shape.Dot, Shape.Rect(3, 4)]
+    print(shapes)
+    eprint("err ", p)
+    return 0
+}

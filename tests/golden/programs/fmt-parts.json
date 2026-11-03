@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "v=[3, 1, 4] p=P { x: 7, name: \"pt\" } b=Box(2, 5) d=Dot\nnames [\"a\", \"b\"] len 2\n"
+}

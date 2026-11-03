@@ -1,0 +1,18 @@
+// unwrap: Some/Ok payloads owned by the caller; an Err(enum) panics naming the variant.
+enum E { Bad(i64), Worse }
+
+fn f(n: i64): Result<string, E> {
+    if n > 2 {
+        return Err(E.Bad(n))
+    }
+    return Ok(format("ok", n))
+}
+
+pub fn main(): i32 {
+    let a: Option<string> = Some("s".clone())
+    print(a!, " ", f(1)!)
+    let r: Result<i64, string> = Ok(4)
+    print(r!)
+    print(f(3)!)
+    return 0
+}

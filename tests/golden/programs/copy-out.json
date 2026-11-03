@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "[\"alpha\", \"be\", \"gamma\"] 4\n[\"alpha\", \"gamma\", \"delta\"]\n3 rrr 20 r\nSome(\"vvv\") Some(\"w\")\n"
+}

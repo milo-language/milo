@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "make 2\nclone 2\n102 2\n--if\nmake 3\nclone 3\n103 3\n--heap\nmake 6\n6\n--end\ndrop 6\ndrop 103\ndrop 3\ndrop 102\ndrop 2\n"
+}

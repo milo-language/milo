@@ -1,0 +1,25 @@
+// milo.string.push_<kind>: toString and pushInt of every scalar width and kind.
+pub fn main(): i32 {
+    let a: i8 = 0 - 127 - 1
+    let b: u8 = 255
+    let c: i32 = 0 - 2147483647
+    let d: u64 = 18446744073709551615
+    let f: f64 = 0.1 + 0.2
+    let g: f32 = 1.5
+    let t = true
+    print(a.toString(), " ", b.toString(), " ", c.toString(), " ", d.toString())
+    print(f.toString(), " ", g.toString(), " ", t.toString())
+    var s = "n=".clone()
+    s.pushInt(c)
+    s.pushInt(d)
+    s.pushInt(a)
+    print(s, " ", s.len())
+    var i: i64 = 0
+    var acc = "".clone()
+    while i < 50 {
+        acc.pushInt(i * 1000003)
+        i = i + 1
+    }
+    print(acc.len())
+    return 0
+}

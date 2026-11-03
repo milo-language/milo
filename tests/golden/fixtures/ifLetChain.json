@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "got 3\nno\nn2 child\nnone found\nborrowed: n1 -> child\nborrowed: none\nloop n3\nloop n2\nowned abc\n7\nreplaced\nsecond clause failed, moved payload dropped\n"
+}

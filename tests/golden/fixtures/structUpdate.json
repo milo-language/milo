@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "first 10 2 2 from mk\nq 10 x from mk\nr 0\nend\nstart\nbase\n6 7 base\n2 in 3 o\n2 new 3 o\n5 two\n5 three\n5 three\nkeep 1 keep 99\na 42\nb 42\n"
+}

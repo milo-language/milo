@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "err P { x: 3, name: \"a\", f: 1.5 }\n",
+  "stdout": "P { x: 3, name: \"a\", f: 1.5 }\np = P { x: 3, name: \"a\", f: 1.5 } and 7true\n[1, 2, 3][\"x\", \"y\"]\nCircle(2.5)Rect(1, 2)DotNamed(\"n\")\n[4, 5, 6]\n[Dot, Rect(3, 4)]\n"
+}

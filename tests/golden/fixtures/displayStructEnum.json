@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "User { name: \"alice\", age: 30, happy: true }\nRed\nRgb(255, 128, 0)\nSome(42)\nNone\n"
+}

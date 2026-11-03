@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "ok sub=alice\nsignature does not match\nmalformed token: no Authorization header\nmalformed token: Authorization header is not a Bearer token\n200\n401\ntrue\ntrue\ntrue\nhello\n"
+}

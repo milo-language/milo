@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "basic=a;b;|c;d;|\nquoted=a;b,c;d\"e;|\nnoeol=a;b;|\nempty=\ncrlf=a;b;|c;d;|\nemptyquoted=;x;|\nquotednewline=a;line1\nline2;|\nragged=a;b;c;|d;e;|\nunterminated=csv: unterminated quoted field starting at byte 2\nbareQuote=csv: bare '\"' in unquoted field at byte 3\nafterQuote=csv: unexpected text after closing quote at byte 5\n"
+}

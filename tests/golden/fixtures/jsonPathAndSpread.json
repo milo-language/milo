@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "I-80 39.3 true\nUS-50 0 false\nUS-50\nnone\n0\n{\"a\":1,\"b\":\"y\",\"c\":3}\n{\"z\":1}\n"
+}

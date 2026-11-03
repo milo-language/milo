@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "order [\"b\", \"a\", \"c\"] values [2, 10, 3]\nget Some(10) None contains true\nremoved Some(2) None order [\"a\", \"c\"]\nmoved [\"c\", \"a\"] missing false\npopFirst c=3 left [\"a\"]\nread 10 modify 11\nchurn ok len 100 first 4900 last 4999\ncounter a=3 b=2 c=1 zz=0 len 4\nmostCommon [a:3, b:2]\nties [x:2, y:2, z:2]\nall 4\n"
+}

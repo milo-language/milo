@@ -1,4 +1,4 @@
-// MLIR driver (default build path; MILO_LEGACY=1 turns it off) (docs/mlir-backend.md): the functions the milo dialect covers go
+// MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go
 // HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
 // replace the legacy codegen's in the one LLVM module clang sees.
 //
@@ -18,21 +18,8 @@ import type { HIRFunction, HIRModule } from "./hir";
 import { mapSymbols } from "./cgu";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
+import { MlirGlue } from "./mlir-glue";
 
-// On unless MILO_LEGACY=1 (temporary escape hatch for critical deploys; docs/mlir-backend.md).
-// MILO_MLIR=0 is the old opt-out spelling, accepted for one release; MILO_MLIR=1 is a no-op.
-export const MLIR_MODE = process.env.MILO_LEGACY !== "1" && process.env.MILO_MLIR !== "0";
-
-/**
- * Whether builds for `target` go through MLIR: every hosted target (cross builds and
- * Windows included) and wasm64. A 32-bit target (the Cortex-M family) stays legacy:
- * legacy codegen's typeSize/enum layout hardcode an 8-byte pointer, while milo-opt lays
- * structs out with the target's data layout (4-byte pointer on thumb), so the two halves
- * of one module would disagree about every struct holding a pointer.
- */
-export function mlirTargetOk(target: TargetInfo): boolean {
-  return target.arch !== "arm";
-}
 
 // The data layout clang uses for `triple` (the one source of truth for it: legacy codegen
 // emits no `target datalayout` and lets clang pick). Asked of the clang of milo-opt's LLVM,
@@ -149,7 +136,7 @@ export function mlirClang(): { path: string; id: string } {
 }
 function tool(path: string, what: string): string {
   if (!existsSync(path)) {
-    console.error(`error: missing ${what} at ${path}; ${BUILD_HINT} (or MILO_LEGACY=1 for the legacy code generator)`);
+    console.error(`error: missing ${what} at ${path}; ${BUILD_HINT}`);
     process.exit(1);
   }
   return path;
@@ -182,12 +169,8 @@ function run(cmd: string, args: string[], input: string): string {
   return r.stdout;
 }
 
-const ONLY = process.env.MILO_MLIR_ONLY ? new RegExp(process.env.MILO_MLIR_ONLY) : null;
 const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
-// Where main's prologue ends when main keeps its legacy body for the noalias analysis
-// (take's "legacy"): codegen writes it right after the prologue, the splice stops there.
-export const PROLOGUE_END = "; milo.mlir.prologue.end";
 
 /**
  * Which functions go through MLIR, decided by legacy codegen as it reaches each one
@@ -199,60 +182,41 @@ export class MlirPlan {
   private takenNames = new Set<string>();
   private log: string[] = [];
   private readonly fns = new Map<string, HIRFunction>();
+  // Type-directed glue (display, ...) every taken function shares: emitted once, appended
+  // to the module as closure bodies are.
+  private readonly glue: MlirGlue;
 
   constructor(hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
+    this.glue = new MlirGlue(cx);
     for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
   }
 
   /**
-   * The stub body for `fn` when MLIR takes it, else null. The stub is never executed and
-   * never shipped; it exists for codegen's module-wide noalias dataflow, which reads call
-   * edges out of the IR text: one dead call per callee keeps the edges through this
-   * function. With by-ref params and scalars that is all the analysis would see in the
-   * real body. A raw pointer flows in ways a stub does not capture (stored, returned,
-   * made from an int), so a function with one keeps its legacy body for the analysis
-   * ("legacy"), and pays for generating it.
+   * The stub body for `fn` when MLIR takes it, else null: a placeholder the splice
+   * replaces with the MLIR body, never executed and never shipped.
    */
-  take(fn: HIRFunction): string[] | "legacy" | null {
+  take(fn: HIRFunction): string[] | null {
     if (fn.isExtern) return null;
-    // Bisecting a miscompile: only functions whose name matches go through MLIR.
-    if (ONLY && !ONLY.test(fn.name)) return null;
-    const r = emitMlirFunction(fn, this.cx, this.fns);
+    const r = emitMlirFunction(fn, this.cx, this.fns, this.glue);
     if (typeof r === "string") {
       const [first, ...more] = r.split("\n");
       this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
-      return null;
+      // No legacy body to fall back to: the dialect must cover every function.
+      throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
     }
     // A lazy global's init function is codegen's own, not in the HIR module.
     if (!this.fns.has(r.name)) this.fns.set(r.name, fn);
-    // Mutable globals the body names are what the analysis reads as `touches`, and their
-    // addresses flow like a raw pointer's: neither is in a stub's call list.
-    const body = r.text.slice(r.text.indexOf("\n"));
-    // A fn value runs unknown code, and a closure lends this frame's slots to it: the
-    // analysis reads both from the legacy body (byRefClosures, an indirect call).
-    const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ") || body.includes("!milo.fn<");
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(r.name);
-    if (ptrs) return "legacy";
-    const stub = [STUB_FIRST, "mlir.stub.calls:", STUB_MARK];
-    // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
-    // everything else is a scalar or a slot of this frame, which reaches no global.
-    for (const call of r.calls) {
-      const callee = this.fns.get(call.name)!;
-      const args = callee.params.map((p, i) => {
-        const own = call.refParams[i];
-        if (p.isRef || p.isRefMut) return `ptr ${own == null ? "poison" : `%${fn.params[own].name}`}`;
-        return `${this.cx.llvmType(p.type)} poison`;
-      });
-      const sym = /^[-\w$.]+$/.test(call.name) ? call.name : `"${call.name}"`;
-      // An sret callee is `void @f(ptr %__sret.out, ...)`; its out slot is this frame's.
-      const sret = this.cx.sretFns.has(call.name);
-      if (sret) args.unshift("ptr poison");
-      stub.push(`  call ${sret ? "void" : this.cx.llvmType(callee.retType)} @${sym}(${args.join(", ")})`);
-    }
-    stub.push("  unreachable");
-    return stub;
+    // The noalias pass runs on the spliced module (Codegen.noaliasOnFinal), so the stub
+    // only holds the place: the splice replaces it whole.
+    return [STUB_FIRST, "mlir.stub.calls:", STUB_MARK, "  unreachable"];
+  }
+
+  /** The closure bodies MLIR emitted (not their env drops), for the noalias pass. */
+  closureBodies(): string[] {
+    return this.taken.flatMap(f => f.closures).filter(n => !n.endsWith("$envdrop"));
   }
 
   /** `ir` with every stub replaced by the function's body compiled through MLIR. */
@@ -274,7 +238,9 @@ export class MlirPlan {
     // lowering sizes types with the data layout.
     const triple = this.target.triple;
     const dl = targetDataLayout(triple);
-    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText(this.taken)}}\n`;
+    const glue = this.glue.module();
+    const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
+    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText([...this.taken, ...glueFn])}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
     // A per-module extern is one more typed view of a C symbol: legacy codegen renames its
@@ -348,11 +314,11 @@ export class MlirPlan {
         header = header.replace(re, ` %${k}`);
         renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
       });
-      // Legacy lines ahead of the stub or PROLOGUE_END (main's prologue: argc/argv globals, stdout
+      // Legacy lines ahead of the stub (main's prologue: argc/argv globals, stdout
       // buffering, global init) run first, at the top of the MLIR entry block. They are
       // calls and stores of params and globals, so they number no values of their own.
       const prologue: string[] = [];
-      for (let j = i + 1; name === "main" && lines[j] !== PROLOGUE_END && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
+      for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
         if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
         // The legacy entry label goes; the MLIR body brings its own entry block.
         if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
@@ -383,7 +349,7 @@ export class MlirPlan {
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
     // Closure bodies are functions legacy never defined (it made its own, now dead, for
     // the bodies it generated): appended whole, MLIR's `define internal` line and all.
-    for (const name of this.taken.flatMap(f => f.closures)) {
+    for (const name of [...this.taken, ...glueFn].flatMap(f => f.closures)) {
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
       for (const b of got.body) if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);

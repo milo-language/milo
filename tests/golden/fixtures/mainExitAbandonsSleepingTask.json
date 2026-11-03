@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "11",
+    "o2": "11"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "sleeping\nend\n"
+}

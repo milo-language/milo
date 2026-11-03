@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "each: 1 2 3\nmap: 10 20 30\nfilter kept 2\nposition 1\nretain kept 3\nfold 6\nsortBy 1 2 3 4 5\nsortByKey 5 4 3 2 1\n"
+}

@@ -378,31 +378,569 @@ done:
   ret ptr %old
 }
 
-; @@ milo.bufappend
-define internal void @milo.bufappend(ptr %bufSlot, ptr %lenSlot, ptr %capSlot, ptr %src, i64 %n) {
+; @@ milo.fmt.g
+; The "%.*g" format both float formatters hand snprintf.
+@milo.fmt.g = private unnamed_addr constant [5 x i8] c"%.*g\00"
+
+; @@ milo.fmt.f64
+; A double as the shortest %.*g that strtod reads back exactly (at most 17 digits),
+; written to %buf (F64_BUF bytes); returns its length. -0.0 prints as "-0".
+define private i64 @milo.fmt.f64(double %v, ptr %buf) {
+entry.bb:
+  %d = fadd double %v, -0.000000e+00
+  %isneg = fcmp olt double %d, 0.000000e+00
+  %negd = fneg double %d
+  %av = select i1 %isneg, double %negd, double %d
+  br label %dloop
+dloop:
+  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]
+  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]
+  %room = icmp slt i32 %dig, 17
+  %over = fcmp oge double %av, %pow
+  %grow = and i1 %room, %over
+  br i1 %grow, label %dnext, label %ploop
+dnext:
+  %dignext = add i32 %dig, 1
+  %pownext = fmul double %pow, 1.000000e+01
+  br label %dloop
+ploop:
+  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
+  %back = call double @strtod(ptr %buf, ptr null)
+  %exact = fcmp oeq double %back, %v
+  %last = icmp sge i32 %p, 17
+  %stop = or i1 %exact, %last
+  br i1 %stop, label %fin, label %again
+again:
+  %pnext = add i32 %p, 1
+  br label %ploop
+fin:
+  %n64 = sext i32 %n to i64
+  ret i64 %n64
+}
+
+; @@ milo.fmt.f32
+; milo.fmt.f64 for a float: at most 9 digits, read back with strtof.
+define private i64 @milo.fmt.f32(float %v, ptr %buf) {
+entry.bb:
+  %d = fpext float %v to double
+  %isneg = fcmp olt double %d, 0.000000e+00
+  %negd = fneg double %d
+  %av = select i1 %isneg, double %negd, double %d
+  br label %dloop
+dloop:
+  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]
+  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]
+  %room = icmp slt i32 %dig, 9
+  %over = fcmp oge double %av, %pow
+  %grow = and i1 %room, %over
+  br i1 %grow, label %dnext, label %ploop
+dnext:
+  %dignext = add i32 %dig, 1
+  %pownext = fmul double %pow, 1.000000e+01
+  br label %dloop
+ploop:
+  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
+  %back = call float @strtof(ptr %buf, ptr null)
+  %exact = fcmp oeq float %back, %v
+  %last = icmp sge i32 %p, 9
+  %stop = or i1 %exact, %last
+  br i1 %stop, label %fin, label %again
+again:
+  %pnext = add i32 %p, 1
+  br label %ploop
+fin:
+  %n64 = sext i32 %n to i64
+  ret i64 %n64
+}
+
+; @@ milo.string.concat
+; `a + b`, a fresh string of both (count 1, NUL-terminated); the MLIR path's string
+; concat (milo.string.concat lowers to a call of this).
+define internal %String @milo.string.concat(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
 entry:
-  %len = load i64, ptr %lenSlot
-  %cap = load i64, ptr %capSlot
-  %end = add i64 %len, %n
-  ; +1 so the NUL written below always has room
-  %need = add i64 %end, 1
-  %fits = icmp ule i64 %need, %cap
-  br i1 %fits, label %copy, label %grow
-grow:
-  %dbl = shl i64 %cap, 1
-  %small = icmp ult i64 %dbl, %need
-  %newcap = select i1 %small, i64 %need, i64 %dbl
-  %old = load ptr, ptr %bufSlot
-  %nb = call ptr @realloc(ptr %old, i64 %newcap)
-  store ptr %nb, ptr %bufSlot
-  store i64 %newcap, ptr %capSlot
-  br label %copy
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %ad = extractvalue %String %as, 0
+  %al = extractvalue %String %as, 1
+  %bd = extractvalue %String %bs, 0
+  %bl = extractvalue %String %bs, 1
+  %len = add i64 %al, %bl
+  %cap = add i64 %len, 1
+  %buf = call ptr @milo.str.alloc(i64 %cap)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fill, label %oom
+oom:
+  call void @milo.str.oom()
+  unreachable
+fill:
+  call ptr @memcpy(ptr %buf, ptr %ad, i64 %al)
+  %tail = getelementptr i8, ptr %buf, i64 %al
+  call ptr @memcpy(ptr %tail, ptr %bd, i64 %bl)
+  %end = getelementptr i8, ptr %buf, i64 %len
+  store i8 0, ptr %end
+  %s0 = insertvalue %String undef, ptr %buf, 0
+  %s1 = insertvalue %String %s0, i64 %len, 1
+  %s2 = insertvalue %String %s1, i64 %cap, 2
+  ret %String %s2
+}
+
+; @@ milo.string.append
+; `s.pushStr(x)`: x's bytes appended to s in place (unique first, then grown by
+; milo.str.reserve). x may point into s's own buffer (`s.pushStr(s)`): its data pointer
+; is re-based onto the buffer reserve returns.
+define internal void @milo.string.append(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr nonnull dereferenceable(24) align 8 %x) {
+entry:
+  %xs = load %String, ptr %x
+  %xd = extractvalue %String %xs, 0
+  %xl = extractvalue %String %xs, 1
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %old = load ptr, ptr %datap
+  %oldi = ptrtoint ptr %old to i64
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %xl)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %oom
+oom:
+  call void @milo.str.oom()
+  unreachable
 copy:
-  %buf = load ptr, ptr %bufSlot
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %xdi = ptrtoint ptr %xd to i64
+  %off = sub i64 %xdi, %oldi
+  %inside = icmp ult i64 %off, %len
+  %moved = getelementptr i8, ptr %buf, i64 %off
+  %src = select i1 %inside, ptr %moved, ptr %xd
+  call ptr @memcpy(ptr %dst, ptr %src, i64 %xl)
+  %nlen = add i64 %len, %xl
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret void
+}
+
+; @@ milo.string.eq
+; `a == b` on strings: equal lengths, then equal bytes.
+define internal i1 @milo.string.eq(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
+entry:
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %al = extractvalue %String %as, 1
+  %bl = extractvalue %String %bs, 1
+  %leq = icmp eq i64 %al, %bl
+  br i1 %leq, label %bytes, label %done
+bytes:
+  %ad = extractvalue %String %as, 0
+  %bd = extractvalue %String %bs, 0
+  %c = call i32 @memcmp(ptr %ad, ptr %bd, i64 %al)
+  %ceq = icmp eq i32 %c, 0
+  br label %done
+done:
+  %r = phi i1 [ false, %entry ], [ %ceq, %bytes ]
+  ret i1 %r
+}
+
+; @@ milo.string.cmp
+; String ordering, three-way: negative, zero or positive as a sorts before, with or after
+; b. Bytes compare unsigned over the shorter length (memcmp); a prefix sorts first.
+define internal i32 @milo.string.cmp(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
+entry:
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %ad = extractvalue %String %as, 0
+  %al = extractvalue %String %as, 1
+  %bd = extractvalue %String %bs, 0
+  %bl = extractvalue %String %bs, 1
+  %short = icmp ult i64 %al, %bl
+  %n = select i1 %short, i64 %al, i64 %bl
+  %c = call i32 @memcmp(ptr %ad, ptr %bd, i64 %n)
+  %same = icmp eq i32 %c, 0
+  br i1 %same, label %bylen, label %done
+bylen:
+  %gt = icmp ugt i64 %al, %bl
+  %gti = zext i1 %gt to i32
+  %lti = zext i1 %short to i32
+  %l = sub i32 %gti, %lti
+  br label %done
+done:
+  %r = phi i32 [ %c, %entry ], [ %l, %bylen ]
+  ret i32 %r
+}
+
+; @@ milo.string.reserve
+; `_strReserve(&mut s, extra)`: s's data pointer with room for `extra` more bytes and the
+; NUL, in a buffer s holds alone; null when growing fails. The fast path (room, and a count
+; of 1, which a heap buffer with room implies is safe to write) is small enough to inline;
+; anything else goes through @milo.str.reserve, which copies or grows.
+define internal ptr @milo.string.reserve(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %extra) {
+entry:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %capp = getelementptr %String, ptr %s, i32 0, i32 2
+  %cap = load i64, ptr %capp
+  %need = add i64 %len, %extra
+  %room = icmp ult i64 %need, %cap
+  br i1 %room, label %chk, label %slow
+chk:
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %data = load ptr, ptr %datap
+  %hdr = getelementptr i8, ptr %data, i64 -8
+  %rc = {{rcload}}
+  %only = icmp eq i64 %rc, 1
+  br i1 %only, label %fast, label %slow
+fast:
+  ret ptr %data
+slow:
+  %grown = call ptr @milo.str.reserve(ptr %s, i64 %extra)
+  ret ptr %grown
+}
+
+; @@ milo.string.push_i64
+; Appends v's decimal digits to s in place (unique first). Returns s's buffer, or null
+; when growing fails, so the caller's check reports it at its site.
+define internal ptr @milo.string.push_i64(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %v) {
+entry:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 20)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fmt, label %fail
+fmt:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %n = call i64 @milo.fmt.i64(ptr %dst, i64 %v)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_u64
+; milo.string.push_i64 for an unsigned value.
+define internal ptr @milo.string.push_u64(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %v) {
+entry:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 20)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fmt, label %fail
+fmt:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %n = call i64 @milo.fmt.u64(ptr %dst, i64 %v)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_f64
+; Appends v as milo.fmt.f64 writes it (the shortest round-tripping digits).
+define internal ptr @milo.string.push_f64(ptr noalias nonnull dereferenceable(24) align 8 %s, double %v) {
+entry:
+  %tmp = alloca [32 x i8], align 1
+  %n = call i64 @milo.fmt.f64(double %v, ptr %tmp)
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %dst, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_f32
+; milo.string.push_f64 for an f32, through milo.fmt.f32 (the shortest f32 digits).
+define internal ptr @milo.string.push_f32(ptr noalias nonnull dereferenceable(24) align 8 %s, float %v) {
+entry:
+  %tmp = alloca [32 x i8], align 1
+  %n = call i64 @milo.fmt.f32(float %v, ptr %tmp)
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %dst, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_bool
+; Appends "true" or "false" to s in place; null when growing fails.
+@milo.string.true = private unnamed_addr constant [4 x i8] c"true"
+@milo.string.false = private unnamed_addr constant [5 x i8] c"false"
+define internal ptr @milo.string.push_bool(ptr noalias nonnull dereferenceable(24) align 8 %s, i1 %v) {
+entry:
+  %src = select i1 %v, ptr @milo.string.true, ptr @milo.string.false
+  %n = select i1 %v, i64 4, i64 5
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
   %dst = getelementptr i8, ptr %buf, i64 %len
   call ptr @memcpy(ptr %dst, ptr %src, i64 %n)
-  store i64 %end, ptr %lenSlot
-  %term = getelementptr i8, ptr %buf, i64 %end
-  store i8 0, ptr %term
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_ptr
+; Appends a pointer as `0x` and lowercase hex digits (`0x0` for null), the same text on
+; every target.
+define internal ptr @milo.string.push_ptr(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr %p) {
+entry:
+  %v = ptrtoint ptr %p to i64
+  %tmp = alloca [18 x i8], align 1
+  br label %count
+count:
+  %i = phi i64 [ 0, %entry ], [ %inext, %count ]
+  %sh = shl i64 %i, 2
+  %rest = lshr i64 %v, %sh
+  %inext = add i64 %i, 1
+  %more = icmp ugt i64 %rest, 15
+  br i1 %more, label %count, label %digits
+digits:
+  %nd = add i64 %i, 1
+  %n = add i64 %nd, 2
+  store i8 48, ptr %tmp
+  %x = getelementptr i8, ptr %tmp, i64 1
+  store i8 120, ptr %x
+  br label %emit
+emit:
+  %k = phi i64 [ 0, %digits ], [ %knext, %emit ]
+  %pos = sub i64 %i, %k
+  %psh = shl i64 %pos, 2
+  %pv = lshr i64 %v, %psh
+  %nib = and i64 %pv, 15
+  %big = icmp ugt i64 %nib, 9
+  %lo = add i64 %nib, 48
+  %hi = add i64 %nib, 87
+  %ch = select i1 %big, i64 %hi, i64 %lo
+  %c8 = trunc i64 %ch to i8
+  %at = add i64 %k, 2
+  %dst = getelementptr i8, ptr %tmp, i64 %at
+  store i8 %c8, ptr %dst
+  %knext = add i64 %k, 1
+  %done = icmp ugt i64 %knext, %i
+  br i1 %done, label %append, label %emit
+append:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %out = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %out, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.drop
+; Drops the string at %s: one handle fewer on a heap buffer (cap > 0); a literal or an
+; empty string holds none.
+define internal void @milo.string.drop(ptr %s) {
+entry:
+  %capp = getelementptr %String, ptr %s, i32 0, i32 2
+  %cap = load i64, ptr %capp
+  %heap = icmp ugt i64 %cap, 0
+  br i1 %heap, label %rel, label %done
+rel:
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %d = load ptr, ptr %datap
+  call void @milo.str.release(ptr %d)
+  br label %done
+done:
   ret void
+}
+
+; @@ milo.closure.drop
+; Drops the owning closure { fn, env } at %c: an env's first word is its drop function,
+; null for a by-reference closure (its env is a frame's slot); a closure that captured
+; nothing has no env at all.
+define internal void @milo.closure.drop(ptr %c) {
+entry:
+  %envp = getelementptr { ptr, ptr }, ptr %c, i32 0, i32 1
+  %env = load ptr, ptr %envp
+  %has = icmp ne ptr %env, null
+  br i1 %has, label %mid, label %done
+mid:
+  %fn = load ptr, ptr %env
+  %hasfn = icmp ne ptr %fn, null
+  br i1 %hasfn, label %call, label %done
+call:
+  call void %fn(ptr %env)
+  br label %done
+done:
+  ret void
+}
+
+; @@ milo.iface.drop
+; Drops the Heap<Interface> { data, itable } at %h: the concrete type's destructor from the
+; itable's slot %slot (after the methods; null when the type has none), then the box.
+define internal void @milo.iface.drop(ptr %h, i64 %slot) {
+entry:
+  %data = load ptr, ptr %h
+  %live = icmp ne ptr %data, null
+  br i1 %live, label %drop, label %done
+drop:
+  %itp = getelementptr { ptr, ptr }, ptr %h, i32 0, i32 1
+  %it = load ptr, ptr %itp
+  %sp = getelementptr ptr, ptr %it, i64 %slot
+  %fn = load ptr, ptr %sp
+  %hasfn = icmp ne ptr %fn, null
+  br i1 %hasfn, label %call, label %free
+call:
+  call void %fn(ptr %data)
+  br label %free
+free:
+  call void @free(ptr %data)
+  br label %done
+done:
+  ret void
+}
+
+; @@ milo.string.push_json
+; Appends the n bytes at %d to s JSON-escaped (RFC 8259, as std/json's jsonEscapeStr):
+; " \ newline tab return as two-byte escapes, any other byte below 0x20 as \u00xx.
+; Null when growing fails.
+define internal ptr @milo.string.push_json(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr %d, i64 %n) {
+entry:
+  %worst = mul i64 %n, 6
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %worst)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %start, label %fail
+start:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len0 = load i64, ptr %lenp
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %start ], [ %inext, %next ]
+  %o = phi i64 [ %len0, %start ], [ %onext, %next ]
+  %more = icmp ult i64 %i, %n
+  br i1 %more, label %byte, label %done
+byte:
+  %cp = getelementptr i8, ptr %d, i64 %i
+  %c = load i8, ptr %cp
+  %isq = icmp eq i8 %c, 34
+  %isb = icmp eq i8 %c, 92
+  %isn = icmp eq i8 %c, 10
+  %ist = icmp eq i8 %c, 9
+  %isr = icmp eq i8 %c, 13
+  %e1 = or i1 %isq, %isb
+  %e2 = or i1 %isn, %ist
+  %e3 = or i1 %e1, %e2
+  %named = or i1 %e3, %isr
+  br i1 %named, label %esc, label %notnamed
+esc:
+  %s1 = select i1 %isn, i8 110, i8 %c
+  %s2 = select i1 %ist, i8 116, i8 %s1
+  %s3 = select i1 %isr, i8 114, i8 %s2
+  %ep0 = getelementptr i8, ptr %buf, i64 %o
+  store i8 92, ptr %ep0
+  %eo1 = add i64 %o, 1
+  %ep1 = getelementptr i8, ptr %buf, i64 %eo1
+  store i8 %s3, ptr %ep1
+  %eo2 = add i64 %o, 2
+  br label %next
+notnamed:
+  %isctl = icmp ult i8 %c, 32
+  br i1 %isctl, label %ctl, label %plain
+ctl:
+  %c0 = getelementptr i8, ptr %buf, i64 %o
+  store i8 92, ptr %c0
+  %o1 = add i64 %o, 1
+  %c1 = getelementptr i8, ptr %buf, i64 %o1
+  store i8 117, ptr %c1
+  %o2 = add i64 %o, 2
+  %c2 = getelementptr i8, ptr %buf, i64 %o2
+  store i8 48, ptr %c2
+  %o3 = add i64 %o, 3
+  %c3 = getelementptr i8, ptr %buf, i64 %o3
+  store i8 48, ptr %c3
+  %hi = lshr i8 %c, 4
+  %hid = add i8 %hi, 48
+  %o4 = add i64 %o, 4
+  %c4 = getelementptr i8, ptr %buf, i64 %o4
+  store i8 %hid, ptr %c4
+  %lo = and i8 %c, 15
+  %lodig = add i8 %lo, 48
+  %loalpha = add i8 %lo, 87
+  %lolt = icmp ult i8 %lo, 10
+  %lod = select i1 %lolt, i8 %lodig, i8 %loalpha
+  %o5 = add i64 %o, 5
+  %c5 = getelementptr i8, ptr %buf, i64 %o5
+  store i8 %lod, ptr %c5
+  %o6 = add i64 %o, 6
+  br label %next
+plain:
+  %pp = getelementptr i8, ptr %buf, i64 %o
+  store i8 %c, ptr %pp
+  %op1 = add i64 %o, 1
+  br label %next
+next:
+  %onext = phi i64 [ %eo2, %esc ], [ %o6, %ctl ], [ %op1, %plain ]
+  %inext = add i64 %i, 1
+  br label %loop
+done:
+  store i64 %o, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %o
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.cstr
+; The bytes of the string at %s as a C string for one call: an owned string (cap > 0)
+; keeps its NUL at [len] and is passed as is. A cap-0 one (a literal held in a variable,
+; or a view, which has no NUL of its own) is copied into a NUL-terminated string stored
+; at %tmp (which holds an empty string otherwise), for the caller to drop after the call.
+define internal ptr @milo.string.cstr(ptr nonnull dereferenceable(24) align 8 %s, ptr nonnull dereferenceable(24) align 8 %tmp) {
+entry:
+  %v = load %String, ptr %s
+  %d = extractvalue %String %v, 0
+  %cap = extractvalue %String %v, 2
+  %view = icmp eq i64 %cap, 0
+  br i1 %view, label %copy, label %done
+copy:
+  %len = extractvalue %String %v, 1
+  %c = call %String @milo.str.from(ptr %d, i64 %len)
+  store %String %c, ptr %tmp
+  %cd = extractvalue %String %c, 0
+  ret ptr %cd
+done:
+  ret ptr %d
 }

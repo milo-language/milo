@@ -1,0 +1,8 @@
+// milo.panic_if: std's _strPanic, head and tail around the value.
+pub fn main(): i32 {
+    var s = "héllo".clone()
+    print(s.len())
+    s.truncate(2)
+    print(s)
+    return 0
+}

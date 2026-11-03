@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "true\nfalse\n[\"a\", \"b\", \"c\"]\n[1, 2, 3]\n3\n4\n0\ntrue\n9\n100\n0\n99\n100\n"
+}

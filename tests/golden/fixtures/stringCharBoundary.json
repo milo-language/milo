@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "a\né\nb\n日\né\nb日\n[**café]\n[日本・・]\n[éééab]\n5\nAéB\n"
+}

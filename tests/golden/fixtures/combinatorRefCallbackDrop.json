@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "named map copy-err\nnamed andThen copy-err\nnamed mapErr copy-ok\nnamed orElse copy-ok\nfield map copy-err\ncopyForward end\ndrop ce\ndrop cd\ndrop cc\ndrop cb\ndrop ca\nopt.map temp\ndrop a\nopt.andThen temp\ndrop b\nopt.orElse temp some\nopt.orElse temp none\nres.map temp ok\ndrop e\nres.map temp err\nres.andThen temp ok\ndrop g\nres.andThen temp err\nres.mapErr temp err\ndrop i\nres.mapErr temp ok\nres.orElse temp err\ndrop k\nres.orElse temp ok\nnamed res.andThen ok\ndrop ng\nnamed res.mapErr err\ndrop ni\nnamed res.map ok\ndrop ne\nnamed res.map err\nnamed res.orElse err\ndrop nk\nnamed opt.andThen\nnamed opt.orElse some\nnamed opt.map\nres.unwrapOrElse temp err\ndrop m\nres.unwrapOr temp err\ndrop n\nres.isErr temp err\ndrop o\nend\ndrop na\ndrop nc\ndrop nb\ndrop nf\ndrop l\ndrop j\ndrop h\ndrop f\ndrop d2\ndrop c\n"
+}

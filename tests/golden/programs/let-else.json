@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "24\nnot a pair\nnot three\nnot three\nnot three\n1:p\nnot three\nnot three\nnot three\nnot a pair\n2:tt:2\n2:tt:3\n2:tt:3\nnot a pair\nnot three\nnot three\nnot three\n4:pppp\nnot three\nnot three\nnot three\nnot a pair\n5:ttttt:2\n5:ttttt:6\n5:ttttt:6\ninin!\nno\nno\n9\n9\n11\nwwww7\nnarrow\n15\n"
+}

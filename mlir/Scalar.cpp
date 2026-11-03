@@ -1216,6 +1216,215 @@ struct ContractCheckLowering : ConvertOpToLLVMPattern<ContractCheckOp> {
   }
 };
 
+template <typename SOv, typename UOv>
+Value overflowFlag(ConversionPatternRewriter &rw, Location loc, bool isUnsigned, Value l, Value r) {
+  Type t = l.getType();
+  auto pairTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), {t, rw.getI1Type()});
+  Value pair = isUnsigned ? UOv::create(rw, loc, pairTy, l, r).getResult()
+                          : SOv::create(rw, loc, pairTy, l, r).getResult();
+  return LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{1});
+}
+
+struct OverflowsLowering : ConvertOpToLLVMPattern<OverflowsOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(OverflowsOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    bool u = isUnsignedInt(op.getLhs().getType());
+    Value l = a.getLhs(), r = a.getRhs();
+    StringRef k = op.getKind();
+    Value bad;
+    if (k == "add")
+      bad = overflowFlag<LLVM::SAddWithOverflowOp, LLVM::UAddWithOverflowOp>(rw, loc, u, l, r);
+    else if (k == "sub")
+      bad = overflowFlag<LLVM::SSubWithOverflowOp, LLVM::USubWithOverflowOp>(rw, loc, u, l, r);
+    else if (k == "mul")
+      bad = overflowFlag<LLVM::SMulWithOverflowOp, LLVM::UMulWithOverflowOp>(rw, loc, u, l, r);
+    else {
+      Type t = l.getType();
+      unsigned w = cast<IntegerType>(t).getWidth();
+      bad = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, r, constInt(rw, loc, t, 0));
+      if (!u) {
+        Value isMin = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, l,
+                                           constInt(rw, loc, t, APInt::getSignedMinValue(w)));
+        Value isNeg1 = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, r, constInt(rw, loc, t, -1));
+        bad = LLVM::OrOp::create(rw, loc, bad, LLVM::AndOp::create(rw, loc, isMin, isNeg1));
+      }
+    }
+    rw.replaceOp(op, bad);
+    return success();
+  }
+};
+
+// add and sub are LLVM's .sat intrinsics; there is no mul one, so mul clamps on the
+// overflow flag, toward MIN when exactly one operand is negative (the product's sign).
+struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(SaturatingOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    bool u = isUnsignedInt(op.getType());
+    Value l = a.getLhs(), r = a.getRhs();
+    StringRef k = op.getKind();
+    if (k == "add") {
+      rw.replaceOp(op, u ? LLVM::UAddSat::create(rw, loc, l, r).getResult() : LLVM::SAddSat::create(rw, loc, l, r).getResult());
+      return success();
+    }
+    if (k == "sub") {
+      rw.replaceOp(op, u ? LLVM::USubSat::create(rw, loc, l, r).getResult() : LLVM::SSubSat::create(rw, loc, l, r).getResult());
+      return success();
+    }
+    Type t = l.getType();
+    unsigned w = cast<IntegerType>(t).getWidth();
+    auto pairTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), {t, rw.getI1Type()});
+    Value pair = u ? LLVM::UMulWithOverflowOp::create(rw, loc, pairTy, l, r).getResult()
+                   : LLVM::SMulWithOverflowOp::create(rw, loc, pairTy, l, r).getResult();
+    Value prod = LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{0});
+    Value ov = LLVM::ExtractValueOp::create(rw, loc, pair, ArrayRef<int64_t>{1});
+    Value clamp;
+    if (u) {
+      clamp = constInt(rw, loc, t, APInt::getMaxValue(w));
+    } else {
+      Value zero = constInt(rw, loc, t, 0);
+      Value lNeg = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::slt, l, zero);
+      Value rNeg = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::slt, r, zero);
+      Value neg = LLVM::XOrOp::create(rw, loc, lNeg, rNeg);
+      clamp = LLVM::SelectOp::create(rw, loc, neg, constInt(rw, loc, t, APInt::getSignedMinValue(w)),
+                                     constInt(rw, loc, t, APInt::getSignedMaxValue(w)));
+    }
+    rw.replaceOp(op, LLVM::SelectOp::create(rw, loc, ov, clamp, prod));
+    return success();
+  }
+};
+
+struct CCallLowering : ConvertOpToLLVMPattern<CCallOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(CCallOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    SmallVector<Type> fixed;
+    for (Value v : a.getArgs().take_front(op.getFixed()))
+      fixed.push_back(v.getType());
+    Type ret = op.getResult() ? getTypeConverter()->convertType(op.getResult().getType()) : LLVM::LLVMVoidType::get(rw.getContext());
+    auto module = op->getParentOfType<ModuleOp>();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, op.getCallee(), fixed, ret, /*isVarArg=*/true);
+    if (failed(fn))
+      return failure();
+    auto call = LLVM::CallOp::create(rw, op.getLoc(), *fn, a.getArgs());
+    if (op.getResult())
+      rw.replaceOp(op, call.getResult());
+    else
+      rw.eraseOp(op);
+    return success();
+  }
+};
+
+struct CallPtrLowering : ConvertOpToLLVMPattern<CallPtrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(CallPtrOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    SmallVector<Type> params;
+    for (Value v : a.getArgs())
+      params.push_back(v.getType());
+    Type ret = op.getResult() ? getTypeConverter()->convertType(op.getResult().getType()) : LLVM::LLVMVoidType::get(rw.getContext());
+    auto fty = LLVM::LLVMFunctionType::get(ret, params);
+    SmallVector<Value> ops{a.getCallee()};
+    ops.append(a.getArgs().begin(), a.getArgs().end());
+    auto call = LLVM::CallOp::create(rw, op.getLoc(), fty, ops);
+    if (op.getResult())
+      rw.replaceOp(op, call.getResult());
+    else
+      rw.eraseOp(op);
+    return success();
+  }
+};
+
+// Declared as an external byte when nothing in this module names it yet: the splice keeps
+// the defining module's own global (src/mlir-backend.ts).
+struct GlobalAddrLowering : ConvertOpToLLVMPattern<GlobalAddrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(GlobalAddrOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    auto module = op->getParentOfType<ModuleOp>();
+    StringRef name = op.getName();
+    if (!module.lookupSymbol(name)) {
+      OpBuilder::InsertionGuard g(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      LLVM::GlobalOp::create(rw, op.getLoc(), rw.getI8Type(), /*isConstant=*/false, LLVM::Linkage::External, name, Attribute());
+    }
+    rw.replaceOpWithNewOp<LLVM::AddressOfOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), name);
+    return success();
+  }
+};
+
+struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(FnAddrOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::AddressOfOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), op.getFn());
+    return success();
+  }
+};
+
+struct BitsLowering : ConvertOpToLLVMPattern<BitsOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(BitsOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Value v = a.getValue();
+    Type t = v.getType();
+    StringRef k = op.getKind();
+    Value r;
+    if (k == "ctpop")
+      r = LLVM::CtPopOp::create(rw, loc, t, v);
+    else if (k == "ctlz")
+      r = LLVM::CountLeadingZerosOp::create(rw, loc, t, v, false);
+    else if (k == "cttz")
+      r = LLVM::CountTrailingZerosOp::create(rw, loc, t, v, false);
+    else if (k == "bitreverse")
+      r = LLVM::BitReverseOp::create(rw, loc, t, v);
+    else if (k == "fshl")
+      r = LLVM::FshlOp::create(rw, loc, t, v, v, a.getAmount());
+    else
+      r = LLVM::FshrOp::create(rw, loc, t, v, v, a.getAmount());
+    if ((k == "ctpop" || k == "ctlz" || k == "cttz") && cast<IntegerType>(t).getWidth() < 64)
+      r = LLVM::ZExtOp::create(rw, loc, rw.getI64Type(), r);
+    rw.replaceOp(op, r);
+    return success();
+  }
+};
+
+// The message as the format of the module's `__milo_mlir_panic(fmt)`, or with values
+// `__milo_mlir_panic_v3(fmt, a, b, c)` (unused slots 0: printf reads only what the
+// format names), on the failing edge only.
+struct PanicIfLowering : ConvertOpToLLVMPattern<PanicIfOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PanicIfOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    bool withValue = !a.getValues().empty();
+    SmallVector<Type> params{ptrTy};
+    if (withValue)
+      params.append(3, rw.getI64Type());
+    auto fn = LLVM::lookupOrCreateFn(rw, module, withValue ? "__milo_mlir_panic_v3" : kPanic, params,
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    branchToPanic(rw, loc, a.getBad(), [&] {
+      SmallVector<Value> args{globalString(rw, loc, module, op.getMessage())};
+      if (withValue) {
+        args.append(a.getValues().begin(), a.getValues().end());
+        while (args.size() < 4)
+          args.push_back(constInt(rw, loc, rw.getI64Type(), 0));
+      }
+      LLVM::CallOp::create(rw, loc, *fn, args);
+    });
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct BoundsCheckLowering : ConvertOpToLLVMPattern<BoundsCheckOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1552,44 +1761,6 @@ namespace {
 
 // Scalars are passed by value, everything else by reference (a slot in the entry block,
 // so a print in a loop does not grow the stack).
-struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
-  LogicalResult
-  matchAndRewrite(PrintOp op, OpAdaptor a,
-                  ConversionPatternRewriter &rw) const override {
-    Location loc = op.getLoc();
-    auto module = op->getParentOfType<ModuleOp>();
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    std::string name = op.getStderr() ? "milo.eprint" : "milo.print";
-    if (op.getPartial())
-      name += ".part";
-    SmallVector<Value> args;
-    SmallVector<Type> argTys;
-    for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
-      Type t = part.getType();
-      name += "." + typeKey(t);
-      // As legacy mlirPrintHelper: scalars and pointers by value, every other part by
-      // address (a by-value Vec param would be dropped inside the helper).
-      if (isa<IntegerType, FloatType, PtrType>(t)) {
-        args.push_back(v);
-        argTys.push_back(v.getType());
-        continue;
-      }
-      Value slot = entrySlot(rw, op, v.getType());
-      LLVM::StoreOp::create(rw, loc, v, slot);
-      args.push_back(slot);
-      argTys.push_back(ptrTy);
-    }
-    auto fn = LLVM::lookupOrCreateFn(rw, module, name, argTys,
-                                     LLVM::LLVMVoidType::get(rw.getContext()));
-    if (failed(fn))
-      return failure();
-    LLVM::CallOp::create(rw, loc, *fn, args);
-    rw.eraseOp(op);
-    return success();
-  }
-};
-
 struct CheckUnaliasedLowering : ConvertOpToLLVMPattern<CheckUnaliasedOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1707,8 +1878,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering,
-               StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, OverflowsLowering, SaturatingLowering,
+               StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,

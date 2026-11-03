@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "4 7\nPoint { x: 101, y: 2.5 } Point { x: 8, y: 8 } 8\nPoint { x: 10, y: 9.5 }\nFlags { on: true, level: 200, scale: 0.5 } true 200 0.5\n-3 Blue\n6 6.75 0\nRect(1, 2) Empty\n250 42 -4\n69700 -1\nB(true, 9) C(-1, 2)\nfound 6\nnone\nok 3\nerr 7\n1262550\n5 -5 0\nGreen Blue Red\ntrue false\n1 8\n"
+}

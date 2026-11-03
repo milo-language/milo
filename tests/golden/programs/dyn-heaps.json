@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "sq=16 rect r1=6\n36\nheld rect r2 9\nrect r1=36\nend of run\ndrop rect r1\ndrop rect r2\ndone\n"
+}

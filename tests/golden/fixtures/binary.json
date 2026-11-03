@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "15\nu8 171\nu16le 4660\nu32le 3735928559\nu64le 81985529216486895\n14\nu16be 4660\nu32be 3735928559\nu64be 81985529216486895\n4433221111223344\n29\ni8 -1\ni16le -2\ni16be -2\ni32le -3\ni32be -3\ni64le -4\ni64be -4\ni16le-as-u16 65534\n24\n1.5\n1.5\n-0.15625\n-0.15625\nexact 4294967295\nshort none\natEnd none\nnegative none\nhuge none\nempty none\ntrue\nfalse\nfalse\n4609434218613702656\n1.5\n1069547520\n1.5\n"
+}

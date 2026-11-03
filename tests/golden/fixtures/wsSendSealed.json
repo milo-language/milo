@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "holders 3\nholders after 1\nText 200 true\nText 200 true\nsealed Text 5 hello\n"
+}

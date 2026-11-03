@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "drop 10\ndrop 11\ndrop 12\nloop done\ndrop 1\nend\n"
+}

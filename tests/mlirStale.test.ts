@@ -49,21 +49,9 @@ test("the compiler refuses a stale milo-opt with the build command", () => {
   const src = join(dir, "a.milo");
   writeFileSync(src, "fn add(a: i32, b: i32): i32 { return a + b }\nfn main() { print(add(1, 2)) }\n");
   const r = spawnSync("bun", ["run", join(import.meta.dir, "..", "src", "main.ts"), "emit-ir", src], {
-    encoding: "utf-8", env: { ...process.env, MILO_MLIR: "1", MILO_LEGACY: "", MILO_OPT: bin() },
+    encoding: "utf-8", env: { ...process.env, MILO_OPT: bin() },
   });
   expect(r.status).not.toBe(0);
   expect(r.stderr).toContain("milo-opt is stale (mlir/Scalar.cpp is newer");
   expect(r.stderr).toContain("run sh mlir/build.sh");
-});
-
-test("MILO_LEGACY=1 never runs milo-opt, stale or not", () => {
-  utimesSync(bin(), t(10), t(10));
-  utimesSync(join(dir, "mlir", "Scalar.cpp"), t(20), t(20));
-  const src = join(dir, "a.milo");
-  writeFileSync(src, "fn add(a: i32, b: i32): i32 { return a + b }\nfn main() { print(add(1, 2)) }\n");
-  const r = spawnSync("bun", ["run", join(import.meta.dir, "..", "src", "main.ts"), "emit-ir", src], {
-    encoding: "utf-8", env: { ...process.env, MILO_LEGACY: "1", MILO_OPT: bin() },
-  });
-  expect(r.status).toBe(0);
-  expect(r.stderr).not.toContain("stale");
 });

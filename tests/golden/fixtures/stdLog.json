@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "INFO  default threshold is info\nWARN  default threshold is info\nERROR default threshold is info\nDEBUG debug now passes\nINFO  upload path=\"/var/tmp/a b\" bytes=42 ok=true ratio=1.5\nINFO  bare values path=/var/tmp/plain n=-7\nINFO  empty renders quoted note=\"\"\nINFO  multi\\nline stays one record body=\"a\\nb\"\nWARN  warn threshold\nERROR error threshold\nINFO  [http] listening port=8080\n{\"level\":\"INFO\",\"msg\":\"json record\",\"path\":\"a\\\"b\",\"n\":7,\"ok\":false}\n{\"level\":\"WARN\",\"logger\":\"http\",\"msg\":\"slow\",\"ms\":1200}\ndone\n"
+}

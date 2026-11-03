@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "22",
+    "o2": "22"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "hung: timeout: dns\nwithin bound: true\nanswered: 1\n"
+}

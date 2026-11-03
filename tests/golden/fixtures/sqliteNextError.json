@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "row: true\ndone: false\ndropped: no such table: t\ndbStep on dropped: false\nduplicate: UNIQUE constraint failed: t.k\n"
+}

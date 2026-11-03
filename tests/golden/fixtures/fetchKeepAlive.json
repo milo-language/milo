@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "63",
+    "o2": "63"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "10 fetches: all on conn 1 true, accepts 1\nchunked: hello, world | after: conn 1\nclose: close | next: conn 2\nidle close: idle | next: conn 3\nstale GET retried: conn 4\nstale POST: connect: empty reply from server\nconnection close: 2 new connections true\nconcurrent: conn 1,conn 2,conn 3,conn 4 accepts 4\nthen sequential: accepts 4\n"
+}

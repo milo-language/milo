@@ -1,0 +1,20 @@
+// format(): a fresh owned string, parts as print shows them; interpolation goes the same way.
+struct P { x: i64, s: string }
+
+pub fn main(): i32 {
+    let p = P { x: 1, s: "q".clone() }
+    let a = format("p=", p, " n=", 3, " f=", 0.5, " b=", false)
+    let v: Vec<i64> = [1, 2]
+    let b = format(v, "|", "tail")
+    let c = format()
+    print(a)
+    print(b, " ", b.len(), " [", c, "] ", c.len())
+    var acc = "".clone()
+    var i: i64 = 0
+    while i < 3 {
+        acc = acc + format(i, ",")
+        i = i + 1
+    }
+    print(acc)
+    return 0
+}

@@ -66,17 +66,10 @@ export interface FnSig {
 export interface NameSource {
   nextTemp(): string;
   nextLabel(prefix?: string): string;
-  /**
-   * The current function's entry-block preamble, which Codegen splices in after the body
-   * is generated. Optional so a builder can exist outside a function body; `entryAlloca`
-   * throws without it.
-   */
-  entryAllocas?: string[];
 }
 
 export type BinOp = "add" | "fadd" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
 export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
-export type FCmpPred = "oeq" | "one" | "olt" | "ole" | "ogt" | "oge";
 export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
 
 /** `!range` and `!noundef` metadata ids for a load of a ranged int (`i32(0..100)`). */
@@ -98,12 +91,6 @@ export interface Builder {
    * that other code addresses by name. Draws no temp. The name must be a named local.
    */
   alloca(ty: Ty, name: string): Val;
-  /**
-   * A named stack slot in the function's entry block, the form codegen uses for locals
-   * and loop state so LLVM folds them into the fixed frame. `init`, if given, is stored
-   * there too, so the slot holds it before any body code runs.
-   */
-  entryAlloca(name: string, ty: Ty, init?: Val): Val;
   /** `align`, if given, prints as a trailing `, align N`; `meta` (int loads only) follows it. */
   load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta, dest?: Val): Val;
   /** `load atomic T, ptr P acquire, align N`: reads a refcount that another thread may release. */
@@ -123,19 +110,10 @@ export interface Builder {
   binop(op: BinOp, a: Val, b: Val, dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val;
-  fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   cast(op: CastOp, v: Val, to: Ty, dest?: Val): Val;
   /** The builder knows no aggregate layouts, so the caller names the element type. `dest` as in `cast`. */
   extractvalue(agg: Val, idx: number, elt: Ty, dest?: Val): Val;
-  /** `dest` as in `cast`. */
-  insertvalue(agg: Val, elt: Val, idx: number, dest?: Val): Val;
-  /**
-   * `padded` prints `[ v, %b ]`, the spelling a few older sites used; same IR to LLVM.
-   * `dest` as in `cast`; a loop header phi names itself before its back-edge value exists.
-   */
-  phi(ty: Ty, incoming: [Val, Block][], padded?: boolean, dest?: Val): Val;
-  select(cond: Val, a: Val, b: Val, dest?: Val): Val;
   /**
    * Draw a temp name now and define it later with `select(..., dest)`. Exists only because
    * old string codegen drew a result temp before the temps of the operands that feed it,
@@ -165,8 +143,6 @@ export interface Builder {
   switch(v: Val, dflt: Block, cases: [number | bigint, Block][], multiline?: boolean): void;
   /** `ret void` with no operand, else `ret T v`. */
   ret(v?: Val): void;
-  /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
-  raw(line: string): void;
 }
 
 // Terminators as they open a line, plus the `]` that closes a multi-line switch.
@@ -213,22 +189,6 @@ export class LlvmTextBuilder implements Builder {
     if (name === undefined) return this.def(`alloca ${ty.ll}`, Ty.ptr);
     if (!/^%[A-Za-z_.$][\w.$-]*$/.test(name) || /^%t\.\d+$/.test(name)) this.fail(`alloca name ${name} is not a named local`);
     this.emit(`${name} = alloca ${ty.ll}`);
-    return { ref: name, ty: Ty.ptr };
-  }
-
-  entryAlloca(name: string, ty: Ty, init?: Val): Val {
-    const entry = this.names.entryAllocas;
-    if (!entry) this.fail(`entryAlloca ${name} with no function entry block`);
-    if (ty.kind === "void") this.fail(`entryAlloca ${name} of void`);
-    // Named, never a temp: a numbered temp defined in the entry block would break the
-    // body's numbering order, which LLVM requires to be ascending.
-    if (!/^%[A-Za-z_.$][\w.$-]*$/.test(name) || /^%t\.\d+$/.test(name)) this.fail(`entryAlloca name ${name} is not a named local`);
-    const def = `  ${name} = alloca `;
-    // LLVM rejects a redefinition only at llc time, far from the codegen that caused it.
-    if (entry.some(l => l.startsWith(def))) this.fail(`entryAlloca ${name} already defined in this function`);
-    if (init && init.ty.ll !== ty.ll) this.fail(`entryAlloca ${name} (${ty.ll}) initialized with ${init.ref} (${init.ty.ll})`);
-    entry.push(`${def}${ty.ll}`);
-    if (init) entry.push(`  store ${init.ty.ll} ${init.ref}, ptr ${name}`);
     return { ref: name, ty: Ty.ptr };
   }
 
@@ -290,12 +250,6 @@ export class LlvmTextBuilder implements Builder {
     return this.defOrDest(`icmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1, dest);
   }
 
-  fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val {
-    this.sameTy(`fcmp ${pred}`, a, b);
-    if (a.ty.kind !== "float") this.fail(`fcmp ${pred} on non-float ${a.ref} (${a.ty.ll})`);
-    return this.defOrDest(`fcmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1, dest);
-  }
-
   cast(op: CastOp, v: Val, to: Ty, dest?: Val): Val {
     if (v.ty.kind === "void" || to.kind === "void") this.fail(`${op} involving void`);
     return this.defOrDest(`${op} ${v.ty.ll} ${v.ref} to ${to.ll}`, to, dest);
@@ -304,31 +258,6 @@ export class LlvmTextBuilder implements Builder {
   extractvalue(agg: Val, idx: number, elt: Ty, dest?: Val): Val {
     if (agg.ty.kind !== "agg") this.fail(`extractvalue from non-aggregate ${agg.ty.ll}`);
     return this.defOrDest(`extractvalue ${agg.ty.ll} ${agg.ref}, ${idx}`, elt, dest);
-  }
-
-  insertvalue(agg: Val, elt: Val, idx: number, dest?: Val): Val {
-    if (agg.ty.kind !== "agg") this.fail(`insertvalue into non-aggregate ${agg.ty.ll}`);
-    return this.defOrDest(`insertvalue ${agg.ty.ll} ${agg.ref}, ${elt.ty.ll} ${elt.ref}, ${idx}`, agg.ty, dest);
-  }
-
-  phi(ty: Ty, incoming: [Val, Block][], padded = false, dest?: Val): Val {
-    if (ty.kind === "void") this.fail("phi of void");
-    for (const [v] of incoming) if (v.ty.ll !== ty.ll) this.fail(`phi ${ty.ll} incoming ${v.ref} is ${v.ty.ll}`);
-    const pad = padded ? " " : "";
-    return this.defOrDest(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${pad}${v.ref}, %${b.name}${pad}]`).join(", ")}`, ty, dest);
-  }
-
-  select(cond: Val, a: Val, b: Val, dest?: Val): Val {
-    if (cond.ty.ll !== "i1") this.fail(`select condition ${cond.ref} is ${cond.ty.ll}, not i1`);
-    this.sameTy("select", a, b);
-    if (a.ty.kind === "void") this.fail("select of void");
-    const text = `select i1 ${cond.ref}, ${a.ty.ll} ${a.ref}, ${b.ty.ll} ${b.ref}`;
-    if (!dest) return this.def(text, a.ty);
-    if (!this.reserved.has(dest.ref)) this.fail(`select into ${dest.ref}, which is not a reserved temp`);
-    if (dest.ty.ll !== a.ty.ll) this.fail(`select into ${dest.ref} (${dest.ty.ll}) but operands are ${a.ty.ll}`);
-    this.reserved.delete(dest.ref);
-    this.emit(`${dest.ref} = ${text}`);
-    return dest;
   }
 
   reserveTemp(ty: Ty): Val {
@@ -402,10 +331,6 @@ export class LlvmTextBuilder implements Builder {
     if (v === undefined) { this.emit("ret void"); return; }
     if (v.ty.kind === "void") this.fail(`ret of void value ${v.ref}; use ret()`);
     this.emit(`ret ${v.ty.ll} ${v.ref}`);
-  }
-
-  raw(line: string): void {
-    this.lines.push(line);
   }
 
   // The temp is drawn before the line is checked and pushed, matching the order the

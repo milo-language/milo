@@ -12,14 +12,22 @@
 //   bun scripts/mlir-same.ts --programs --owned   # also: live heap blocks at exit equal
 //                                             # legacy's (scripts/livecount.c; at -O2 and
 //                                             # at -O0), clean ASan
+//   bun scripts/mlir-same.ts [--programs] [--owned] --record-golden   # legacy side only: write
+//                                             # tests/golden/<fixtures|programs>/<name>.json
+//                                             # (stdout, stderr, exit, and with --owned the
+//                                             # live-block counts); nondeterministic or
+//                                             # legacy-unbuildable programs get no file
+//   bun scripts/mlir-same.ts [--programs] [--owned] --golden          # MLIR side only, compared
+//                                             # to those files; no legacy build; a program
+//                                             # without a file counts as "no golden", not same
 //
 // It cannot pass vacuously: zero fixtures compared, zero functions through MLIR, or a
 // milo-opt that is not built all fail. A mismatch is rerun once on both sides; a fixture
 // whose legacy binary disagrees with itself is nondeterministic and reported apart. A guard
 // kill for the machine's sake (memory pressure) is retried and, every time, aborts with
 // exit 2 and no verdict.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
-import { basename, join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { basename, dirname, join } from "path";
 import { tmpdir } from "os";
 import { guardedRun, type RunResult } from "./guard";
 
@@ -31,6 +39,11 @@ const MILO_OPT = process.env.MILO_OPT ?? join(ROOT, "mlir", "build", "milo-opt")
 const argv = process.argv.slice(2);
 const opt = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const filter = opt("--filter");
+const RECORD = argv.includes("--record-golden");
+const GOLDEN = argv.includes("--golden");
+if (!GOLDEN) { console.error("mlir-same: the legacy backend is gone; only --golden (compare against tests/golden) is supported"); process.exit(1); }
+if (RECORD && GOLDEN) { console.error("mlir-same: --record-golden and --golden are exclusive"); process.exit(1); }
+const GOLDEN_DIR = join(ROOT, "tests", "golden");
 const jobs = Number(opt("--jobs") ?? 2);
 const GUARD_TRIES = 3;
 const NOISE = new Set(["pressure", "global-memory", "watchdog-blind"]);
@@ -80,7 +93,7 @@ if (OWNED && process.platform === "darwin") {
   if (cc.exitCode !== 0) { console.error(`mlir-same: cannot build scripts/livecount.c:\n${cc.stderr}`); process.exit(1); }
 }
 
-type Verdict = "same" | "differ" | "nondeterministic" | "build-differ" | "no-build" | "owned-differ";
+type Verdict = "same" | "differ" | "nondeterministic" | "build-differ" | "no-build" | "owned-differ" | "no-golden" | "recorded";
 const results: { name: string; verdict: Verdict; detail?: string }[] = [];
 const fnTotal = { ok: 0, all: 0 };
 const reasons = new Map<string, number>();
@@ -129,39 +142,46 @@ let fixturesLowered = 0;
 //    more is a missing drop, fewer an extra free.
 //  * the MLIR binary under ASan: no report, same exit status. Symbolizing a report needs
 //    the task port, which hangs where lldb does, so it is off: the report names no lines.
-async function ownership(name: string, mlirBin: string, legacyBin: string, legacyRun: RunResult): Promise<string | null> {
+// Live blocks at exit for one binary, at -O2 (the binary itself) and at -O0 (`--fast`).
+type Live = { o2: string | null; o0: string | null };
+async function measureLive(name: string, bin: string, mlir: boolean): Promise<Live> {
+  // Not through guard.ts: it execs via /bin/sh, and macOS strips DYLD_* from anything a
+  // system binary starts. The same binary has just run to completion under the guard
+  // with the same input, so a direct spawn with a hard timeout is what is left to risk.
+  const live = async (b: string) => {
+    const out = `${b}.live`;
+    rmSync(out, { force: true });
+    const p = Bun.spawn([b], { cwd: tmp, stdout: "ignore", stderr: "ignore", stdin: "ignore",
+      env: { ...process.env, DYLD_INSERT_LIBRARIES: LIVECOUNT!, MILO_LIVECOUNT_OUT: out } });
+    const timer = setTimeout(() => p.kill(9), 30_000);
+    await p.exited;
+    clearTimeout(timer);
+    return existsSync(out) ? readFileSync(out, "utf-8").trim() : null;
+  };
+  const fastBin = `${bin}.fast`;
+  const args = ["run", MAIN, "build", `${name}.milo`, "--fast", ...extraFlags(name), "-o", fastBin];
+  if (existsSync(`${name}.c`)) args.push(`${name}.c`);
+  const b = await guarded(`build ${name} (${mlir ? "mlir" : "legacy"}, -O0)`, "bun", args, { env: buildEnv(mlir, {}), timeoutMs: 180_000 });
+  return { o2: await live(bin), o0: b.code === 0 ? await live(fastBin) : `build failed: ${b.stderr.trim().split("\n")[0]}` };
+}
+
+// ref is the legacy side: its exit code and live counts (live null without --owned or off darwin).
+type Ref = { code: number | null; live: Live | null };
+async function ownership(name: string, mlirBin: string, ref: Ref): Promise<string | null> {
+  const legacyRun = ref;
   if (LIVECOUNT) {
-    // Not through guard.ts: it execs via /bin/sh, and macOS strips DYLD_* from anything a
-    // system binary starts. The same binary has just run to completion under the guard
-    // with the same input, so a direct spawn with a hard timeout is what is left to risk.
-    const live = async (bin: string) => {
-      const out = `${bin}.live`;
-      rmSync(out, { force: true });
-      const p = Bun.spawn([bin], { cwd: tmp, stdout: "ignore", stderr: "ignore", stdin: "ignore",
-        env: { ...process.env, DYLD_INSERT_LIBRARIES: LIVECOUNT!, MILO_LIVECOUNT_OUT: out } });
-      const timer = setTimeout(() => p.kill(9), 30_000);
-      await p.exited;
-      clearTimeout(timer);
-      return existsSync(out) ? readFileSync(out, "utf-8").trim() : null;
-    };
-    const [lm, lh] = [await live(mlirBin), await live(legacyBin)];
+    const lm = await measureLive(name, mlirBin, true);
+    const lh = ref.live;
+    if (!lh) return "live blocks: golden has no live counts (record with --owned on darwin)";
     // No count from a program that exits normally means the counter was not loaded.
-    if (lh === null && legacyRun.code === 0) return "live blocks: scripts/livecount.c did not load";
-    if (lh !== null && !/^-?\d+$/.test(lh)) return `live blocks: scripts/livecount.c counted nothing (${lh})`;
+    if (lh.o2 === null && legacyRun.code === 0) return "live blocks: scripts/livecount.c did not load";
+    if (lh.o2 !== null && !/^-?\d+$/.test(lh.o2)) return `live blocks: scripts/livecount.c counted nothing (${lh.o2})`;
     // -O0 (`--fast`: checks as at -O2) decides. At -O2 LLVM deletes a malloc whose block is
     // never freed and never escapes, and whether it can see that depends on inlining, which
     // differs per backend: legacy inlines string formatting, MLIR calls a helper. So the -O2
     // counts can differ with identical drops (exitDivergesMoves: a string still owned at
     // exit()), or agree with a drop erased (a struct's drop of its strings left both equal).
-    const fast = async (mlir: boolean) => {
-      const bin = `${mlir ? mlirBin : legacyBin}.fast`;
-      const args = ["run", MAIN, "build", `${name}.milo`, "--fast", ...extraFlags(name), "-o", bin];
-      if (existsSync(`${name}.c`)) args.push(`${name}.c`);
-      const b = await guarded(`build ${name} (${mlir ? "mlir" : "legacy"}, -O0)`, "bun", args, { env: buildEnv(mlir, {}), timeoutMs: 180_000 });
-      return b.code === 0 ? await live(bin) : `build failed: ${b.stderr.trim().split("\n")[0]}`;
-    };
-    const [fm, fh] = [await fast(true), await fast(false)];
-    if (fm !== fh) return `live blocks at exit at -O0: legacy ${fh}, mlir ${fm} (at -O2: legacy ${lh}, mlir ${lm})`;
+    if (lm.o0 !== lh.o0) return `live blocks at exit at -O0: legacy ${lh.o0}, mlir ${lm.o0} (at -O2: legacy ${lh.o2}, mlir ${lm.o2})`;
   }
   const asanBin = `${mlirBin}.asan`;
   const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", ...extraFlags(name), "-o", asanBin];
@@ -176,31 +196,66 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
   return null;
 }
 
-async function one(name: string): Promise<void> {
-  // Both sides are always built, so the build-time totals cover the same corpus.
-  const m = await build(name, true);
+type Golden = { code: number | null; signal: string | null; stdout: string; stderr: string; live?: Live };
+const goldenPath = (name: string) => join(GOLDEN_DIR, programs.includes(name) ? "programs" : "fixtures", `${basename(name)}.json`);
+const sortedJson = (o: Record<string, unknown>) =>
+  JSON.stringify(o, (_k, v) => v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : 1))) : v, 2) + "\n";
+const skipped: string[] = [];
+
+// Legacy side only: build, run twice (differing runs are nondeterministic, as in the
+// differential path), then write the golden.
+async function record(name: string): Promise<void> {
   const h = await build(name, false);
+  if (h.res.code !== 0) { skipped.push(`${basename(name)}: legacy build failed`); results.push({ name, verdict: "no-build" }); return; }
+  const r1 = await run(h.bin);
+  const r2 = await run(h.bin);
+  if (key(r1) !== key(r2)) { skipped.push(`${basename(name)}: nondeterministic`); results.push({ name, verdict: "nondeterministic" }); return; }
+  const g: Golden = { code: r1.code, signal: r1.signal ?? null, stdout: r1.stdout, stderr: r1.stderr };
+  if (LIVECOUNT) g.live = await measureLive(name, h.bin, false);
+  mkdirSync(dirname(goldenPath(name)), { recursive: true });
+  writeFileSync(goldenPath(name), sortedJson(g));
+  results.push({ name, verdict: "recorded" });
+}
+
+async function one(name: string): Promise<void> {
+  if (RECORD) return record(name);
+  let gold: Golden | null = null;
+  if (GOLDEN) {
+    if (!existsSync(goldenPath(name))) { results.push({ name, verdict: "no-golden" }); return; }
+    gold = JSON.parse(readFileSync(goldenPath(name), "utf-8"));
+  }
+  // Both sides are built unless --golden, so the build-time totals cover the same corpus.
+  const m = await build(name, true);
+  const h = gold ? null : await build(name, false);
   if (m.lowered > 0) fixturesLowered++;
   else if (programs.includes(name)) {
     results.push({ name, verdict: "build-differ", detail: "a gate program compiled nothing through MLIR" });
     return;
   }
-  if ((m.res.code === 0) !== (h.res.code === 0)) {
-    results.push({ name, verdict: "build-differ", detail: (m.res.code ? m.res.stderr : h.res.stderr).trim().split("\n").slice(0, 3).join(" | ") });
+  if (gold ? m.res.code !== 0 : (m.res.code === 0) !== (h!.res.code === 0)) {
+    results.push({ name, verdict: "build-differ", detail: (m.res.code ? m.res.stderr : h!.res.stderr).trim().split("\n").slice(0, 3).join(" | ") });
     return;
   }
   if (m.res.code !== 0) { results.push({ name, verdict: "no-build" }); return; }
-  let [rm, rh] = await Promise.all([run(m.bin), run(h.bin)]);
+  let [rm, rh] = await Promise.all([run(m.bin), h ? run(h.bin) : Promise.resolve(null)]);
+  const ref = gold ?? rh!;
+  const refKey = JSON.stringify([ref.code, ref.signal ?? null, ref.stdout, ref.stderr]);
   const same = async () => {
-    const bad = OWNED && m.lowered > 0 ? await ownership(name, m.bin, h.bin, rh) : null;
+    let bad: string | null = null;
+    if (OWNED && m.lowered > 0) {
+      const r: Ref = gold ? { code: gold.code, live: gold.live ?? null } : { code: rh!.code, live: LIVECOUNT ? await measureLive(name, h!.bin, false) : null };
+      bad = await ownership(name, m.bin, r);
+    }
     results.push(bad ? { name, verdict: "owned-differ", detail: bad } : { name, verdict: "same" });
   };
-  if (key(rm) === key(rh)) return same();
-  const rh2 = await run(h.bin);
-  if (key(rh2) !== key(rh)) { results.push({ name, verdict: "nondeterministic" }); return; }
+  if (key(rm) === refKey) return same();
+  if (h) {
+    const rh2 = await run(h.bin);
+    if (key(rh2) !== key(rh!)) { results.push({ name, verdict: "nondeterministic" }); return; }
+  }
   rm = await run(m.bin);
-  if (key(rm) === key(rh)) return same();
-  const what = rm.code !== rh.code ? `exit ${rh.code} -> ${rm.code}` : rm.stdout !== rh.stdout ? "stdout" : "stderr";
+  if (key(rm) === refKey) return same();
+  const what = rm.code !== ref.code ? `exit ${ref.code} -> ${rm.code}` : rm.stdout !== ref.stdout ? "stdout" : "stderr";
   results.push({ name, verdict: "differ", detail: what });
 }
 
@@ -213,6 +268,11 @@ rmSync(tmp, { recursive: true, force: true });
 const count = (v: Verdict) => results.filter(r => r.verdict === v).length;
 for (const r of results) if (r.verdict === "differ" || r.verdict === "build-differ" || r.verdict === "owned-differ") console.log(`DIFF ${basename(r.name)}: ${r.verdict} ${r.detail ?? ""}`);
 for (const r of results) if (r.verdict === "nondeterministic") console.log(`nondeterministic ${basename(r.name)}`);
+if (RECORD) {
+  for (const k of skipped) console.log(`no golden: ${k}`);
+  console.log(`mlir-same: recorded ${count("recorded")}/${names.length} goldens in tests/golden, ${skipped.length} skipped`);
+  process.exit(count("recorded") === 0 ? 1 : 0);
+}
 const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 console.log(`legacy reasons: ${top.map(([r, n]) => `${r} ${n}`).join(", ")}`);
 const pct = fnTotal.all ? (100 * fnTotal.ok / fnTotal.all).toFixed(1) : "0";
@@ -221,7 +281,7 @@ const s = (ms: number) => (ms / 1000).toFixed(1);
 console.log(`build time (sum over fixtures): legacy ${s(buildMs.legacy)}s, mlir ${s(buildMs.mlir)}s (${buildMs.legacy ? ((buildMs.mlir / buildMs.legacy - 1) * 100).toFixed(1) : "?"}%)`);
 const bad = count("differ") + count("build-differ") + count("owned-differ");
 const compared = count("same") + bad;
-console.log(`mlir-same: ${count("same")}/${compared} same, ${bad} differ${OWNED ? ` (${count("owned-differ")} in ownership)` : ""}, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither`);
+console.log(`mlir-same: ${count("same")}/${compared} same, ${bad} differ${OWNED ? ` (${count("owned-differ")} in ownership)` : ""}, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither${GOLDEN ? `, ${count("no-golden")} no golden` : ""}`);
 if (compared === 0) { console.error("mlir-same: nothing compared"); process.exit(1); }
 if (fnTotal.ok === 0) { console.error("mlir-same: no function went through MLIR, so nothing was tested"); process.exit(1); }
 process.exit(bad > 0 ? 1 : 0);

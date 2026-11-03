@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "empty=[]\nf=Zg==\nfo=Zm8=\nfoo=Zm9v\nfoob=Zm9vYg==\nfooba=Zm9vYmE=\nfoobar=Zm9vYmFy\nrt=foobar\nurl_foob=Zm9vYg\nurl_fo=Zm8\n"
+}

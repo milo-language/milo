@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "cp=97\ncp=233\ncp=28450\ncp=127881\nat 0 = 97\nat 1 = 233\nat 3 = 28450\nat 6 = 127881\nnonAscii=3\nfirst=97\ntmp cp=97\ntmp cp=233\nnested 97-120\nnested 97-121\nnested 98-120\nnested 98-121\nempty count=0\ns still usable len=10\n"
+}

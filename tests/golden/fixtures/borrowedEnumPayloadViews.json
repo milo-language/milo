@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "hello world, long enough to heap allocate\nx:short\n41\n5\nmut:long payload on the heap for the mut case!\ninner payload string that lives on the heap\nhello world, long enough to heap allocate\nhello world, long enough to heap allocate\n"
+}

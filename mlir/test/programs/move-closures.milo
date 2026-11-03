@@ -1,65 +1,33 @@
-// Differential program for scripts/mlir-same.ts --programs --owned: `move` closures, whose
-// heap env owns the captures. Strings and Vecs moved in, a string shared in (used again
-// after), scalars, a closure returned and passed to a `move` param, called more than
-// once, overwritten, dropped uncalled, and one whose body consumes its capture.
+// Move closures natively: owned captures in a heap env, moved out by the body once,
+// dropped by the env when the closure goes; strings, Vecs and structs.
+struct Res { name: string, n: i64 }
 
 fn run(f: move () => i64): i64 {
-    return f() + f()
-}
-
-fn adder(base: string, n: i64): move (i64) => i64 {
-    return move(x: i64): i64 => x + n + base.len()
-}
-
-fn consume(s: string): i64 {
-    return s.len()
-}
-
-fn once(): i64 {
-    let s = "x".repeat(9)
-    let f = move(): i64 => consume(s)
     return f()
 }
 
-fn vecs(): i64 {
-    var v: Vec<i64> = Vec.new()
-    for i in 0..5 {
-        v.push(i)
+fn take(r: Res): i64 {
+    return r.n + r.name.len()
+}
+
+pub fn main(): i32 {
+    let s = "abc".clone()
+    let v: Vec<i64> = [1, 2, 3]
+    let f = move(): i64 => s.len() + v.len()
+    print(f(), " ", f())
+    let r = Res { name: "res".clone(), n: 10 }
+    print(run(move(): i64 => take(r)))
+    let unused = Res { name: "dropped".clone(), n: 1 }
+    let g = move(): i64 => unused.n
+    print(g())
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        let t = format("t", i)
+        let h = move(): i64 => t.len()
+        count = count + h()
+        i = i + 1
     }
-    let f = move(): i64 => v.len() * 10
-    return run(f)
-}
-
-fn shared(): i64 {
-    let s = "y".repeat(4)
-    let f = move(k: i64): i64 => s.len() + k
-    print(s, " ", f(1))
-    return f(2)
-}
-
-fn overwrite(): i64 {
-    let a = "a".repeat(3)
-    let b = "b".repeat(5)
-    var f = move(): i64 => a.len()
-    let first = f()
-    f = move(): i64 => b.len()
-    return first * 100 + f()
-}
-
-fn unused() {
-    let s = "z".repeat(7)
-    let _f = move(): i64 => s.len()
-    print("made")
-}
-
-fn main() {
-    let add = adder("abc", 10)
-    print(add(1), " ", add(2))
-    print(once())
-    print(vecs())
-    print(shared())
-    print(overwrite())
-    unused()
-    let t = 4
-    print(run(move(): i64 => t * 2))
+    print(count)
+    return 0
 }

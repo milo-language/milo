@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "basic 5 [\"apple\", \"banana\", \"cherry\", \"date\", \"fig\"]\nget Some(2) None contains true false\nfloor Some(\"cherry\") ceil Some(\"date\") none None None\nfirst Some(\"apple\") last Some(\"fig\")\nrange banana=2 cherry=3 date=4\nremoved Some(3) None len 4 [\"apple\", \"banana\", \"date\", \"fig\"]\nmodify 20 missing false\ndesc [30, 20, 10]\ndifferential ok 30000 ops\ncleared 0 [] then [7]\n"
+}

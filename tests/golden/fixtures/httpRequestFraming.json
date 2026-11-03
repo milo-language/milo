@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "40",
+    "o2": "40"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "listening on http://127.0.0.1:47393 (bound)\nchunked: 200 [11 bytes: hello world; ce=-; cl=-]\nchunked with ext+trailer: 200 [3 bytes: abc; ce=-; cl=-]\nchunked over limit: 413\nchunked malformed: 400\nchunked not last: 400\ngzip then chunked: 501\ngzip: 200 [16 bytes: {\"login\":\"milo\"}; ce=-; cl=16]\nx-gzip chunked: 200 [16 bytes: {\"login\":\"milo\"}; ce=-; cl=-]\ndeflate (zlib): 200 [16 bytes: {\"login\":\"milo\"}; ce=-; cl=16]\ndeflate (bare): 200 [16 bytes: {\"login\":\"milo\"}; ce=-; cl=16]\ngzip, identity listed: 200 [16 bytes: {\"login\":\"milo\"}; ce=-; cl=16]\nzip bomb: 413\nnot gzip: 400\nbr: 415\nno version: 400\nhttp/2.0: 505\nspace before colon: 400\nno colon: 400\nlength 1x: 400\ntwo lengths: 400\nsame length twice: 200 [2 bytes: ok; ce=-; cl=2]\nuri too long: 414\nstill serving: 200 [0 bytes: ; ce=-; cl=-]\n"
+}

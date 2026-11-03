@@ -479,20 +479,6 @@ def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
   let assemblyFormat = "$value attr-dict";
 }
 
-def Milo_PrintOp : Milo_Op<"print"> {
-  let summary = "print or eprint a line";
-  let description = [{
-    `print(a, b, ...)` (or `eprint` with `stderr`): each part displayed the way Milo
-    displays its type, then a newline. Lowered to one call of a function the legacy module
-    defines for exactly this sequence of part types (codegen mlirPrintHelper), so the text
-    is legacy's byte for byte. Writes a stream: no traits, so nothing moves it or drops it.
-    `partial`: the first parts of one print, up to and including a string part, with no
-    newline (legacy writes a string part as soon as it is evaluated).
-  }];
-  let arguments = (ins Variadic<AnyType>:$parts, UnitAttr:$stderr, UnitAttr:$partial);
-  let assemblyFormat = "(`stderr` $stderr^)? (`partial` $partial^)? ($parts^ `:` type($parts))? attr-dict";
-  let hasVerifier = 1;
-}
 
 def Milo_PtrLoadOp : Milo_Op<"ptr.load"> {
   let summary = "read a value through a raw pointer";
@@ -869,6 +855,18 @@ def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Milo_VecSlotOp : Milo_Op<"vec.slot", [Pure]> {
+  let summary = "the slot of the Vec behind a header place";
+  let description = [{
+    The inverse of milo.vec.place: a `&mut Vec` param or field is lent as its header, and
+    what writes the whole Vec (`replace(v, w)`, `swap`) wants its slot: the same address.
+  }];
+  let arguments = (ins Milo_VecType:$vec);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$vec attr-dict `:` type($vec) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
 def Milo_VecTailInitOp : Milo_Op<"vectail.init"> {
   let summary = "move a Vec into a vectail slot";
   let description = [{
@@ -928,6 +926,110 @@ def Milo_ContractCheckOp : Milo_Op<"contract_check",
   }];
   let arguments = (ins I1:$cond, StrAttr:$kind);
   let assemblyFormat = "$cond $kind attr-dict";
+  let hasVerifier = 1;
+}
+
+def Milo_OverflowsOp : Milo_Op<"overflows", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "whether integer arithmetic would overflow";
+  let description = [{
+    True when `lhs <kind> rhs` has no result in the type (in its signedness): add, sub and
+    mul past the range; div and rem by zero, or signed MIN by -1. Never traps.
+    `x.checkedAdd(y)` is None when this holds, else Some of the wrapping op.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$lhs, Milo_Int:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$kind `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasVerifier = 1;
+}
+
+def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]> {
+  let summary = "integer add, sub or mul clamped to the type's range";
+  let description = [{
+    `x.saturatingAdd(y)`: the result, or the type's MIN or MAX in the direction the true
+    result lies. Never traps.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$lhs, Milo_Int:$rhs);
+  let results = (outs Milo_Int:$result);
+  let assemblyFormat = "$kind `,` $lhs `,` $rhs attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+def Milo_CCallOp : Milo_Op<"ccall"> {
+  let summary = "a call of a C function that is variadic";
+  let description = [{
+    `printf(fmt, ...)`, `open(path, flags, ...)`: the first `fixed` arguments are the
+    declared ones, the rest go through C's `...` as they are (no promotion, as legacy
+    codegen passes them). The callee is declared variadic here.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee, I64Attr:$fixed, Variadic<Milo_Value>:$args);
+  let results = (outs Optional<Milo_Value>:$result);
+  let assemblyFormat = "$callee `(` $args `)` `fixed` $fixed attr-dict `:` functional-type($args, $result)";
+  let hasVerifier = 1;
+}
+
+def Milo_CallPtrOp : Milo_Op<"call_ptr"> {
+  let summary = "a call through a raw code pointer";
+  let description = [{
+    A C function pointer called (`extern (..) => R` values), a closure's code pointer
+    called with its env (`_callClosureVoid`), or an interface method from its itable: an
+    indirect call, arguments and result as the dialect's types lower. It may do anything a
+    call does.
+  }];
+  let arguments = (ins Milo_PtrType:$callee, Variadic<Milo_Value>:$args);
+  let results = (outs Optional<Milo_Value>:$result);
+  let assemblyFormat = "$callee `(` $args `)` attr-dict `:` functional-type($args, $result)";
+}
+
+def Milo_GlobalAddrOp : Milo_Op<"global.addr", [Pure]> {
+  let summary = "the address of a module global the dialect does not describe";
+  let description = [{
+    A global the rest of the module defines (an interface's itable `itable.T.I`, the
+    process globals), by symbol: declared here, defined there.
+  }];
+  let arguments = (ins StrAttr:$name);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$name attr-dict";
+}
+
+def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {
+  let summary = "the code address of a named function";
+  let description = [{
+    `f as *u8` for a named function: the symbol's own address (not a closure trampoline),
+    as legacy codegen casts it. A C function pointer handed to C wants exactly this.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$fn);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$fn attr-dict";
+}
+
+def Milo_BitsOp : Milo_Op<"bits", [Pure]> {
+  let summary = "a bit intrinsic of an integer";
+  let description = [{
+    `ctpop`, `ctlz`, `cttz` count bits of `value` (defined for 0: the width) and give an
+    si64; `bitreverse` gives the value's type; `fshl` / `fshr` rotate `value` by
+    `amount` (taken mod the width), the value's type.
+  }];
+  let arguments = (ins StrAttr:$kind, Milo_Int:$value, Optional<Milo_Int>:$amount);
+  let results = (outs Milo_Int:$result);
+  let assemblyFormat = "$kind `,` $value (`,` $amount^)? attr-dict `:` type($value) (`,` type($amount)^)? `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Milo_PanicIfOp : Milo_Op<"panic_if",
+    [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
+  let summary = "panic with a message when a condition holds";
+  let description = [{
+    When `bad` holds, prints `message` to stderr as a printf format and aborts through the
+    panic hook. `message` is the whole text, site included, as the emitter builds it; its
+    only conversions are `%lld`, one per value, at most three. Every other `%` is written
+    `%%`.
+
+    ```mlir
+    milo.panic_if %neg, "milo: negative length at a.milo:3:9: %lld\n"(%n)
+    ```
+  }];
+  let arguments = (ins I1:$bad, StrAttr:$message, Variadic<SI64>:$values);
+  let assemblyFormat = "$bad `,` $message (`(` $values^ `)`)? attr-dict";
   let hasVerifier = 1;
 }
 

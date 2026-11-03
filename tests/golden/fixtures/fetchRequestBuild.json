@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "default accept true\ndefault ua true\naccept count 1\nempty value present true\nempty value is empty true\nabsent false\nabsent falls back x\ncontent length true\na%20b%2Bc%2Fd~e\ndata=way%5B%22natural%22%5D&n=1%262\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 1,
+  "live": {
+    "o0": null,
+    "o2": null
+  },
+  "signal": "SIGABRT",
+  "stderr": "todo: 'half' is not implemented (mlir/test/programs/todo-abort.milo:6:5): neg -3\n",
+  "stdout": "4\n"
+}

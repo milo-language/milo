@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "16 aaaaaaaaaaaaaaa!\n27 {\"name\":\"milo\",\"name\":\"x\"}!\n101 a\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "literal yes\nstar yes\nstar-no-slash no\nquestion yes\nquestion-one-byte no\ndoublestar yes\ndoublestar-dotted-dir yes\ndoublestar-zero yes\ndoublestar-trailing yes\ndoublestar-inline no\ndoublestar-collapsed yes\ndoublestar-collapsed-miss no\nclass yes\nclass-range yes\nclass-negated yes\nclass-negated-hit no\nclass-unterminated yes\nescape yes\nescape-not-wild no\nempty yes\nstar-empty yes\nbacktrack yes\nnot-anchored yes\n"
+}

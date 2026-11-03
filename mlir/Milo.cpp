@@ -455,6 +455,13 @@ LogicalResult PtrLendOp::verify() {
   return success();
 }
 
+LogicalResult VecSlotOp::verify() {
+  auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
+  if (!v || v.getElementType() != getVec().getType().getElementType())
+    return emitOpError("gives the slot of a Vec of ") << getVec().getType().getElementType();
+  return success();
+}
+
 LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
   // A Vec of owning closures lent as one of plain closures: the same { fn, env } bits, as
@@ -501,6 +508,65 @@ LogicalResult ContractCheckOp::verify() {
   StringRef k = getKind();
   if (k != "requires" && k != "ensures" && k != "invariant")
     return emitOpError("checks a requires, ensures or invariant clause, not ") << k;
+  return success();
+}
+
+LogicalResult CCallOp::verify() {
+  if (getFixed() > static_cast<int64_t>(getArgs().size()))
+    return emitOpError("has more fixed arguments than arguments");
+  return success();
+}
+
+LogicalResult BitsOp::verify() {
+  StringRef k = getKind();
+  bool count = k == "ctpop" || k == "ctlz" || k == "cttz";
+  bool rotate = k == "fshl" || k == "fshr";
+  if (!count && !rotate && k != "bitreverse")
+    return emitOpError("is ctpop, ctlz, cttz, bitreverse, fshl or fshr, not ") << k;
+  if (rotate != static_cast<bool>(getAmount()))
+    return emitOpError("takes an amount exactly when it rotates");
+  if (rotate && getAmount().getType() != getValue().getType())
+    return emitOpError("rotates by an amount of the value's type");
+  auto r = cast<IntegerType>(getType());
+  if (count ? !(r.isSigned() && r.getWidth() == 64) : getType() != getValue().getType())
+    return emitOpError(count ? "counts into an si64" : "gives the value's type");
+  return success();
+}
+
+LogicalResult OverflowsOp::verify() {
+  StringRef k = getKind();
+  if (k != "add" && k != "sub" && k != "mul" && k != "div" && k != "rem")
+    return emitOpError("checks add, sub, mul, div or rem, not ") << k;
+  return success();
+}
+
+LogicalResult SaturatingOp::verify() {
+  StringRef k = getKind();
+  if (k != "add" && k != "sub" && k != "mul")
+    return emitOpError("saturates add, sub or mul, not ") << k;
+  return success();
+}
+
+LogicalResult PanicIfOp::verify() {
+  // printf reads one argument per conversion: the message may name exactly the value given.
+  StringRef m = getMessage();
+  unsigned convs = 0;
+  for (size_t i = 0; i < m.size(); ++i) {
+    if (m[i] != '%')
+      continue;
+    if (m.substr(i, 2) == "%%") {
+      ++i;
+      continue;
+    }
+    if (m.substr(i, 4) != "%lld")
+      return emitOpError("message has a conversion other than %lld or %%");
+    ++convs;
+    i += 3;
+  }
+  if (getValues().size() > 3)
+    return emitOpError("prints at most three values");
+  if (convs != getValues().size())
+    return emitOpError("message needs one %lld per value");
   return success();
 }
 
@@ -657,19 +723,6 @@ LogicalResult CastOp::verify() {
 LogicalResult IndexStoreOp::verify() {
   if (getValue().getType() != getVec().getType().getElementType())
     return emitOpError("value is not the Vec's element type");
-  return success();
-}
-
-LogicalResult PrintOp::verify() {
-  for (Type t : getParts().getTypes()) {
-    auto i = dyn_cast<IntegerType>(t);
-    bool ok = (i && (!i.isSignless() || i.getWidth() == 1)) || t.isF32() || t.isF64() ||
-              isa<PtrType, StringType, StructType, EnumType, VecValType>(t);
-    if (!ok)
-      return emitOpError("cannot display a part of type ") << t;
-  }
-  if (getPartial() && (getParts().empty() || !isa<StringType>(getParts().back().getType())))
-    return emitOpError("partial must end at a string part");
   return success();
 }
 

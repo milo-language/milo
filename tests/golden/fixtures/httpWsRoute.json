@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "61",
+    "o2": "61"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "listening on http://127.0.0.1:47394 (bound)\na got: echo: hi\na got: a says hi\nb got: a says hi\nb got: echo: yo\nb got: b says yo\na got: b says yo\nb left\nstale outbox send: false\na got: echo: again\na got: a says again\npeers: 1\nplain get: hello\nno key: HTTP/1.1 400 Bad Request\npong: true\na closed by server: true\nc over the limit: true\n"
+}

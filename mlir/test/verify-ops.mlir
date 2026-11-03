@@ -362,3 +362,99 @@ func.func @contract_kind(%c: i1) {
   milo.contract_check %c "assert"
   milo.return
 }
+
+// -----
+
+func.func @panic_if_stray_conversion(%b: i1) {
+  // expected-error @+1 {{message has a conversion other than %lld or %%}}
+  milo.panic_if %b, "at %s\n"
+  milo.return
+}
+
+// -----
+
+func.func @panic_if_value_without_conversion(%b: i1, %v: si64) {
+  // expected-error @+1 {{message needs one %lld per value}}
+  milo.panic_if %b, "100%% bad\n"(%v)
+  milo.return
+}
+
+// -----
+
+func.func @panic_if_conversion_without_value(%b: i1) {
+  // expected-error @+1 {{message needs one %lld per value}}
+  milo.panic_if %b, "n = %lld\n"
+  milo.return
+}
+
+// -----
+
+func.func @overflows_kind(%a: si32, %b: si32) {
+  // expected-error @+1 {{checks add, sub, mul, div or rem, not shl}}
+  %0 = milo.overflows "shl", %a, %b : si32
+  milo.return
+}
+
+// -----
+
+func.func @saturating_kind(%a: ui8, %b: ui8) {
+  // expected-error @+1 {{saturates add, sub or mul, not div}}
+  %0 = milo.saturating "div", %a, %b : ui8
+  milo.return
+}
+
+// -----
+
+func.func @panic_if_four_values(%b: i1, %v: si64) {
+  // expected-error @+1 {{prints at most three values}}
+  milo.panic_if %b, "%lld %lld %lld %lld\n"(%v, %v, %v, %v)
+  milo.return
+}
+
+// -----
+
+func.func @bits_kind(%a: si32) {
+  // expected-error @+1 {{is ctpop, ctlz, cttz, bitreverse, fshl or fshr, not popcnt}}
+  %0 = milo.bits "popcnt", %a : si32 -> si32
+  milo.return
+}
+
+// -----
+
+func.func @bits_rotate_amount(%a: ui8) {
+  // expected-error @+1 {{takes an amount exactly when it rotates}}
+  %0 = milo.bits "fshl", %a : ui8 -> ui8
+  milo.return
+}
+
+// -----
+
+func.func @bits_rotate_amount_type(%a: ui8, %n: ui16) {
+  // expected-error @+1 {{rotates by an amount of the value's type}}
+  %0 = milo.bits "fshr", %a, %n : ui8, ui16 -> ui8
+  milo.return
+}
+
+// -----
+
+func.func @bits_count_type(%a: ui8) {
+  // expected-error @+1 {{counts into an si64}}
+  %0 = milo.bits "ctpop", %a : ui8 -> ui8
+  milo.return
+}
+
+// -----
+
+func.func @vec_slot_elem(%v: !milo.vec<si64>) {
+  // expected-error @+1 {{gives the slot of a Vec of 'si64'}}
+  %0 = milo.vec.slot %v : !milo.vec<si64> -> !milo.ref<!milo.vecval<f64>>
+  milo.return
+}
+
+// -----
+
+func.func @ccall_fixed(%a: si32) {
+  // expected-error @+1 {{has more fixed arguments than arguments}}
+  %0 = milo.ccall @printf(%a) fixed 2 : (si32) -> si32
+  milo.return
+}

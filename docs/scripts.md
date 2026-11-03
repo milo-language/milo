@@ -95,6 +95,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
 | `scripts/own-ledger.ts` | Ownership-ledger census: emit IR for every fixture with MILO_OWN_LEDGER=1 and report codegen's drop-bookkeeping findings (src/own-ledger.ts). |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
+| `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
 | `scripts/prove-soundness-fuzz.ts` | Differential falsifier for `milo prove`. |
 | `scripts/release-meta.ts` | Shared facts about a release: the target list and how a git tag maps to a version string. |
 | `scripts/render-formula.ts` | Renders the Homebrew formula for a release and prints it to stdout. |

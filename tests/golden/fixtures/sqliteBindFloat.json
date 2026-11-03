@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "typeof real, back 2.5\nrows >= 1.5: 2\nrows >= -1e300: 3\nbad index: bind_double failed\n"
+}

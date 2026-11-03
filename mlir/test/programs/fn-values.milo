@@ -1,0 +1,23 @@
+// A named fn as a value: a capture-free closure calling it, by-value and by-ref params.
+fn double(n: i64): i64 {
+    return n * 2
+}
+
+fn shout(s: &string): string {
+    return s + "!"
+}
+
+fn apply(f: (i64) => i64, n: i64): i64 {
+    return f(n)
+}
+
+pub fn main(): i32 {
+    let f = double
+    print(f(3), " ", apply(double, 5))
+    let g = shout
+    print(g("hi".clone()))
+    let fs: Vec<(i64) => i64> = [double, double]
+    let h = fs[1]
+    print(h(7))
+    return 0
+}

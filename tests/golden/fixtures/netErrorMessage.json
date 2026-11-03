@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "4",
+    "o2": "4"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "connect: connect() failed\n"
+}

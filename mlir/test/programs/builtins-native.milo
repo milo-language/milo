@@ -1,0 +1,17 @@
+// exit, flush and the C-string builtins as native calls: output order across flush and an
+// exit status that is not 0.
+extern fn strlen(s: *u8): i64
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var n: i64 = 0
+    unsafe {
+        n = strlen(s.cstr())
+    }
+    print(s, " ", n)
+    flush()
+    eprint("to stderr")
+    print("after flush")
+    exit(3)
+    return 0
+}

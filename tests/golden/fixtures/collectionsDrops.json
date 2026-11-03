@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "heap pop 1 clear 5 drop 8 live 0\ndeque pop 2 clear 20 drop 35 live 0\nsortedmap replace 1 remove 151 clear 201 drop 251 live 0\nsortedkeys remove 150 drop 300 live 0\norderedmap replace 1 churn 52 clear 201 drop 251 live 0\n"
+}

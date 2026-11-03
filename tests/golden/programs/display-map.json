@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "{\"one\": \"uno\"}\nn = {7: [\"a\", \"b\"]}\n{1: Pt { x: 1, y: 2 }} 1\n{}\n"
+}

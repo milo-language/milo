@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "tag=str len=11\nnum arm sees 7\nunit arm sees len 11\nelse sees len 11\n"
+}

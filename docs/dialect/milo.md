@@ -310,6 +310,48 @@ of (milo.copy), with the cursor set past it.
 
 
 
+### `milo.bits` (::milo::BitsOp)
+
+_A bit intrinsic of an integer_
+
+Syntax:
+
+```
+operation ::= `milo.bits` $kind `,` $value (`,` $amount^)? attr-dict `:` type($value) (`,` type($amount)^)? `->` type($result)
+```
+
+`ctpop`, `ctlz`, `cttz` count bits of `value` (defined for 0: the width) and give an
+si64; `bitreverse` gives the value's type; `fshl` / `fshr` rotate `value` by
+`amount` (taken mod the width), the value's type.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `value` | signed integer or unsigned integer |
+| `amount` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer |
+
+
+
 ### `milo.bounds_check` (::milo::BoundsCheckOp)
 
 _Panic unless 0 <= index < len_
@@ -355,6 +397,36 @@ Traits: `Terminator`
 
 
 
+### `milo.call_ptr` (::milo::CallPtrOp)
+
+_A call through a raw code pointer_
+
+Syntax:
+
+```
+operation ::= `milo.call_ptr` $callee `(` $args `)` attr-dict `:` functional-type($args, $result)
+```
+
+A C function pointer called (`extern (..) => R` values), a closure's code pointer
+called with its env (`_callClosureVoid`), or an interface method from its itable: an
+indirect call, arguments and result as the dialect's types lower. It may do anything a
+call does.
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `callee` | a raw pointer, untyped |
+| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+
+
 ### `milo.cast` (::milo::CastOp)
 
 _Convert a scalar to another scalar type_
@@ -386,6 +458,42 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped |
+
+
+
+### `milo.ccall` (::milo::CCallOp)
+
+_A call of a C function that is variadic_
+
+Syntax:
+
+```
+operation ::= `milo.ccall` $callee `(` $args `)` `fixed` $fixed attr-dict `:` functional-type($args, $result)
+```
+
+`printf(fmt, ...)`, `open(path, flags, ...)`: the first `fixed` arguments are the
+declared ones, the rest go through C's `...` as they are (no promotion, as legacy
+codegen passes them). The callee is declared variadic here.
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>callee</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+<tr><td><code>fixed</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `args` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1063,6 +1171,40 @@ elaboration it is a store. A 128+ byte aggregate is filled this way, never loade
 
 
 
+### `milo.fn.addr` (::milo::FnAddrOp)
+
+_The code address of a named function_
+
+Syntax:
+
+```
+operation ::= `milo.fn.addr` $fn attr-dict
+```
+
+`f as *u8` for a named function: the symbol's own address (not a closure trampoline),
+as legacy codegen casts it. A C function pointer handed to C wants exactly this.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>fn</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | a raw pointer, untyped |
+
+
+
 ### `milo.fn.cast` (::milo::FnCastOp)
 
 _Retype a fn value between owning and plain_
@@ -1163,6 +1305,40 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `ref` | the address of a place: a local slot, a field, an element |
+
+
+
+### `milo.global.addr` (::milo::GlobalAddrOp)
+
+_The address of a module global the dialect does not describe_
+
+Syntax:
+
+```
+operation ::= `milo.global.addr` $name attr-dict
+```
+
+A global the rest of the module defines (an interface's itable `itable.T.I`, the
+process globals), by symbol: declared here, defined there.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | a raw pointer, untyped |
 
 
 
@@ -1714,36 +1890,84 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
-### `milo.print` (::milo::PrintOp)
+### `milo.overflows` (::milo::OverflowsOp)
 
-_Print or eprint a line_
+_Whether integer arithmetic would overflow_
 
 Syntax:
 
 ```
-operation ::= `milo.print` (`stderr` $stderr^)? (`partial` $partial^)? ($parts^ `:` type($parts))? attr-dict
+operation ::= `milo.overflows` $kind `,` $lhs `,` $rhs attr-dict `:` type($lhs)
 ```
 
-`print(a, b, ...)` (or `eprint` with `stderr`): each part displayed the way Milo
-displays its type, then a newline. Lowered to one call of a function the legacy module
-defines for exactly this sequence of part types (codegen mlirPrintHelper), so the text
-is legacy's byte for byte. Writes a stream: no traits, so nothing moves it or drops it.
-`partial`: the first parts of one print, up to and including a string part, with no
-newline (legacy writes a string part as soon as it is evaluated).
+True when `lhs <kind> rhs` has no result in the type (in its signedness): add, sub and
+mul past the range; div and rem by zero, or signed MIN by -1. Never traps.
+`x.checkedAdd(y)` is None when this holds, else Some of the wrapping op.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
 
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>stderr</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
-<tr><td><code>partial</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
 </table>
 
 #### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
-| `parts` | variadic of any non-token type |
+| `lhs` | signed integer or unsigned integer |
+| `rhs` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 1-bit signless integer |
+
+
+
+### `milo.panic_if` (::milo::PanicIfOp)
+
+_Panic with a message when a condition holds_
+
+Syntax:
+
+```
+operation ::= `milo.panic_if` $bad `,` $message (`(` $values^ `)`)? attr-dict
+```
+
+When `bad` holds, prints `message` to stderr as a printf format and aborts through the
+panic hook. `message` is the whole text, site included, as the emitter builds it; its
+only conversions are `%lld`, one per value, at most three. Every other `%` is written
+`%%`.
+
+```mlir
+milo.panic_if %neg, "milo: negative length at a.milo:3:9: %lld\n"(%n)
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::milo::PanicResource}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>message</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `bad` | 1-bit signless integer |
+| `values` | variadic of 64-bit signed integer |
 
 
 
@@ -2008,6 +2232,47 @@ Traits: `Terminator`
 | Operand | Description |
 | :-----: | ----------- |
 | `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
+
+
+
+### `milo.saturating` (::milo::SaturatingOp)
+
+_Integer add, sub or mul clamped to the type's range_
+
+Syntax:
+
+```
+operation ::= `milo.saturating` $kind `,` $lhs `,` $rhs attr-dict `:` type($result)
+```
+
+`x.saturatingAdd(y)`: the result, or the type's MIN or MAX in the direction the true
+result lies. Never traps.
+
+Traits: `AlwaysSpeculatableImplTrait`, `SameOperandsAndResultType`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>kind</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `lhs` | signed integer or unsigned integer |
+| `rhs` | signed integer or unsigned integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | signed integer or unsigned integer |
 
 
 
@@ -2709,6 +2974,39 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `vec` | a Vec by reference: the address of its header |
+
+
+
+### `milo.vec.slot` (::milo::VecSlotOp)
+
+_The slot of the Vec behind a header place_
+
+Syntax:
+
+```
+operation ::= `milo.vec.slot` $vec attr-dict `:` type($vec) `->` type($ref)
+```
+
+The inverse of milo.vec.place: a `&mut Vec` param or field is lent as its header, and
+what writes the whole Vec (`replace(v, w)`, `swap`) wants its slot: the same address.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `vec` | a Vec by reference: the address of its header |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `ref` | the address of a place: a local slot, a field, an element |
 
 
 

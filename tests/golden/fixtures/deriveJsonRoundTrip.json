@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "{\"name\":\"ada \\\"lovelace\\\"\",\"age\":36,\"score\":99.5,\"active\":true,\"role\":\"Admin\",\"email\":\"ada@example.com\",\"tags\":[\"math\",\"engine\"],\"address\":{\"city\":\"London\",\"zip\":12345},\"friends\":[{\"city\":\"Paris\",\"zip\":75001}],\"legacy_id\":77}\nround-trip identical\nnone-and-empty {\"name\":\"x\",\"age\":0,\"score\":0,\"active\":false,\"role\":\"Guest\",\"email\":null,\"tags\":[],\"address\":{\"city\":\"\",\"zip\":0},\"friends\":[],\"legacy_id\":0}\n"
+}

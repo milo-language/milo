@@ -1,0 +1,18 @@
+// Display glue for HashMap: quoted string keys and values, nested containers. One entry
+// per map: slot order follows the per-run hash seed.
+struct Pt { x: i64, y: i64 }
+
+pub fn main(): i32 {
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("one".clone(), "uno".clone())
+    print(m)
+    var n: HashMap<i64, Vec<string>> = HashMap.new()
+    n.insert(7, ["a".clone(), "b".clone()])
+    print("n = ", n)
+    var p: HashMap<i64, Pt> = HashMap.new()
+    p.insert(1, Pt { x: 1, y: 2 })
+    print(p, " ", p.len())
+    let empty: HashMap<i64, i64> = HashMap.new()
+    print(empty)
+    return 0
+}
