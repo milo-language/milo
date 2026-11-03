@@ -361,8 +361,13 @@ fn main(): void {
 // every native library std can bind (sqlite, tls, dl).
 test("every std module imports together in one program", () => {
   const stdDir = join(import.meta.dir, "..", "std");
+  // Impl-only modules (std/hashmap, std/vec: methods, no names) are merged by the prelude's
+  // `import {}`, so every program already carries them; only those are left out here.
+  const preludeOnly = new Set(Array.from(
+    readFileSync(join(stdDir, "prelude.milo"), "utf-8").matchAll(/^from "std\/(\w+)" import \{\}/gm), m => m[1]));
   const modules = readdirSync(stdDir)
     .filter(f => f.endsWith(".milo") && !/\.(darwin|linux|windows|wasm)\.milo$/.test(f) && f !== "prelude.milo")
+    .filter(f => !preludeOnly.has(f.replace(/\.milo$/, "")))
     .map(f => f.replace(/\.milo$/, ""))
     .sort();
   expect(modules.length).toBeGreaterThan(60);
