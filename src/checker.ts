@@ -6023,6 +6023,7 @@ export class TypeChecker {
   // parameter does not escape). The builtin map and sorts loaded the element for such a
   // callback; coerceCopyCallback covers literals and named fns, not locals.
   private thunkByValueFnValue(arg: Expr, element: TypeKind, arity: number): void {
+    // ident-ok: the rewrite emits a call by NAME (`f(p0)`), so only a fn value bound to a name qualifies
     if (arg.kind !== "Ident") return;
     const t = this.lookup(arg.name)?.type;
     if (t?.tag !== "fn" || t.params.length !== arity || !this.isCopyType(element)) return;
@@ -12154,6 +12155,7 @@ export class TypeChecker {
       });
       return;
     }
+    // ident-ok: asks whether the NAME is a top-level fn (not shadowed by a local), not a place
     if (arg.kind !== "Ident" || this.lookup(arg.name)) return;
     const sig = this.functions.get(arg.name);
     if (!sig || sig.params.length !== want.params.length) return;
