@@ -3016,7 +3016,7 @@ class FnEmitter {
         if (pp) return this.ptrRead(pp);
         // A field of a place is read in place; of a value, out
         // of the value.
-        if (e.isMove && this.hasDrop(this.value(e.type, "field"))) return this.moveField(e);
+        if (e.isMove && this.hasDrop(this.value(e.type, "field")) && !this.borrowedRoot(e)) return this.moveField(e);
         const own = this.hasDrop(this.value(e.type, "field")) ? "view" as const : undefined;
         const p = this.fieldPlace(e);
         if (p) return { ...this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own };
@@ -5035,6 +5035,20 @@ class FnEmitter {
     const name = r.name;
     const b = this.scopes.some(m => m.has(name)) ? this.lookup(name) : null;
     return b ? (b.kind === "var" ? (b.owned ? "owned var" : b.param !== undefined ? "by-ref param" : "var") : b.kind) : "unbound";
+  }
+
+  /**
+   * `e`'s root is a binding that only borrows (a `&T` param, a match binding of a borrowed
+   * subject): taking one of its fields is a read, never a move, and whatever takes the
+   * value copies it (a string shares its buffer by count).
+   */
+  private borrowedRoot(e: HIRExpr): boolean {
+    let r = e;
+    while (r.kind === "FieldAccess") r = r.object;
+    if (r.kind !== "Ident") return false;
+    const name = r.name;
+    const b = this.scopes.some(m => m.has(name)) ? this.lookup(name) : null;
+    return b?.kind === "var" && !b.owned && !b.flag && !b.zeroOnMove;
   }
 
   private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {

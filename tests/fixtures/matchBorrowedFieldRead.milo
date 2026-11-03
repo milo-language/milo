@@ -1,0 +1,26 @@
+// @expect: hi bye no
+// A field of a binding that only borrows (a payload of a borrowed match subject) is read,
+// never moved; the caller still owns and drops the enum.
+struct Reply {
+    body: string
+}
+
+enum Err {
+    Fail(string)
+    Answer(Reply)
+}
+
+fn message(e: &Err): string {
+    return match e {
+        Err.Fail(msg) => msg
+        Err.Answer(r) => r.body
+    }
+}
+
+pub fn main(): i32 {
+    let a = Err.Answer(Reply { body: "hi" })
+    let b = Err.Answer(Reply { body: "bye" })
+    let c = Err.Fail("no")
+    print($"{message(a)} {message(b)} {message(c)}")
+    return 0
+}
