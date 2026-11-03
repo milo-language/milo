@@ -37,6 +37,7 @@ export interface MlirEmitCtx {
   mlirDisplayName(name: string): string;
   mlirFieldOffset(struct: string, field: string): number;
   mlirAtomic(builtin: string): string | null;
+  mlirCAbiShim(name: string, variadic: boolean): string | null;
   mlirVecGrow(elemSize: number): string;
   mlirItable(from: string, iface: string): string;
   mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string;
@@ -4956,11 +4957,14 @@ class FnEmitter {
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
     // Only C coerces a struct by value (the ABI); a Milo callee that took a string as *u8
     // takes any other value as the normal call path passes it.
-    const cAbi = callee.isExtern;
-    if (ret !== null && !isScalarTy(ret) && ret !== PTR && (cAbi || ret === STR)) return null;
+    // A struct by value to or from C goes through the module's shim for f (Codegen
+    // mlirCAbiShim), which does the C ABI's coercion; to the shim it is a plain value.
+    const shim = callee.isExtern ? this.cx.mlirCAbiShim(e.func, !!(sig.variadic || e.variadic)) : null;
+    const cAbi = callee.isExtern && !shim;
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR && (cAbi || ret === STR || this.hasDrop(ret) || (shim && inSlot(this.cx, ret)))) return null;
     for (const a of e.args) {
       const t = stripRefs(a.expr.type);
-      if (!a.passByRef && t.tag !== "string" && t.tag !== "array" && (() => { const vt = valueType(this.cx, a.expr.type); return vt === null || (cAbi && !(isScalarTy(vt) || vt === PTR)); })()) return null;
+      if (!a.passByRef && t.tag !== "string" && t.tag !== "array" && (() => { const vt = valueType(this.cx, a.expr.type); return vt === null || (cAbi && !(isScalarTy(vt) || vt === PTR)) || (shim && this.hasDrop(vt)); })()) return null;
       if (a.passByRef && (t.tag === "string" || t.tag === "vec" || (t.tag === "array" && t.size === null))) return null;
     }
     const keep = this.cx.retainingLibc.has(e.func);
@@ -5014,6 +5018,13 @@ class FnEmitter {
       }
     }
     const tys = `(${vals.map(v => v.ty).join(", ")}) -> ${ret ?? "()"}`;
+    if (shim) {
+      if (sig.variadic || e.variadic) throw new MlirUnsupported("a variadic extern with a struct by value");
+      this.callees.set(shim, tys);
+      const call = `func.call @${quote(shim)}(${vals.map(v => v.ref).join(", ")}) : ${tys}`;
+      if (ret === null) { this.emit(call); return this.valued({ ref: "", ty: "" }, stmt); }
+      return this.valued(this.def(call, ret), stmt);
+    }
     const call = sig.variadic || e.variadic
       ? `milo.ccall @${quote(e.func)}(${vals.map(v => v.ref).join(", ")}) fixed ${callee.params.length} : ${tys}`
       : (this.callees.set(e.func, tys), `func.call @${quote(e.func)}(${vals.map(v => v.ref).join(", ")}) : ${tys}`);

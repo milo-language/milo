@@ -1342,6 +1342,30 @@ export class Codegen {
   // Emit an extern call whose signature crosses the C ABI with a by-value struct.
   // argVals hold the Milo-level argument values (struct params are whole %T values);
   // here we reinterpret each into the register/indirect/sret form the ABI demands.
+  /**
+   * MLIR path: `milo.cabi.<f>`, a shim taking extern f's arguments as Milo passes them (a
+   * struct by value as its %T) and calling f across the C ABI (emitExternAbiCall), or null
+   * when f needs none. Text of the module, as the other scaffold routines.
+   */
+  public mlirCAbiShim(name: string, variadic: boolean): string | null {
+    if (!this.externAbi.has(name)) return null;
+    const shim = `milo.cabi.${name}`;
+    if (this.emittedMlirWrites.has(shim)) return shim;
+    this.emittedMlirWrites.add(shim);
+    const sig = must(this.fnSigs, name, "fn sigs");
+    const saved = this.tempCounter;
+    this.tempCounter = 0;
+    const lines: string[] = [];
+    const ps = sig.paramTypes.map((t, i) => ({ name: `a${i}`, ty: t }));
+    lines.push(`define internal ${sig.retType} @${shim}(${ps.map(p => `${p.ty} %${p.name}`).join(", ")}) {`, "entry:");
+    const [, v, ty] = this.emitExternAbiCall({ kind: "Call", func: name, args: [], type: { tag: "void" }, variadic } as HIRExpr & { kind: "Call" },
+      ps.map(p => ({ val: `%${p.name}`, type: p.ty })), lines);
+    lines.push(ty === "void" ? "  ret void" : `  ret ${ty} ${v}`, "}");
+    this.tempCounter = saved;
+    this.helperFnBodies.push(lines);
+    return shim;
+  }
+
   private emitExternAbiCall(expr: HIRExpr & { kind: "Call" }, argVals: { val: string; type: string }[], lines: string[]): Gen {
     const abi = must(this.externAbi, expr.func, "extern abi");
     const sig = must(this.fnSigs, expr.func, "fn sigs");
