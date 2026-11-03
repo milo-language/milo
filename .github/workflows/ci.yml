@@ -196,44 +196,71 @@ jobs:
   # fixtures carry `// @skip-os: win32` with the reason inline, so the skip list IS the
   # remaining port work — see docs/roadmap.md.
   #
-  # This is the only place generated code executes on real Windows. The mac/linux dev
-  # loop cross-compiles via xwin and runs under Wine (`bun scripts/windows-sweep.ts`),
-  # which validates the link and the CRT calls but is not the OS. This job is the
-  # authority on "does it actually run".
-  test-windows:
-    runs-on: windows-latest
+  # Split in two because compiling needs mlir/build/milo-opt (LLVM/MLIR 23), which is
+  # built for macOS and Linux only. build-windows cross-compiles every fixture to a PE
+  # on Linux (xwin supplies the CRT/SDK); test-windows then executes them on real
+  # Windows with no compiler at all. test-windows is the only place generated code runs
+  # on the actual OS; the Wine loop (`bun scripts/windows-sweep.ts`) is a dev proxy.
+  build-windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      XWIN_VERSION: 0.9.0
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # tags, for tests/breakingChanges.test.ts
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      # clang emits the COFF object and drives the link; the runner's bundled MSVC
-      # supplies the CRT and SDK, which clang locates on its own on a real Windows host
-      # (no xwin / MILO_WINDOWS_SDK needed here — that is the cross-compile path only).
-      - name: Install LLVM
-        run: choco install llvm --no-progress -y
-      # Dump the toolchain up front: when this job goes red, the version/triple it
-      # actually resolved is the first thing you need and the most annoying to get.
-      - name: Toolchain info
+      - uses: ./.github/actions/milo-opt   # sets MILO_LLVM_BIN
+      # lld-link drives the COFF link; clang/llvm tools come from milo-opt's LLVM.
+      # lld-23 is from the same apt.llvm.org repo the milo-opt action registers.
+      - name: Install lld
         run: |
-          clang --version
-          clang -print-target-triple
-          bun run src/main.ts --help | Select-String -Pattern "target" -SimpleMatch
-        continue-on-error: true
-      - run: bun test tests/hostTarget.test.ts
-      # The end-to-end proof, kept separate from the test runner so a failure here is
-      # unambiguous: the compiler built a PE and Windows itself executed it.
-      - name: Build and run hello.exe
-        run: |
-          bun run src/main.ts build examples/hello.milo -o hello
-          ./hello.exe
-      # The real coverage: every fixture without `@skip-os: win32` compiles to a PE and
-      # its stdout is matched on Windows. Slower than the other runners (fewer cores,
-      # clang-on-COFF), hence the widened job timeout.
-      - name: Fixture suite
-        run: bun test tests/run.test.ts
-        timeout-minutes: 45
+          sudo apt-get install -y lld-23
+          echo "$MILO_LLVM_BIN" >> "$GITHUB_PATH"
+      - name: Cache xwin binary
+        id: xwin-bin
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/xwin
+          key: xwin-bin-${{ runner.os }}-${{ env.XWIN_VERSION }}
+      - name: Install xwin
+        if: steps.xwin-bin.outputs.cache-hit != 'true'
+        run: cargo install xwin --locked --version ${{ env.XWIN_VERSION }}
+      - name: Cache Windows SDK/CRT
+        id: xwin-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/.xwin
+          key: xwin-sdk-${{ runner.os }}-${{ env.XWIN_VERSION }}
+      - name: Fetch Windows SDK/CRT
+        if: steps.xwin-sdk.outputs.cache-hit != 'true'
+        run: ~/.cargo/bin/xwin --accept-license --arch x86_64 splat --output ~/.xwin
+      - name: Cross-build fixtures
+        run: MILO_WINDOWS_SDK="$HOME/.xwin" bun scripts/windows-sweep.ts --out winbuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winbuild
+          path: winbuild
+          if-no-files-found: error
+
+  test-windows:
+    needs: build-windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: winbuild
+          path: winbuild
+      # Runs each PE natively and matches stdout to its `@expect:` lines. Fails closed on
+      # a missing/empty manifest or any exe that did not run.
+      - name: Run fixtures
+        run: bun scripts/windows-sweep.ts --run winbuild
+      # tests/hostTarget.test.ts is not run here: it compiles examples/hello.milo, which
+      # needs milo-opt, and there is none on Windows hosts. The Linux/macOS jobs run it.
       # NOTE: `scripts/audit-extern-returns.ts` is deliberately NOT run here yet. It works
       # on Windows (clang-detecting, Windows-header-aware) and correctly finds that
       # `socket`/`accept` return `SOCKET` (8 bytes), not `int` — but that is the unfinished
@@ -241,9 +268,3 @@ jobs:
       # restructure), so gating this job on a clean audit would mean no green Windows CI
       # until Winsock lands. Turn this on once that tier is done. It already runs on the
       # mac/linux jobs, where it is clean.
-      # On failure the IR is what you need and cannot get afterwards; emitting it costs
-      # a second and turns a red X into something diagnosable without a second push.
-      - name: Emit IR on failure
-        if: failure()
-        run: bun run src/main.ts emit-ir examples/hello.milo
-        continue-on-error: true
