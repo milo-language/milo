@@ -57,6 +57,10 @@ jobs:
             (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" pkg install) || true
           done
       - run: bun test
+      # Dialect gates (FileCheck, hygiene, round-trip, test/programs goldens). Until
+      # 2026-11-03 they lived only in mlir/run.sh, which CI never ran.
+      - name: MLIR dialect gates
+        run: sh mlir/check.sh
       # Checks every scalar-returning `extern fn` against this runner's real headers.
       # Needs no annotations; see the script's header for what it does and doesn't cover.
       - run: bun run scripts/audit-extern-returns.ts

@@ -126,7 +126,7 @@ main() {
             cp "$tmp/milo-$target/milo-opt" "$INSTALL_DIR/milo-opt" && chmod +x "$INSTALL_DIR/milo-opt"
         }
     else
-        printf '\n\033[33mwarning:\033[0m this archive has no milo-opt. Build it with: sh mlir/build.sh (in a milo checkout, needs LLVM 23),\n  or set MILO_LEGACY=1 to compile with the legacy code generator.\n\n'
+        printf '\n\033[33mwarning:\033[0m this archive has no milo-opt. Build it with: sh mlir/build.sh (in a milo checkout, needs LLVM 23),\n  milo cannot compile without it.\n\n'
     fi
 
     installed=$("$INSTALL_DIR/milo" --version 2>/dev/null || echo "unknown version")
