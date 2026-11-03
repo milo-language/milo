@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "current true\nprevious-step-in-window true\nnext-step-in-window true\ntwo-steps-away false\nno-window-neighbour false\nwrong-code false\nwrong-length false\n"
+}

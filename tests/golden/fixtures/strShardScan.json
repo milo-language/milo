@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "len=40 windows=2\ndisjoint misses the seam: 2\noverlap finds it: 3\nper window: 2 1\nstart0=0 start1=20\nbyte0=109 byte1=105\nuneven: windows=4 total=3\n"
+}

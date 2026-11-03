@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "13"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "task got 7\nsender resumed\n"
+}

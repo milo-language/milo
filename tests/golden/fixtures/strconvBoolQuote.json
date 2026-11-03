@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "true -> true\nTRUE -> true\nTrue -> true\nt -> true\n1 -> true\nfalse -> false\nF -> false\n0 -> false\nyes -> none\n true -> none\n -> none\ntruex -> none\n\"hi\"\n\"a\\\"b\\\\c\"\n\"tab\\there\\nnl\"\n\"héllo\"\n\"\"\nok \"hi\"\nok \"a\\\"b\\\\c\"\nok \"tab\\there\"\nok \"A\\x7f\"\nok \"\"\nnone\nnone\nnone\nnone\nnone\nnone\nnone\n"
+}

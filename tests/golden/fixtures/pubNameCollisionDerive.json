@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "{\"id\":7,\"ok\":true}\n{\"name\":\"b\",\"tags\":[\"x\"]}\n8 true\nc y,z\n7 b\n"
+}

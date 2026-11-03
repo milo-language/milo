@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "127.0.0.1 ::1 2001:db8::1 :: fe80::1%4 1:0:0:2::\nlocalhost has 127.0.0.1: true\nv4-only server: hi\nv6-only server: hi\nunknown host: dns: no-such-host.invalid\n"
+}

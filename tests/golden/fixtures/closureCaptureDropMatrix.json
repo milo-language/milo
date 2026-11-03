@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "neverCalled 1\ncalledOnce 1\nconsumed 1\npassed 1\nreturned 1\ntwoCapsOneConsumed 2\nnested 1\nloop3 3\n"
+}

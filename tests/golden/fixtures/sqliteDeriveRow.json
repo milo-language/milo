@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "7 x 2.5 true 9 Some(5) Some(true) Some(\"hi\")\n8 y 1 false -1 None None None\nMissing.userId: no column named 'userId' in result\nNullName.name: column 'name' is NULL but the field is not an Option\n7\n"
+}

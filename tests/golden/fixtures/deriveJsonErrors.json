@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "missing field 'address.zip' | path=address.zip\nfield 'friends[1].zip': expected integer, got string | path=friends[1].zip\nfield 'tags': expected array, got object | path=tags\nfield 'code': expected u8, got out-of-range number | path=code\nfield 'code': expected integer, got number | path=code\nfield 'role': expected one of \"Admin\", \"Guest\", got \"Wizard\" | path=role\ndocument root: expected object, got array | path=\ninvalid JSON: malformed json at byte 1 | path=\n"
+}

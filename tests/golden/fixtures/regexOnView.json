@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "aab 1\nzzz 0\naaab 1\nqqq 0\ntrue\nfalse\ntrue\nfalse\n3\n2..5\n7..9\n11..15\n1\n0\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "75",
+    "o2": "75"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "listening on http://127.0.0.1:47398 (bound)\nreuse: 200 a conn=- | 200 b conn=-\npipelined: 200 a | 200 b | 200 a\nclose asked: 200 conn=close eof=true\nhttp/1.0: 200 conn=close eof=true\nhttp/1.0 keep-alive: 200 conn=keep-alive | 200 conn=keep-alive\ncap: conn=- | conn=- | conn=close eof=true\ntoo big: 413 conn=close eof=true\nte+cl: 200 conn=close eof=true\nchunked kept: 200 echo 5 conn=- | 200 a conn=-\nidle: eof=true within bound=true\nfetch: 200 a conn=- | 200 a conn=- | 200 a conn=close | 200 a conn=-\nfetch after idle: 200 a\n"
+}

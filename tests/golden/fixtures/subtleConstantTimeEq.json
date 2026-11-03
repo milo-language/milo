@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "identical true\nempty true\ndiffer-first false\ndiffer-last false\nprefix false\nlonger false\nhigh-bytes true\nnul-bytes true\nnul-differs false\n"
+}

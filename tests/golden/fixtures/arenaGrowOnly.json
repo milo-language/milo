@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "root\nafter growth root still resolves: root\nleaf added later: leaf\nlen=3\nmutated: leaf-renamed!\nforeign=false\nrefused: freed\nfrozen still resolves: root\n"
+}

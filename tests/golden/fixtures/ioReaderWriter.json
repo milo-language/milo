@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "line: alpha\nline: beta\nline: gamma\nbyte: 104\nexact: ello\nrest:  world\ncopied 11\nsink: hello world\nnested 26\npending 5\nflushed: abcde\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "30000 0 0 -1 1.5 http://x 0\npost\nno proxy\n1 0 5\n7 bee 3\n0 s 0\n0 3 2\ntrue\n5 z\n42 lib 1\nu 30000 0 dflt 3\nv 5 1 none 9\nmissing field 'url'\nfield 'timeoutMs': expected integer, got string\n{\"url\":\"u\",\"timeoutMs\":30000,\"tags\":[],\"note\":\"dflt\",\"max_retries\":3}\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "rt=foobar\nempty=[]\nbadchar=base64: invalid character at byte 0\nnotmul4=base64: length 3 is not a multiple of 4\nspace=base64: length 9 is not a multiple of 4\nnewline=base64: length 9 is not a multiple of 4\nallpad=base64: 4 padding characters, at most 2 allowed\nmidpad=base64: '=' padding before end of input at byte 1\nurlalpha=base64: invalid character at byte 3\nurlrt=foo?~\nurlnopad=f\nurlpad=f\nurldangling=base64url: truncated input, 9 symbols leaves a dangling 6 bits\nurlstdalpha=base64url: invalid character at byte 3\n"
+}

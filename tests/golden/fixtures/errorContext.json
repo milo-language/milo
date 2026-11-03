@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "ok 6\nloading config: reading x.toml: not found: x.toml\nparsing: empty\n"
+}

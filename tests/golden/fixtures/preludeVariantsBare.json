@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "some 3\nnone\niflet 3\nletelse 3\npop 2\npop 1\nok 7\nerr bad\nprop 8\ndefault 9\ninfer 5\nsum 3\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "2: {title field body=[Hello]} {upload file=[notes.txt] ct=text/plain body=[line one\\r\\nline two]}\n2: {c field body=[one]} {c field body=[two]}\nfield c = one\n1: {e field body=[]}\n1: {e field body=[see --B here]}\n1: {e field body=[x\\r\\n--BB\\r\\ny]}\n1: {e field body=[z]}\n1: {n field body=[value]}\n1: {f file=[a;b=c.txt] body=[x]}\nerr: content type is not multipart\nerr: multipart content type has no boundary parameter\nerr: multipart boundary is empty, too long, or has illegal bytes\nerr: multipart boundary is empty, too long, or has illegal bytes\nerr: multipart body has no opening boundary delimiter\nerr: unterminated multipart part starting at byte 5\nerr: unterminated multipart part starting at byte 5\nerr: unterminated multipart part starting at byte 3\nerr: part at byte 5 is not form-data\nerr: malformed part header at byte 5\nerr: part at byte 5 has no name parameter\nerr: part at byte 5 is not form-data\nerr: more parts than the limit of 1\nerr: part body over the limit of 2 bytes\nerr: part headers over the limit of 8 bytes\nsafe: notes.txt\nsafe: passwd\nsafe: passwd\nsafe: shadow\nsafe: evil.dll\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: (rejected)\nsafe: .bashrc\n1: {f file=[] body=[]}\nsafe: (rejected)\n"
+}

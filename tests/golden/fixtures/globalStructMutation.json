@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "1",
+    "o2": "1"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "milo 42\n5 9 2\ncounter 3\n"
+}

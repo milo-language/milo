@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "rgb q50 420 a842ebe99cc0182e615875dbb76cb735e11f67b049ab016beaa050cbd5876bbb\nrgb q90 444 d0c6ebc97220a290b9569fab45c293fcf6e0af5b0ecfab4d7e7c185a1a8dd3b3\nrgb q10 420 be5f5fbaa9acad9cf2e72382371c8431511d3a5f23745222c1afc66ff86d03a8\nrgb q100 444 2c75adac29fea2f46f371e33ccebb86de72273502b4e892c1530fd7ca6ce9ccf\ngray q75 420 84ac5633125e29c1af4411c1b0409be3f17df9bb4446eccf899a669715351c50\nroundtrip 37x29x3 maxdiff<=40 true\nrgba drops alpha true\njpeg: quality 0 is outside 1..100\njpeg: cannot encode 2 channels (1, 3 or 4)\njpeg: 2x2x3 image needs 12 bytes, has 3\n"
+}

@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "body 3\nr1 a conn\nr2 a\nr1 b conn\nr2 b\nr1 c conn\nr2 c\nreaders joined\ntotal 10\nlog 3 m0 m2\nmove owned\nlate hi\nearly joined\ntook given\nnested outer+inner\nnested joined\ntotal 10\n"
+}

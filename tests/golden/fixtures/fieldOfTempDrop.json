@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "len 1960200\narg 1960200\nnested 1960200\nmethod 200\neq 0\nconcat 1960400\ndrop 1960200 1960200\nmoved 1960200\niter 3920400\n"
+}

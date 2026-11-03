@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "58",
+    "o2": "58"
+  },
+  "signal": null,
+  "stderr": "milo: array index out of bounds: 5/3 at tests/fixtures/taskPanicIsolated.milo:71\nmilo: array index out of bounds: 5/3 at tests/fixtures/taskPanicIsolated.milo:71\nruntime error: integer overflow at tests/fixtures/taskPanicIsolated.milo:47\nmilo: array index out of bounds: 5/3 at tests/fixtures/taskPanicIsolated.milo:71\n",
+  "stdout": "listening on http://127.0.0.1:47395 (bound)\nboom: HTTP/1.1 500 Internal Server Error\nboom has Date: true\nok after boom: HTTP/1.1 200 OK\noverflow task joined\nboom again: HTTP/1.1 500 Internal Server Error\nstill serving: HTTP/1.1 200 OK\n"
+}

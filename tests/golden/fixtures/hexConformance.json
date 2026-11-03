@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "empty=[]\nf=66\nfo=666f\nfoobar=666f6f626172\nrtLower=foobar\nrtUpper=foobar\n"
+}

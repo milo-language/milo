@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "0\nal di cy bo \nal bo cy di \nbo di cy al \ndi al bo cy \nal bo cy di \n[5, 3, -1]\n[3, 2, 1]\n[4, 17, 9]\n[1, 2, 3, 4, 5] 11\n[1, 2, 3]\n[3, 2, 1]\n1 2 3\ndrop 1\ndrop 2\ndrop 3\ndone\n"
+}

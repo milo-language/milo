@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "rt=fooba\nempty=[]\nlower=fooba\nbadchar=base32: invalid character at byte 7\nspace=base32: invalid character at byte 5\nshortlen=base32: length 3 is not a multiple of 8\nbadpad=base32: 2 padding characters is not a valid amount\nloosespaced=MZXW6YTBOI======\nloosedash=fooba\nloosedangling=base32: truncated input, 3 symbols leaves a dangling fragment\nloosebadchar=base32: invalid character at byte 7\n"
+}

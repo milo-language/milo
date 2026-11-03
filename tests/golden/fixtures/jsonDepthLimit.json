@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "512 deep: ok\n513 deep: json nesting deeper than 512 levels at byte 512\n100000 deep: json nesting deeper than 512 levels at byte 512\nobjects 100000 deep: error\nafter: ok 3\n"
+}

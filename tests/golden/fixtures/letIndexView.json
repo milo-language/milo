@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "a 2 x\nb 0 -\nsame true\nrow 3 9\nab\n7\nsome true\n"
+}

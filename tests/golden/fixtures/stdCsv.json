@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "3\nname|age|city\nAlice|30|NYC\nBob|25|SF\na\nb,c\nd\"e\n"
+}

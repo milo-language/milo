@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "ident 1560000\nnone-default 1560000\nbound 1560000\ncall 1560000\n"
+}

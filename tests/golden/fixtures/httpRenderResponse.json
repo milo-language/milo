@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "HTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\nhi\nHTTP/1.1 404 Not Found\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 13\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n404 Not Found\nHTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n{}\nHTTP/1.1 201 Created\\r\\nContent-Type: text/html\\r\\nContent-Length: 3\\r\\nX-Trace: abc\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n<b>\n"
+}

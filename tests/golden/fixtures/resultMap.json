@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "ok:42\nerr:boom-alpha\ntrue\nmapped\n30\n0\n200\n12\nboom-carried\n"
+}

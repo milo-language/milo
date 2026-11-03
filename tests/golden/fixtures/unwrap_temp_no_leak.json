@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "heap option 1 padded out\nheap option 2 padded out\nheap result 1 padded out\n1250\n"
+}

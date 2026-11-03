@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "bytes=10 cps=4 utf16units=5\nat 0 value=97 size=1\nat 1 value=233 size=2\nat 3 value=28450 size=3\nat 6 value=127881 size=4\nroundtrip ok=true\nsurrogates 55356 57225 back=127881\nlone continuation=65533\ntruncated lead=65533\noverlong=65533\nsurrogate encoded=65533\nout of bounds=65533\n"
+}

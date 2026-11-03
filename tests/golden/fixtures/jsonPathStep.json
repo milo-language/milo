@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "ada\nmilo 3\nrust 9\nfirst\nrust\nmissing\nfalse\n2\nmilo\ntrue\n"
+}

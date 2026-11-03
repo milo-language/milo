@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "own=alice\nmissing=-1\nholds-own=true\nholds-missing=false\nholds-foreign=false\nholds-handbuilt=false\nsub-title=t\nholds-parent-in-sub=false\n"
+}

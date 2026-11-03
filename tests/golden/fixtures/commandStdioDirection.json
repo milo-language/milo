@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "stdin cannot be Stdio.Write — the child reads it\nstdout cannot be Stdio.Read — the child writes it\nstdout cannot be Stdio.Merge — only stderr can merge\nstderr cannot be Stdio.Read — the child writes it\nchild env still inherited\n"
+}

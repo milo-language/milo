@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "Point<3>: x:i64=1 y:i64=2 label:string=here\nPoint x,y,label\n"
+}

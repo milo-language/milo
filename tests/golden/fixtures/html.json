@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "plain\n&lt;script&gt;alert(1)&lt;/script&gt;\na &amp; b\nalready &amp;amp; escaped\n&quot; onmouseover=x\n&#39; onmouseover=x\nhéllo → ok\n\nx&#39;&#32;onerror&#61;&#39;alert(1)\nx&#32;onerror&#61;alert(1)\na&#9;b&#10;c\n&#96;backtick&#96;\n<b>hi</b>\n&amp;\n''\"'\n→\n&bogus;&frac13x;\n&#39 &# &#x &amp\n100% & rising\n�\n�\na�b\n�\n&\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\n"
+}

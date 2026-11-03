@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "map-contains 1\nmap-get 3\nvec-contains 20\nvec-indexof 0\nvec-len 60\nvec-empty 0\nmap-len 20\nsplit-len 60\nentries 40\n"
+}

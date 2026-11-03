@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "hello world\nhello world\n0\n64\nQQQQQ\n32\ntrue\nabcabcabcabcabcabcabcabcabcabc\nthe quick brown fox the quick brown fox the quick brown fox\n100\n100\na85946506e3225f8\n02457e0873b029ec\n"
+}

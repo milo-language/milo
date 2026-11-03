@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "1",
+    "o2": "1"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "reader sees 1\nwriter done\nreader sees 2\nreader sees 3\nreader saw 100003 elements\n"
+}

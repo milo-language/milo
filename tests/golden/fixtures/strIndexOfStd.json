@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "0 none 0\n0 none 0\n1 7 11 none\n3 9 none\n5 none\n2 none\n4 9\n0 0 3\n1 1 0\n3 1\n6 none 0\n2 2\ntrue\n"
+}

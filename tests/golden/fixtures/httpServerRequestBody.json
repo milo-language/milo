@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "33",
+    "o2": "33"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "listening on http://127.0.0.1:47391 (bound)\nsplit: HTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 21\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n11 bytes: hello world\ncontinue: HTTP/1.1 100 Continue\\r\\n\\r\\nHTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 14\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n5 bytes: abcde\ntoo big: HTTP/1.1 413 Content Too Large\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 21\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n413 Content Too Large\nchunked: HTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 21\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n11 bytes: hello mi lo\nhuge headers: HTTP/1.1 431 Request Header Fields Too Large\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 35\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n431 Request Header Fields Too Large\nhung up mid-request: (no response)\nafter: HTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: 11\\r\\nConnection: close\\r\\nDate: <date>\\r\\n\\r\\n2 bytes: ok\n"
+}

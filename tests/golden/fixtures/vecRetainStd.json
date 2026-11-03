@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "0\n[1, 2, 3, 4, 5, 6]\n[2, 4, 6]\n[] 0\n[\"apple\", \"cherry\"]\n[[1], [2, 3]]\ndrop 1\ndrop 2\ndrop 4\ndrop 5\nkept 2 0 3\n[10, 15]\ndone\ndrop 0\ndrop 3\n"
+}

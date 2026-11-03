@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "0",
+    "o2": "0"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "-- keep\nsee 1\ndrop 1\nsee 2\ndrop 2\ndrop 100\n-- move\nkept 3\ndrop 1\ndrop 2\ndrop 3\ndrop 100\n-- conditional move\ndrop 1\ndrop 3\nkept 2\ndrop 2\ndrop 4\ndrop 100\n-- break\nsee 1\ndrop 1\ndrop 2\nafter break\ndrop 100\n-- continue\nsee 1\ndrop 1\ndrop 2\nsee 3\ndrop 3\ndrop 100\n-- return moved\ndrop 1\ndrop 100\nfound 2\ndrop 2\n-- return kept\ndrop 1\ndrop 2\ndrop 3\ndrop 100\nover 3\n-- propagate\ndrop 1\ndrop 2\ndrop 100\nerr bad 2\n-- named\ndrop 1\ndrop 2\nresume\nrest 3\ndrop 3\ndrop 100\n-- strings\n29893\n"
+}

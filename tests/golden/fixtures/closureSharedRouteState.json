@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "live": {
+    "o0": "328",
+    "o2": "328"
+  },
+  "signal": null,
+  "stderr": "",
+  "stdout": "hits=5 seen=320 total=320\n"
+}
