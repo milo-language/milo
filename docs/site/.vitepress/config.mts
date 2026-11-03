@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { toDate } from './postdate'
 import { miloGrammar } from './miloGrammar'
+import { mlirGrammar } from './mlirGrammar'
 
 const SITE = 'https://milo-language.github.io/milo'
 
@@ -310,7 +311,7 @@ export default defineConfig({
   ],
 
   markdown: {
-    languages: [miloGrammar],
+    languages: [miloGrammar, mlirGrammar],
     config(md) {
       // A `milo error` snippet is followed by the compiler's output, which names a
       // line: number its gutter so the two can be matched without counting. Done here
