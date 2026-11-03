@@ -4,6 +4,8 @@ import type { Program, Function, Contract, Expr, Stmt, MiloType } from "./ast";
 import { must } from "./must";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
+import { resolve, sep } from "path";
+import { STDLIB_DIR } from "./stdlibBundle";
 
 interface VerificationCondition {
   fn: string;
@@ -749,6 +751,10 @@ let FN_TABLE = new Map<string, Function>();
 // that name qualifies, so an impure `Foo.reset` keeps `bar.reset()` conservative.
 let PURE_FN_NAMES = new Set<string>();
 let PURE_METHOD_NAMES = new Set<string>();
+
+const STD_CONTAINERS = new Set(["Vec", "string", "HashMap"]);
+const STD_SOURCE_DIR = resolve(STDLIB_DIR, "std") + sep;
+const isStdSource = (file: string | undefined) => !!file?.startsWith(STD_SOURCE_DIR);
 
 function mutatesNothing(f: Function): boolean {
   return !!f.attributes?.some(a => a.name === "pure")
@@ -2136,6 +2142,12 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     const byBareName = new Map<string, Function[]>();
     for (const m of implMethods) {
       const bare = m.name.slice(m.name.indexOf(".") + 1);
+      // std's Vec/string/HashMap methods were compiler builtins until they moved into std
+      // (2026-11): a read-only one (no `&mut`/pointer param) cannot be @pure only because
+      // its body uses unsafe, and counting it would make every user `get`/`len` impure by
+      // name. One that takes `&mut` still counts, so `m.insert(..)` keeps its havoc.
+      if (STD_CONTAINERS.has(m.name.slice(0, m.name.indexOf("."))) && isStdSource(m.sourceFile)
+        && !m.params.some(p => (p.type as any)?.isRefMut || (p.type as any)?.isPtr)) continue;
       (byBareName.get(bare) ?? byBareName.set(bare, []).get(bare)!).push(m);
     }
     for (const [bare, ms] of byBareName) if (ms.every(mutatesNothing)) PURE_METHOD_NAMES.add(bare);
