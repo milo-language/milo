@@ -1,0 +1,25 @@
+// @expect: 38 160 0
+// @expect: 2
+// A match on a borrowed string compares it with literals; nothing moves out of it.
+fn code(name: &string): i32 {
+    return match name {
+        "amp" => 38
+        "nbsp" => 160
+        _ => 0
+    }
+}
+
+fn kind(s: &string): i64 {
+    return match s {
+        "a" => 1
+        "bb" => 2
+        _ => s.len()
+    }
+}
+
+pub fn main(): i32 {
+    let a = "amp".clone()
+    print(code(a), " ", code("nbsp"), " ", code("zz"))
+    print(kind("bb"))
+    return 0
+}

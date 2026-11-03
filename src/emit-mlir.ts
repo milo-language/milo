@@ -3755,7 +3755,7 @@ class FnEmitter {
       if (place && inSlot(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
       if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
       subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: this.hasDrop(place.ty) ? "view" : undefined };
-    } else if (owning && !m.subjectIsRef) {
+    } else if (owning && !m.subjectIsRef && !this.borrowedString(m.subject)) {
       const e = m.subject;
       const b = e.kind === "Ident" ? this.lookup(e.name) : null;
       if (b?.kind === "var" && b.owned) from = b.ref;
@@ -5107,6 +5107,16 @@ class FnEmitter {
       return b?.kind === "var" && !!b.owned;
     }
     return e.kind === "FieldAccess" && e.object.type.tag === "struct" && this.fieldOfOwnedLocal(e.object);
+  }
+
+  /**
+   * `e` is a string this function only borrows (a `&string` param, a view): a match on it
+   * compares it with literals and moves nothing out, so it is read in place.
+   */
+  private borrowedString(e: HIRExpr): boolean {
+    if (stripRefs(e.type).tag !== "string" || e.kind !== "Ident") return false;
+    const b = this.scopes.some(m => m.has(e.name)) ? this.lookup(e.name) : null;
+    return b?.kind === "var" ? !b.owned : b?.kind === "ssa" && b.v.own !== "owned";
   }
 
   /** `e` names a string this function owns outright. */
