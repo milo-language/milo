@@ -69,6 +69,8 @@ describe("examples compile", () => {
       // Warnings land on stderr as "warning: ..."; stdout is IR (may contain the
       // word in string constants, so only stderr counts).
       expect(r.stderr, `unexpected compiler warning:\n${r.stderr}`).not.toMatch(/\bwarning:/);
-    });
+      // bun's 5s default: examples/net/weather/app.milo compiles in ~2s here and hit 5s
+      // on a loaded CI runner, where the test was killed mid-compile (SIGTERM).
+    }, 30_000);
   }
 });
