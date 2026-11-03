@@ -232,6 +232,12 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 
 ## In Progress
 
+### MLIR parity gaps
+
+Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; each one's test is `test.failing` until it lands.
+
+- [ ] `!range`/`!noundef` on loads of ranged ints: `llvm.load` has no range attribute, so it needs a milo-opt translation hook (`tests/refParamAttrs.test.ts`)
+
 ### Platform Coverage — the linux-arm64 hole
 
 - [x] **CI runs on linux-arm64 (2026-09-21)**, `ubuntu-24.04-arm` in the `test-linux` matrix, and the first run found the hole: `epoll_event` is `__attribute__((packed))` on x86_64 only (12 bytes, `data` at offset 4) and padded to 16 bytes on aarch64, and `std/event.linux.milo` hardcoded the x86_64 shape, so every registration on arm64 watched fd 0 and every green-IO fixture hung. Fixed with `@targetArch()`, a new compile-time builtin beside `@targetOs()`. The `free(): invalid pointer` milojs saw on the same target has not been reproduced yet; the runner is what will
