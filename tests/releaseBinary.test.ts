@@ -6,7 +6,7 @@
 // bundle. Every non-checkout user hit it; every test passed.
 import { test, expect } from "bun:test";
 import { execFileSync, spawnSync } from "child_process";
-import { mkdtempSync, writeFileSync } from "fs";
+import { copyFileSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -18,6 +18,9 @@ test("shipped binary can format", () => {
 
   execFileSync("bun", ["run", join(ROOT, "scripts", "bundle-stdlib.ts")], { cwd: ROOT });
   execFileSync("bun", ["build", "--compile", join(ROOT, "src", "main.ts"), "--outfile", bin], { cwd: ROOT });
+  // The release archive ships milo-opt beside the binary (release.yml); building the
+  // formatter compiles Milo, and every compile goes through it.
+  copyFileSync(join(ROOT, "mlir", "build", "milo-opt"), join(dir, "milo-opt"));
 
   const src = join(dir, "t.milo");
   writeFileSync(src, "fn main(){\n  let x  =  1\n  print(\"hi\")\n}\n");
