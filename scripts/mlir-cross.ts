@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
-// Cross-target gate for the MLIR backend (docs/mlir-backend.md, Coexistence): programs are
-// emitted as LLVM IR for each non-host target with the default (MLIR) path and with
-// MILO_LEGACY=1, and the MLIR module must be for the TARGET:
+// Cross-target gate for the MLIR backend (docs/mlir-backend.md): programs are emitted as
+// LLVM IR for each non-host target, and the module must be for the TARGET:
 //   - its `target triple` is the target's, and its `target datalayout` is the literal
 //     layout in EXPECT below (not asked of clang, so a host layout leaking into a cross
 //     build cannot agree with itself);
-//   - legacy's module names no layout and the same triple, and both define the same symbols;
-//   - the MLIR path took functions (a silent fallback to legacy would pass everything else);
+//   - functions went through MLIR (the log has "ok" lines);
 //   - clang (the one of milo-opt's LLVM) compiles the IR for that target to an object.
 // Nothing is linked or run: a foreign binary cannot run here.
 //
@@ -41,7 +39,6 @@ const files = [
 ].filter(f => existsSync(f) && (!filter || filter.test(f)));
 
 const tmp = mkdtempSync(join(tmpdir(), "mlir-cross-"));
-const defines = (ir: string) => new Set([...ir.matchAll(/^define [^@]*@("(?:[^"\\]|\\.)*"|[-\w$.]+)\(/gm)].map(m => m[1]));
 let bad = 0, checked = 0, mlirFns = 0;
 const fail = (what: string, msg: string) => { bad++; console.log(`FAIL ${what}: ${msg}`); };
 
@@ -52,27 +49,14 @@ for (const t of targets) {
     const what = `${f.slice(ROOT.length + 1)} --target ${t}`;
     const log = join(tmp, "log");
     rmSync(log, { force: true });
-    const env = (legacy: boolean) => {
-      const e = { ...process.env } as Record<string, string>;
-      delete e.MILO_MLIR; delete e.MILO_LEGACY;
-      if (legacy) e.MILO_LEGACY = "1"; else e.MILO_MLIR_LOG = log;
-      return e;
-    };
-    const run = (legacy: boolean) => guardedRun("bun", ["run", MAIN, "emit-ir", f, "--target", t], { env: env(legacy), timeoutMs: 120_000 });
-    const l = await run(true);
-    if (l.code !== 0) continue; // the program does not build for this target at all
-    const m = await run(false);
+    const env = { ...process.env, MILO_MLIR_LOG: log } as Record<string, string>;
+    const m = await guardedRun("bun", ["run", MAIN, "emit-ir", f, "--target", t], { env, timeoutMs: 120_000 });
     checked++;
-    if (m.code !== 0) { fail(what, `mlir build failed: ${m.stderr.trim().split("\n")[0]}`); continue; }
+    if (m.code !== 0) { fail(what, `build failed: ${m.stderr.trim().split("\n")[0]}`); continue; }
     const tripleLine = `target triple = "${want.triple}"`;
     if (!m.stdout.split("\n").includes(tripleLine)) fail(what, `mlir module lacks ${tripleLine}`);
-    if (!l.stdout.split("\n").includes(tripleLine)) fail(what, `legacy module lacks ${tripleLine}`);
     const dl = /^target datalayout = "(.*)"$/m.exec(m.stdout)?.[1];
     if (dl !== want.layout) fail(what, `mlir data layout is ${dl}, want ${want.layout}`);
-    if (/^target datalayout/m.test(l.stdout)) fail(what, "legacy now names a data layout; the splice contract changed");
-    const dm = defines(m.stdout), dlg = defines(l.stdout);
-    const diff = [...dlg].filter(x => !dm.has(x)); // MLIR adds helper functions of its own
-    if (diff.length) fail(what, `a legacy function is missing: ${diff.slice(0, 3).join(", ")}`);
     const ok = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(x => x.endsWith("\tok")).length : 0;
     if (ok === 0) fail(what, "no function went through MLIR");
     mlirFns += ok;
@@ -83,6 +67,6 @@ for (const t of targets) {
   }
 }
 rmSync(tmp, { recursive: true, force: true });
-if (checked === 0) { console.error("mlir-cross: nothing was compared"); process.exit(2); }
+if (checked === 0) { console.error("mlir-cross: nothing was checked"); process.exit(2); }
 console.log(`mlir-cross: ${checked} (program, target) pairs, ${mlirFns} functions through MLIR, ${bad} failures`);
 process.exit(bad ? 1 : 0);

@@ -3,7 +3,7 @@ system: dev-scripts
 purpose: index of dev scripts and how to write new ones well
 key-files: scripts/, bin/, .githooks/, scripts/lint.ts
 update-when: a script is added/removed/changed, or the scripting conventions change
-last-verified: 2026-08-15
+last-verified: 2026-11-02
 -->
 
 # Dev Scripts & Tools
@@ -90,8 +90,8 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/lsp-probe.ts` | Differential + crash-safety probe for the Milo language server. |
 | `scripts/mascot.ts` | The Milo mascot as a char grid — the single source for every rendering of it (docs/site/scripts/gen-logo.ts → logo.svg, scripts/gen-vscode-icon.ts → the extension's icon.png). |
 | `scripts/mlir-census.ts` | Compile-only MLIR coverage census: emit-ir with MILO_MLIR_LOG over every fixture and example with a main plus milojs's two entry points, then the function-instance coverage and the top legacy reasons. |
-| `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend (docs/mlir-backend.md, Coexistence): programs are emitted as LLVM IR for each non-host target with the default (MLIR) path and with MILO_LEGACY=1, and the MLIR… |
-| `scripts/mlir-same.ts` | Differential gate for the MLIR backend (docs/mlir-backend.md): every fixture is built with the default (MLIR) and with MILO_LEGACY=1, both binaries run, and stdout, stderr and the exit status must ma… |
+| `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend (docs/mlir-backend.md): programs are emitted as LLVM IR for each non-host target, and the module must be for the TARGET: - its `target triple` is the target's,… |
+| `scripts/mlir-same.ts` | Conformance gate for the MLIR backend (docs/mlir-backend.md): every fixture is built through MLIR, the binary runs, and stdout, stderr and the exit status must equal the recorded golden in tests/gold… |
 | `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
 | `scripts/own-ledger.ts` | Ownership-ledger census: emit IR for every fixture with MILO_OWN_LEDGER=1 and report codegen's drop-bookkeeping findings (src/own-ledger.ts). |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |

@@ -75,7 +75,7 @@ ${block(intel("linux"), "      ")}
     <<~EOS
       milo compiles with the clang of Homebrew's llvm (brew install llvm).
       The Intel macOS archive ships no milo-opt: build it (sh mlir/build.sh in a milo
-      checkout) or run with MILO_LEGACY=1 to use the legacy code generator.
+      checkout) and put it beside the milo binary.
     EOS
   end
 
