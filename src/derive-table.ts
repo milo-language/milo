@@ -13,7 +13,7 @@ export const TABLE_METHODS = ["columns", "insert", "get", "update", "delete"];
 
 export const TABLE_IMPORT_NAMES = ["Database", "SqlArg", "dbRun", "dbLastInsertId", "sqlOptInt", "sqlOptText"];
 
-export function snakeCase(field: string): string {
+function snakeCase(field: string): string {
   return field.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
 }
 

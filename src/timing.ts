@@ -7,7 +7,7 @@
 // are fixed per-process costs a daemon would remove, so they are reported as phases.
 const loadedAt = performance.now();
 
-export const timingEnabled = process.env.MILO_TIMING === "1";
+const timingEnabled = process.env.MILO_TIMING === "1";
 
 interface Entry { name: string; ms: number; depth: number; note?: string }
 const entries: Entry[] = [];

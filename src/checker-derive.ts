@@ -25,7 +25,7 @@ function isStdJsonVal(info: EnumInfo): boolean {
   });
 }
 
-export interface DeriveHost {
+interface DeriveHost {
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
   dropImpls: Set<string>;

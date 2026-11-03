@@ -51,8 +51,8 @@
 // Windows socket calls that report through WSAGetLastError).
 // `va` gives the variadic tail the wrapper accepts, each passed as an i64.
 
-export type ExternEffectKind = "pure" | "local" | "sync" | "input" | "effect" | "sched" | "hole";
-export type ExternOs = "darwin" | "linux" | "windows" | "wasm";
+type ExternEffectKind = "pure" | "local" | "sync" | "input" | "effect" | "sched" | "hole";
+type ExternOs = "darwin" | "linux" | "windows" | "wasm";
 
 export interface ExternEffect {
   effect: ExternEffectKind;

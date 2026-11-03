@@ -75,7 +75,7 @@ export const COMPILER_KNOWN_STD_HELPERS: ReadonlySet<string> = new Set([
 // `==`, `impl Drop`/`impl Clone` hook moves and copies, `Send`/`Sync` gate threads. A
 // program's own `trait Eq` means exactly that hook, so renaming it would leave the
 // built-in AND the user's impl in place and every `.eq` call ambiguous.
-export const COMPILER_KNOWN_TRAITS: ReadonlySet<string> = new Set(["Eq", "Clone", "Drop", "Json", "Send", "Sync"]);
+const COMPILER_KNOWN_TRAITS: ReadonlySet<string> = new Set(["Eq", "Clone", "Drop", "Json", "Send", "Sync"]);
 
 // One file's top-level names the per-module pass MAY rename: its private names, or with
 // `pub` set its exported ones. The two sets are collected apart because their renames

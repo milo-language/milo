@@ -3,7 +3,7 @@
 // by scripts/gen-spec.ts. Same contract as scripts/ownership-rules.ts: every rule cites fixtures
 // whose expected output pins it, and tests/spec.test.ts refuses a rule whose fixtures do not exist.
 
-export interface ValueRule {
+interface ValueRule {
   id: string;            // MILO-V-<name>, stable across rewording
   rule: string;          // the normative sentence(s)
   fixtures: string[];    // tests/fixtures/<name>.milo programs that pin it

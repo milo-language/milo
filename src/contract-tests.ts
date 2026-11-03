@@ -16,8 +16,8 @@
 
 import type { Program, Function, Expr, MiloType, Param } from "./ast";
 
-export interface ContractTest { name: string; fn: string; source: string }
-export interface ContractDiscovery {
+interface ContractTest { name: string; fn: string; source: string }
+interface ContractDiscovery {
   tests: ContractTest[];
   skipped: { name: string; why: string }[];
   // Some harness draws a call sequence, so the support code needs the env-gated tracer.

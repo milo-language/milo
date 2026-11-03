@@ -15,9 +15,9 @@ import { join } from "path";
 export const ROOT = join(import.meta.dir, "..");
 export const BASELINE = join(ROOT, "tests", "file-size-baseline.json");
 // A file absent from the baseline may be this long before it needs an entry.
-export const NEW_FILE_LIMIT = 1500;
+const NEW_FILE_LIMIT = 1500;
 // Shrinking this much without rebaselining is red: the freed lines must not be refillable.
-export const RATCHET_SLACK = 200;
+const RATCHET_SLACK = 200;
 
 export function measure(): Record<string, number> {
   const out: Record<string, number> = {};

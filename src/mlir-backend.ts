@@ -26,7 +26,7 @@ import { MlirGlue } from "./mlir-glue";
 // the same one that later compiles the module, so both halves of the module agree by
 // construction.
 const dataLayouts = new Map<string, string>();
-export function targetDataLayout(triple: string): string {
+function targetDataLayout(triple: string): string {
   const known = dataLayouts.get(triple);
   if (known) return known;
   const r = spawnSync(mlirClang().path, ["--target=" + triple, "-S", "-emit-llvm", "-x", "c", "/dev/null", "-o", "-"], { encoding: "utf-8" });
@@ -65,7 +65,7 @@ const CANONICALIZE = "canonicalize{disable-patterns=SelectToExtUI}";
 // Passes that see one function at a time sit under func.func(...) / llvm.func(...): MLIR's
 // pass manager runs those on every function in parallel. At module level the generic
 // passes (canonicalize, cse, licm, mem2reg) ran on one thread over the whole module.
-export const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
+const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
   "milo-verify",
   "func.func(" + [
     // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value

@@ -9,7 +9,7 @@ import { STDLIB_DIR, readStd, bundledStdPaths } from "./stdlibBundle";
 // One-line summary per std module, from the file's leading `// std/<name> — <what>`
 // comment (or its first comment line when the header names no module). Platform arms
 // (`event.darwin.milo`, `event.linux.milo`) collapse to one module.
-export function stdModuleSummaries(): { module: string; summary: string }[] {
+function stdModuleSummaries(): { module: string; summary: string }[] {
   const stdDir = resolve(STDLIB_DIR, "std");
   // Disk when present; otherwise the embedded bundle (a shipped `bun build --compile` binary).
   const files = existsSync(stdDir)

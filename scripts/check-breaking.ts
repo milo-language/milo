@@ -105,7 +105,7 @@ function shortName(qualified: string): string {
 // "documented" by an unrelated older entry about `Csv.parse`, and any short name (`len`,
 // `Pool`) is a substring of something. `Csv.parse` and `x.len` use the name as a namespace
 // or a method, not the item itself, so a neighbouring `.` disqualifies a match.
-export function documentedNames(doc: string): (name: string) => boolean {
+function documentedNames(doc: string): (name: string) => boolean {
   const spans = doc.replace(/^```[\s\S]*?^```/gm, "").match(/`[^`\n]+`/g) ?? [];
   return (name: string) => {
     const re = new RegExp(`(?<![\\w.])${name}(?![\\w.])`);

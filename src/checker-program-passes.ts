@@ -33,7 +33,7 @@ export interface ProgramView {
 }
 
 // The name of the synthetic fn standing for a lazy global's initializer.
-export const LAZY_INIT_FN_PREFIX = "<init of ";
+const LAZY_INIT_FN_PREFIX = "<init of ";
 export const lazyInitFnName = (global: string) => `${LAZY_INIT_FN_PREFIX}${global}>`;
 
 // The slice of the checker these passes read. Every member is a per-body result that is
@@ -434,7 +434,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
 // returns, spawns, captures in a `move` closure) has to say so: `f: move (A) => R`.
 // Checked here, in the callee, so the signature alone tells a caller what happens to
 // its closure.
-export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
+function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
   return t?.tag === "fn" && !t.owning;
 }
 
@@ -445,10 +445,10 @@ export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
 // its plain closure param past the call to do that, which is sound only if every call
 // site obeys the three rules below. Mangled names:
 // a private user type named `TaskScope` is renamed by the resolver, so these are std's.
-export const TASK_SCOPE_FN = "Task$scope";
+const TASK_SCOPE_FN = "Task$scope";
 export const SCOPED_SPAWN_FN = "TaskScope$spawn";
 // A read of the scope's live task count: it cannot spawn, so it may sit anywhere in the body.
-export const SCOPED_LIVE_FN = "TaskScope$live";
+const SCOPED_LIVE_FN = "TaskScope$live";
 
 export function checkTaskScopes(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const seen = new Set<string>();
@@ -1336,7 +1336,7 @@ function globalWriteSummary(host: ProgramPassHost, program: Program, view: Progr
 //     counts as dropping it. A closure value or interface value hides what it owns, so
 //     it counts as dropping whatever any `move` closure captures (narrowed to the literals it can
 //     be, where those are known), or any Drop type at all.
-export const INDIRECT = "<indirect>";
+const INDIRECT = "<indirect>";
 // Foreign code may call back into any `@externalLinkage` fn while it runs.
 export const FOREIGN = "<foreign>";
 const isDropFn = (t: string) => t.endsWith("$Drop$drop");

@@ -7,7 +7,7 @@
 // backends implement these rules (src/codegen.ts and src/emit-mlir.ts cite them by id), and
 // the core-HIR pass (docs/plans/core-hir.md) is to implement them in one place.
 
-export interface OwnershipRule {
+interface OwnershipRule {
   id: string;            // MILO-O-<name>, stable across rewording
   rule: string;          // the normative sentence(s)
   fixtures: string[];    // tests/fixtures/<name>.milo programs that pin it

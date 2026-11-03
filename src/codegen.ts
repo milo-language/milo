@@ -39,7 +39,7 @@ import { mapSymbols } from "./cgu";
 // rule it out when chasing a miscompile. An environment variable rather than a Codegen
 // constructor argument so the flag reaches every compile path, `milo run`/`test` and
 // separately compiled modules included, without threading through each signature.
-export function noaliasEnabled(): boolean {
+function noaliasEnabled(): boolean {
   return process.env.MILO_NOALIAS !== "0";
 }
 

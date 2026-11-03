@@ -59,7 +59,7 @@ export interface MlirEmitCtx {
 }
 
 // What codegen names main's body behind the green-task wrapper (Codegen.MAIN_BODY_FN).
-export const MAIN_BODY = "__milo_main_body";
+const MAIN_BODY = "__milo_main_body";
 
 const CALLBACK_OPS = new Set(["map", "optionAndThen", "optionOrElse", "resultMap", "resultMapErr", "unwrapOrElse", "resultAndThen", "resultOrElse", "resultUnwrapOrElse", "resultContext"]);
 const PROBE = !!process.env.MILO_MLIR_PROBE;
@@ -75,7 +75,7 @@ const PTR = "!milo.ptr";
 const STR = "!milo.string";
 
 /** The dialect's type for a Milo scalar (ints carry signedness), or null. */
-export function mlirType(t: TypeKind): string | null {
+function mlirType(t: TypeKind): string | null {
   // A ranged int is stored as its width; every flow into the range is an
   // explicit RangeCheck, and no !range metadata is attached.
   if (t.tag === "int") return `${t.signed ? "si" : "ui"}${t.bits}`;
@@ -5301,12 +5301,6 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
     if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");
     throw err;
   }
-}
-
-/** Why `fn` is unsupported, or null when the dialect covers it. */
-export function mlirSupports(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): string | null {
-  const r = emitMlirFunction(fn, cx, fns);
-  return typeof r === "string" ? r : null;
 }
 
 /** One module: the functions, plus a declaration for every callee not among them. */

@@ -23,9 +23,9 @@ import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 // their own name would let a Milo function named `read` or `write` interpose libc's for
 // every other library in the process (ELF global lookup, and Mach-O flat lookup from the
 // patch dylib); the prefix makes that collision impossible.
-export const HOT_PREFIX = "__milo_hot.";
+const HOT_PREFIX = "__milo_hot.";
 
-export type HotFn = { sig: string; hash: string; patchable: boolean };
+type HotFn = { sig: string; hash: string; patchable: boolean };
 export type HotManifest = {
   version: 1;
   /** keyed by the function's name in the codegen IR (before export renaming) */
@@ -506,7 +506,7 @@ export function initialHashes(m: HotManifest): Record<string, string> {
   return Object.fromEntries(Object.entries(m.fns).map(([k, f]) => [k, f.hash]));
 }
 
-export function hotRuntimeSource(): string {
+function hotRuntimeSource(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "tools", "hot", "hot_runtime.c");
 }
 
@@ -554,7 +554,7 @@ export async function awaitAck(ackFile: string, n: number, timeoutMs = 5000): Pr
   return { ok: false, msg: "timed out waiting for the host to apply the patch" };
 }
 
-export type HotDeps = {
+type HotDeps = {
   /** Build the hot host binary; returns false after printing diagnostics. */
   buildHost: (outBin: string) => boolean;
   /** Frontend + codegen of the current sources (plain IR, before the hot transform); null after printing diagnostics. */

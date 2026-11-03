@@ -103,7 +103,7 @@ function renderEntry(m: Merged, level: string, allArms: string[]): string {
   return lines.join("\n");
 }
 
-export function renderModule(page: string, entries: ApiEntry[]): string {
+function renderModule(page: string, entries: ApiEntry[]): string {
   const { merged, allArms } = merge(entries);
   const byName = (a: Merged, b: Merged) => a.name.localeCompare(b.name);
   const types = merged.filter(m => m.kind === "type").sort(byName);
@@ -150,7 +150,7 @@ export function builtinMembers(): Record<string, BuiltinMember[]> {
 
 // The string page documents methods the checker dispatches by hand (no import, no std
 // source), so their signatures come from `milo lang --json`, not from `milo api`.
-export function renderBuiltins(receiver: string, members: BuiltinMember[]): string {
+function renderBuiltins(receiver: string, members: BuiltinMember[]): string {
   const cell = (t: string) => escapeProse(t).replace(/\|/g, "\\|");
   const rows = members.map(m => `| \`${m.name}${m.signature}\` | ${m.note ? cell(m.note) : ""} |`);
   return [`| \`${receiver}\` method | Notes |`, "|---|---|", ...rows].join("\n");

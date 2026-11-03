@@ -14,7 +14,7 @@
 
 import type { Gen } from "./codegen";
 
-export type TyKind = "void" | "int" | "float" | "ptr" | "agg";
+type TyKind = "void" | "int" | "float" | "ptr" | "agg";
 export interface Ty { readonly ll: string; readonly kind: TyKind; readonly bits?: number }
 
 const intTys = new Map<number, Ty>();
@@ -69,13 +69,13 @@ export interface NameSource {
 }
 
 export type BinOp = "add" | "fadd" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
-export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
-export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
+type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
+type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
 
 /** `!range` and `!noundef` metadata ids for a load of a ranged int (`i32(0..100)`). */
-export interface LoadMeta { readonly range: number; readonly noundef: number }
+interface LoadMeta { readonly range: number; readonly noundef: number }
 
-export interface Builder {
+interface Builder {
   /**
    * `define ... {` and the `entry.bb:` label; returns the params as values. Once per
    * builder: a builder's checks (reserved temps, the open function) are per function.

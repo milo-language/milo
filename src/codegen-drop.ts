@@ -24,7 +24,7 @@ export class DropGlueSeen {
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this, they are not part of its external API.
-export interface DropCtx extends NameSource {
+interface DropCtx extends NameSource {
   llvmType(t: TypeKind): string;
   typeSizeOf(t: TypeKind): number;
   hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string;

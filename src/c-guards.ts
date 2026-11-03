@@ -11,7 +11,7 @@ import { must } from "./must";
 export interface CSigClaim { fnName: string; header: string; sig: string; retType: TypeKind; params?: { type: TypeKind }[] }
 export interface CValueClaim { global: string; cName: string; header: string; value: string; signed: boolean }
 
-export interface CGuardInput {
+interface CGuardInput {
   cLayoutStructs: HIRStruct[];
   cSigs: CSigClaim[];
   cValues: CValueClaim[];
@@ -21,7 +21,7 @@ export interface CGuardInput {
 }
 
 // The layout math codegen used, so every asserted offset and size is the one it emitted.
-export interface CGuardLayout {
+interface CGuardLayout {
   llvmType(t: TypeKind): string;
   typeSize(ty: string): number;
   structFieldOffset(fieldTypes: string[], fieldIdx: number): number;

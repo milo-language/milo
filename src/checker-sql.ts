@@ -25,7 +25,7 @@ import type { Attribute, Expr, Span } from "./ast";
 import type { RowFieldPlan } from "./derive-row";
 import { suggestions, didYouMean } from "./suggest";
 
-export interface SqlAttr { sqlIndex: number; argsIndex: number | null }
+interface SqlAttr { sqlIndex: number; argsIndex: number | null }
 
 interface Site {
   sql: string;
@@ -45,7 +45,7 @@ export interface ConstResolver {
   call(fn: string, args: string[]): string | null;
 }
 
-export interface SqlHost {
+interface SqlHost {
   error(msg: string, span?: Span, hint?: string): void;
 }
 

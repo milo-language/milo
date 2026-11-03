@@ -13,11 +13,11 @@
 
 import type { Diagnostic } from "./diagnostics";
 
-export interface TextEdit { offset: number; len: number; newText: string }
+interface TextEdit { offset: number; len: number; newText: string }
 export interface Fix { title: string; edits: TextEdit[] }
 
 // The 0-based offset of a 1-based (line, col), as spans are written.
-export function spanOffset(source: string, line: number, col: number): number {
+function spanOffset(source: string, line: number, col: number): number {
   let off = 0, l = 1;
   for (let i = 0; i < source.length && l < line; i++) if (source[i] === "\n") { l++; off = i + 1; }
   return off + col - 1;

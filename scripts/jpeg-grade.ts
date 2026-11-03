@@ -188,7 +188,7 @@ if (photos) {
 
 // ── decoder conformance ──────────────────────────────────────────────────────
 
-export const VARIANTS: Record<string, string[]> = {
+const VARIANTS: Record<string, string[]> = {
   q75: ["-quality", "75"], q95: ["-quality", "95"], q20: ["-quality", "20"], q100: ["-quality", "100"],
   s444: ["-sample", "1x1"], s422: ["-sample", "2x1"], s440: ["-sample", "1x2"], s420: ["-sample", "2x2"], s411: ["-sample", "4x1"],
   gray: ["-grayscale"], rgb: ["-rgb"], opt: ["-optimize"],

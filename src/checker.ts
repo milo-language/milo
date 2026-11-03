@@ -501,12 +501,12 @@ export interface StructInfo {
 // The first field whose type is a raw pointer, directly or through a fixed array. A struct
 // field of a pointer-holding struct is not reported here: that inner struct is itself
 // move-tracked (or `@copy`), and the ordinary all-fields-Copy rule carries the verdict up.
-export function rawPointerField(fields: { name: string; type: TypeKind }[]): string | undefined {
+function rawPointerField(fields: { name: string; type: TypeKind }[]): string | undefined {
   return fields.find(f => holdsRawPtr(f.type))?.name;
 }
 
 // The enum form of rawPointerField: the first variant whose payload holds a raw pointer.
-export function rawPointerVariant(variants: Map<string, { fields: TypeKind[] }>): string | undefined {
+function rawPointerVariant(variants: Map<string, { fields: TypeKind[] }>): string | undefined {
   for (const [name, v] of variants) if (v.fields.some(holdsRawPtr)) return name;
   return undefined;
 }

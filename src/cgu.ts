@@ -416,7 +416,7 @@ export type SplitStats = { units: number; promoted: number; placement?: Placemen
  * read) and whether to place hot functions at all. Disabled still records hashes, with an
  * empty hot set, so the next enabled build starts from this one.
  */
-export type HotOptions = { prev: HotState | null; enabled: boolean };
+type HotOptions = { prev: HotState | null; enabled: boolean };
 
 /**
  * Split `ir` into `units` self-contained LLVM modules that link to the same program.

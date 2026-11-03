@@ -6,7 +6,7 @@ import type { HIRFunction } from "./hir";
 import type { TypeKind } from "./types";
 import type { StructLayout, EnumLayout } from "./codegen";
 
-export interface DwarfHost {
+interface DwarfHost {
   displayName(s: string): string;
   filePath(): string | undefined;
   structLayouts: Map<string, StructLayout>;

@@ -4,7 +4,7 @@
 // file or socket reads lists in constant memory.
 import { closeSync, openSync, readSync, writeSync } from "fs";
 
-export interface TraceRecord {
+interface TraceRecord {
   seq: number;
   kind: string;
   arg: string;
@@ -24,7 +24,7 @@ function readAt(fd: number, pos: number, len: number): Buffer {
 }
 
 /** Every record's header and arg, in order. Throws on a foreign or corrupt trace. */
-export function* traceRecords(path: string): Generator<TraceRecord> {
+function* traceRecords(path: string): Generator<TraceRecord> {
   const fd = openSync(path, "r");
   try {
     if (readAt(fd, 0, HEADER.length).toString("latin1") !== HEADER) {
