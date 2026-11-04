@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { emitPatch, compilePatch, sendPatch, awaitAck, initialHashes, patchLibName, hostTransform, type HotManifest, type PatchResult, type HashCache } from "../src/hot";
 import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
+import { mlirClang } from "../src/mlir-backend";
 
 const ROOT = resolve(import.meta.dir, "..");
 const MAIN = join(ROOT, "src/main.ts");
@@ -159,7 +160,8 @@ class Host {
     if (r.kind !== "patch") return r;
     this.n++;
     const lib = patchLibName(this.dir, this.n, OS);
-    compilePatch("clang", r.ir, lib, OS);
+    // The patch IR is milo-opt's LLVM; a system clang of another version may reject it.
+    compilePatch(mlirClang().path, r.ir, lib, OS);
     sendPatch(this.fifo, lib, this.n, r.exported, r.dataExported);
     const a = await awaitAck(this.ack, this.n);
     if (!a.ok) throw new Error(`apply failed: ${a.msg}`);
