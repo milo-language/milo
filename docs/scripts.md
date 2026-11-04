@@ -33,6 +33,7 @@ To change an entry, change that line — this table is a projection of it.
 | Script | Purpose |
 |---|---|
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
+| `scripts/api-sweep.ts` | API sweep before deploy: build a web app with an old and a new compiler, run both on copies of the same data, request every GET route and byte-diff status + body. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
@@ -129,3 +130,19 @@ To change an entry, change that line — this table is a projection of it.
 <!-- END GENERATED INDEX -->
 
 This table is regenerated, not maintained — it is how contributors discover what already exists before writing a duplicate.
+
+## API sweep before deploy
+
+`scripts/api-sweep.ts` builds a web app with the deployed compiler and the new one, starts both on free ports against separate copies of the same data, requests every GET route (found by scanning `r.get("/...")`, `r.stream`, `addRoute("GET", ...)`) and byte-diffs status and body. A parameterised route is compared only if `--routes` lists a concrete path for it, otherwise it is reported as skipped. `--ignore REGEX` (repeatable) masks matches before diffing. Exit 0 only if no route differs.
+
+For tahoeroads (the deployed checkout is the compiler the last deploy was built from, e.g. a worktree at the deployed commit):
+
+```sh
+bun scripts/api-sweep.ts --app ~/git/tahoeroads/app.milo \
+  --old-compiler ~/git/milo-deployed --new-compiler ~/git/milo \
+  --data-dir ~/git/tahoeroads/data --data-env TAHOEROADS_DATA \
+  --routes ~/git/tahoeroads/sweep-routes.txt \
+  --ignore '\d{4}-\d\d-\d\dT[\d:.]+Z?' --ignore 'localhost:\d+'
+```
+
+The paths, env var names and the routes file above are placeholders: use the app's own data-dir variable and keep `sweep-routes.txt` (one concrete path per line, `#` comments) beside the app. `--db FILE` copies a single database file (with `-wal` and `-shm`) into each instance's working directory instead, and `--env K=V` sets other variables. `--new-app B.milo` builds the new side from a different source, to check a source edit rather than a compiler change.
