@@ -76,7 +76,7 @@ const sweep = async (files: string[], env: Record<string, string>) => {
 await sweep(entries, {});
 const entryCounts = Object.fromEntries(KINDS.map(k => [k, counts[k]!.size]));
 const stdBase = Object.fromEntries(KINDS.map(k => [k, counts[k]!.size]));
-if (stdFiles.length) await sweep(stdFiles, { MILO_MUTABILITY_STD: "1" });
+if (stdFiles.length) await sweep(stdFiles, {});
 if (before.size === 0) { console.error("census: nothing was checked"); process.exit(1); }
 
 console.log(`checked ${entries.length} entries${stdFiles.length ? ` + ${stdFiles.length} std files` : ""} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);

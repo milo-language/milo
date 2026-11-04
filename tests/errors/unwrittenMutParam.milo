@@ -1,0 +1,13 @@
+// @error: 'n' is taken as '&mut' but never written through
+// A private fn that takes `&mut T` and never writes through it tells every caller the
+// argument may change. Take `&T`; `milo fix` also drops `&mut` at the call sites.
+fn show(n: &mut i64): void {
+    print(n)
+}
+
+fn main() {
+    var a: i64 = 1
+    show(&mut a)
+    a = 2
+    print(a)
+}

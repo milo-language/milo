@@ -53,8 +53,8 @@ build rather than quietly teaching the wrong thing.
 | [`replay-hole`](#replay-hole) | allow |
 | [`single-variant-match`](#single-variant-match) | allow |
 | [`string-concat-in-loop`](#string-concat-in-loop) | warn |
-| [`var-never-reassigned`](#var-never-reassigned) | warn |
-| [`unwritten-mut-param`](#unwritten-mut-param) | warn |
+| [`var-never-reassigned`](#var-never-reassigned) | error |
+| [`unwritten-mut-param`](#unwritten-mut-param) | error |
 | [`unused-import`](#unused-import) | allow |
 | [`unowned-pointer-copy`](#unowned-pointer-copy) | allow |
 | [`unchecked-ffi-contract`](#unchecked-ffi-contract) | allow |
@@ -450,9 +450,9 @@ fn main() {
 
 ### var-never-reassigned
 
-_On by default._
+_A hard error: no flag silences it._
 
-A `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.
+An error: a `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.
 
 ```milo
 fn main() {
@@ -465,9 +465,9 @@ fn main() {
 
 ### unwritten-mut-param
 
-_On by default._
+_A hard error: no flag silences it._
 
-A `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.
+An error: a `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.
 
 ```milo
 fn show(n: &mut i64): void {

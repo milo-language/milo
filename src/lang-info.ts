@@ -84,6 +84,7 @@ export function langInfo() {
     warnings: WARNINGS.map(w => ({
       name: w.name,
       offByDefault: !!w.offByDefault,
+      ...(w.hardError ? { hardError: true } : {}),
       ...(w.doc ? { doc: w.doc } : {}),
       ...(w.fix ? { fix: w.fix } : {}),
       ...(w.example ? { example: w.example } : {}),
@@ -169,11 +170,11 @@ export function explainText(query: string, json = false): string | undefined {
   if (!warning && !attribute && !keywordDoc) return undefined;
   if (json) return JSON.stringify(warning ?? attribute ?? { name, doc: keywordDoc }, null, 2) + "\n";
   if (warning) {
-    return `warning: ${warning.name}${warning.offByDefault ? "   (off by default)" : ""}\n\n` +
+    return `${warning.hardError ? "error" : "warning"}: ${warning.name}${warning.offByDefault ? "   (off by default)" : ""}\n\n` +
       (warning.doc ? `${warning.doc}\n\n` : "no reference entry yet\n\n") +
       (warning.example ? `example:\n${warning.example.replace(/^(?!$)/gm, "  ")}\n` : "") +
       (warning.fix ? `fix: ${warning.fix}\n\n` : "") +
-      `silence it: --allow=${warning.name}   enforce it: --deny=${warning.name}\n`;
+      (warning.hardError ? `always an error: no flag silences it\n` : `silence it: --allow=${warning.name}   enforce it: --deny=${warning.name}\n`);
   }
   if (attribute) {
     return `attribute: @${attribute.name}${attribute.takesArgs ? "(…)" : ""}\n` +

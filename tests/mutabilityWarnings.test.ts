@@ -1,4 +1,4 @@
-// `var-never-reassigned` and `unwritten-mut-param` (src/checker-mutability.ts): what
+// `var-never-reassigned` and `unwritten-mut-param` (hard errors; src/checker-mutability.ts): what
 // fires, what must not, and the exact text `milo fix` leaves (comments and layout intact,
 // the result checks clean and prints what the original printed).
 import { test, expect } from "bun:test";
@@ -171,6 +171,25 @@ test("a chain of forwarders is peeled one link per fix round, and ends clean", (
   expect(text).toContain("fn mid(n: &i64)");
   expect(text).toContain("print(mid(a))");
   expect(run).toBe("7\n");
+});
+
+test("both are hard errors: severity error, check fails, --allow does not reach them, a fix is attached", () => {
+  const srcs = [
+    lines("fn main() {", "    var x = 1", "    print(x)", "}"),
+    lines("fn show(n: &mut i64): void { print(n) }", "fn main() {", "    var a: i64 = 1", "    show(&mut a)", "    a = 2", "}"),
+  ];
+  for (const [i, src] of srcs.entries()) {
+    const f = join(dir, `e${n++}.milo`);
+    writeFileSync(f, src);
+    const code = ["var-never-reassigned", "unwritten-mut-param"][i]!;
+    for (const flags of [[], [`--allow=${code}`]]) {
+      const r = milo(["check", f, "--json", ...flags]);
+      expect(r.status).not.toBe(0);
+      const d = JSON.parse(r.stdout).diagnostics.find((x: any) => x.code === code);
+      expect(d.severity).toBe("error");
+      expect(JSON.stringify(d)).toContain("fix");
+    }
+  }
 });
 
 test("a fn used as a value keeps its signature", () => {

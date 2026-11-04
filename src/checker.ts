@@ -4,6 +4,7 @@
 // Error recovery: an erroneous declaration still binds, an erroneous expression is typed
 // `unknown`, and nothing reports about `unknown` (enforced in `error()`).
 import { attributesFor } from "./attributes";
+import { HARD_ERRORS } from "./warnings";
 import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from "./replay-externs";
 import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
@@ -1493,6 +1494,10 @@ export class TypeChecker {
   private firedWarnings = new Set<string>();
 
   private warn(code: string, msg: string, span?: Span, hint?: string, len?: number) {
+    if (HARD_ERRORS.has(code)) {
+      this.diagnostics.push({ severity: "error", span, len, message: msg, hint, code });
+      return;
+    }
     if (this.warningConfig.expected?.has(code)) {
       this.firedWarnings.add(code);
       return; // expected findings are suppressed, exactly like an allow

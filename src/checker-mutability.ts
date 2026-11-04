@@ -11,9 +11,9 @@
 // Names are matched per function, not per scope: a write to any `x` in a function keeps
 // every `var x` in it. That only ever loses a hit, never invents one.
 //
-// std is not reported (a user program compiles its imports too, and they are not its to
-// fix); MILO_MUTABILITY_STD=1 lifts that, for the corpus census over std itself.
-import type { Program, Function, Expr, Span } from "./ast";
+// std is checked like user code: it has to stay clean, because every user program compiles
+// the std modules it imports.
+import type { Program, Expr, Span } from "./ast";
 import type { ProgramPassHost, ProgramView } from "./checker-program-passes";
 
 const WALK_SKIP = new Set(["span", "type", "targetType", "retType", "methodSpan"]);
@@ -99,15 +99,13 @@ function readsOnly(host: ProgramPassHost, view: ProgramView, id: Node, parent: N
 const spanKey = (s: Span | undefined) => s ? `${s.file ?? ""}:${s.line}:${s.col}` : "";
 
 export function checkMutability(host: ProgramPassHost, program: Program, view: ProgramView): void {
-  const lintStd = !!process.env.MILO_MUTABILITY_STD;
-  const user = (f: Function) => lintStd || !host.fnDeclaredInStd(f);
 
   // ── var-never-reassigned ─────────────────────────────────────────────────────────
   // Generic bodies are checked once per instance, each a clone with the same spans: a
   // `var` is reported only when every copy leaves it unwritten.
   const vars = new Map<string, { name: string; span: Span; ok: boolean }>();
   for (const [name, f] of view.fns) {
-    if (name.startsWith("<") || f.isExtern || !f.body || f.typeParams.length > 0 || !user(f)) continue;
+    if (name.startsWith("<") || f.isExtern || !f.body || f.typeParams.length > 0) continue;
     const { written } = writtenNames(host, view, f.body, null);
     walk(f.body, n => {
       if (n.kind !== "VarDecl" || !n.span) return;
@@ -145,7 +143,7 @@ export function checkMutability(host: ProgramPassHost, program: Program, view: P
     });
   }
   for (const f of program.functions) {
-    if (f.isExtern || !f.body || f.isPub || f.typeParams.length > 0 || f.name === "main" || f.attributes?.length || !user(f)) continue;
+    if (f.isExtern || !f.body || f.isPub || f.typeParams.length > 0 || f.name === "main" || f.attributes?.length) continue;
     if (f.retType?.isRefMut || values.has(f.name)) continue;
     const sig = host.functions.get(f.name);
     if (!sig) continue;

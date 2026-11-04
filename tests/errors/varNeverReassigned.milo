@@ -1,0 +1,7 @@
+// @error: 'total' is never reassigned
+// A `var` nothing writes after its initializer is an error, not a warning: `let` says the
+// same thing and lets the checker reject a later write. `milo fix` rewrites it.
+fn main() {
+    var total = 40 + 2
+    print(total)
+}

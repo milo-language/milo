@@ -37,9 +37,10 @@ default arm wherever it was written. Move the `_` arm last.
 
 ## `var-never-reassigned` and `unwritten-mut-param` (2026-11-03)
 
-Two new warnings, each with a `milo fix` edit: a `var` that is never reassigned (make it
-`let`), and a `&mut T` parameter of a non-`pub` function that nothing writes through (make it
-`&T`, and drop `&mut` at its call sites). They will become errors; run `milo fix` now.
+Two checks, each with a `milo fix` edit, and both hard errors now (no `--allow` reaches them):
+a `var` that is never reassigned (make it `let`), and a `&mut T` parameter of a non-`pub`
+function that nothing writes through (make it `&T`, and drop `&mut` at its call sites). Run
+`milo fix` on your sources.
 
 ## MLIR is the default build path (2026-11-01)
 

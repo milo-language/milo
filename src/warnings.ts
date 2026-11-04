@@ -16,6 +16,8 @@ interface WarningInfo {
   name: string;
   /** Off by default: not reported unless `--deny=<name>` (or `--deny-all`) asks for it. */
   offByDefault?: true;
+  /** A hard error: always reported as an error, no `--allow`/`--expect` reaches it. Keeps its name, doc and fix like a warning. */
+  hardError?: true;
   /**
    * What the warning means, in one or two sentences of markdown. Rendered to the site and
    * to `milo lang --json`; write it for a user who has never seen the name before.
@@ -342,7 +344,8 @@ fn main() {
   },
   {
     name: "var-never-reassigned",
-    doc: "A `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.",
+    hardError: true,
+    doc: "An error: a `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.",
     fix: "Declare it with `let`. `milo fix` does this.",
     example: `fn main() {
   var total = 40 + 2
@@ -352,7 +355,8 @@ fn main() {
   },
   {
     name: "unwritten-mut-param",
-    doc: "A `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.",
+    hardError: true,
+    doc: "An error: a `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.",
     fix: "Take `&T`, and drop `&mut` at every call site (shared borrows are implicit). `milo fix` does both.",
     example: `fn show(n: &mut i64): void {
   print(n)
@@ -511,4 +515,5 @@ export const WARNING_DOCS_URL = "https://milo-language.github.io/milo/language/w
 export function warningDocUrl(name: string): string | undefined {
   return WARNING_NAMES.includes(name) ? `${WARNING_DOCS_URL}#${name}` : undefined;
 }
+export const HARD_ERRORS = new Set(WARNINGS.filter(w => w.hardError).map(w => w.name));
 export const OFF_BY_DEFAULT: string[] = WARNINGS.filter(w => w.offByDefault).map(w => w.name);

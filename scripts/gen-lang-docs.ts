@@ -21,7 +21,7 @@ import { execFileSync } from "child_process";
 
 const ROOT = join(import.meta.dir, "..");
 
-interface Warning { name: string; offByDefault: boolean; doc?: string; fix?: string; example?: string }
+interface Warning { name: string; offByDefault: boolean; hardError?: boolean; doc?: string; fix?: string; example?: string }
 interface Attribute { name: string; targets: string[]; takesArgs: boolean; doc: string }
 interface Command {
   name: string; group: "compiler" | "package"; usage: string; summary: string; details?: string;
@@ -47,7 +47,7 @@ function renderWarnings(warnings: Warning[]): string {
   lines.push("|---|---|");
   for (const w of warnings) {
     const anchor = w.doc ? `[\`${w.name}\`](#${w.name})` : `\`${w.name}\``;
-    lines.push(`| ${anchor} | ${w.offByDefault ? "allow" : "warn"} |`);
+    lines.push(`| ${anchor} | ${w.hardError ? "error" : w.offByDefault ? "allow" : "warn"} |`);
   }
   // Documented first, so the reference reads as a reference and the undocumented tail is
   // visibly a gap rather than an absence.
@@ -56,7 +56,9 @@ function renderWarnings(warnings: Warning[]): string {
     lines.push("");
     lines.push(`### ${w.name}`);
     lines.push("");
-    lines.push(w.offByDefault
+    lines.push(w.hardError
+      ? "_A hard error: no flag silences it._"
+      : w.offByDefault
       ? `_Off by default — enable with \`--deny=${w.name}\` or \`--expect=${w.name}\`._`
       : "_On by default._");
     lines.push("");
