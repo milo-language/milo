@@ -114,3 +114,35 @@ that still exist under `Promise.blocking`.
 - Detach-vs-join for the blocking thread (no-leak requirement either way).
 - Should `time.sleepMs` park the task when called on the scheduler (green-aware
   sleep)? Nice-to-have, separate change; don't block this plan on it.
+
+## Follow-on: one scheduler per core (workers), 2026-11-04
+
+The model above stays; `std/http` can now run N schedulers. Decided: **design A, tasks never
+migrate**. Work stealing was rejected because it breaks `Task.scope` borrow soundness (a
+borrowing task may only run where its frame is), the documented "tasks never race" promise,
+and record/replay determinism (one thread-ordered log).
+
+- **Runtime.** Nothing in `std/runtime` was single-scheduler by construction: the scheduler
+  pointer and the panic hook are `thread_local` (`src/scaffold.ts`), and a task unparked from
+  another thread goes on the owner's mutex-guarded transfer list and wakes its event loop
+  (`unparkTask`/`drainXfer`), never its run queue. `spawnWorker(f)` (std/runtime) starts a
+  dedicated OS thread, runs `f` as that scheduler's first task and tears the scheduler down
+  when it and its tasks are done. Same checker rules as `Promise.blocking` (`@thread`).
+- **Cross-worker sync.** `Channel` and `WaitGroup` already park/wake across threads (their
+  waiter records name the waiter's task, and the wake goes through `unparkTask`).
+  Fixtures: `workerChannelHandoff`, `workerWaitGroup`.
+- **HTTP.** `ServeOptions.workers` (1 default, 0 = one per core) with
+  `serveRouterFactory(host, port, make, opts)`: `make` builds one `Router` per worker, on that
+  worker. Linux binds one SO_REUSEPORT listener per worker. Darwin and socket activation
+  (LISTEN_FDS) share one listener fd and every worker accepts on it. Darwin's REUSEPORT
+  binds but does not spread connections, and a handoff acceptor costs a hop per connection
+  the kernel already saves on Linux. `workers: 1` takes the old path untouched.
+- **Globals.** The checker's "thread read of a global written elsewhere" rule is the audit;
+  it ran over every handler path. Changed: `uuid` v7 state (one atomic word, now ordered
+  across threads), `log` timestamps decision, `regex` locale flag, the SIGTERM drain globals
+  and the replay heap flag (written through atomics). Every other std counter was already
+  atomic.
+- **Record/replay.** `workers > 1` under `MILO_RECORD`/`MILO_REPLAY` returns an `Err`; the
+  single-worker path is unchanged.
+- **Open.** The factory closure is called concurrently by all workers (one shared closure
+  value), so it must only read what it captured.

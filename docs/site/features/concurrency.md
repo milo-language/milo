@@ -531,6 +531,32 @@ Callers do `ensureTable()` and then read `gTable` directly. There is no `Lazy<T>
 `OnceCell<T>`: with no way to return a reference, every `get()` would deep-copy the cached
 value, turning a cache into a per-access allocation.
 
+## One Scheduler per Core: `workers`
+
+A scheduler is single-threaded, so one server uses one core for its handlers. `ServeOptions { workers: N }` (std/http) runs N schedulers instead, each on its own OS thread with its own run queue, fd table and timers; `0` means one per core and `1` (the default) is the single-scheduler server, unchanged. A connection stays on the worker that accepted it for its whole life: **tasks never migrate**, so `Task.scope` borrows and "tasks never race" mean what they mean on one thread. (Work stealing was rejected for exactly that reason.)
+
+```milo
+from "std/http" import { Context, Response, Router, ServeOptions, serveRouterFactory }
+
+pub fn main(): i32 {
+    // The factory runs once per worker, on that worker: every worker has a Router of its own.
+    serveRouterFactory("0.0.0.0", 8080, (): Router => {
+        var r = Router.new()
+        r.get("/hello", (ctx: &mut Context): Response => ctx.text("hello"))
+        return r
+    }, ServeOptions { workers: 0 })!
+    return 1
+}
+```
+
+- **State is per worker** unless you share it deliberately: a `Channel`, a `WaitGroup` or an atomic captured by the factory (`.clone()` it inside) works across workers. A wake from worker A to a task parked on worker B goes onto B's transfer list and rouses B's event loop; nothing touches another scheduler's run queue.
+- **Globals are checked.** The factory and everything it reaches run on several OS threads, so a mutable `var` global that is written anywhere is the compile error "is a mutable global, and this code runs on a real OS thread". Use an atomic, `Once.run`, or `thread_local var`. The factory itself is called concurrently by all workers and must only read what it captured.
+- **Listeners.** Linux gives each worker its own `SO_REUSEPORT` listener and the kernel spreads connections. On macOS, and under systemd socket activation (`socketActivation: true`), all workers accept on the one shared listener, which can be a little uneven.
+- `maxConn` is the total, split evenly across workers. SIGTERM drains every worker, then exits.
+- Not available while recording or replaying: `workers > 1` returns an `Err`, since the trace is one thread-ordered log.
+
+The same building block is public: `spawnWorker(f)` (std/runtime) starts an OS thread running `f` as the first task of a scheduler of its own, under the `Promise.blocking` Send rules.
+
 ## Pitfalls
 
 1. **`main` is a green task, in any program that can spawn one.** Every blocking std call in it parks and lets other tasks run, instead of wedging the single scheduler thread. A program with no reachable `Task.spawn` keeps the plain entry point and pays nothing for the scheduler.
