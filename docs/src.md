@@ -56,6 +56,10 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
 | `src/hir.ts` | Typed HIR — every expression carries its resolved TypeKind. |
 | `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
+| `src/interp-natives.ts` | Reference interpreter, library behaviour: what the compiled runtime does for print, strings (a counted buffer, copy on write), Vec, Option/Result combinators and the integer intrinsics. |
+| `src/interp-run.ts` | `milo interp` driver: run a lowered module in the reference interpreter and mirror what a compiled binary would do with its stdout, stderr and exit code. |
+| `src/interp-values.ts` | Reference interpreter, values and state: the shapes docs/semantics/mini-milo.md §2 calls slots, places and values, plus the errors the interpreter raises. |
+| `src/interp.ts` | Reference interpreter: runs the merged AST directly, using only the checker's facts (CheckResult: expression types, resolved callees, borrow and move marks), never src/lower.ts or the HIR. |
 | `src/ir.ts` | Typed IR builder: codegen describes instructions as typed values, and a backend prints them. |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |

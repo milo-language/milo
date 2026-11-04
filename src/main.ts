@@ -19,6 +19,7 @@ import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
 import { MlirPlan, mlirClang } from "./mlir-backend";
 import { lower } from "./lower";
+import { runInterp } from "./interp-run";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
 import { generateHeader } from "./headergen";
@@ -100,7 +101,9 @@ function failCompile(what: string): never {
 // Every source file the last frontend run read; `milo hot` watches these.
 let lastResolvedFiles: string[] = [];
 
-function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
+// `checkedOnly`: stop after the checker and hand back its result (the reference interpreter
+// runs the AST on the checker's facts, never on the HIR).
+function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, checkedOnly?: (program: Program, result: import("./checker").CheckResult) => void) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let program: Program | undefined;
   try {
@@ -138,6 +141,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     failCompile(`${errors.length} type error${errors.length === 1 ? "" : "s"}`);
   }
 
+  if (checkedOnly) { checkedOnly(program!, result); return undefined as never; }
   const hir = phase("lower", () => lower(program!, result, sourceDir, target.os, target.arch));
   // Attached here rather than inside `lower`: the map is a resolver fact codegen renders
   // through (print text, DWARF names), not anything lowering computes or reads.
@@ -2245,6 +2249,12 @@ async function main() {
     emitAst(source!, output, target, emitAll, emitSpans);
   } else if (cmd === "emit-hir") {
     emitHir(source!, output, target, emitAll, emitSpans, warningConfig);
+  } else if (cmd === "interp") {
+    // The reference interpreter (src/interp.ts): runs the typed HIR, no codegen. Exit 3 means
+    // the program uses something it does not model; exit 4 means a rule did not apply (stuck).
+    let code = 0;
+    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live")); });
+    process.exit(code);
   } else if (cmd === "emit-ir") {
     const trapOnOverflow = overflowChecks ?? true;
     const emitContractChecks = contractChecks ?? (optFlag === "-O0");
