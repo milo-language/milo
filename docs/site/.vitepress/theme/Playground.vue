@@ -204,9 +204,14 @@ onBeforeUnmount(() => { worker?.terminate(); worker = null })
 .chip.on { color: var(--vp-c-white); background: var(--vp-c-brand-2); border-color: var(--vp-c-brand-2); }
 .chip.bad:not(.on) { border-style: dashed; }
 .edited { font-size: 12px; color: var(--vp-c-text-3); }
+/* Phones: every example visible at once (a sideways scroll hid most of them), and the
+   playground runs edge to edge instead of inside the page's side padding. */
 @media (max-width: 640px) {
-  .chips { flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; }
-  .chip { scroll-snap-align: start; }
+  .pg { margin: 0 -24px; }
+  .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; }
+  .chip { white-space: normal; text-align: left; border-radius: 8px; padding: 7px 10px; line-height: 1.3; }
+  .toolbar { padding: 0 12px; }
+  .editor, .out-bar, .vp-doc .out-pane { border-radius: 0; border-left: 0; border-right: 0; }
 }
 .spacer { flex: 1; }
 .hint { font-size: 12px; color: var(--vp-c-text-3); }
