@@ -4,11 +4,10 @@
 //   populateScalarToLLVMPatterns  milo arithmetic, casts, locals, return -> LLVM dialect,
 //                             used by convert-milo-to-llvm
 //
-// The traps reproduce legacy codegen (src/codegen.ts emitScalarBinOp and friends) byte
-// for byte on stderr: overflow calls the module's `__milo_overflow_fail(file, line)`,
-// every other panic calls `__milo_mlir_panic(msg)`, which prints msg the way the legacy
-// inline sequence does and then aborts through the panic hook. Both routines are defined
-// by the legacy module this function is linked into (src/mlir-backend.ts).
+// The traps print what the legacy backend printed, byte for byte on stderr (the goldens in
+// tests/golden hold them): overflow calls the module's `__milo_overflow_fail(file, line)`,
+// every other panic calls `__milo_mlir_panic(msg)`, which prints msg and then aborts
+// through the panic hook. Both routines are the scaffold's (src/scaffold.ts).
 #include "Milo.h"
 
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
@@ -775,9 +774,9 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
   }
 };
 
-// The address of a global the legacy module defines (the recorder's, a Milo module global).
-// Declared external here with a placeholder type: with opaque pointers only the accesses
-// carry types, and the splice drops the declaration for a name the module already has.
+// The address of a global defined elsewhere in the module (the recorder's, a Milo module
+// global). Declared external here with a placeholder type: with opaque pointers only the
+// accesses carry types, and milo-merge-scaffold or the definition's own lowering takes over.
 Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name, bool threadLocal = false) {
   auto module = op->getParentOfType<ModuleOp>();
   // Any symbol of that name is the definition: a milo.global.def may not be lowered yet.
@@ -1338,8 +1337,8 @@ struct CallPtrLowering : ConvertOpToLLVMPattern<CallPtrOp> {
   }
 };
 
-// Declared as an external byte when nothing in this module names it yet: the splice keeps
-// the defining module's own global (src/mlir-backend.ts).
+// Declared as an external byte when nothing in this module names it yet: the scaffold
+// defines it (milo-merge-scaffold replaces the declaration).
 struct GlobalAddrLowering : ConvertOpToLLVMPattern<GlobalAddrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1357,8 +1356,7 @@ struct GlobalAddrLowering : ConvertOpToLLVMPattern<GlobalAddrOp> {
 };
 
 // The table is a constant struct of pointers built in the global's initializer region. A
-// symbol nothing in the module names (the scaffold's drop helper, a method MLIR did not take)
-// is declared as `void()`; the splice keeps the defining module's own symbol.
+// symbol nothing in the module names is declared as `void()`.
 struct ItableLowering : ConvertOpToLLVMPattern<ItableOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1622,7 +1620,7 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   }
 };
 
-// legacy's `%String`, by name: the spliced body then uses the module's own definition.
+// `%String`, by name: the runtime sections (src/runtime/str.ll) spell the same type.
 LLVM::LLVMStructType stringStruct(MLIRContext *ctx) {
   auto s = LLVM::LLVMStructType::getIdentified(ctx, "String");
   if (!s.isInitialized()) {
@@ -1950,11 +1948,11 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     auto p = LLVM::LLVMPointerType::get(ctx);
     return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
   });
-  // Identified by legacy's names, so a spliced body's `%Point` is the module's own type.
+  // Identified by the Milo type's name, as src/layout.ts names it. The scaffold
+  // (src/scaffold.ts) spells some of these types itself; setBody fails on a body that
+  // differs from the one already there, so the two can never disagree silently.
   tc.addConversion([&tc](StructType s) -> std::optional<Type> {
     auto st = LLVM::LLVMStructType::getIdentified(&tc.getContext(), s.getName());
-    if (st.isInitialized())
-      return st;
     SmallVector<Type> fields;
     for (Type f : s.getFields()) {
       Type c = tc.convertType(f);
@@ -1969,9 +1967,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
   tc.addConversion([&tc](EnumType e) -> std::optional<Type> {
     MLIRContext *ctx = &tc.getContext();
     auto st = LLVM::LLVMStructType::getIdentified(ctx, e.getName());
-    if (st.isInitialized())
-      return st;
-    // Legacy's niche layout, `%Name = type { P }`: the payload alone.
+    // A niche layout, `%Name = type { P }`: the payload alone.
     if (e.getNicheBits()) {
       Type p = tc.convertType(e.getVariants()[e.variantOf(e.getSomeTag())].getType(0));
       if (!p || failed(st.setBody({p}, /*isPacked=*/false)))

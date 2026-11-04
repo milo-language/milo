@@ -1,7 +1,7 @@
 // RUN: milo-opt %s --milo-scope-drops --milo-lower-structured-cf --convert-milo-to-llvm | FileCheck %s
-// milo.global is the address of a global the legacy module defines (declared external
+// milo.global is the address of a global defined elsewhere (declared external
 // here); a store over a string in one drops the old value first, an `init` store does
-// not; milo.global.init calls legacy's guarded entry for the lazy global.
+// not; milo.global.init calls the scaffold's guarded entry for the lazy global.
 
 // CHECK-DAG: llvm.mlir.global external @total() {{.*}} : i64
 // CHECK-DAG: llvm.mlir.global external thread_local @hits()

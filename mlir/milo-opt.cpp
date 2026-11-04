@@ -1,6 +1,7 @@
 // milo-opt: mlir-opt with the milo dialect and passes registered.
 //
-// `milo-opt --emit-llvmir <passes...> < in.mlir` runs the passes and prints LLVM IR, what
+// `milo-opt --emit-llvmir <passes...> < in.mlir` runs the passes and prints LLVM IR (the
+// runtime sections linked in, Link.cpp), what
 // `milo-opt <passes> | mlir-translate --mlir-to-llvmir` prints, in one process: a build
 // through MLIR spends most of its extra time starting processes.
 #include "Milo.h"
@@ -91,9 +92,10 @@ static int emitLLVMIR(int argc, char **argv, mlir::DialectRegistry &registry) {
   };
   if (failed(pipeline.addToPipeline(pm, err)) || failed(pm.run(*module)))
     return 1;
+  milo::ModuleConfig config = milo::takeModuleConfig(*module);
   llvm::LLVMContext llctx;
   auto ll = mlir::translateModuleToLLVMIR(*module, llctx);
-  if (!ll)
+  if (!ll || !milo::finishModule(*ll, config))
     return 1;
   rewriteEnumerators(*ll);
   ll->print(llvm::outs(), nullptr);

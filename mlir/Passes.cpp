@@ -597,4 +597,5 @@ void milo::registerPasses() {
   PassRegistration<LowerDebugVarsPass>();
   registerScalarPasses();
   registerDropPasses();
+  registerLinkPasses();
 }

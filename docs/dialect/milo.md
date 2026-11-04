@@ -2595,8 +2595,8 @@ Syntax:
 operation ::= `milo.string.concat` $lhs `,` $rhs attr-dict
 ```
 
-`a + b` on strings: a new owned string, made by legacy's concatenation (a helper of the
-legacy module, `milo.string.concat`, the operands through slots). Allocates, so two are
+`a + b` on strings: a new owned string, made by the runtime's concatenation
+(`milo.string.concat`, src/runtime/str.ll, the operands through slots). Allocates, so two are
 never merged: each result is an owner of its own.
 
 Interfaces: `InferTypeOpInterface`, `MemoryEffectOpInterface (MemoryEffectOpInterface)`
@@ -3529,8 +3529,8 @@ Syntax:
 >
 ```
 
-A `HashMap<K, V>` value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
-i64 tombs }` (codegen-map.ts). Its methods are Milo code in std/hashmap that reads it
+A `HashMap<K, V>` value: `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
+i64 tombs }` (src/layout.ts HASHMAP_FIELDS). Its methods are Milo code in std/hashmap that reads it
 through a raw pointer, so no op here looks inside; K and V only name its drop glue
 (legacy's, `milo.drop.map.<k>.<v>`).
 
@@ -3582,8 +3582,8 @@ _Milo's string value_
 
 Syntax: `!milo.string`
 
-Milo's `string` value: legacy's `%String = { ptr data, i64 len, i64 cap }`, the same
-bytes on both sides of the splice. A literal has cap 0: its buffer is static, so its
+Milo's `string` value: `%String = { ptr data, i64 len, i64 cap }`, the same
+bytes the runtime sections (src/runtime/str.ll) read. A literal has cap 0: its buffer is static, so its
 drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
 
 
@@ -3591,10 +3591,10 @@ drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
 
 _A struct by value, identified by name_
 
-A struct by value, named as legacy codegen names its LLVM type (`%Point`), with its
+A struct by value, named as src/layout.ts names its LLVM type (`%Point`), with its
 fields' types in declaration order: `!milo.struct<"Point", si64, f64>`. It lowers to
-the identified LLVM struct of that name, so a spliced body uses the module's own
-definition and the layout is LLVM's natural one, which is legacy's.
+the identified LLVM struct of that name, and the layout is LLVM's natural one, which is
+src/layout.ts's.
 A type with its own `impl Drop` says so after its name, `!milo.struct<"Noisy" drop, si64>`
 (enums the same way): it has drop glue whatever its fields are, and the glue runs the
 user's drop first (legacy's, through `milo.drop.<key>`).

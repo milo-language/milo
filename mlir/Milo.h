@@ -14,6 +14,10 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/IR/SymbolTable.h"
 
+namespace llvm {
+class Module;
+} // namespace llvm
+
 namespace mlir {
 class ConversionPatternRewriter;
 class LLVMTypeConverter;
@@ -41,6 +45,19 @@ bool needsDrop(mlir::Type t);
 void registerPasses();
 void registerScalarPasses();
 void registerDropPasses();
+void registerLinkPasses();
+// What src/mlir-backend.ts says about the module as a whole, on milo.* module attributes
+// (Link.cpp): taken off before translation, applied to the LLVM module after it.
+struct ModuleConfig {
+  std::string runtimeIR;
+  std::vector<std::pair<std::string, std::string>> linkNames;
+  std::vector<std::string> onDemand;
+  std::string sanitize;
+  bool replayHeap = false;
+};
+ModuleConfig takeModuleConfig(mlir::ModuleOp m);
+// Links the runtime sections in and applies the module-wide attributes; false on error.
+bool finishModule(llvm::Module &ll, const ModuleConfig &c);
 // How the symbol of a legacy helper (print, drop, push) spells a type; codegen builds the
 // same names from Milo types (emit-mlir.ts typeKey).
 std::string typeKey(mlir::Type t);
