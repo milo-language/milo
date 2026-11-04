@@ -12,7 +12,7 @@
 //   bun scripts/interp-vs-golden.ts --programs      # only mlir/test/programs
 //   bun scripts/interp-vs-golden.ts --why           # tally of why programs are unsupported
 //   bun scripts/interp-vs-golden.ts --list          # each unsupported program with its cause
-//   bun scripts/interp-vs-golden.ts --jobs 4         # --timeout MS or MILO_INTERP_TIMEOUT_MS: per-program limit (default 240000)
+//   bun scripts/interp-vs-golden.ts --jobs 4         # --timeout MS or MILO_INTERP_TIMEOUT_MS: per-program limit (default 600000)
 //
 // It cannot pass vacuously: zero programs compared exits 1.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
@@ -28,7 +28,7 @@ const opt = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i +
 const filter = opt("--filter");
 const jobs = Number(opt("--jobs") ?? 4);
 // sha256, pbkdf2 and inflate programs take minutes in a tree-walking interpreter: a long default, MILO_INTERP_TIMEOUT_MS or --timeout to change it
-const TIMEOUT_MS = Number(opt("--timeout") ?? process.env.MILO_INTERP_TIMEOUT_MS ?? 240_000);
+const TIMEOUT_MS = Number(opt("--timeout") ?? process.env.MILO_INTERP_TIMEOUT_MS ?? 600_000);
 
 type Verdict = "same" | "differ" | "unsupported" | "no-oracle";
 export interface Result { name: string; verdict: Verdict; detail: string }
