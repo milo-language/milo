@@ -146,3 +146,4 @@ pub fn main(): i32 {
 // @expect: nested outer+inner
 // @expect: nested joined
 // @expect: total 10
+// @rule: R-TASK-SCOPE

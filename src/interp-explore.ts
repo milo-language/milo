@@ -73,6 +73,7 @@ class ExploreCo extends InterpCo {
     if (e?.span) this.lastStop = `${(e.span.file ?? this.entryFile).split("/").pop()}:${e.span.line}`;
     return yield* super.runNative$g(nat, args, e);
   }
+  // R-EXPLORE-CHOICE
   closeStep(): void {
     const s = this.steps[this.steps.length - 1];
     if (!s) return;
@@ -99,6 +100,7 @@ class ExploreCo extends InterpCo {
   }
 }
 
+// R-EXPLORE-FAIL
 function runOnce(program: Program, checked: CheckResult, ex: ExploreOptions, chooser: Chooser, schedule: number[]): Run {
   const it = new ExploreCo(program, checked, chooser);
   it.contractChecks = true;
@@ -134,6 +136,7 @@ const prefixChooser = (prefix: readonly number[]): Chooser => (ex, ready) => {
 
 // Probabilistic concurrency testing: each task gets a random priority, the highest-priority ready task runs, and
 // at `depth - 1` random steps the running task drops to the lowest priority.
+// R-EXPLORE-RANDOM
 function pctChooser(rng: () => number, horizon: number, depth: number): Chooser {
   const prio = new Map<number, number>();
   const change = new Set<number>();
@@ -150,6 +153,7 @@ function pctChooser(rng: () => number, horizon: number, depth: number): Chooser 
     return best;
   };
 }
+// R-EXPLORE-RANDOM
 function mulberry32(a: number): () => number {
   return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
@@ -169,6 +173,7 @@ interface Finding { kind: FailureKind; run: Run; index: number }
 
 export interface ExploreReport { text: string; failures: number; findings: Finding[]; schedules: number }
 
+// R-EXPLORE-DFS R-EXPLORE-FAIL
 export function explore(program: Program, checked: CheckResult, ex: ExploreOptions, file: string): ExploreReport {
   const base = runOnce(program, checked, ex, prefixChooser([]), []);
   const runs: Run[] = [base];

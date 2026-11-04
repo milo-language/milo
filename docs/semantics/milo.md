@@ -3,7 +3,7 @@ system: semantics
 purpose: Milo Semantics: the executable definition of Milo, with Core Milo (the proved core): operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
-last-verified: 2026-11-04 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
+last-verified: 2026-11-04 (scripts/trace-semantics.ts traces rules and interpreter both ways; src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
 -->
 
 # Milo Semantics
@@ -24,6 +24,11 @@ The interpreter (`src/interp.ts`) implements section 2 one function per rule, an
 function names its rule ID. It runs the merged AST on the checker's facts (types, resolved
 callees, move and borrow marks), never on the HIR. A difference between the interpreter and a compiled binary is a
 compiler bug, or a rule that is wrong.
+
+The trace runs both ways and is gated (`scripts/trace-semantics.ts`, `tests/traceSemantics.test.ts`): every rule ID
+defined here (a `[ID]` line in a code block, or the first cell of a table row) is cited by an interpreter function and
+exercised by a test whose title names it or a fixture tagged `// @rule: ID`; every interpreter function cites a rule
+or sits in the script's allowlist with a reason; every ID the interpreter cites is defined here.
 
 ## 1. Syntax
 
@@ -214,8 +219,26 @@ Each is implemented in `src/interp.ts` under its ID, and was needed to match a r
 | E-GLOBAL | A module global with a non-constant initializer runs at its first mention; one no function mentions runs before `main`, in declaration order. |
 | E-HASHMAP | A HashMap owns one table block while non-empty and its entries (key, then value, dropped in that order). Iteration order is unspecified; `get`/`m[k]` yield copies. |
 | E-NEW-ITER | The iterator temporary of a `next()` for-in (`for x in gen()`) is dropped once, when the scope around the loop ends. |
-| S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run, no live count is reported, and the exit status is 134 for a panic. |
+| S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run and no live count is reported. Every runtime failure ends the process the way the compiled runtime does (`panicTail` in `src/scaffold.ts`): the message goes to stderr, stdout is flushed, then `abort()`. The process dies of SIGABRT, which a shell reports as status 134 (128 + 6) and which `milo interp` exits with. Nothing in the runtime exits with status 1 for a failure; a driver that reports 1 for a signal death (as `scripts/guard.ts` does when it has no exit code) is reporting its own default, so a comparison maps a signal to 128 + its number first. `exit(n)` is the one failure-free stop: status `n & 255`, stdout flushed, and the live count still reported. The table below gives the message per kind. |
 | T-STUCK | Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed. |
+
+| Failure | Status | Compiled message (stderr) | Interpreter message |
+|---|---|---|---|
+| index out of bounds (Vec, array, slice) | 134 | `milo: array index out of bounds: I/LEN at FILE:LINE` | `array index out of bounds: I/LEN` |
+| slice or string range out of bounds | 134 | `milo: slice range out of bounds: A..B (len LEN) at FILE:LINE:COL` | `string range A..B out of bounds (len LEN)` |
+| integer overflow, negation overflow | 134 | `runtime error: integer overflow at FILE:LINE` | `integer overflow` |
+| value out of range (checked cast, ranged type) | 134 | `runtime error: value out of range at FILE:LINE` | `T out of range` |
+| division or remainder by zero | 134 | `milo: division by zero at FILE:LINE:COL` | `division by zero` |
+| shift amount out of range | 134 | `milo: shift amount out of range (>= BITS) at FILE:LINE:COL` | `shift amount out of range` |
+| `x!` on None or Err | 134 | `error at FILE:LINE:COL: unwrap called on None` (the error's text for Err) | `unwrap called on None` / `unwrap called on Err` |
+| `assert` | 134 | `assertion failed at FILE:LINE:COL: MSG` | `assertion failed: MSG` |
+| `todo` | 134 | `todo: 'FN' is not implemented (FILE:LINE:COL)` | `not yet implemented` |
+| contract clause (R-CONTRACT-FAIL) | 134 | `runtime error: requires clause violated at FILE:LINE` | the same text |
+| call stack too deep | 139 | none: the process dies of SIGSEGV | none, status 139 (the depth limit is 3000 frames, not the OS stack) |
+| `exit(n)` | `n & 255` | none | none |
+
+Only the status and stdout are compared between a compiled run and the interpreter; the stderr text is
+the runtime's and is not (the interpreter leaves out the source position, except for contracts).
 
 ### Tasks, channels and atomics
 
@@ -294,7 +317,7 @@ allocation it came from.
 | R-MEM-LOAD, R-MEM-STORE | `*p`, `p[i]` (at p + i * sizeOf T) read or write a value of type T at the pointer. Scalars, pointers, structs of those and fixed arrays of those have bytes; a field written through `p.f` is read-modified-written. |
 | R-MEM-ADDROF | `x.addrOf()` is a pointer to the bytes of the place x (a fixed array is its elements). Taking it twice gives equal pointers. A place with no byte layout (a string, Vec, enum) is unsupported. |
 | R-MEM-VECPTR | `v.ptr()` points at element 0 of a slice; an empty Vec, owning no block, gives null. A string's `_strDataPtr` points at its bytes. |
-| R-MEM-CSTR | `s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (R-MEM-DECAY), and so does a fixed array for a `*T` parameter, as a pointer to the array itself. |
+| R-MEM-CSTR | `s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (string and array decay), and so does a fixed array for a `*T` parameter, as a pointer to the array itself. |
 | R-MEM-ADDR | `p as i64` is the allocation's base + offset; `n as *T` is the allocation whose range holds n, with that offset, or null for 0. Comparing pointers compares addresses. An address no allocation of this run owns can be held and compared but not followed. |
 | R-MEM-COPY | `memcpy`, `memmove` and `memset` act on bytes, with the bounds of R-MEM-OOB at both ends. `sizeOf<T>()`, `offsetOf<T>("f")` and `zeroed<T>()` use the compiled layout. |
 | R-MEM-OOB | stuck: an access of n bytes at offset o of an allocation of size s with o < 0 or o + n > s (a view's size is its element count times the element size). |

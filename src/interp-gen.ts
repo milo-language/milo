@@ -35,7 +35,7 @@ export class InterpGen extends Interp {
           const b = (yield* this.resolve$g(e.object));
           const i = (yield* this.ev$g(e.index)) as bigint;
           const n = this.seqLen(this.getPlace(b));
-          if (i < 0n || i >= BigInt(n)) this.panic(`index out of bounds: ${i} (len ${n})`);
+          if (i < 0n || i >= BigInt(n)) this.panic(`array index out of bounds: ${i}/${n}`);
           return { ...b, path: [...b.path, Number(i)] };
         }
         case "UnaryOp": {
@@ -70,10 +70,10 @@ export class InterpGen extends Interp {
   }
   *callFn$g(fn: AstFn, args: Value[]): Gen {
     if (fn.isExtern) return callExtern(this, fn, args);
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
-      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
+      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
       fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
@@ -126,7 +126,7 @@ export class InterpGen extends Interp {
     this.panic(`runtime error: ${c.kind} clause violated at ${shown.startsWith("..") ? file : shown}:${c.span?.line ?? 0}`);
   }
   *callClosure$g(c: ClosureV, args: Value[]): Gen {
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn: this.frames.length ? this.frame.fn : null, ret: c.ret });
     const envScope = this.frame.scopes[0]!;
     try {
@@ -173,7 +173,7 @@ export class InterpGen extends Interp {
       const mark = this.cr.autoBorrowed.get(raw);
       const byRef = !!mark || !!f?.isRef || !!f?.isRefMut;
       if (!byRef) {
-        // R-MEM-DECAY: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
+        // R-MEM-CSTR: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
         if (f?.ptrParam && this.isPlaceExpr(a) && (this.T(a).tag === "array" || this.T(a).tag === "string")) return this.refTo((yield* this.resolve$g(a)), true);
         return this.pending((yield* this.ev$g(a)));
       }
@@ -282,7 +282,7 @@ export class InterpGen extends Interp {
     for (const d of this.structFields(name)) {
       if (given.has(d.name)) { f[d.name] = given.get(d.name)!; if (base) this.dropValue(base.f[d.name]!); }
       else if (base) f[d.name] = base.f[d.name]!;
-      else this.stuck("T-STRUCT", `${name}.${d.name} not given`);
+      else this.stuck("T-STUCK", `${name}.${d.name} not given`);
     }
     return { k: "struct", name, f };
   }
@@ -461,7 +461,7 @@ export class InterpGen extends Interp {
           return (yield* runThunk(arm.run()));
         } finally { this.frame.scopes.pop(); this.dropScope(scope); }
       }
-      return this.stuck("S-MATCH", "no arm matched");
+      return this.stuck("E-MATCH", "no arm matched");
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
   }
   *callExpr$g(e: CallE): Gen {

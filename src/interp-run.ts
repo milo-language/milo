@@ -47,6 +47,7 @@ export function interpOptions(args: string[], source: string, contractChecks: bo
   };
 }
 
+// S-PANIC-ABORT
 export function runInterp(program: Program, checked: CheckResult, reportLive: boolean, opts: RunInterpOptions = {}): number {
   let it: Interp | undefined;
   try {

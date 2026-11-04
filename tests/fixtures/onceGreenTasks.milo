@@ -44,3 +44,4 @@ pub fn main(): i32 {
     print(seen.load())
     return 0
 }
+// @rule: R-ONCE

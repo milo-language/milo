@@ -77,7 +77,7 @@ plain("TaskScope$spawn", (it, [self, f]) => {
 plain("TaskScope$live", (it, [self]) => BigInt(objOf<ScopeObj>(it, self).live));
 
 // ── scheduler entry points std exposes ──
-// R-TASK-CURRENT: a task pointer is the task's number; main is a task whenever the program can spawn.
+// R-TASK-MAIN: a task pointer is the task's number; main is a task whenever the program can spawn.
 plain("schedulerCurrent", it => BigInt((it as InterpCo).cur.id));
 plain("schedulerExists", () => true);
 co("schedulerYield", function* (it) { yield* it.yieldNow(); return undefined; });
@@ -108,6 +108,7 @@ class ChanObj {
   sendW: Task[] = [];
   rc = 1;
   constructor(public cap: number, public blocks: number[]) {}
+  // R-TASK-ABANDON
   release(it: Interp): void {
     if (--this.rc > 0) return;
     for (const v of this.q) it.dropValue(v);
@@ -243,6 +244,7 @@ class AtomObj {
   release(it: Interp): void { if (--this.rc === 0) it.free(this.block); }
 }
 const ATOM = /^Atomic(I64|I32|U64|Bool)\$([A-Za-z0-9_]+)$/;
+// R-ATOMIC
 function atomicNative(kind: string, m: string): Native | undefined {
   const wrap = (v: bigint) => (kind === "I64" ? BigInt.asIntN(64, v) : kind === "I32" ? BigInt.asIntN(32, v) : BigInt.asUintN(64, v));
   const a = (it: Interp, self: Value) => objOf<AtomObj>(it, self);

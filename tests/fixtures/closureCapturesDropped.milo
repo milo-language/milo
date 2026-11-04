@@ -37,3 +37,4 @@ pub fn main(): i32 {
     print("done")
     return 0
 }
+// @rule: E-CLOSURE

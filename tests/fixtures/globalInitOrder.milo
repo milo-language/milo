@@ -14,3 +14,4 @@ pub fn main(): i32 {
 }
 
 // @expect: head|SKY|tail
+// @rule: E-GLOBAL

@@ -3,7 +3,7 @@
 // a program the checker would reject run anyway to see it get stuck, and the golden comparison
 // (scripts/interp-vs-golden.ts) over a slice of the fixtures.
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { Lexer } from "../src/lexer";
@@ -144,7 +144,7 @@ function stuckRule(src: string): string {
   return "";
 }
 
-test("R-MEM-LOAD/STORE: malloc, typed stores and loads, memcpy, memset and free round-trip, and the block count returns to zero", () => {
+test("R-MEM-LOAD, R-MEM-STORE, R-MEM-ALLOC, R-MEM-FREE, R-MEM-COPY: malloc, typed stores and loads, memcpy, memset and free round-trip, and the block count returns to zero", () => {
   const r = run(MEM + `
 fn main() {
     unsafe {
@@ -322,12 +322,15 @@ const FIXTURES = [
   "closureCaptureSelf",
   "channelGreenPark", "greenThread", "asyncCallOrdering", "taskScopeBorrow", "waitGroup", "promiseAll", "onceGreenTasks", "contracts",
 ];
-test("interp-vs-golden: a slice of the fixtures is the same as the compiled run", async () => {
+// every fixture tagged `// @rule: ID` stands as the test for that rule (scripts/trace-semantics.ts check (c)), so it runs too
+const FIXDIR = join(import.meta.dir, "fixtures");
+const TAGGED = readdirSync(FIXDIR).filter(f => f.endsWith(".milo") && /^\/\/ @rule:/m.test(readFileSync(join(FIXDIR, f), "utf-8"))).map(f => f.slice(0, -5));
+test("interp-vs-golden: a slice of the fixtures, and every fixture tagged with a rule, is the same as the compiled run", async () => {
   const results = [];
-  for (const name of FIXTURES) results.push(await compareOne({ path: join(import.meta.dir, "fixtures", `${name}.milo`), name, kind: "fixtures" }, dir));
+  for (const name of new Set([...FIXTURES, ...TAGGED])) results.push(await compareOne({ path: join(import.meta.dir, "fixtures", `${name}.milo`), name, kind: "fixtures" }, dir));
   const bad = results.filter(r => r.verdict !== "same");
   expect(bad.map(r => `${r.name}: ${r.verdict} ${r.detail}`)).toEqual([]);
-}, 120_000);
+}, 600_000);
 
 // ── tasks (docs/semantics/milo.md R-TASK-*, R-CHAN, R-WG) ──
 const runTasks = (src: string, opts: RunOptions = {}) => {
@@ -336,7 +339,7 @@ const runTasks = (src: string, opts: RunOptions = {}) => {
   return { out: new TextDecoder().decode(r.stdout), err: r.stderr, code: r.code, live: r.live, co: it instanceof InterpCo };
 };
 
-test("R-TASK-SPAWN: a spawned task waits for its spawner to park; the run queue is FIFO and yield goes to the back", () => {
+test("R-TASK-SPAWN, R-TASK-YIELD, R-TASK-JOIN, R-TASK-MAIN: a spawned task waits for its spawner to park; the run queue is FIFO and yield goes to the back", () => {
   const r = runTasks(`
 from "std/runtime" import { Task, schedulerYield }
 fn main() {
@@ -458,7 +461,7 @@ fn main() {
 });
 
 // ── contracts (R-CONTRACT-*) ──
-test("R-CONTRACT: requires, ensures with result and old(), and loop invariants abort like a debug build", () => {
+test("R-CONTRACT-ENTRY, R-CONTRACT-EXIT, R-CONTRACT-FAIL: requires, and ensures with result and old(), abort like a debug build", () => {
   const src = (call: string) => `
 fn bump(n: &mut i64, by: i64): i64
 requires by >= 0
@@ -523,7 +526,7 @@ fn main() {
     t2.join()
 }`;
 
-test("R-EXPLORE: a deadlock only one interleaving reaches is found and its schedule replays", () => {
+test("R-EXPLORE-CHOICE, R-EXPLORE-DFS, R-EXPLORE-FAIL, R-EXPLORE-REPLAY: a deadlock only one interleaving reaches is found and its schedule replays", () => {
   expect(runTasks(LOCK_ORDER).out).toBe("t1 done\nt2 done\n"); // the default schedule passes
   const rep = exploreSrc(LOCK_ORDER);
   expect(rep.findings.map(f => f.kind)).toEqual(["deadlock"]);
@@ -539,7 +542,7 @@ test("R-EXPLORE: a deadlock only one interleaving reaches is found and its sched
   expect(rule).toBe("S-DEADLOCK");
 });
 
-test("R-EXPLORE: random PCT schedules find the lock-order deadlock too, from a seed", () => {
+test("R-EXPLORE-RANDOM: random PCT schedules find the lock-order deadlock too, from a seed", () => {
   const { program } = check(LOCK_ORDER);
   const go = () => explore(program, checkedOf.get(program)!, exploreOpts({ random: 60, seed: 7 }), "t.milo");
   const rep = go();
@@ -547,7 +550,7 @@ test("R-EXPLORE: random PCT schedules find the lock-order deadlock too, from a s
   expect(go().text).toBe(rep.text); // same seed, same report
 }, 60_000); // runs dozens of schedules; the 5s default trips under machine load
 
-test("R-EXPLORE: stdout that depends on the schedule is flagged, and --allow-nondeterministic-output accepts it", () => {
+test("R-EXPLORE-FAIL: stdout that depends on the schedule is flagged, and --allow-nondeterministic-output accepts it", () => {
   const src = `
 from "std/runtime" import { Task }
 fn main() {
@@ -562,7 +565,7 @@ fn main() {
   expect(exploreSrc(src, { allowNondeterministicOutput: true }).failures).toBe(0);
 });
 
-test("R-EXPLORE: tasks that share nothing are clean, and independent choices are not explored", () => {
+test("R-EXPLORE-INDEP: tasks that share nothing are clean, and independent choices are not explored", () => {
   const src = `
 from "std/runtime" import { Task, schedulerYield }
 from "std/sync" import { Channel }
@@ -587,7 +590,7 @@ fn main() {
   expect(rep.text).toMatch(/[1-9]\d* choices? skipped as independent/);
 });
 
-test("R-EXPLORE: an assert only some schedules fail is reported with its kind", () => {
+test("R-EXPLORE-FAIL: an assert only some schedules fail is reported with its kind", () => {
   const rep = exploreSrc(`
 from "std/runtime" import { Task, schedulerYield }
 from "std/sync" import { AtomicI64 }
@@ -616,4 +619,218 @@ fn main() {
 test("the generated task twin (src/interp-gen.ts) is current", () => {
   const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "scripts", "gen-interp-co.ts"), "--check"]);
   expect(r.exitCode).toBe(0);
+});
+
+// ── rule coverage the trace gate counts (scripts/trace-semantics.ts, check (c)): core rules, the failure table, stuck states ──
+function errorsOf(src: string): string[] {
+  const path = join(dir, `t${n++}.milo`);
+  writeFileSync(path, src);
+  const program = resolveImports(new Parser(new Lexer(src).tokenize(), src, path).parse(), dirname(path), getHostTarget(), path);
+  return new TypeChecker().check(program).diagnostics.filter(d => d.severity === "error").map(d => d.message);
+}
+// run a program the checker rejects anyway, to see which rule the interpreter gets stuck on
+function stuckLoose(src: string): string {
+  const path = join(dir, `t${n++}.milo`);
+  writeFileSync(path, src);
+  const program = resolveImports(new Parser(new Lexer(src).tokenize(), src, path).parse(), dirname(path), getHostTarget(), path);
+  const result = new TypeChecker().check(program);
+  try { new Interp(program, result).run(); } catch (e) { return (e as InterpStuck).rule; }
+  return "";
+}
+
+test("E-COPY, E-CALL, S-LET, S-VAR: a Copy struct is copied by a read, a call gets its own frame, a var may be assigned", () => {
+  const r = run(`
+struct P { x: i64, y: i64 }
+fn sum(p: P): i64 { return p.x + p.y }
+fn main() {
+    let a = P { x: 1, y: 2 }
+    var b = a
+    b.x = 10
+    print(sum(a), " ", sum(b))
+}`);
+  expect(r.out).toBe("3 12\n");
+});
+
+test("S-TEMP, S-TEMP-FIELD: a temporary drops at the end of its statement; a field read out of one moves it and drops the rest at once", () => {
+  const r = run(`${NOISY}
+struct Pair { a: Noisy, b: Noisy }
+fn mk2(): Pair { return Pair { a: mk(1), b: mk(2) } }
+fn main() {
+    let n = mk(5).id
+    print("n ", n)
+    let first = mk2().a
+    print("first ", first.id)
+}`);
+  expect(r.out).toBe("drop 5\nn 5\ndrop 2\nfirst 1\ndrop 1\n");
+  expect(r.live).toBe(0);
+});
+
+test("T-LET, T-MOVED, T-EXCL, T-SHARED-READONLY, T-NO-MOVE-OUT, T-REF-PARAM: the checker rejects each program the rule names", () => {
+  const P = `struct P { x: i64 }\nstruct H { v: Vec<i64> }\n`;
+  const bad: [string, string][] = [
+    ["T-LET", `fn main() { let x = 1\n x = 2\n print(x) }`],
+    ["T-MOVED", `fn main() { let v: Vec<i64> = [1]\n let w = v\n print(v.len())\n print(w.len()) }`],
+    ["T-EXCL", `${P}fn g(a: &mut P, b: &mut P) { a.x = b.x }\nfn main() { var p = P { x: 1 }\n g(p, p)\n print(p.x) }`],
+    ["T-SHARED-READONLY", `${P}fn f(p: &P) { p.x = 1 }\nfn main() { var p = P { x: 0 }\n f(p)\n print(p.x) }`],
+    ["T-NO-MOVE-OUT", `${P}fn f(h: &H): Vec<i64> { return h.v }\nfn main() { let h = H { v: [1] }\n print(f(h).len()) }`],
+    ["T-REF-PARAM", `struct R { r: &i64 }\nfn main() { print(1) }`],
+  ];
+  for (const [rule, src] of bad) expect({ rule, rejected: errorsOf(src).length > 0 }).toEqual({ rule, rejected: true });
+});
+
+test("T-ASSIGN-MOVED-OK: assigning a moved variable makes it owned again", () => {
+  const r = run(`${NOISY}
+fn main() {
+    var a = mk(1)
+    let b = a
+    a = mk(2)
+    print(a.id, b.id)
+}`);
+  expect(r.out).toBe("21\ndrop 1\ndrop 2\n");
+});
+
+test("T-STUCK, T-SHARED-READONLY: a write through a shared reference, which the checker rejects, stops the run on S-ASSIGN-REF", () => {
+  expect(stuckLoose(`struct P { x: i64 }
+fn f(p: &P) { p.x = 1 }
+fn main() {
+    var p = P { x: 0 }
+    f(p)
+    print(p.x)
+}`)).toBe("S-ASSIGN-REF");
+});
+
+test("E-VEC, E-STRING-SHARE: a Vec with no capacity owns no block, and a string copied out of a borrow shares its buffer", () => {
+  expect(run(`fn main() {\n let v: Vec<i64> = Vec.new()\n exit(0)\n}`).live).toBe(0);
+  expect(run(`fn main() {\n var v: Vec<i64> = Vec.new()\n v.push(1)\n exit(0)\n}`).live).toBe(1);
+  const r = run(`
+fn keep(v: &Vec<string>): string { return v[0] }
+fn main() {
+    var v: Vec<string> = Vec.new()
+    v.push("ab" + "c")
+    let s = keep(v)
+    print(s, v[0])
+    exit(0)
+}`);
+  expect(r.out).toBe("abcabc\n");
+  expect(r.live).toBe(2); // the Vec buffer, and one string buffer with a count of 2
+});
+
+test("E-PROPAGATE: ? yields the payload on Ok and returns the error from the enclosing fn on Err", () => {
+  const r = run(`
+fn half(n: i64): Result<i64, string> {
+    if n % 2 != 0 { return Err("odd") }
+    return Ok(n / 2)
+}
+fn quarter(n: i64): Result<i64, string> {
+    let h = half(n)?
+    return half(h)
+}
+fn main() {
+    print(quarter(8)!)
+    match quarter(6) {
+        Ok(v) => print("ok ", v),
+        Err(e) => print("err ", e),
+    }
+}`);
+  expect(r.out).toBe("2\nerr odd\n");
+});
+
+test("S-PANIC-ABORT: every runtime failure is status 134 with the output so far flushed and no live count; exit(n) is n; a stack overflow is 139", () => {
+  const kinds: [string, string][] = [
+    ["bounds", `fn main() { var v: Vec<i64> = Vec.new()\n v.push(1)\n let i = v.len() + 4\n print("x")\n print(v[i]) }`],
+    ["overflow", `fn one(): i32 { return 1 }\nfn main() { let x: i32 = 2147483647\n print("x")\n print(x + one()) }`],
+    ["division", `fn z(): i64 { return 0 }\nfn main() { print("x")\n print(5 / z()) }`],
+    ["remainder", `fn z(): i64 { return 0 }\nfn main() { print("x")\n print(5 % z()) }`],
+    ["shift", `fn z(): i64 { return 70 }\nfn main() { print("x")\n print(1 << z()) }`],
+    ["unwrap", `fn nothing(): Option<i64> { return None }\nfn main() { print("x")\n print(nothing()!) }`],
+    ["assert", `fn main() { print("x")\n assert(1 == 2, "no") }`],
+  ];
+  for (const [kind, src] of kinds) {
+    const r = run(src);
+    expect({ kind, code: r.code, out: r.out, live: r.live }).toEqual({ kind, code: 134, out: "x\n", live: null });
+  }
+  const e = run(`fn main() { print("x")\n exit(3) }`);
+  expect({ code: e.code, out: e.out }).toEqual({ code: 3, out: "x\n" });
+  expect(run(`fn f(n: i64): i64 { return f(n + 1) + 1 }\nfn main() { print(f(0)) }`).code).toBe(139);
+});
+
+test("R-MEM-ADDR, R-MEM-FREE-INVALID, R-MEM-OVERLAP, R-MEM-PROVENANCE, R-MEM-LAYOUT: the remaining raw-memory rules", () => {
+  const r = run(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(16) as *i64
+        let a = p as i64
+        let q = a as *i64
+        q[0] = 5
+        print(p[0])
+        print(a == (q as i64))
+        free(p as *u8)
+    }
+}`);
+  expect(r.out).toBe("5\ntrue\n");
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        var x: i64 = 0
+        free(x.addrOf() as *u8)
+    }
+}`)).toBe("R-MEM-FREE-INVALID");
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(16) as *u8
+        memcpy(p, p, 8)
+    }
+}`)).toBe("R-MEM-OVERLAP");
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = 4096 as *i64
+        print(p[0])
+    }
+}`)).toBe("R-MEM-PROVENANCE");
+  expect(stuckLoose(`
+struct S { a: i64 }
+fn main() {
+    print(offsetOf<S>("nope"))
+}`)).toBe("R-MEM-LAYOUT");
+});
+
+test("R-SYS-ENV, R-SYS-CLOCK, R-SYS-RANDOM, R-SYS-EXIT, R-REPLAY-OFF, R-MEM-WRITE-RO: the environment, the clock, entropy, _exit, record/replay off, a read-only message", () => {
+  const r = run(`
+from "std/time" import { epochMillis }
+extern fn getenv(name: *u8): *u8
+extern fn setenv(name: *u8, value: *u8, overwrite: i32): i32
+extern fn time(t: *i64): i64
+extern fn sleep(s: u32): u32
+extern fn arc4random_uniform(n: u32): u32
+fn main() {
+    unsafe {
+        print(getenv("MILO_TRACE_UNSET".cstr()) as i64)
+        setenv("MILO_TRACE_SET".cstr(), "7".cstr(), 1)
+        let p = getenv("MILO_TRACE_SET".cstr())
+        print(p[0] as i64)
+        let t0 = time(0 as *i64)
+        sleep(3)
+        print(time(0 as *i64) - t0 >= 3)
+        print(arc4random_uniform(10) < 10)
+    }
+    print(epochMillis() > 0)
+}`);
+  expect(r.out).toBe("0\n55\ntrue\ntrue\ntrue\n");
+  const e = run(`
+extern fn _exit(code: i32): void
+fn main() {
+    print("x")
+    unsafe { _exit(5) }
+}`);
+  expect({ code: e.code, out: e.out }).toEqual({ code: 5, out: "x\n" });
+  expect(stuckRule(`
+extern fn strerror(e: i32): *u8
+fn main() {
+    unsafe {
+        let p = strerror(2)
+        p[0] = 1
+    }
+}`)).toBe("R-MEM-WRITE-RO");
 });

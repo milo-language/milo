@@ -58,6 +58,7 @@ export class InterpCo extends InterpGen {
   schedule: number[] | null = null;
   choicesMade = 0;
   scheduleMismatch = false;
+  // R-TASK-PICK
   pickNext(ready: readonly Task[]): number {
     if (!this.schedule || ready.length < 2) return 0;
     const i = this.schedule[this.choicesMade++];
@@ -74,6 +75,7 @@ export class InterpCo extends InterpGen {
 
   liveTasks(): number { return this.tasks.size; }
 
+  // R-TASK-SPAWN
   spawnTask(f: ClosureV, scope: Task["scope"] = null, cacheable = true): Task {
     if (cacheable && this.cachedContexts > 0) this.cachedContexts--;
     this.touch("spawn"); // task ids come from one counter, so two spawns do not commute
@@ -84,6 +86,7 @@ export class InterpCo extends InterpGen {
     this.runq.push(t);
     return t;
   }
+  // R-TASK-PANIC R-TASK-MAIN
   *taskBody(f: ClosureV): Gen {
     yield* this.callValue$g(f, []);
     this.dropTemps(0); // a body's last expression leaves its temporaries for the caller to drop; a task has no caller
@@ -110,6 +113,7 @@ export class InterpCo extends InterpGen {
     this.sleepers.push({ t: this.cur, at: this.clock + ms });
     yield* this.park("sleepMs");
   }
+  // R-TIME
   private wakeSleepers(): boolean {
     if (this.sleepers.length === 0) return false;
     this.clock = Math.min(...this.sleepers.map(x => x.at));
@@ -139,6 +143,7 @@ export class InterpCo extends InterpGen {
     t.ctx = { frames: this.frames, temps: this.temps, depth: this.depth, pend: this.pend };
     this.frames = []; this.temps = []; this.depth = 0; this.pend = [];
   }
+  // R-TASK-JOIN
   private reap(t: Task): void {
     this.tasks.delete(t.id);
     this.touch(t);
@@ -215,6 +220,7 @@ export class InterpCo extends InterpGen {
  */
 // schedule: replay these choices (R-EXPLORE-REPLAY); it runs under the task interpreter from the start
 export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions; schedule?: number[] }
+// R-TASK-MAIN
 export function runChecked(program: Program, checked: CheckResult, opts: RunOptions = {}): { it: Interp; result: RunResult } {
   const make = (c: new (p: Program, r: CheckResult) => Interp): Interp => {
     const i = new c(program, checked);

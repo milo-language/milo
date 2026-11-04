@@ -40,8 +40,10 @@ export function display(it: Interp, v: Value, ty: TypeKind, nested = false): str
 }
 
 // ── strings ──
+// E-STRING-SHARE
 export function concat(it: Interp, a: Str, b: Str): Str { return it.newStr([...a.b.bytes, ...b.b.bytes]); }
 // Make the string in `r` the only handle to a heap buffer (copy on write), then return it.
+// E-STRING-SHARE
 export function unique(it: Interp, r: Ref): Str {
   const s = it.deref(r) as Str;
   if (s.b.id >= 0 && s.b.rc === 1) return s;
@@ -50,12 +52,14 @@ export function unique(it: Interp, r: Ref): Str {
   it.dropValue(s);
   return copy;
 }
+// E-STRING-SHARE
 export function appendTo(it: Interp, r: Ref, bytes: number[]): void {
   if (bytes.length === 0) return;
   const s = unique(it, r);
   if (s.b.id < 0) { it.setPlace(it.derefPlace(r), it.newStr([...s.b.bytes, ...bytes])); return; }
   s.b.bytes.push(...bytes);
 }
+// S-PANIC-ABORT
 export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
   if (a < 0n || b < a || b > BigInt(s.b.bytes.length)) it.panic(`string range ${a}..${b} out of bounds (len ${s.b.bytes.length})`);
   return [Number(a), Number(b)];
@@ -64,6 +68,7 @@ export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, num
 // ── Vec ──
 const vecOf = (it: Interp, r: Value) => it.deref(r) as VecV;
 // size in bytes of a value of type t (the compiled layout), which decides a Vec's first capacity
+// R-MEM-COPY
 export function sizeOf(it: Interp, t: TypeKind): number {
   switch (t.tag) {
     case "int": case "float": return t.bits / 8;
@@ -89,17 +94,20 @@ const elemSize = (it: Interp, e: Expr | undefined): number => {
   const t = obj ? it.T(obj) : undefined;
   return t && (t.tag === "vec" || t.tag === "array") ? sizeOf(it, t.element) : 8;
 };
+// E-VEC
 function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
   else h.buf.elems.length = h.start + cap;
   h.cap = cap;
 }
 // std/vec vecGrowOne: the first buffer holds 8 elements (64 bytes' worth when they are bigger), then doubles
+// E-VEC
 function growOne(it: Interp, h: VecV, size: number): void {
   if (h.len < h.cap) return;
   setCap(it, h, h.cap === 0 ? (size > 8 ? Math.max(1, Math.floor(64 / size)) : 8) : h.cap * 2);
 }
 // std/vec vecReserveTotal: room for `need` elements in all, doubling when that suffices
+// E-VEC
 function reserveTotal(it: Interp, h: VecV, need: number): void {
   if (h.cap >= need) return;
   setCap(it, h, h.cap * 2 > need ? h.cap * 2 : need);
@@ -111,11 +119,12 @@ export const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Va
 };
 const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   const i = v as bigint;
-  if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`index out of bounds: ${i} (len ${n})`);
+  if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`array index out of bounds: ${i}/${n}`);
   return Number(i);
 };
 // the Vec header behind a Vec, a slice or a fixed array (a fixed array is viewed whole)
 export const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
+// E-VEC
 export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bigint, hi: bigint): VecV {
   const n = v.k === "arr" ? v.e.length : v.len;
   if (lo < 0n || hi < lo || hi > BigInt(n)) it.panic(`slice ${lo}..${hi} out of bounds (len ${n})`);
@@ -152,6 +161,7 @@ nat("string$substr", (it, [self, a, b]) => {
 // The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
 // Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
 const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+// R-MEM-LOAD
 function withPtr<T>(it: Interp, p: Value, f: (q: Value) => T): T {
   const held: Value[] = [];
   try { return f(it.mem.decay(p, PTR_U8, held)); } finally { for (const h of held) it.dropValue(h); }
@@ -332,6 +342,7 @@ function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
   }
   return out;
 }
+// S-PANIC-ABORT
 export function builtinCall(it: Interp, e: CallE): Value {
   switch (e.func) {
     case "print": case "eprint": {
@@ -373,6 +384,7 @@ export const INT_ARITH: Record<string, string> = {
 };
 
 // A closure parameter that is `&T` gets a reference to the value, otherwise the value itself.
+// E-CLOSURE
 function callWith(it: Interp, f: Value, payload: Value[]): Value {
   const c = f as ClosureV;
   const args = payload.map((p, i) => (c.paramRefs?.[i] ? ({ k: "ref", slot: it.tempOwn(p), path: [] } as Ref) : p));
@@ -457,6 +469,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   return NOT_NATIVE;
 }
 
+// E-MOVE
 function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, base: string, type: TypeKind): Value | typeof NOT_NATIVE {
   const m = e.method;
   const isOpt = base === "Option";
@@ -524,6 +537,7 @@ function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, b
 // A combinator's receiver: a view when it isn't consumed (MILO-O-combinatorReceiver), else its
 // value. A function of its own so the task twin can suspend inside it (gen-interp-co.ts only
 // rewrites an arrow whose whole body is one call).
+// E-MOVE
 function receiverOf(it: Interp, obj: Expr, inPlace: boolean): EnumV {
   return (inPlace ? it.viewOf(it.peek(obj)) : it.ev(obj)) as EnumV;
 }

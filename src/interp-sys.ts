@@ -74,6 +74,7 @@ export class Sys {
   }
 
   // ── errno ──
+  // R-SYS-FD
   setErrno(e: number): bigint {
     if (!this.errnoCell) this.errnoCell = this.it.mem.staticBytes(new Uint8Array(4));
     this.it.mem.store(this.errnoCell, I32, BigInt(e));
@@ -82,6 +83,7 @@ export class Sys {
 
   // ── paths ──
   private hostAllowed(p: string): boolean { return !!this.o.hostFs && (this.o.hostRoots ?? []).some(r => p === r || p.startsWith(r === "/" ? "/" : r + "/")); }
+  // R-SYS-FS
   lookup(p: string): Node | null {
     const hit = this.files.get(p);
     if (hit) return hit;
@@ -93,12 +95,14 @@ export class Sys {
     this.files.set(p, n);
     return n;
   }
+  // R-SYS-FS
   list(p: string): { name: string; dir: boolean }[] {
     const out = new Map<string, boolean>();
     if (this.hostAllowed(p)) for (const e of this.o.hostFs!.readdir(p) ?? []) if (!this.gone.has(norm(p, e.name))) out.set(e.name, e.dir);
     for (const [k, n] of this.files) if (k !== p && parentOf(k) === p) out.set(k.slice(p === "/" ? 1 : p.length + 1), n.dir);
     return [...out].map(([name, dir]) => ({ name, dir }));
   }
+  // R-SYS-FS
   create(p: string, dir: boolean, mode: number): Node {
     const n: Node = { dir, data: new Uint8Array(0), size: 0, mode, mtimeMs: this.now() };
     this.files.set(p, n);
@@ -106,6 +110,7 @@ export class Sys {
     return n;
   }
   now(): number { return Date.now() + this.sleptMs + this.it.clock; }
+  // R-SYS-FS
   grow(n: Node, size: number): void {
     if (size > n.data.length) { const d = new Uint8Array(Math.max(size, n.data.length * 2, 64)); d.set(n.data.subarray(0, n.size)); n.data = d; }
     if (size > n.size) n.data.fill(0, n.size, size);
@@ -125,6 +130,7 @@ const cstr = (s: Sys, p: Value): string => new TextDecoder().decode(s.it.mem.cst
 const path = (s: Sys, p: Value): string => norm(s.cwd, cstr(s, p));
 
 
+// R-SYS-FS
 function statInto(s: Sys, node: Node, buf: Value): void {
   const m = s.it.mem, plat = platform();
   const bufSize = plat === "darwin" ? 144 : (process.arch === "arm64" ? 128 : 144);
@@ -141,6 +147,7 @@ function statInto(s: Sys, node: Node, buf: Value): void {
   if (nsecOff >= 0) m.store(m.advance(buf, nsecOff), I64, BigInt(Math.floor((node.mtimeMs % 1000) * 1e6)));
 }
 
+// R-SYS-FD
 function readFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
   if (!fd.read) return s.setErrno(ERRNO.EBADF);
   if (fd.std === 0) {
@@ -161,6 +168,7 @@ function readFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
   fd.pos += k;
   return BigInt(k);
 }
+// R-SYS-FD
 function writeFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
   if (!fd.write) return s.setErrno(ERRNO.EBADF);
   const bytes = s.it.mem.readBytes(buf, count, "write");
@@ -175,6 +183,7 @@ function writeFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
   fd.node.mtimeMs = s.now();
   return BigInt(count);
 }
+// R-SYS-FD R-SYS-FS
 function openPath(s: Sys, p: string, flags: number, mode: number): bigint {
   const O = OFLAGS(), acc = flags & 3;
   let node = s.lookup(p);
@@ -189,6 +198,7 @@ function openPath(s: Sys, p: string, flags: number, mode: number): bigint {
   if ((flags & O.trunc) && !node.dir && acc !== 0) { node.size = 0; node.mtimeMs = s.now(); }
   return BigInt(s.allocFd({ node, path: p, pos: 0, read: acc !== 1, write: acc !== 0, append: !!(flags & O.append) }));
 }
+// R-SYS-FS
 function mkdirSys(s: Sys, p: string, mode: number): bigint {
   if (s.lookup(p)) return s.setErrno(ERRNO.EEXIST);
   const parent = s.lookup(parentOf(p));
@@ -196,6 +206,7 @@ function mkdirSys(s: Sys, p: string, mode: number): bigint {
   s.create(p, true, mode & 0o777);
   return 0n;
 }
+// R-SYS-FS
 function unlinkSys(s: Sys, p: string, dirOnly: boolean): bigint {
   const node = s.lookup(p);
   if (!node) return s.setErrno(ERRNO.ENOENT);
@@ -208,6 +219,7 @@ function unlinkSys(s: Sys, p: string, dirOnly: boolean): bigint {
 
 const STRERROR: Record<number, string> = { 1: "Operation not permitted", 2: "No such file or directory", 9: "Bad file descriptor", 13: "Permission denied", 17: "File exists", 20: "Not a directory", 21: "Is a directory", 22: "Invalid argument", 28: "No space left on device", 29: "Illegal seek", 34: "Result too large" };
 
+// R-SYS-RANDOM
 function randomBytes(len: number): Uint8Array {
   const out = new Uint8Array(len);
   for (let i = 0; i < len; i += 65536) crypto.getRandomValues(out.subarray(i, Math.min(len, i + 65536)));
@@ -399,6 +411,7 @@ export const SYS: Record<string, SysFn> = {
   getrandom: (s, [buf, k]) => { s.it.mem.writeBytes(buf!, randomBytes(n(k)), "getrandom"); return k; },
 
   // ── process ──
+  // R-SYS-EXIT
   exit: (s, [c]) => { s.it.aborted = true; throw new ExitProgram(n(c) & 255); },
   _exit: (s, [c]) => SYS.exit!(s, [c]),
 
@@ -446,6 +459,7 @@ export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
 }
 
 // fds 0, 1 and 2 exist from the start: the program's stdin, stdout and stderr
+// R-SYS-FD
 export function initStdio(s: Sys): void {
   s.fds.set(0, { node: null, path: "", pos: 0, read: true, write: false, append: false, std: 0 });
   s.fds.set(1, { node: null, path: "", pos: 0, read: false, write: true, append: false, std: 1 });

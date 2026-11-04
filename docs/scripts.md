@@ -70,7 +70,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-case-map.ts` | Regenerates the simple case mapping tables at the bottom of std/unicode.milo from the Unicode Character Database. |
 | `scripts/gen-error-catalog.ts` | Generates docs/site/language/errors.md, every compile error the test suite pins, with the program that provokes it. |
 | `scripts/gen-html-entities.ts` | Regenerates the named character reference table at the bottom of std/html.milo from the WHATWG HTML entity list. |
-| `scripts/gen-interp-co.ts` | Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can reach a task switch, so the task interpreter (src/interp-co.ts) can suspend a task anywhere in the midd… |
+| `scripts/gen-interp-co.ts` | Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can reach a task switch. |
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |
 | `scripts/gen-lang-docs.ts` | Renders the published language reference from `milo lang --json`. |
 | `scripts/gen-scripts-doc.ts` | Regenerates the Index table in docs/scripts.md from each script's own first comment line, so the index cannot fall behind the directory. |
@@ -116,6 +116,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/selfhost.sh` | Build milo-self (the Milo compiler written in Milo) with the TS compiler. |
 | `scripts/stamp-version.ts` | Stamps the current commit into src/version.ts so a released binary can report which commit built it. |
 | `scripts/strip-string-clones.ts` | Deletes `.clone()` calls on strings: strings are values (copy on write, shared by count where the code reads them again), so every string clone is redundant and removing one changes no behaviour. |
+| `scripts/trace-semantics.ts` | Two-way trace between the written semantics (docs/semantics/milo.md) and the reference interpreter (src/interp*.ts), so neither can drift from the other unseen: (a) every rule ID the doc defines is c… |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |

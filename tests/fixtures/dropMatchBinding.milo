@@ -60,3 +60,4 @@ pub fn main(): i32 {
     print(kept[0].id)
     return 0
 }
+// @rule: E-MATCH
