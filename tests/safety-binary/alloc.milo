@@ -1,0 +1,15 @@
+// Planted: a string builder that grows on the heap, hidden behind a plain-looking helper.
+fn banner(n: i32): string {
+    var s: string = ""
+    var k: i32 = 0
+    while k < n {
+        s = s + "ab"
+        k += 1
+    }
+    return s
+}
+
+pub fn main(): i32 {
+    let s: string = banner(5)
+    return s.len() as i32
+}

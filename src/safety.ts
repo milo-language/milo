@@ -1,4 +1,11 @@
-// Compiler-enforced safety profiles for domain-specific certification standards
+// Compiler-enforced safety profiles for domain-specific certification standards.
+//
+// A profile is checked twice. checkSafetyCompliance (below) walks the source AST. The same
+// profile also constrains the BINARY: src/pinned-build.ts fixes the toolchain that builds
+// it (opt level, milo-opt pipeline, no LTO, LLVM major) and records that in the binary, and
+// src/object-checks.ts re-checks noDynamicAllocation, noRecursion, indirect calls and a
+// runtime-symbol allowlist on the linked object. `milo build --safety=<p>` runs both;
+// `milo verify --profile <p> <binary>` re-runs them on a binary already built.
 import type { Program, Function, Stmt, Expr, MiloType } from "./ast";
 import type { Span } from "./ast";
 import { must } from "./must";
@@ -241,6 +248,18 @@ interface SafetyViolation {
 const ALIASES: Record<string, SafetyLevel> = {
   "do178": "do178c-b",
 };
+
+// The part of a profile that is re-checked on the linked object (src/object-checks.ts).
+// Calls with no static target cannot be excluded from a cycle or an allocation path, so the
+// strictest class of each standard (DAL A, ASIL D, SIL 4, NASA A) fails on them.
+export function objectPolicy(level: SafetyLevel): { noDynamicAllocation: boolean; noRecursion: boolean; noUnknownCallTargets: boolean } {
+  const c = PROFILES[level];
+  return {
+    noDynamicAllocation: c.noDynamicAllocation,
+    noRecursion: c.noRecursion,
+    noUnknownCallTargets: ["do178c-a", "iso26262-d", "iec61508-4", "nasa-a"].includes(level),
+  };
+}
 
 export function parseSafetyLevel(s: string): SafetyLevel | null {
   if (s in PROFILES) return s as SafetyLevel;

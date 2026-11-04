@@ -27,6 +27,9 @@ import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConf
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets, UnsupportedHostError } from "./target";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport, proveJson } from "./verify";
 import { proveWithMilo } from "./prove-milo";
+import type { SafetyLevel } from "./safety";
+import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
+import { readObject, checkObject, allocationFindings } from "./object-checks";
 import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -79,6 +82,41 @@ function cguCount(irLineCount: number, optFlag: string, emitDebug: boolean): num
   if (irLineCount < CGU_MIN_IR_LINES) return 1;
   const cores = Math.max(1, (navigator.hardwareConcurrency ?? 8) - 2);
   return Math.max(2, Math.min(CGU_MAX_UNITS, cores));
+}
+
+// The profile a `build --safety=<p>` pins its toolchain to (src/pinned-build.ts); null otherwise.
+let pinnedProfile: SafetyLevel | null = null;
+
+// Pinned-build and object checks on a linked binary. Prints findings; returns whether it passed.
+function verifyBinary(bin: string, level: SafetyLevel, json: boolean, all = false): boolean {
+  const problems: { check: string; message: string }[] = [];
+  const notes: string[] = [];
+  try {
+    const rec = readRecord(bin);
+    for (const m of pinMismatches(rec, level)) problems.push({ check: "pin", message: m });
+    notes.push(`pinned build: ${rec.opt}, ${rec.lto} LTO, ${rec.cgus} codegen unit, LLVM ${rec.llvmMajor}, milo-opt ${rec.miloOptSha256.slice(0, 12)}`);
+  } catch (e: any) {
+    problems.push({ check: "pin", message: e.message });
+  }
+  const g = readObject(bin);
+  problems.push(...checkObject(g, level));
+  const rtAllocs = allocationFindings(g).filter(f => f.viaRuntime).length;
+  notes.push(`${g.defined.size} defined symbols, ${g.undefinedSyms.size} imports, ${[...g.indirect.values()].reduce((a, b) => a + b, 0)} indirect call sites, ${rtAllocs} runtime allocation paths`);
+  if (json) writeStdout(JSON.stringify({ profile: level, binary: bin, passed: problems.length === 0, notes, violations: problems }, null, 2) + "\n");
+  else {
+    console.log(`${bin} against ${level}`);
+    for (const n of notes) console.log(`  ${n}`);
+    // A hosted runtime has dozens of findings per check; the first few name the cause, --all lists the rest.
+    const shown = new Map<string, number>();
+    for (const p of problems) {
+      const n = (shown.get(p.check) ?? 0) + 1;
+      shown.set(p.check, n);
+      if (all || n <= 8) console.log(`  FAIL [${p.check}] ${p.message}`);
+      else if (n === 9) console.log(`  ... more [${p.check}] findings (--all lists every one)`);
+    }
+    console.log(problems.length ? `binary check FAILED (${problems.length} finding${problems.length > 1 ? "s" : ""})` : "binary check passed");
+  }
+  return problems.length === 0;
 }
 
 // A compile that reported diagnostics, raised instead of exiting. The CLI's one-file
@@ -1271,6 +1309,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     hotLink = hostLinkFlags(target.os);
   }
 
+  if (pinnedProfile) ir += recordIr(buildRecord(pinnedProfile, { target, optFlag }), target);
   try {
     writeFileSync(tmpLl, ir);
     // Dev hook: keep a copy of the whole-program IR for inspection (objdump shows
@@ -2067,6 +2106,18 @@ async function main() {
     return;
   }
 
+  // `milo verify --profile <level> <binary>`: the binary is the argument, not a .milo source.
+  if (cmd === "verify") {
+    const va = args.slice(1);
+    const pi = va.findIndex(a => a === "--profile" || a.startsWith("--profile="));
+    const name = pi < 0 ? "" : va[pi].includes("=") ? va[pi].split("=")[1] : va[pi + 1] ?? "";
+    const level = parseSafetyLevel(name);
+    const bin = va.filter((a, i) => !a.startsWith("--") && i !== pi + 1)[0];
+    if (!level || !bin) { console.error("usage: milo verify --profile <level> <binary>   (milo safety --list shows the levels)"); process.exit(1); }
+    if (!existsSync(bin)) { console.error(`error: no such file: ${bin}`); process.exit(1); }
+    process.exit(verifyBinary(bin, level, va.includes("--json"), va.includes("--all")) ? 0 : 1);
+  }
+
   // Ahead of the source check below: `milo test` takes files OR directories, and a bare
   // `milo test` (no positional at all) means "this directory".
   if (cmd === "test") {
@@ -2234,8 +2285,23 @@ async function main() {
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
     const t0 = Date.now();
+    if (safetyLevel) {
+      const level = parseSafetyLevel(safetyLevel);
+      if (!level) { console.error(`unknown safety level: ${safetyLevel}\nuse 'milo safety --list' to see available profiles`); process.exit(1); }
+      const refusal = buildRefusal(level, { optFlag, emitDebug, sanitize, hot, overflowChecks, cgus: cguOverride, target });
+      if (refusal) { console.error(`error: ${refusal}`); process.exit(1); }
+      pinnedProfile = level;
+      cguOverride = 1;
+    }
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations, hot);
     reportCompiled(source!, bin, Date.now() - t0);
+    // A profile is a claim about the binary: re-check what the toolchain produced, and
+    // leave no binary behind that fails it.
+    if (pinnedProfile && !verifyBinary(bin, pinnedProfile, false)) {
+      try { unlinkSync(bin); } catch {}
+      console.error(`error: ${bin} does not satisfy --safety=${pinnedProfile}; binary removed`);
+      process.exit(1);
+    }
     timingReport();
   } else if (cmd === "hot") {
     process.exit(await hotCommand(source!, rest, target, warningConfig, overflowChecks, contractChecks));

@@ -43,7 +43,7 @@ function findMiloOpt(): string {
   const beside = join(dirname(process.execPath), "milo-opt");
   return !existsSync(built) && existsSync(beside) ? beside : built;
 }
-const MILO_OPT = findMiloOpt();
+export const MILO_OPT = findMiloOpt();
 // The LLVM whose clang compiles the module, the one milo-opt was built against (mlir/build.sh
 // looks in the same places).
 function findLlvmBin(): string {
@@ -51,7 +51,7 @@ function findLlvmBin(): string {
   const dirs = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin", "/home/linuxbrew/.linuxbrew/opt/llvm/bin", "/usr/lib/llvm-23/bin"];
   return dirs.find(d => existsSync(join(d, "clang"))) ?? dirs[0];
 }
-const LLVM_BIN = findLlvmBin();
+export const LLVM_BIN = findLlvmBin();
 const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
 // arith's `select %c, 1, 0` -> `extui %c` makes a signless-only op from a select whose
@@ -62,7 +62,7 @@ const CANONICALIZE = "canonicalize{disable-patterns=SelectToExtUI}";
 // Passes that see one function at a time sit under func.func(...) / llvm.func(...): MLIR's
 // pass manager runs those on every function in parallel. At module level the generic
 // passes (canonicalize, cse, licm, mem2reg) ran on one thread over the whole module.
-const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
+export const MLIR_PIPELINE ="--pass-pipeline=builtin.module(" + [
   "milo-verify",
   "func.func(" + [
     // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value

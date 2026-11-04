@@ -117,6 +117,11 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     extraRows: [{ usage: "safety --list", help: "list available safety profiles" }],
   },
   {
+    name: "verify", usage: "verify --profile <level> <binary>",
+    summary: "check a built binary against a safety profile: pinned build record, no allocation, no call cycles, runtime-symbol allowlist",
+    flags: [{ flag: "--json", help: "machine-readable findings" }, { flag: "--all", help: "list every finding (default: first 8 per check)" }],
+  },
+  {
     name: "wcet", usage: "wcet <file> [-o out]", summary: "emit OTAWA flow facts (loop bounds) for WCET analysis",
     flags: [{ flag: "--cycles", help: "a Cortex-M cycle bound from the linked ELF (bare-metal ARM --target only)" }],
   },

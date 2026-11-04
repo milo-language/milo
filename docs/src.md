@@ -81,8 +81,10 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/noalias.ts` | `noalias` on `&mut` parameters, decided on the HIR. |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
+| `src/object-checks.ts` | Profile checks on the linked binary (docs/plans/object-level-assurance.md step 3). |
 | `src/owned-temp.ts` | Ownership facts emit-mlir asks of the HIR: which expressions are owned temporaries (discarding one must drop it), whether an if/match used as a value owns its result, and whether a closure handed to… |
 | `src/parser.ts` | Recursive-descent parser: token stream -> AST. |
+| `src/pinned-build.ts` | Pinned build pipeline per safety profile (docs/plans/object-level-assurance.md step 1). |
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
 | `src/pkgcli.ts` | milo package-manager CLI verbs: init/new/add/remove/install/update/tree/why/ vendor/publish and the `tool` namespace (install/uninstall/list/run). |
 | `src/playground-entry.ts` | Browser entry for the docs playground: lex, parse, resolve, check, then the reference interpreter (src/interp.ts), all in-page. |
@@ -96,7 +98,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
 | `src/runtime-ir.ts` | The one fixed runtime piece still kept as LLVM IR text: the atomics (src/runtime/atomic.ll), linked into milo-opt's module (mlir/Link.cpp). |
 | `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/runtime-ir.ts). |
-| `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
+| `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards. |
 | `src/scaffold.ts` | The process scaffold around the program's functions, as an LLVM-dialect module (`milo.scaffold`, folded into the program by milo-opt's milo-merge-scaffold): - the process entry: argc/argv, record/rep… |
 | `src/skill.ts` | `milo skill`: the agent guide. |
 | `src/startup.ts` | What runs before and around `main`, decided on the HIR: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a… |

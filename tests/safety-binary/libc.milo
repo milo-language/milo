@@ -1,0 +1,9 @@
+// Planted: a call into a libc function no profile allowlist names (hosted build only: a
+// bare-metal image has no libc to import from).
+extern fn getppid(): i32
+
+pub fn main(): i32 {
+    unsafe {
+        return getppid()
+    }
+}
