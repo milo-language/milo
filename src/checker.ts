@@ -8,7 +8,7 @@ import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from
 import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst, isNestedPattern, patternLeafNames } from "./ast";
-import { useful, showPat, type Pat, type SpaceEnv } from "./match-usefulness";
+import { useful, showPat, armAfterWildcard, type Pat, type SpaceEnv } from "./match-usefulness";
 import type { TypeKind } from "./types";
 import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, sameFnOwnership, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 const spanKey = (sp: Span): string => `${sp.file ?? ""}:${sp.line}:${sp.col}`;
@@ -15120,6 +15120,8 @@ export class TypeChecker {
       const t = rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
       for (const arm of arms) this.bindElidedPattern(arm.pattern, t);
     }
+    const dead = armAfterWildcard(arms);
+    if (dead >= 0) this.error(`unreachable match arm: '${this.showPattern(arms[dead]!.pattern)}' comes after a '_' arm, which matches everything`, arms[dead]!.pattern.span ?? sp);
     // Matching on a borrowed enum (`&Enum`) reads the pointee without moving
     // it. Payload bindings become borrows (see below), so nothing is consumed.
     // Reading a ref Ident auto-derefs, so also consult its declared type.

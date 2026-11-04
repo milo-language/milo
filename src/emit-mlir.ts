@@ -3911,9 +3911,9 @@ class FnEmitter {
     for (const arm of m.arms) {
       const p = arm.pattern;
       if (p.kind === "WildcardPattern") {
-        if (dflt) throw new MlirUnsupported("two wildcard arms");
+        // First match wins: arms after `_` are dead (the checker rejects them).
         dflt = arm;
-        continue;
+        break;
       }
       let c: bigint;
       let args: { name: string; ty: string }[] = [];

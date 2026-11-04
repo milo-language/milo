@@ -60,10 +60,10 @@ fn safeDiv(a: i64, b: i64): Result<i64, i64> {
 
 fn classify(c: u8): i64 {
     return match c {
-        _ => 0,
         'a' => 1,
         'z' => 26,
         255 => 255,
+        _ => 0,
     }
 }
 

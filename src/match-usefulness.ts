@@ -91,3 +91,10 @@ export function showPat(p: Pat): string {
   if (p.k === "lit") return p.text;
   return p.args.length === 0 ? p.name : `${p.name}(${p.args.map(showPat).join(", ")})`;
 }
+
+// First match wins, so every arm after a `_` arm can never run. Returns the index of the
+// first such arm, or -1. The lowering stops at the wildcard; this is what tells the author.
+export function armAfterWildcard(arms: { pattern: { kind: string } }[]): number {
+  const w = arms.findIndex(a => a.pattern.kind === "WildcardPattern");
+  return w >= 0 && w + 1 < arms.length ? w + 1 : -1;
+}
