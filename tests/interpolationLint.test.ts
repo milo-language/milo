@@ -59,3 +59,8 @@ test("--allow suppresses it and --deny promotes it to an error", () => {
   expect(denied.length).toBe(1);
   expect(denied[0].severity).toBe("error");
 });
+
+test("does not warn on a doubled-brace {{name}} template placeholder", () => {
+  expect(lint(`    let inviter = "a"\n    print("x".replace("{{inviter}}", inviter))`)).toEqual([]);
+  expect(lint(`    let name = "w"\n    print("{{name}}")`)).toEqual([]);
+});

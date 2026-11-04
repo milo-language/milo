@@ -12,6 +12,8 @@
 // Offsets are 0-based character offsets into `source`; `len` 0 is an insertion.
 
 import type { Diagnostic } from "./diagnostics";
+import { Lexer } from "./lexer";
+import { Parser } from "./parser";
 
 interface TextEdit { offset: number; len: number; newText: string }
 export interface Fix { title: string; edits: TextEdit[] }
@@ -46,6 +48,11 @@ export function fixFor(d: Diagnostic, source: string): Fix | null {
       for (let i = at + 1; i < close - 1; i++) {
         if (source[i] === "$" && source[i + 1] === "{") edits.push({ offset: i, len: 1, newText: "" });
       }
+      // A doubled brace is a template placeholder, and any rewrite that does not parse
+      // would turn a warning into a syntax error: re-parse the new literal before offering it.
+      if (/\{\{|\}\}/.test(source.slice(at, close))) return null;
+      const lit = applyEdits(source.slice(at, close + 1), edits.map(e => ({ ...e, offset: e.offset - at })));
+      try { new Parser(new Lexer(`fn f() { let x = ${lit} }`).tokenize()).parse(); } catch { return null; }
       return { title: "Make this an interpolated string", edits };
     }
     case "unused-unsafe": {

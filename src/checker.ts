@@ -1259,6 +1259,9 @@ export class TypeChecker {
     if (!v.includes("{")) return;
     for (const m of v.matchAll(/\$?\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
       if (!this.lookup(m[1])) continue;
+      // `{{name}}` is a template placeholder (`t.replace("{{name}}", v)`), not a missed interpolation.
+      const open = m.index! + m[0].indexOf("{");
+      if (v[open - 1] === "{" || v[open + m[0].length - (open - m.index!)] === "}") continue;
       this.warn("missing-interpolation", `'${m[0]}' in a plain string is not interpolated`, expr.span,
         `prefix the literal with '$' to interpolate: $"...{${m[1]}}..."  (Milo drops the '$' inside the braces)`);
       return;

@@ -103,3 +103,12 @@ test("a missing import in an imported module is fixed there, from the entry", ()
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("missing-interpolation fix is refused for a doubled-brace placeholder and never yields unparsable source", async () => {
+  const { fixFor } = await import("../src/fixes");
+  const diag = (src: string) => ({ code: "missing-interpolation", message: "", severity: "warning", span: { line: 1, col: src.indexOf('"') + 1 } }) as any;
+  const bad = `let t = "{{inviter}}"`;
+  expect(fixFor(diag(bad), bad)).toBeNull();
+  const ok = `let t = "hi {x}"`;
+  expect(fixFor(diag(ok), ok)).not.toBeNull();
+});
