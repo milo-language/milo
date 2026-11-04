@@ -31,7 +31,7 @@ import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
 import { requirementsDiagnostics, runTraceCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
-import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
+import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
@@ -89,7 +89,8 @@ function cguCount(irLineCount: number, optFlag: string, emitDebug: boolean): num
 let pinnedProfile: SafetyLevel | null = null;
 
 // Pinned-build and object checks on a linked binary. Prints findings; returns whether it passed.
-function verifyBinary(bin: string, level: SafetyLevel, json: boolean, all = false): boolean {
+// `warnOnly`: a dev build reports the findings as warnings and keeps the binary; release and `milo verify` fail on them.
+function verifyBinary(bin: string, level: SafetyLevel, json: boolean, all = false, warnOnly = false): boolean {
   const problems: { check: string; message: string }[] = [];
   const notes: string[] = [];
   try {
@@ -112,12 +113,12 @@ function verifyBinary(bin: string, level: SafetyLevel, json: boolean, all = fals
     for (const p of problems) {
       const n = (shown.get(p.check) ?? 0) + 1;
       shown.set(p.check, n);
-      if (all || n <= 8) console.log(`  FAIL [${p.check}] ${p.message}`);
+      if (all || n <= 8) console.log(`  ${warnOnly ? "warning" : "FAIL"} [${p.check}] ${p.message}`);
       else if (n === 9) console.log(`  ... more [${p.check}] findings (--all lists every one)`);
     }
-    console.log(problems.length ? `binary check FAILED (${problems.length} finding${problems.length > 1 ? "s" : ""})` : "binary check passed");
+    console.log(problems.length ? `binary check ${warnOnly ? "found" : "FAILED"} (${problems.length} finding${problems.length > 1 ? "s" : ""})${warnOnly ? "; --strict makes these errors" : ""}` : "binary check passed");
   }
-  return problems.length === 0;
+  return warnOnly || problems.length === 0;
 }
 
 // A compile that reported diagnostics, raised instead of exiting. The CLI's one-file
@@ -343,19 +344,58 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
       const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any });
       return z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
     },
+    // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
+    runTests(file, names) {
+      const mainTs = join(import.meta.dir, "main.ts");
+      const compiled = import.meta.dir.startsWith("/$bunfs") || !existsSync(mainTs);
+      const r = spawnSync(process.execPath, [...(compiled ? [] : [mainTs]), "test", "--json", file, "-t", `^(${names.join("|")})$`], { encoding: "utf-8", timeout: 600000 });
+      let doc: any;
+      try { doc = JSON.parse(r.stdout ?? ""); } catch { return null; }
+      if (doc.compileErrors?.length) return null;
+      const out = new Map<string, { pass: boolean; output?: string }>();
+      for (const t of doc.tests ?? []) out.set(t.name, { pass: !!t.ok, ...(t.output ? { output: String(t.output).trim().split("\n")[0] } : {}) });
+      return out;
+    },
   };
 }
 
-// A DO-178C profile makes the requirements matrix strict, so `build --safety=do178c-a` fails on
-// a fn with no @req, a requirement with no implementation or test, or a clause the prover
-// cannot discharge. Other profiles have no traceability objective here.
-function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean): void {
-  const rep = traceEntry({ entry, json: false, strict: true, z3 }, traceDeps(target, warningConfig));
+// `--strict` and `--baseline <file>` for build and verify. Taken out before parseArgs so a
+// baseline path is never mistaken for the source file.
+function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; baseline?: string } {
+  const out: string[] = [];
+  let strict = false;
+  let baseline: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--strict") strict = true;
+    else if (a === "--baseline") baseline = args[++i];
+    else if (a.startsWith("--baseline=")) baseline = a.slice(11);
+    else out.push(a);
+  }
+  return { args: out, strict, baseline };
+}
+
+// A profile whose traceability field is "strict" (every DO-178C, ISO 26262, IEC 61508 and NASA
+// level, IEC 62304 B and C) checks the requirements matrix: a fn with no @req, a requirement
+// with no implementation or verified-ness, a failing @req test, a clause the prover cannot
+// discharge. The profile says WHAT is checked; the build says how hard. A dev build prints every
+// gap as a warning and succeeds; --strict (release, CI) turns the gaps into errors, except those
+// a --baseline lists, which stay warnings so an existing codebase can adopt a profile.
+// Tests are run only under --strict: a dev build must stay fast.
+function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean, strict: boolean, baseline?: string): void {
+  const rep = traceEntry({ entry, json: false, strict, z3, noRun: !strict, ...(baseline ? { baseline } : {}) }, traceDeps(target, warningConfig));
   if (!rep.ok) {
     console.error(formatTrace(rep));
     console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under --safety=${level}`);
     process.exit(1);
   }
+  if (strict) {
+    for (const m of rep.baselined) console.error(`warning: baselined traceability gap: ${m}`);
+    for (const k of rep.staleBaseline) console.error(`warning: baseline lists a gap that is fixed, remove it: ${k}`);
+    return;
+  }
+  for (const m of rep.strictFailures) console.error(`warning: traceability gap: ${m}`);
+  if (rep.strictFailures.length) console.error(`warning: ${rep.strictFailures.length} traceability gap(s) under --safety=${level}; --strict makes these errors`);
 }
 
 // The safety profile's own rules (src/safety.ts), shared by `safety`, `build --safety` and `verify`.
@@ -373,7 +413,7 @@ function safetyViolationsFor(source: string, level: ReturnType<typeof parseSafet
   return { program, violations: checkSafetyCompliance(program, level, unusedResults) };
 }
 
-function enforceSafetyProfile(source: string, levelName: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean): void {
+function enforceSafetyProfile(source: string, levelName: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean, strict: boolean, baseline?: string): void {
   const level = parseSafetyLevel(levelName);
   if (!level) { console.error(`unknown safety level: ${levelName}\nuse 'milo safety --list' to see available profiles`); process.exit(1); }
   const { program, violations } = safetyViolationsFor(source, level, target, warningConfig);
@@ -381,7 +421,7 @@ function enforceSafetyProfile(source: string, levelName: string, target: TargetI
     console.error(display(program.displayNames, formatSafetyReport(violations, level)));
     process.exit(1);
   }
-  if (level.startsWith("do178")) enforceTraceability(source, level, target, warningConfig, z3);
+  if (traceabilityOf(level) === "strict") enforceTraceability(source, level, target, warningConfig, z3, strict, baseline);
 }
 
 // `milo verify <entry.milo> --profile <level>`: everything a certification review reads in one
@@ -392,6 +432,8 @@ function runVerify(args: string[]): number {
   let profile: string | null = null;
   let entry = "";
   const z3 = args.includes("--solver=z3");
+  const tf = takeTraceFlags(args);
+  args = tf.args;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--profile" || a === "--safety") profile = args[++i] ?? null;
@@ -410,7 +452,10 @@ function runVerify(args: string[]): number {
   console.log(`profile ${level}: ${errs.length === 0 ? "ok" : `${errs.length} violation(s)`}`);
   if (errs.length) { console.log(display(program.displayNames, formatSafetyReport(violations, level))); ok = false; }
 
-  const rep = traceEntry({ entry, json: false, strict: level.startsWith("do178"), z3 }, traceDeps(target, wc));
+  // verify is the release path: a strict-traceability profile is always enforced here.
+  const rep = traceEntry({ entry, json: false, strict: traceabilityOf(level) === "strict", z3, ...(tf.baseline ? { baseline: tf.baseline } : {}) }, traceDeps(target, wc));
+  for (const m of rep.baselined) console.log(`  warning: baselined gap: ${m}`);
+  for (const k of rep.staleBaseline) console.log(`  warning: baseline lists a gap that is fixed, remove it: ${k}`);
   if (rep.requirementsFile || rep.strict) {
     const fails = rep.errors.length + (rep.strict ? rep.strictFailures.length : 0);
     console.log(`requirements: ${fails === 0 ? "ok" : `${fails} failure(s)`} (${rep.requirements.length} requirements, ${rep.unknown} unknown)`);
@@ -2198,7 +2243,8 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(args.slice(1));
+  const traceFlags = takeTraceFlags(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(cmd === "build" ? traceFlags.args : args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -2392,7 +2438,7 @@ async function main() {
     }
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
-    if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, rest.includes("--solver=z3"));
+    if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, rest.includes("--solver=z3"), traceFlags.strict, traceFlags.baseline);
     const t0 = Date.now();
     if (safetyLevel) {
       const level = parseSafetyLevel(safetyLevel);
@@ -2406,7 +2452,7 @@ async function main() {
     reportCompiled(source!, bin, Date.now() - t0);
     // A profile is a claim about the binary: re-check what the toolchain produced, and
     // leave no binary behind that fails it.
-    if (pinnedProfile && !verifyBinary(bin, pinnedProfile, false)) {
+    if (pinnedProfile && !verifyBinary(bin, pinnedProfile, false, false, !traceFlags.strict)) {
       try { unlinkSync(bin); } catch {}
       console.error(`error: ${bin} does not satisfy --safety=${pinnedProfile}; binary removed`);
       process.exit(1);

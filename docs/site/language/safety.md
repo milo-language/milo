@@ -383,12 +383,14 @@ call site, with the file and line, so a caller that cannot meet it shows up as `
 it is written. Below the matrix: fns with no `@req`, requirements with no implementation or
 test, and the count of unknowns. `--json` prints the same as data.
 
-Without a profile the matrix is a report. With `--strict`, or `--safety=` a DO-178C profile
-(also on `milo build` and `milo verify --profile`), these are errors: a fn with no `@req`
+Without a profile the matrix is a report. With `--strict`, or `--safety=` a profile whose
+`traceability` field is `strict` (also on `milo build --strict` and `milo verify --profile`; a dev
+`build --safety` only warns, and `--baseline <file>` keeps listed gaps warnings), these are errors: a fn with no `@req`
 (`@derived` and `@deactivated` are exempt), a requirement with no implementation or no
-verifying test (a parent is traced through its children), and a formalizing clause that is
-`FAILED` or `UNKNOWN`. A law has to be `PROVEN`, covered by a `@req` test, or `@assume`d.
-Tests are traced, not run, and line coverage is not measured yet.
+verification (DO-333: a low-level requirement needs a fully `PROVEN` set of clauses or a passing test;
+a high-level one, or one with no clause, needs a passing test of its own), a failing `@req` test, and a
+formalizing clause that is `FAILED` or `UNKNOWN`. A law has to be `PROVEN`, covered by a passing `@req`
+test, or `@assume`d. `milo trace` runs the tests (`--no-run` skips them); line coverage is not measured yet.
 
 A clause that proves itself (`ensures result == result`) would trace a requirement to
 nothing, so the [`vacuous-contract`](/language/warnings-and-errors#vacuous-contract) warning

@@ -3,7 +3,7 @@ system: safety-profiles
 purpose: how to check code against a safety-critical coding standard (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304) with milo safety
 key-files: src/safety.ts, src/main.ts
 update-when: a profile is added or retuned, a constraint is added, or the milo safety CLI or its exit code changes
-last-verified: 2026-09-22
+last-verified: 2026-11-04
 -->
 
 # Safety profiles
@@ -68,6 +68,33 @@ milo safety src/controller.milo --safety=do178c-a || exit 1
 ```
 
 The command exits with code 1 if any errors are found, making it suitable for CI gates.
+
+## Requirements traceability: what a profile checks, how hard a build enforces it
+
+Each profile carries two fields (`milo safety --list` prints them): `traceability`, which is
+`strict` for every DO-178C, ISO 26262, IEC 61508 and NASA level and for IEC 62304 B and C
+(bidirectional requirement traces are an objective there) and `report` for IEC 62304 A, and
+`coverage`, the structural-coverage criterion the standard names (`statement`, `branch`, `mcdc`;
+no gate reads it yet). A `strict` profile checks the `milo trace` matrix: a function with no
+`@req`, a requirement with no implementation or no verification, a failing `@req` test, a clause
+the prover cannot discharge. The profile says what is checked; the build decides how hard:
+
+```bash
+milo build app.milo --safety=iso26262-d                     # dev: every gap is a warning, the build succeeds
+milo build app.milo --safety=iso26262-d --strict            # release: gaps are errors, @req tests are run
+milo verify app.milo --profile iso26262-d                   # always strict
+milo trace app.milo --write-baseline gaps.json              # record today's gaps
+milo build app.milo --safety=iso26262-d --strict --baseline gaps.json
+```
+
+The profile's source rules (contracts, bounded loops, no allocation, ...) are errors in every mode.
+Binary-check findings are warnings in a dev build and remove the binary under `--strict`.
+A baselined gap stays a warning even under `--strict`; a gap that is not in the baseline fails. A
+baseline only shrinks: `--write-baseline` refuses to add a gap to an existing file, and a baseline
+entry whose gap has been fixed warns `remove it`. Verification follows DO-333: a low-level
+requirement is verified by a fully `PROVEN` set of clauses or a passing test, a high-level one
+(no parent) and one with no clause need a passing test of their own. The worked example is
+[examples/assured/pid](https://github.com/milo-language/milo/tree/main/examples/assured/pid).
 
 ## Checked on the binary
 

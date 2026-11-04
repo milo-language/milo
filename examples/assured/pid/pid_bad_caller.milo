@@ -1,5 +1,5 @@
 // The mistake LLR-3 exists to catch: a caller that hands pidStep a raw sensor reading.
-// `milo trace examples/assured/pid/pid_bad_caller.milo --solver=z3` shows the FAILED
+// `milo trace examples/assured/pid/pid_bad_caller.milo` shows the FAILED
 // call-site obligation. pid.milo's controlTick is the fixed version (it clamps first).
 from "./pid" import { pidStep }
 
@@ -10,4 +10,12 @@ requires prevError >= -65534 && prevError <= 65534
 {
     let one: i32 = 65536
     return pidStep(100, rawSensor, one / 2, one / 100, one / 10, integral, prevError, 0, 255 * one)
+}
+
+// Only so the bad caller can be built (`milo build` needs an entry point).
+@derived(DR-1)
+pub fn main(): i32
+ensures result >= -32768 && result <= 32767
+{
+    return controlTickUnclamped(1200, 0, 0) >> 16
 }

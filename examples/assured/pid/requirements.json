@@ -1,6 +1,7 @@
 {
   "requirements": [
     { "id": "HLR-1", "text": "The actuator command shall always lie within the configured output range." },
+    { "id": "DR-1", "text": "The demo harness drives the controller from a fixed sensor reading and reports the command." },
     { "id": "HLR-2", "text": "The integral term shall not wind up: it shall stay within a fixed limit." },
     { "id": "LLR-1", "parent": "HLR-1", "text": "Every command is clamped to [outLo, outHi] on its way out of the PID step." },
     { "id": "LLR-2", "parent": "HLR-2", "text": "The integral accumulator is clamped to +/-1000000 after every tick." },

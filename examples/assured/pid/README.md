@@ -6,14 +6,14 @@ tested. Based on [`examples/embedded/pidStep.milo`](../../embedded/pidStep.milo)
 
 | File | What it is |
 |---|---|
-| `requirements.json` | two high-level (HLR) and three low-level (LLR) requirements, with `parent` links |
-| `pid.milo` | the controller; `@req(ID)` on fns, on contract clauses, and one `@derived` helper |
+| `requirements.json` | two high-level (HLR), three low-level (LLR) and one derived (DR) requirement, with `parent` links |
+| `pid.milo` | the controller; `@req(ID)` on fns, on contract clauses, and the `@derived` helper and harness |
 | `pid_test.milo` | tests that verify requirements, tagged `@req(ID)` |
 | `pid_bad_caller.milo` | one caller that breaks LLR-3, to show what a violation looks like |
 
 Every command below was run from the repository root; the output is pasted as printed.
-The proofs here are nonlinear (`a * b`), which the default `std/smt` solver reports as
-`unknown`, so the commands pass `--solver=z3`.
+Nothing here needs z3: the default `std/smt` prover decides every obligation, including the
+nonlinear `a * b` in `fpMul` (see [How the product is proved](#how-the-product-is-proved)).
 
 ## The syntax
 
@@ -28,28 +28,34 @@ A `test*` fn tagged `@req(ID)` verifies ID. `@assume(ID)` marks a trusted axiom,
 `@derived(ID)` code that exists for a derived requirement, and `@deactivated("reason")`
 code that is present but not active. Run `milo explain @req` for the full text.
 
+`main` and `demoCommand` are the demo harness, not an implementation of HLR-1 (the controller
+is `controlTick`). They are tagged `@derived(DR-1)` rather than exempted from the "every fn has an
+`@req`" rule: DO-178C treats a test harness as test code, and a blanket entry-point exemption
+would also let a real flight entry point go untraced. A derived requirement is listed under
+"derived (feed back to the system level)", which is where a reviewer wants to see it.
+
 ## How `milo prove --rte` found the overflow
 
 The original `pidStep` has no preconditions on its inputs. `milo prove --rte` generates a
 proof obligation for every arithmetic operation and asks whether it can overflow:
 
 ```text
-$ milo prove examples/embedded/pidStep.milo --rte --solver=z3
+$ milo prove examples/embedded/pidStep.milo --rte
 verification: 23 conditions
-  proven: 12  failed: 8  unknown: 3  errors: 0
+  proven: 10  failed: 8  unknown: 5  errors: 0
 
-  ✓ [overflow] fpMul (overflow in fpMul:22: CastExpr * CastExpr (i64)): proven
-  ✓ [postcondition] fpMul: proven
+  ? [overflow] fpMul (overflow in fpMul:22: CastExpr * CastExpr (i64)): unknown — outside linear fragment (std/smt)
+  ? [postcondition] fpMul: unknown — outside linear fragment (std/smt)
   ✓ [postcondition] clampI32: proven
-  ✗ [precondition] pidStep: failed — counterexample exists
-  ✗ [precondition] pidStep: failed — counterexample exists
-  ✗ [precondition] pidStep: failed — counterexample exists
-  ✓ [precondition] pidStep: proven
-  ✗ [overflow] pidStep (overflow in pidStep:45: setpoint - measured (i32)): failed — counterexample exists
-  ✗ [overflow] pidStep (overflow in pidStep:46: integral + error (i32)): failed — counterexample exists
-  ✗ [overflow] pidStep (overflow in pidStep:47: error - prevError (i32)): failed — counterexample exists
-  ✗ [overflow] pidStep (overflow in pidStep:53: p + i (i32)): failed — counterexample exists
-  ✗ [overflow] pidStep (overflow in pidStep:53: (p + i) + d (i32)): failed — counterexample exists
+  ✗ [precondition] pidStep: failed — counterexample: setpoint = -2147483648, measured = 1, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [precondition] pidStep: failed — counterexample: setpoint = -1, measured = 0, kp = 0, ki = 0, kd = 0, integral = -2147483648, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [precondition] pidStep: failed — counterexample: setpoint = -2, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 2147483647, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✓ [precondition] pidStep: proven — conditional: assumes fpMul, whose own postcondition is not established
+  ✗ [overflow] pidStep (overflow in pidStep:45: setpoint - measured (i32)): failed — counterexample: setpoint = 2147483647, measured = -1, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [overflow] pidStep (overflow in pidStep:46: integral + error (i32)): failed — counterexample: setpoint = 1, measured = 0, kp = 0, ki = 0, kd = 0, integral = 2147483647, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [overflow] pidStep (overflow in pidStep:47: error - prevError (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = -2147483648, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [overflow] pidStep (overflow in pidStep:53: p + i (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 2147483647, fpMul__ret1 = 1, fpMul__ret2 = 0, clampI32__ret3 = 0
+  ✗ [overflow] pidStep (overflow in pidStep:53: (p + i) + d (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 1, fpMul__ret1 = 0, fpMul__ret2 = 2147483647, clampI32__ret3 = 0
   ✓ [precondition] settle: proven
   ✓ [precondition] settle: proven
   ✓ [precondition] settle: proven
@@ -61,18 +67,21 @@ verification: 23 conditions
   ✓ [precondition] main: proven
   ✓ [overflow] main (overflow in main:90: 100 * one (i32)): proven
   ✓ [overflow] main (overflow in main:95: 255 * one (i32)): proven
+
+  1 of 10 proofs are conditional on something this run did not establish.
 ```
 
 `setpoint - measured`, `integral + error` and the sum of the three terms each have a
-counterexample: with unconstrained i32 inputs, `pidStep` can overflow. That finding is
+counterexample: with unconstrained i32 inputs, `pidStep` can overflow. (`fpMul` is `unknown` here:
+with no bound on either factor there is no interval to bound the product by.) That finding is
 requirement LLR-3 (sensor and setpoint within +/-32767, gains within +/-16.0), written as
 `requires` clauses on `pidStep` and `fpMul`, so every caller has to prove it. Rerunning with
-the new `pid.milo` proves all 30 obligations:
+the new `pid.milo` proves every obligation:
 
 ```text
-$ milo prove examples/assured/pid/pid.milo --rte --solver=z3
-verification: 30 conditions
-  proven: 30  failed: 0  unknown: 0  errors: 0
+$ milo prove examples/assured/pid/pid.milo --rte
+verification: 32 conditions
+  proven: 32  failed: 0  unknown: 0  errors: 0
 
   ✓ [overflow] fpMul (overflow in fpMul:22: CastExpr * CastExpr (i64)): proven
   ✓ [postcondition] fpMul: proven
@@ -101,29 +110,48 @@ verification: 30 conditions
   ✓ [precondition] controlTick: proven
   ✓ [precondition] controlTick: proven
   ✓ [precondition] controlTick: proven
-  ✓ [overflow] controlTick (overflow in controlTick:98: 255 * one (i32)): proven
-  ✓ [precondition] main: proven
-  ✓ [precondition] main: proven
+  ✓ [overflow] controlTick (overflow in controlTick:100: 255 * one (i32)): proven
+  ✓ [postcondition] controlTick: proven
+  ✓ [precondition] demoCommand: proven
+  ✓ [precondition] demoCommand: proven
+  ✓ [postcondition] demoCommand: proven
 ```
+
+## How the product is proved
+
+`fpMul` multiplies two variables, which is outside the linear arithmetic `std/smt` decides.
+When both factors have bounds in the constraint set (the `requires` clauses, the type ranges), the
+prover replaces `a * b` by a fresh symbol constrained to `[min, max]` of the four corner products,
+and `n / c` (a constant divisor, which is what `>> 16` lowers to) by its exact definition
+`c*q <= n <= c*q + c-1`. The product bound is an over-approximation, so it can prove a claim but
+never refute one: a "counterexample" found against a product is reported `unknown`, not `failed`,
+and a product with an unbounded factor stays `unknown`. The gates are
+`tests/prove/productIntervalProven.milo` (a true bound proves),
+`tests/prove/productIntervalNoFalseProof.milo` (`|a*b| <= A*B - 1` is not proven) and
+`tests/prove/productUnboundedFactor.milo`, plus `scripts/prove-soundness-fuzz.ts`.
 
 ## The trace matrix
 
+`milo trace` also runs the tests: each `@req` test goes through `milo test`'s runner, one process
+per test, and its row says `PASS` or `FAIL` (`--no-run` skips them and prints `NOT RUN`).
+
 ```text
-$ milo trace examples/assured/pid/pid.milo --solver=z3 --strict
-requirements trace: examples/assured/pid/pid.milo  (examples/assured/pid/requirements.json, 5 requirements)
+$ milo trace examples/assured/pid/pid.milo --strict
+requirements trace: examples/assured/pid/pid.milo  (examples/assured/pid/requirements.json, 6 requirements)
 
 HLR-1  The actuator command shall always lie within the configured output range.
   implemented   pid.milo:92 controlTick
-  implemented   pid.milo:102 main
-  verified      pid_test.milo:15 testStepOutputWithinRange
+  formalized    PROVEN   pid.milo:97 ensures result >= 0 && result <= 16711680  [controlTick]
+  verified      PASS      pid_test.milo:15 testStepOutputWithinRange
 
   LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
     implemented   pid.milo:27 clampI32
     implemented   pid.milo:44 pidStep
     formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
     formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
-    verified      pid_test.milo:7 testClampKeepsValueInRange
-    verified      pid_test.milo:15 testStepOutputWithinRange
+    verified      PROOF     2 formalizing clauses PROVEN
+    verified      PASS      pid_test.milo:7 testClampKeepsValueInRange
+    verified      PASS      pid_test.milo:15 testStepOutputWithinRange
 
   LLR-3  Sensor and setpoint shall be within +/-32767 (gains within +/-16.0 in Q16.16), so no intermediate value overflows i32.
     implemented   pid.milo:13 fpMul
@@ -138,42 +166,62 @@ HLR-1  The actuator command shall always lie within the configured output range.
                 call site PROVEN  pid.milo:65 pidStep
     formalized    PROVEN   pid.milo:19 ensures result >= -33000000 && result <= 33000000  [fpMul]
     formalized    PROVEN   pid.milo:46 requires setpoint >= -32767 && setpoint <= 32767  [pidStep]
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:48 requires measured >= -32767 && measured <= 32767  [pidStep]
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:50 requires prevError >= -65534 && prevError <= 65534  [pidStep]
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:52 requires kp >= -1048576 && kp <= 1048576 && ki >= -1048576 && ki <= 1048576 && kd >= -1048576 && kd <= 1048576  [pidStep]
-                call site PROVEN  pid.milo:98 controlTick
-    verified      pid_test.milo:35 testInputClampedToSensorRange
+                call site PROVEN  pid.milo:100 controlTick
+    verified      PROOF     7 formalizing clauses PROVEN
+    verified      PASS      pid_test.milo:36 testInputClampedToSensorRange
+
+DR-1  The demo harness drives the controller from a fixed sensor reading and reports the command.
+  implemented   pid.milo:106 demoCommand  (derived)
+  implemented   pid.milo:114 main  (derived)
+  verified      PASS      pid_test.milo:45 testHarnessDrivesController
 
 HLR-2  The integral term shall not wind up: it shall stay within a fixed limit.
   implemented   (through LLR-2)
-  verified      (through LLR-2)
+  verified      PASS      pid_test.milo:27 testIntegralDoesNotWindUp
 
   LLR-2  The integral accumulator is clamped to +/-1000000 after every tick.
     implemented   pid.milo:73 nextIntegral
     formalized    PROVEN   pid.milo:54 requires integral >= -1000000 && integral <= 1000000  [pidStep]
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:77 ensures result >= -1000000 && result <= 1000000  [nextIntegral]
     formalized    PROVEN   pid.milo:94 requires integral >= -1000000 && integral <= 1000000  [controlTick]
-                call site PROVEN  pid.milo:103 main
-    verified      pid_test.milo:26 testIntegralDoesNotWindUp
+                call site PROVEN  pid.milo:109 demoCommand
+    verified      PROOF     3 formalizing clauses PROVEN
+    verified      PASS      pid_test.milo:27 testIntegralDoesNotWindUp
 
 untraced fns: none
 requirements with no implementation: none
 requirements with no verifying test: none
 derived (feed back to the system level):
   pid.milo:83 clampInput
+  pid.milo:106 demoCommand
+  pid.milo:114 main
 unknown: 0
 
 strict: ok
 ```
 
-Reading it: a parent (`HLR-1`) is traced through its children, so it needs no code of its
+Reading it: a parent (`HLR-1`) is implemented through its children, so it needs no code of its
 own. Each `formalized` row is a contract clause tagged `@req`, with the verdict `milo prove`
 gives that exact clause. A `requires` clause is judged at every call site, with the line
 of the call. `unknown: 0` counts formalizing clauses the prover could not decide.
+
+How a requirement counts as verified follows DO-333 (the formal-methods supplement):
+
+- a low-level requirement (one with a parent) is verified by a `PROOF` row, meaning it has
+  formalizing clauses and every one is `PROVEN`, or by a passing test;
+- a high-level requirement (no parent) needs a passing test of its own, even when all its
+  children are proven: a proof checks code against the spec, not that the spec is right or that
+  the binary behaves on target;
+- a requirement with no formalizing clause must be tested.
+
+A failing test is a strict error, and a requirement whose only tests fail is unverified.
 
 ## A caller that breaks LLR-3
 
@@ -184,8 +232,8 @@ return pidStep(100, rawSensor, one / 2, one / 100, one / 10, integral, prevError
 ```
 
 ```text
-$ milo trace examples/assured/pid/pid_bad_caller.milo --solver=z3 --strict
-requirements trace: examples/assured/pid/pid_bad_caller.milo  (examples/assured/pid/requirements.json, 5 requirements)
+$ milo trace examples/assured/pid/pid_bad_caller.milo --strict
+requirements trace: examples/assured/pid/pid_bad_caller.milo  (examples/assured/pid/requirements.json, 6 requirements)
   ...
   LLR-3  Sensor and setpoint shall be within +/-32767 (gains within +/-16.0 in Q16.16), so no intermediate value overflows i32.
     implemented   pid.milo:13 fpMul
@@ -201,127 +249,118 @@ requirements trace: examples/assured/pid/pid_bad_caller.milo  (examples/assured/
     formalized    PROVEN   pid.milo:19 ensures result >= -33000000 && result <= 33000000  [fpMul]
     formalized    PROVEN   pid.milo:46 requires setpoint >= -32767 && setpoint <= 32767  [pidStep]
                 call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    FAILED   pid.milo:48 requires measured >= -32767 && measured <= 32767  [pidStep]
-                        counterexample exists
-                call site FAILED  pid_bad_caller.milo:12 controlTickUnclamped  counterexample exists
-                call site PROVEN  pid.milo:98 controlTick
+                        counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0
+                call site FAILED  pid_bad_caller.milo:12 controlTickUnclamped  counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:50 requires prevError >= -65534 && prevError <= 65534  [pidStep]
                 call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
+                call site PROVEN  pid.milo:100 controlTick
     formalized    PROVEN   pid.milo:52 requires kp >= -1048576 && kp <= 1048576 && ki >= -1048576 && ki <= 1048576 && kd >= -1048576 && kd <= 1048576  [pidStep]
                 call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
-    verified      pid_test.milo:35 testInputClampedToSensorRange
+                call site PROVEN  pid.milo:100 controlTick
+    verified      PASS      pid_test.milo:36 testInputClampedToSensorRange
+
 ...
 strict: 1 failure
-  error: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample exists)
+  error: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0)
 exit 1
 ```
 
 The clause `requires measured >= -32767 && measured <= 32767` is `FAILED` at exactly one
-call site, `pid_bad_caller.milo:12`, and strict mode turns it into an error (exit 1).
+call site, `pid_bad_caller.milo:12`, with a concrete counterexample, and strict mode turns it
+into an error (exit 1).
 
 The fix is `controlTick` in `pid.milo`: it clamps the reading with `clampInput` first, and the
 same call site is then `PROVEN` (see `pid.milo:98` in the matrix above).
 
-## Strict mode and the DO-178C profile
+## Dev, strict and baseline: what a profile checks vs how hard it enforces
 
-Without a profile the matrix is a report and exits 0. `--strict`, or a DO-178C `--safety`
-profile, makes these errors: a fn with no `@req` (`@derived` and `@deactivated` are
-exempt), a requirement with no implementation or no verifying test, and a formalizing
-clause that is `FAILED` or `UNKNOWN`. A law must be `PROVEN`, `@req`-tested or `@assume`d;
-`UNKNOWN` fails otherwise. An `UNKNOWN` clause
-prints as `UNKNOWN (tested)` or `UNKNOWN (assumed)` when one of those stands behind it.
+A safety profile (`milo safety --list`) says WHAT is checked. Two of its fields matter here:
+`traceability` (`strict` for every DO-178C, ISO 26262, IEC 61508 and NASA level and IEC 62304
+B and C; `report` for IEC 62304 A) and `coverage` (the structural-coverage criterion the standard
+names; no gate reads it yet). How hard a build enforces it is the build's choice:
+
+- **dev** (`milo build --safety=<profile>`): every traceability gap and every binary-check finding
+  is a warning and the build succeeds. Tests are not run, so a dev build stays fast.
+- **release / CI** (`--strict`, and `milo verify` always): the same gaps are errors, the `@req`
+  tests are run, and a binary-check finding removes the binary.
+- **adoption** (`--baseline <file>`): gaps listed in the baseline stay warnings even under
+  `--strict`; a new gap fails. A baseline only ever shrinks: `milo trace --write-baseline`
+  refuses to add a gap to an existing file, and a baseline entry for a gap that has been fixed
+  warns `remove it`.
 
 ```text
-$ milo build examples/assured/pid/pid.milo --safety=do178c-a --target=cortex-m3 --solver=z3 -o pid.elf
+$ milo build examples/assured/pid/pid.milo --safety=do178c-a --target=cortex-m3 -o pid.elf
 warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it
-compiled examples/assured/pid/pid.milo -> pid.elf in 2.69s
-$ milo verify examples/assured/pid/pid.milo --profile do178c-a --solver=z3
+compiled examples/assured/pid/pid.milo -> /tmp/q/pid.elf in 919ms
+/tmp/q/pid.elf against do178c-a
+  pinned build: -O2, none LTO, 1 codegen unit, LLVM 23, milo-opt 44127db147cd
+  10 defined symbols, 0 imports, 0 indirect call sites, 0 runtime allocation paths
+binary check passed
+$ milo verify examples/assured/pid/pid.milo --profile do178c-a
 profile do178c-a: ok
-requirements: ok (5 requirements, 0 unknown)
-proofs (prove --rte): 30 proven, 0 failed, 0 unknown
+requirements: ok (6 requirements, 0 unknown)
+proofs (prove --rte): 32 proven, 0 failed, 0 unknown
 verify: PASS
 ```
 
 `build --safety` runs the profile's rules (no recursion, bounded loops, no allocation,
-contracts on every public fn, ...) and, for a DO-178C profile, the strict matrix. The same
-build on the bad caller stops:
+contracts on every public fn, ...), which stay errors, then the traceability check, then
+re-checks the linked binary. On the bad caller the dev build warns and succeeds:
 
 ```text
-$ milo build examples/assured/pid/pid_bad_caller.milo --safety=do178c-a --target=cortex-m3 --solver=z3
-requirements trace: examples/assured/pid/pid_bad_caller.milo  (examples/assured/pid/requirements.json, 5 requirements)
+$ milo build examples/assured/pid/pid_bad_caller.milo --safety=do178c-a --target=cortex-m3 -o bad.elf
+warning: traceability gap: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0)
+warning: 1 traceability gap(s) under --safety=do178c-a; --strict makes these errors
+warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it
+compiled examples/assured/pid/pid_bad_caller.milo -> /tmp/q/bad.elf in 654ms
+/tmp/q/bad.elf against do178c-a
+  pinned build: -O2, none LTO, 1 codegen unit, LLVM 23, milo-opt 44127db147cd
+  10 defined symbols, 0 imports, 0 indirect call sites, 0 runtime allocation paths
+binary check passed
+```
 
-HLR-1  The actuator command shall always lie within the configured output range.
-  implemented   pid_bad_caller.milo:7 controlTickUnclamped
-  implemented   pid.milo:92 controlTick
-  verified      pid_test.milo:15 testStepOutputWithinRange
+`--strict` is the release gate:
 
-  LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
-    implemented   pid.milo:27 clampI32
-    implemented   pid.milo:44 pidStep
-    formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
-    formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
-    verified      pid_test.milo:7 testClampKeepsValueInRange
-    verified      pid_test.milo:15 testStepOutputWithinRange
-
-  LLR-3  Sensor and setpoint shall be within +/-32767 (gains within +/-16.0 in Q16.16), so no intermediate value overflows i32.
-    implemented   pid.milo:13 fpMul
-    implemented   pid.milo:83 clampInput  (derived)
-    formalized    PROVEN   pid.milo:15 requires a >= -1048576 && a <= 1048576  [fpMul]
-                call site PROVEN  pid.milo:63 pidStep
-                call site PROVEN  pid.milo:64 pidStep
-                call site PROVEN  pid.milo:65 pidStep
-    formalized    PROVEN   pid.milo:17 requires b >= -2000000 && b <= 2000000  [fpMul]
-                call site PROVEN  pid.milo:63 pidStep
-                call site PROVEN  pid.milo:64 pidStep
-                call site PROVEN  pid.milo:65 pidStep
-    formalized    PROVEN   pid.milo:19 ensures result >= -33000000 && result <= 33000000  [fpMul]
-    formalized    PROVEN   pid.milo:46 requires setpoint >= -32767 && setpoint <= 32767  [pidStep]
-                call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
-    formalized    FAILED   pid.milo:48 requires measured >= -32767 && measured <= 32767  [pidStep]
-                        counterexample exists
-                call site FAILED  pid_bad_caller.milo:12 controlTickUnclamped  counterexample exists
-                call site PROVEN  pid.milo:98 controlTick
-    formalized    PROVEN   pid.milo:50 requires prevError >= -65534 && prevError <= 65534  [pidStep]
-                call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
-    formalized    PROVEN   pid.milo:52 requires kp >= -1048576 && kp <= 1048576 && ki >= -1048576 && ki <= 1048576 && kd >= -1048576 && kd <= 1048576  [pidStep]
-                call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
-    verified      pid_test.milo:35 testInputClampedToSensorRange
-
-HLR-2  The integral term shall not wind up: it shall stay within a fixed limit.
-  implemented   (through LLR-2)
-  verified      (through LLR-2)
-
-  LLR-2  The integral accumulator is clamped to +/-1000000 after every tick.
-    implemented   pid.milo:73 nextIntegral
-    formalized    PROVEN   pid.milo:54 requires integral >= -1000000 && integral <= 1000000  [pidStep]
-                call site PROVEN  pid_bad_caller.milo:12 controlTickUnclamped
-                call site PROVEN  pid.milo:98 controlTick
-    formalized    PROVEN   pid.milo:77 ensures result >= -1000000 && result <= 1000000  [nextIntegral]
-    formalized    UNKNOWN (tested) pid.milo:94 requires integral >= -1000000 && integral <= 1000000  [controlTick]
-                        no call site in the program: callers outside it are unchecked
-    verified      pid_test.milo:26 testIntegralDoesNotWindUp
-
-untraced fns: none
-requirements with no implementation: none
-requirements with no verifying test: none
-derived (feed back to the system level):
-  pid.milo:83 clampInput
-unknown: 1
-
+```text
+$ milo build examples/assured/pid/pid_bad_caller.milo --safety=do178c-a --target=cortex-m3 --strict -o bad.elf
+  ...
 strict: 1 failure
-  error: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample exists)
+  error: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0)
 error: 1 traceability failure(s) under --safety=do178c-a
 exit 1
 ```
 
+To adopt a profile on code that is not clean yet, record today's gaps and enforce that none are
+added:
+
+```text
+$ milo trace examples/assured/pid/pid_bad_caller.milo --write-baseline baseline.json
+baseline: 1 gap(s) written to /tmp/q/out/baseline.json
+$ cat baseline.json
+{
+  "schema": 1,
+  "gaps": [
+    "call-site:LLR-3|pidStep|requires|requires measured >= -32767 && measured <= 32767|controlTickUnclamped"
+  ]
+}
+$ milo build examples/assured/pid/pid_bad_caller.milo --safety=do178c-a --target=cortex-m3 --strict --baseline baseline.json -o bad.elf
+warning: baselined traceability gap: pid_bad_caller.milo:12: call from 'controlTickUnclamped' violates LLR-3: requires clause of 'pidStep' (counterexample: rawSensor = 32768, integral = 0, prevError = 0, pidStep__ret0 = 0)
+warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it
+compiled examples/assured/pid/pid_bad_caller.milo -> /tmp/q/bad.elf in 903ms
+/tmp/q/bad.elf against do178c-a
+  pinned build: -O2, none LTO, 1 codegen unit, LLVM 23, milo-opt 44127db147cd
+  10 defined symbols, 0 imports, 0 indirect call sites, 0 runtime allocation paths
+binary check passed
+```
+
+The keys name a gap (`untraced:<fn>`, `no-verifying-test:<id>`, `clause-unknown:...`,
+`call-site:...`, `test-failed:<test>`), not a line number, so editing nearby code does not
+invalidate the baseline.
+
 ## Not covered yet
 
-Tests are traced, not run: `milo trace` checks that a `@req` test exists, and
-`milo test examples/assured/pid` runs it. Line and branch coverage of the implementing fns by
-the verifying tests is a later task.
+Line and branch coverage of the implementing fns by the verifying tests is a later task; the
+profile's `coverage` field records which criterion the standard asks for.
