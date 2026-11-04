@@ -317,7 +317,7 @@ from "std/sqlite" import { dbOpen }
 fn main() { let _db = dbOpen(":memory:") }`)).toThrow(InterpUnsupported);
 });
 
-test("R-FFI-CALL: CommonCrypto digests run in the system library over the interpreter's buffers", () => {
+test.skipIf(process.platform !== "darwin")("R-FFI-CALL: CommonCrypto digests run in the system library over the interpreter's buffers", () => { // CommonCrypto is macOS-only; Linux std/crypto binds OpenSSL, which BunForeign does not load
   const r = run(`
 from "std/crypto" import { Crypto }
 fn main() {
