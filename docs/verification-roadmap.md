@@ -29,8 +29,12 @@ That set is, near enough, SPARK's — `Pre`, `Post`, `Loop_Invariant`, `Type_Inv
 `Loop_Variant`/`Subprogram_Variant`, `'Old`. Two of SPARK's are absent by choice: `Global`/
 `Depends` (Milo's ownership rules make most of it unnecessary) and quantifiers.
 
-**Where that lands us:** absence of runtime error on scalar and index arithmetic, plus
-termination and simple data invariants — SPARK's "silver" level. NOT functional correctness.
+**Where that lands us:** user-written contracts, termination and simple data invariants. That
+is short of SPARK's "silver": silver means no runtime error is possible, and `milo prove`
+generates no conditions of its own for overflow, index bounds or division by zero (checked
+2026-11-03: a function doing `v[i]` and `a / b` with no `requires` gives "0 conditions"). Those
+are trapped at runtime, not proven absent. Generating those conditions is the step to silver;
+quantifiers are the step after it, toward functional correctness ("gold").
 
 **The one structural gap: quantifiers.** `forall`/`exists` over container contents, and the
 sequence theory to go with them. Without it, sortedness is not merely hard to prove, it is

@@ -62,7 +62,37 @@ The ownership checker settles everything inside one function. It never consults 
 | Temporary read / mutation in a call | pointer argument | `&T` / `&mut T` | `&T` auto-borrowed; `&mut T` written at the call: `f(&mut x)`. |
 | Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` it and share a read-only copy. |
 
-Same memory-safety guarantees as Rust wherever both languages can express the program. Also in the language: `requires` / `ensures` contracts checked by `milo prove`, and concurrency without `Send` / `Sync` (a value that cannot hold a borrow moves to another task as is).
+Same memory-safety guarantees as Rust wherever both languages can express the program, plus concurrency without `Send` / `Sync` (a value that cannot hold a borrow moves to another task as is).
+
+## Proved, not just tested
+
+Contracts are part of the language, and `milo prove` checks them for every input, not the ones you thought to test:
+
+```milo
+fn clamp(x: i64, lo: i64, hi: i64): i64
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { return lo }
+    if x >= hi { return x }    // bug: should return hi
+    return x
+}
+```
+
+```
+$ milo prove clamp.milo
+  ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
+```
+
+Fix the line and the same command reports `✓ [postcondition] clamp: proven`. The vocabulary is close to SPARK's: `requires`, `ensures`, loop and struct `invariant`, `decreases` for termination, `old(e)`. It's discharged by a solver written in Milo (`std/smt`) or by z3 (`--solver=z3`).
+
+Proof is practical here because of the reference rule above. Proving a function correct is hard in C and C++ because any pointer might alias any other. In Milo nothing outside a function can point into its values, so a call can change only what its `&mut` arguments name. The verifier needs no separation logic and no aliasing annotations. This is the same reason SPARK proofs scale, and it comes from the memory model rather than a verification dialect bolted on top.
+
+It also fits agent-written code. Write the contract, and let the agent loop on `milo prove --json` until every condition is proven. You review a few lines of spec instead of the whole implementation, and a counterexample is a concrete input it can fix against.
+
+For safety-critical work, `milo safety --safety=do178c-a` (also ISO 26262, IEC 61508/62304, NASA profiles) checks the source against a certification profile, and `milo wcet` emits loop-bound flow facts for OTAWA timing analysis.
+
+Not there yet, said plainly: overflow, out-of-bounds indexing and division by zero are trapped at runtime but not yet proven absent. There are no quantifiers, so "this Vec is sorted" can't be stated yet. Both are next on the [verification roadmap](docs/verification-roadmap.md).
 
 ## What you give up
 
