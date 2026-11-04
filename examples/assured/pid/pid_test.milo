@@ -1,0 +1,41 @@
+// Tests that verify the requirements in requirements.json. `milo trace` finds them by the
+// @req on each test; `milo test examples/assured/pid` runs them.
+from "std/testing" import { assertEq }
+from "./pid" import { clampI32, pidStep, nextIntegral, clampInput }
+
+@req(LLR-1)
+fn testClampKeepsValueInRange(): void {
+    assertEq(clampI32(500, 0, 255), 255)
+    assertEq(clampI32(-5, 0, 255), 0)
+    assertEq(clampI32(100, 0, 255), 100)
+}
+
+@req(LLR-1)
+@req(HLR-1)
+fn testStepOutputWithinRange(): void {
+    let one: i32 = 65536
+    // a large error with a high gain would be about 1,150,000 unclamped
+    let out: i32 = pidStep(32000, -32000, 16 * one, one, one, 0, 0, -1000, 1000)
+    assertEq(out, 1000)
+    let low: i32 = pidStep(-32000, 32000, 16 * one, one, one, 0, 0, -1000, 1000)
+    let floor: i32 = -1000
+    assertEq(low, floor)
+}
+
+@req(LLR-2)
+fn testIntegralDoesNotWindUp(): void {
+    var integral: i32 = 0
+    for tick in 0..6000 {
+        integral = nextIntegral(integral, 65534)
+    }
+    assertEq(integral, 1000000)
+}
+
+@req(LLR-3)
+fn testInputClampedToSensorRange(): void {
+    let hi: i32 = 32767
+    let lo: i32 = -32767
+    assertEq(clampInput(2000000000), hi)
+    assertEq(clampInput(-2000000000), lo)
+    assertEq(clampInput(12), 12)
+}

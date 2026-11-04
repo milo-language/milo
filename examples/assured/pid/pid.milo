@@ -1,0 +1,105 @@
+// Integer fixed-point PID with requirements traceability (see README.md).
+//
+// Based on examples/embedded/pidStep.milo. `milo prove --rte` on the original found that
+// pidStep overflows for unbounded inputs; that finding is requirement LLR-3 here, written as
+// a `requires` clause so every caller must prove it.
+//
+//   milo trace examples/assured/pid/pid.milo --solver=z3
+
+// Q16.16: integer value n represents the real number n / 65536.
+pub let FP_SHIFT: i32 = 16
+
+@req(LLR-3)
+pub fn fpMul(a: i32, b: i32): i32
+@req(LLR-3)
+requires a >= -1048576 && a <= 1048576
+@req(LLR-3)
+requires b >= -2000000 && b <= 2000000
+@req(LLR-3)
+ensures result >= -33000000 && result <= 33000000
+{
+    // (a/2^16)*(b/2^16) = (a*b)/2^16, kept in 64-bit to avoid overflow midway.
+    let wide: i64 = (a as i64) * (b as i64)
+    return (wide >> 16) as i32
+}
+
+@req(LLR-1)
+pub fn clampI32(v: i32, lo: i32, hi: i32): i32
+requires lo <= hi
+@req(LLR-1)
+ensures result >= lo && result <= hi
+{
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+// One PID step. All gains and signals are Q16.16; `integral` is the running sum carried
+// between ticks.
+@req(LLR-1)
+pub fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32, integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
+@req(LLR-3)
+requires setpoint >= -32767 && setpoint <= 32767
+@req(LLR-3)
+requires measured >= -32767 && measured <= 32767
+@req(LLR-3)
+requires prevError >= -65534 && prevError <= 65534
+@req(LLR-3)
+requires kp >= -1048576 && kp <= 1048576 && ki >= -1048576 && ki <= 1048576 && kd >= -1048576 && kd <= 1048576
+@req(LLR-2)
+requires integral >= -1000000 && integral <= 1000000
+requires outLo <= outHi
+@req(LLR-1)
+ensures result >= outLo && result <= outHi
+{
+    let error: i32 = setpoint - measured
+    let newIntegral: i32 = integral + error
+    let derivative: i32 = error - prevError
+
+    let p: i32 = fpMul(kp, error)
+    let i: i32 = fpMul(ki, newIntegral)
+    let d: i32 = fpMul(kd, derivative)
+
+    let raw: i32 = p + i + d
+    return clampI32(raw, outLo, outHi)
+}
+
+// The integral after one tick: add the error, then clamp (anti-windup).
+@req(LLR-2)
+pub fn nextIntegral(integral: i32, error: i32): i32
+requires integral >= -1000000 && integral <= 1000000
+requires error >= -65534 && error <= 65534
+@req(LLR-2)
+ensures result >= -1000000 && result <= 1000000
+{
+    return clampI32(integral + (error >> 8), -1000000, 1000000)
+}
+
+@derived(LLR-3)
+pub fn clampInput(raw: i32): i32
+ensures result >= -32767 && result <= 32767
+{
+    return clampI32(raw, -32767, 32767)
+}
+
+// One control tick from a raw sensor reading. The reading is clamped to the sensor range
+// first, which is how this caller discharges pidStep's LLR-3 obligation.
+@req(HLR-1)
+pub fn controlTick(rawSensor: i32, integral: i32, prevError: i32): i32
+@req(LLR-2)
+requires integral >= -1000000 && integral <= 1000000
+requires prevError >= -65534 && prevError <= 65534
+{
+    let one: i32 = 65536
+    return pidStep(100, clampInput(rawSensor), one / 2, one / 100, one / 10, integral, prevError, 0, 255 * one)
+}
+
+@req(HLR-1)
+pub fn main(): i32 {
+    let out: i32 = controlTick(1200, 0, 0)
+    return out >> 16
+}

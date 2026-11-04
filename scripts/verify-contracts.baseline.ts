@@ -10,6 +10,10 @@
 //
 // Key format: "<repo-relative-file>::<function>".
 export const BASELINE: Record<string, string> = {
+  "examples/assured/pid/pid_bad_caller.milo::controlTickUnclamped":
+    "the planted mistake in the requirements demo: the caller hands pidStep a raw sensor " +
+    "value, violating its LLR-3 `requires`. The refutation IS the demo (the matrix shows a " +
+    "FAILED call site); pid.milo's controlTick is the fixed version and proves clean.",
   "std/mem.milo::Bump.remaining":
     "bumpRemaining requires `used <= cap` and ensures `result >= 0`. That's a true " +
     "Bump invariant — every constructor/alloc maintains used <= cap — but the caller " +
