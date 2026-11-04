@@ -34,8 +34,8 @@ test("typeSize agrees with the emitted type for %String, %Vec and %HashMap", () 
     const src = join(dir, "agg.milo");
     writeFileSync(src, [
       "pub fn main(): i32 {",
-      '    var s: string = "x"',
-      "    var v: Vec<i64> = [1]",
+      '    let s: string = "x"',
+      "    let v: Vec<i64> = [1]",
       "    var m: HashMap<string, i64> = HashMap.new()",
       '    m.insert("k", 1)',
       "    print(s.len + v.len + m.len)",

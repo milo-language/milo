@@ -173,7 +173,7 @@ function genCase(seed: number): { src: string; expect: string[] } {
       const m = 1 + Math.floor(rnd() * 4);
       const vals: number[] = [];
       for (let i = 0; i < m; i++) vals.push(nextVal++);
-      body.push(`    var ext${op}: Vec<${ELEM}> = [${vals.map(lit).join(", ")}]`);
+      body.push(`    let ext${op}: Vec<${ELEM}> = [${vals.map(lit).join(", ")}]`);
       body.push(`    v.extend(ext${op})`);
       model.push(...vals);
     } else if (kind === "get") {

@@ -47,13 +47,13 @@ from "std/runtime" import { Task }
 from "std/io" import { print }
 
 fn main() {
-    var ln = TcpListener.bind(0)!
+    let ln = TcpListener.bind(0)!
     let port = ln.port() as u16
     let t = Task.spawn(move(): void => {
-        var c = TcpStream.connect(ip4(127, 0, 0, 1), port)!
+        let c = TcpStream.connect(ip4(127, 0, 0, 1), port)!
         let _ = c.send("hi")
     })
-    var _conn = ln.accept()!
+    let _conn = ln.accept()!
     print("accepted")
     t.join()
 }

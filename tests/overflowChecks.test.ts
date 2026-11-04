@@ -27,7 +27,7 @@ const SRC = `fn main(): i32 {
 `;
 
 const SUM_SRC = `fn main(): i32 {
-    var values: Vec<i64> = [9223372036854775807, 1]
+    let values: Vec<i64> = [9223372036854775807, 1]
     print(values.sum())
     return 0
 }

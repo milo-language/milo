@@ -242,7 +242,9 @@ test("every probeable signature's return type matches what the checker infers", 
       const call = m.sig.startsWith(":") ? `r.${m.name}` : `r.${m.name}(${args.join(", ")})`;
       const body = parsed.ret === null ? call : `let _x: ${subst(parsed.ret)} = ${call}`;
       const decl = override?.decl ?? RECEIVER_DECL[recv];
-      const errs = errorsOf(`fn main() {\n  ${decl}\n  unsafe { ${body} }\n}`);
+      // The receiver is a `var` so mutating members probe too; the never-reassigned
+      // lint on read-only ones says nothing about the signature.
+      const errs = errorsOf(`fn main() {\n  ${decl}\n  unsafe { ${body} }\n}`).filter(e => !e.includes("is never reassigned"));
       if (errs.length > 0) wrong.push(`${recv}.${m.name} (${m.sig}): ${errs[0]}`);
     }
   }

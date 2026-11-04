@@ -23,7 +23,7 @@ fn sum(b: Big): i64 {
 }
 fn main() {
     var values = [Big { data: [1; 256] }, Big { data: [2; 256] }]
-    var i: i64 = 0
+    let i: i64 = 0
     var j: i64 = 0
     swap(values[i], values[j])
     print(sum(values[0]))

@@ -14,8 +14,8 @@ const WORK = mkdtempSync(join(tmpdir(), "milo-letview-"));
 afterAll(() => rmSync(WORK, { recursive: true, force: true }));
 
 // The IR of `use` alone: the copy, if any, is a call to the element type's clone.
-function useBody(body: string): string {
-  const src = `struct Mark {\n    name: string,\n    tags: Vec<string>,\n}\n\nfn use(v: &mut Vec<Mark>): i64 {\n${body}\n}\n\nfn main() {\n    var v: Vec<Mark> = [Mark { name: "a", tags: ["x"] }]\n    print(use(&mut v))\n}\n`;
+function useBody(body: string, mut = true): string {
+  const src = `struct Mark {\n    name: string,\n    tags: Vec<string>,\n}\n\nfn use(v: ${mut ? "&mut " : "&"}Vec<Mark>): i64 {\n${body}\n}\n\nfn main() {\n    ${mut ? "var" : "let"} v: Vec<Mark> = [Mark { name: "a", tags: ["x"] }]\n    print(use(${mut ? "&mut v" : "v"}))\n}\n`;
   const f = join(WORK, `t${Math.random().toString(36).slice(2)}.milo`);
   writeFileSync(f, src);
   const out = `${f}.ll`;
@@ -28,7 +28,8 @@ function useBody(body: string): string {
 }
 
 test("a read-only binding of an unwritten container calls no clone", () => {
-  const ir = useBody(`    let m = v[0]\n    return m.name.len + m.tags.len`);
+  // `&`, not `&mut`: a param that is never written through is a hard error (unwritten-mut-param)
+  const ir = useBody(`    let m = v[0]\n    return m.name.len + m.tags.len`, false);
   expect(ir).not.toMatch(/clone/i);
 });
 

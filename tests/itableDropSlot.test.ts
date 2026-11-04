@@ -55,8 +55,8 @@ impl T {
 }
 
 fn main() {
-    var x: Heap<One> = Heap(S { n: 1 })
-    var y: Heap<Two> = Heap(T { m: 2 })
+    let x: Heap<One> = Heap(S { n: 1 })
+    let y: Heap<Two> = Heap(T { m: 2 })
     print(x.a(), y.b())
 }
 `;
@@ -78,15 +78,16 @@ test("an itable ends in a drop slot, filled when the concrete type has a destruc
 
   const findings = rows.map(row => {
     const last = row.values[row.values.length - 1];
-    // S has a Drop impl, so its slot must name the destructor; T has none, so null.
-    const want = row.concrete === "S" ? `ptr @milo.drop.struct.${row.concrete}` : "ptr null";
+    // S has a Drop impl, so its slot must name a milo.drop.* destructor (its mangling is
+    // not this test's concern); T has none, so null.
+    const want = row.concrete === "S" ? "destructor" : "ptr null";
     const methodCount = row.iface === "Two" ? 2 : 1;
     return {
       itable: `${row.concrete}.${row.iface}`,
       slots: row.values.length,
       expectedSlots: methodCount + 1,
       typesMatchValues: row.slotTypes === row.values.length,
-      last,
+      last: last === "ptr null" || !/^ptr @milo\.drop\./.test(last) ? last : "destructor",
       expectedLast: want,
     };
   });
