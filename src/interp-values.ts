@@ -1,4 +1,4 @@
-// Reference interpreter, values and state: the shapes docs/semantics/mini-milo.md §2 calls
+// Reference interpreter, values and state: the shapes docs/semantics/milo.md §2 calls
 // slots, places and values, plus the errors the interpreter raises. No rules live here.
 //
 // Representation choices (the spec leaves them open):

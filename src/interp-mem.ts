@@ -1,5 +1,5 @@
 // Reference interpreter, raw memory: the byte-level model behind `malloc`, `.ptr()`, `.addrOf()`,
-// `string.cstr()` and every `*T` load and store (docs/semantics/mini-milo.md §5, R-MEM-*).
+// `string.cstr()` and every `*T` load and store (docs/semantics/milo.md §5, R-MEM-*).
 //
 // A raw pointer is {allocation, offset}. An allocation is a byte array (malloc) or a byte *view*
 // of a value the interpreter keeps structured (a Vec buffer, a fixed array, a variable): the view

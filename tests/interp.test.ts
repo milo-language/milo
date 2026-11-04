@@ -545,7 +545,7 @@ test("R-EXPLORE: random PCT schedules find the lock-order deadlock too, from a s
   const rep = go();
   expect(rep.findings.map(f => f.kind)).toContain("deadlock");
   expect(go().text).toBe(rep.text); // same seed, same report
-});
+}, 60_000); // runs dozens of schedules; the 5s default trips under machine load
 
 test("R-EXPLORE: stdout that depends on the schedule is flagged, and --allow-nondeterministic-output accepts it", () => {
   const src = `

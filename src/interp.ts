@@ -1,6 +1,6 @@
 // Reference interpreter: runs the merged AST directly, using only the checker's facts
 // (CheckResult: expression types, resolved callees, borrow and move marks), never src/lower.ts
-// or the HIR. One function per rule of docs/semantics/mini-milo.md; comments cite the rule
+// or the HIR. One function per rule of docs/semantics/milo.md; comments cite the rule
 // ID. It is small and slow on purpose: no caching, no fast paths. A difference from a compiled
 // binary is a compiler bug or a wrong rule; a program no rule applies to is InterpStuck,
 // named after the rule it broke. Library behaviour (strings, Vec, printing) is in

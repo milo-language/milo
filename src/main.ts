@@ -2248,7 +2248,7 @@ async function main() {
   } else if (cmd === "emit-hir") {
     emitHir(source!, output, target, emitAll, emitSpans, warningConfig);
   } else if (cmd === "interp") {
-    // --explore / --schedule: R-EXPLORE-* in docs/semantics/mini-milo.md section 5
+    // --explore / --schedule: R-EXPLORE-* in docs/semantics/milo.md section 5
     // The reference interpreter (src/interp.ts): runs the typed HIR, no codegen. Exit 3 means
     // the program uses something it does not model; exit 4 means a rule did not apply (stuck).
     let code = 0;

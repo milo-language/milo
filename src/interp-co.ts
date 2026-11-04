@@ -1,4 +1,4 @@
-// Reference interpreter with tasks: green tasks, a scheduler and the rules of docs/semantics/mini-milo.md
+// Reference interpreter with tasks: green tasks, a scheduler and the rules of docs/semantics/milo.md
 // section 5 (R-TASK-*). Each task is a generator running the interpreter's generator twins
 // (src/interp-gen.ts, generated from src/interp.ts), so it can stop in the middle of an expression
 // and be resumed later; a task has its own frames, temporaries and pending operands, swapped in when

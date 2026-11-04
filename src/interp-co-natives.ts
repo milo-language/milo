@@ -1,7 +1,7 @@
 // Reference interpreter, tasks and synchronization: the library's Task, TaskScope, Channel, WaitGroup,
 // Once and atomics, replaced by natives because std/runtime.milo and std/sync.milo keep them in raw
 // memory under pthread locks and swapcontext. Rules R-TASK-*, R-CHAN-*, R-WG, R-ONCE, R-ATOMIC in
-// docs/semantics/mini-milo.md section 5.
+// docs/semantics/milo.md section 5.
 //
 // A native that can park its task is a generator (`co`): the task interpreter (src/interp-co.ts) runs
 // it on the task's own stack of frames and it `yield`s to hand control back to the scheduler.

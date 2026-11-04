@@ -207,7 +207,7 @@ The order, each step building on the last:
    is one function for this reason), then proved by inductive invariants where it matters.
    The exploration exists: `milo interp --explore` finds deadlocks, panics, assertion and
    contract failures and output differences, with replayable schedules (R-EXPLORE-* in
-   [semantics/mini-milo.md](semantics/mini-milo.md)); checking `always`/`eventually` on top of it is next.
+   [semantics/milo.md](semantics/milo.md)); checking `always`/`eventually` on top of it is next.
 5. **Spec lock.** For each changed contract, the solver checks whether the new one only
    strengthens the old (old `requires` implies new, new `ensures` implies old). A strengthening
    merges on its own; a weakening needs a human. `milo spec --diff <base>` prints the intent

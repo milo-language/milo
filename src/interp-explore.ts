@@ -1,6 +1,6 @@
 // `milo interp --explore`: run a program under many schedules of its green tasks and report the ones that
 // deadlock, panic, fail an assert or contract, or print something other than the default (FIFO) run.
-// Rules R-EXPLORE-* in docs/semantics/mini-milo.md section 5.
+// Rules R-EXPLORE-* in docs/semantics/milo.md section 5.
 //
 // Each schedule is a fresh run of the program (runs are deterministic, so re-running is the simple way to
 // get a state back). A schedule is the list of indices taken at the choice points, the pickNext calls with
