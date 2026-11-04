@@ -37,6 +37,21 @@ describe("trace-object", () => {
     expect(t.coveredBytes).toBe(t.totalBytes);
   });
 
+  test("a host build's compiler-generated Eq/Clone glue has the line of its type, and the pid trace is 100% covered", () => {
+    const bin = join(dir, "pid-host");
+    expect(milo(["build", join(ROOT, "examples", "assured", "pid", "pid.milo"), "-g", "--debug", "-o", bin]).code).toBe(0);
+    const r = milo(["trace-object", bin, "--strict", "--json"]);
+    expect(r.code).toBe(0);
+    const t = JSON.parse(r.out);
+    expect(t.untraced).toEqual([]);
+    expect(t.coveredBytes).toBe(t.totalBytes);
+    // the glue is in the binary (prelude's ErrorMessage and Unit) and every range has a line
+    const glue = t.functions.filter((f: any) => /\$(Eq\$eq|Clone\$clone)$/.test(f.name));
+    expect(glue.map((f: any) => f.name)).toContain("ErrorMessage$Eq$eq");
+    expect(glue.map((f: any) => f.name)).toContain("ErrorMessage$Clone$clone");
+    for (const f of glue) expect(f.ranges.every((x: any) => x.line > 0 && x.file.endsWith("prelude.milo"))).toBe(true);
+  });
+
   test("`milo trace --object` lists the address ranges under each requirement", () => {
     const bin = join(dir, "table-trace.elf");
     expect(milo(["build", SRC, "--target=cortex-m3", "-g", "--debug", "-o", bin]).code).toBe(0);

@@ -275,6 +275,10 @@ export class DeriveSynth {
   stampOrigin(impl: ImplDecl, s: StructDecl | EnumDecl): ImplDecl {
     const file = s.span?.file;
     if (file) for (const m of impl.methods) m.sourceFile ??= file;
+    // The file alone gives DWARF a subprogram but no line, and code on line 0 is code no
+    // requirement or rule can claim (`milo trace-object`). The type that produced the glue is
+    // the line it answers to, as a macro expansion's is its call site.
+    if (s.span) for (const m of impl.methods) m.span ??= { ...s.span };
     return impl;
   }
 

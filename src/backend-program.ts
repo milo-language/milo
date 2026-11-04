@@ -203,7 +203,8 @@ function externDecl(fn: AstFn, fx: Facts): FnDecl {
 
 function fnDecl(fn: AstFn, fx: Facts, replayFns: Set<string>): FnDecl {
   const sig = fx.c.functions.get(fn.name);
-  const line = fn.body.map(s => s.span?.line).find(x => x !== undefined);
+  // A synthesized fn (derive glue) has no body spans; its span is the type that produced it.
+  const line = fn.body.map(s => s.span?.line).find(x => x !== undefined) ?? fn.span?.line;
   return {
     name: fn.name,
     params: fn.params.map((p, i) => fx.param(p, sig?.params[i]?.type)),
