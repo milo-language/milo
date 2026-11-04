@@ -6,7 +6,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { resolveImports } from "./resolver";
 import { TypeChecker } from "./checker";
-import { Interp } from "./interp";
+import { runChecked } from "./interp-co";
 import { InterpStuck, InterpUnsupported } from "./interp-values";
 import { ParseError, type Diagnostic } from "./diagnostics";
 import { resolveTarget } from "./target";
@@ -38,13 +38,12 @@ export function run(source: string): PlaygroundResult {
   }
   for (const d of result.diagnostics) diagnostics.push(flat(d));
   if (result.diagnostics.some(d => d.severity === "error")) return fail(1);
-  const it = new Interp(program, result);
   const dec = new TextDecoder();
   try {
-    const r = it.run();
+    const r = runChecked(program, result).result;
     return { stdout: dec.decode(r.stdout), stderr: r.stderr, exitCode: r.code, diagnostics };
   } catch (e) {
-    const stdout = dec.decode(Uint8Array.from(it.out));
+    const stdout = dec.decode(Uint8Array.from((e as { interp?: { out: number[] } }).interp?.out ?? []));
     if (e instanceof InterpUnsupported || e instanceof InterpStuck) {
       return { stdout, stderr: e.message, exitCode: e instanceof InterpUnsupported ? 3 : 4, diagnostics };
     }

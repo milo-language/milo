@@ -10,26 +10,28 @@
 // checker's instantiation is callee resolution: a call to `foo<T>` runs the body the checker
 // resolved it to (CheckResult.rewrittenCalls / resolvedMethods), which is its callee lookup, not a
 // monomorphization of this interpreter.
-import type { Expr, Function as AstFn, Pattern, Program, Stmt } from "./ast";
+import type { Contract, Expr, Function as AstFn, Pattern, Program, Stmt } from "./ast";
+import { relative } from "path";
 import { declaredType, floatNamespaceConst, patternLeafNames } from "./ast";
 import type { CheckResult } from "./checker";
 import type { TypeKind } from "./types";
 import {
-  ExitProgram, InterpStuck, type MapV, InterpUnsupported, MOVED, Panic, staticStr,
+  ExitProgram, InterpStuck, type MapV, InterpUnsupported, MOVED, NeedTasks, Panic, staticStr,
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
-import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, numberToString, sliceView } from "./interp-natives";
+import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, numberToString, sliceView, type Native } from "./interp-natives";
 
-type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
+export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
 // Control flow raised from expression position (`?`, a diverging if/match arm): caught by the
 // statement that contains the expression and turned back into a Completion.
-class Unwind { constructor(public c: NonNullable<Completion>) {} }
-interface Frame { scopes: { name: string; slot: Slot }[][]; fn: AstFn | null; ret: TypeKind }
-type Scope = { name: string; slot: Slot }[];
-type CallE = Expr & { kind: "Call" };
-type MethodE = Expr & { kind: "MethodCall" };
+export class Unwind { constructor(public c: NonNullable<Completion>) {} }
+export interface Frame { scopes: { name: string; slot: Slot }[][]; fn: AstFn | null; ret: TypeKind; olds?: Map<Expr, Value> }
+export type ChainStep = { ran: boolean; c: Completion };
+export type Scope = { name: string; slot: Slot }[];
+export type CallE = Expr & { kind: "Call" };
+export type MethodE = Expr & { kind: "MethodCall" };
 
-const strip = (t: TypeKind | undefined): TypeKind => (!t ? { tag: "unknown" } : t.tag === "ref" ? strip(t.inner) : t);
+export const strip = (t: TypeKind | undefined): TypeKind => (!t ? { tag: "unknown" } : t.tag === "ref" ? strip(t.inner) : t);
 
 export interface RunResult { stdout: Uint8Array; stderr: string; code: number; live: number | null }
 
@@ -39,7 +41,7 @@ export class Interp {
   frames: Frame[] = [];
   temps: Slot[] = [];
   blocks = new Set<number>();
-  private nextId = 1;
+  nextId = 1;
   out: number[] = [];
   err: number[] = [];
   aborted = false; // a panic or exit does not unwind: no drops run, no live count
@@ -69,17 +71,20 @@ export class Interp {
       };
       for (const f of this.fns.values()) walk(f.body);
       for (const g of this.prog.globals) if (this.cr.nonConstGlobals.includes(g.name) && !mentioned.has(g.name)) this.globalSlot(g.name);
-      const r = this.callFn(main, []);
+      const r = this.runMain(main);
       if (typeof r === "bigint") code = Number(BigInt.asUintN(8, r));
     } catch (e) {
       this.aborted = true;
       if (e instanceof ExitProgram) code = e.code;
       else if (e instanceof Panic) { this.err.push(...new TextEncoder().encode(e.message + "\n")); code = 134; }
+      else if (e instanceof RangeError && /call stack/i.test(e.message)) throw new InterpUnsupported("host stack exhausted (very deep recursion)");
       else throw e;
     }
     return { stdout: Uint8Array.from(this.out), stderr: new TextDecoder().decode(Uint8Array.from(this.err)), code, live: code === 134 ? null : this.blocks.size };
   }
 
+  // The program's entry. The task interpreter (src/interp-co.ts) overrides it to run main as the first task.
+  runMain(main: AstFn): Value { return this.callFn(main, []); }
   panic(msg: string): never { this.aborted = true; throw new Panic(msg); }
   stuck(rule: string, detail: string): never { throw new InterpStuck(rule, detail); }
   unsupported(what: string): never { throw new InterpUnsupported(what); }
@@ -166,7 +171,7 @@ export class Interp {
   // drop(v): user Drop first, then fields last-first (spec §2 Drops).
   dropValue(v: Value): void {
     if (v === undefined || typeof v !== "object" || v === MOVED) return;
-    if ((v.k === "struct" || v.k === "enum" || v.k === "box") && v.ghost) return;
+    if ((v.k === "struct" || v.k === "enum" || v.k === "box" || v.k === "handle") && v.ghost) return;
     switch (v.k) {
       case "str": if (v.b.id >= 0 && --v.b.rc === 0) this.free(v.b.id); return;
       case "struct": {
@@ -194,10 +199,11 @@ export class Interp {
         if (v.buf !== null) this.free(v.buf);
         return;
       case "closure": if (v.owning) for (const c of v.env) if (!isRef(c.slot.v)) this.dropValue(c.slot.v); return;
+      case "handle": v.o.release(this); return;
       default: return;
     }
   }
-  private userDrop(typeName: string, v: Struct | EnumV): void {
+  userDrop(typeName: string, v: Struct | EnumV): void {
     const fn = this.fns.get(this.concreteMethodFn(typeName, "drop"));
     if (!fn) this.stuck("S-DROP", `no drop for ${typeName}`);
     this.callFn(fn, [{ k: "mut", slot: { v }, path: [] }]);
@@ -233,6 +239,7 @@ export class Interp {
         case "Ident": return this.resolveIdent(e.name);
         case "FieldAccess": { const b = this.resolve(e.object); return { ...b, path: [...b.path, e.field] }; }
         case "IndexAccess": {
+          if (this.T(e.object).tag === "ptr") return this.unsupported("raw pointer indexing");
           const b = this.resolve(e.object);
           const i = this.ev(e.index) as bigint;
           const n = this.seqLen(this.getPlace(b));
@@ -251,7 +258,7 @@ export class Interp {
     }
     return this.stuck("T-INDEX", "index into something that is not a Vec or array");
   }
-  private child(cur: Value, step: Step): { get(): Value; set(v: Value): void } {
+  child(cur: Value, step: Step): { get(): Value; set(v: Value): void } {
     if (cur === MOVED) this.stuck("E-STUCK", "read through a moved value");
     if (cur && typeof cur === "object") {
       if (cur.k === "struct") return { get: () => cur.f[step as string]!, set: v => { cur.f[step as string] = v; } };
@@ -377,6 +384,7 @@ export class Interp {
       case "arr": return { k: "arr", e: v.e.map(x => this.viewOf(x)) };
       case "box": return { ...v, ghost: true };
       case "map": return { ...v, view: true };
+      case "handle": return { ...v, ghost: true };
       default: return v;
     }
   }
@@ -427,13 +435,56 @@ export class Interp {
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
       fn.params.forEach((p, i) => this.declare(p.name, args[i]!));
+      const checked = this.contractChecks && !!fn.contracts?.length;
+      if (checked) this.enterContracts(fn);
       const c = this.runStmts(fn.body);
-      return c && c.k === "return" ? c.v : undefined;
+      const v = c && c.k === "return" ? c.v : undefined;
+      if (checked) this.exitContracts(fn, v);
+      return v;
     } finally {
       this.depth--;
       const f = this.frames.pop()!;
       for (let i = f.scopes.length - 1; i >= 0; i--) this.dropScope(f.scopes[i]!);
     }
+  }
+  // R-CONTRACT-ENTRY: the old(...) snapshots of the ensures clauses, then every requires clause, before the body runs.
+  enterContracts(fn: AstFn): void {
+    const calls: (Expr & { kind: "Call" })[] = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+      const o = n as { kind?: string; func?: string; args?: Expr[] };
+      if (o.kind === "Call" && o.func === "old" && o.args?.length === 1) calls.push(n as Expr & { kind: "Call" });
+      for (const [k, v] of Object.entries(n)) if (k !== "span") walk(v);
+    };
+    for (const c of fn.contracts) if (c.kind === "ensures") walk(c.expr);
+    const olds = new Map<Expr, Value>();
+    for (const o of calls) olds.set(o, this.share(this.ev(o.args[0]!), "old"));
+    this.frame.olds = olds;
+    for (const c of fn.contracts) if (c.kind === "requires") this.checkClause(c);
+  }
+  // R-CONTRACT-EXIT: at every return, with `result` naming the value being returned, before the frame's variables drop.
+  exitContracts(fn: AstFn, v: Value): void {
+    const scope: Scope = [];
+    this.frame.scopes.push(scope);
+    try {
+      if (v !== undefined) this.declare("result", this.viewOf(v), scope);
+      for (const c of fn.contracts) if (c.kind === "ensures") this.checkClause(c);
+    } finally { this.frame.scopes.pop(); }
+  }
+  // R-CONTRACT-LOOP: a while loop's invariants are checked before its condition each time (so on exit too); a for loop's at the top of each iteration.
+  checkInvariants(invs: Contract[] | undefined): void {
+    if (!this.contractChecks) return;
+    for (const c of invs ?? []) if (c.kind === "invariant") this.checkClause(c);
+  }
+  checkClause(c: Contract): void {
+    const mark = this.temps.length;
+    const holds = this.peek(c.expr) === true;
+    this.dropTemps(mark);
+    if (holds) return;
+    const file = c.span?.file ?? this.entryFile;
+    const shown = file && !file.startsWith("/") ? file : relative(process.cwd(), file);
+    this.panic(`runtime error: ${c.kind} clause violated at ${shown.startsWith("..") ? file : shown}:${c.span?.line ?? 0}`);
   }
   callClosure(c: ClosureV, args: Value[]): Value {
     if (++this.depth > 3000) this.panic("stack overflow");
@@ -470,7 +521,18 @@ export class Interp {
   evalArgs(args: Expr[], flags?: { isRef: boolean; isRefMut: boolean }[], offset = 0): Value[] {
     const places: { slot: Slot; path: Step[]; mut: boolean }[] = [];
     const pm = this.pend.length;
-    const out = args.map((raw, i) => {
+    const out: Value[] = [];
+    for (let i = 0; i < args.length; i++) out.push(this.evalArg(args[i]!, i, flags, offset, places));
+    this.settle(pm);
+    // [T-EXCL] a place passed &mut overlaps no other reference argument
+    for (let i = 0; i < places.length; i++) for (let j = i + 1; j < places.length; j++) {
+      const a = places[i]!, b = places[j]!;
+      if ((a.mut || b.mut) && a.slot === b.slot && prefixOf(a.path, b.path)) this.stuck("T-EXCL", "a &mut argument overlaps another argument");
+    }
+    return out;
+  }
+  evalArg(raw: Expr, i: number, flags: { isRef: boolean; isRefMut: boolean }[] | undefined, offset: number, places: { slot: Slot; path: Step[]; mut: boolean }[]): Value {
+    {
       const a = raw.kind === "UnaryOp" && raw.op === "&mut" ? raw.operand : raw; // a call-site marker only
       const f = flags?.[i + offset];
       const mark = this.cr.autoBorrowed.get(raw);
@@ -491,20 +553,13 @@ export class Interp {
         return { k: "ref", slot: this.tempOwn(view), path: [] } as Ref;
       }
       return this.refTo(pl, mut);
-    });
-    this.settle(pm);
-    // [T-EXCL] a place passed &mut overlaps no other reference argument
-    for (let i = 0; i < places.length; i++) for (let j = i + 1; j < places.length; j++) {
-      const a = places[i]!, b = places[j]!;
-      if ((a.mut || b.mut) && a.slot === b.slot && prefixOf(a.path, b.path)) this.stuck("T-EXCL", "a &mut argument overlaps another argument");
     }
-    return out;
   }
 
   // [S-PENDING] an owned operand evaluated before its siblings is held as a temporary until the op
   // takes all of them (settle); a return/break/`?` out of a later operand drops it, last first.
   pending(v: Value): Value { this.pend.push(this.tempOwn(v)); return v; }
-  private pend: Slot[] = [];
+  pend: Slot[] = [];
   settle(mark: number): void { while (this.pend.length > mark) this.pend.pop()!.v = MOVED; }
 
   // ── expressions ──
@@ -519,12 +574,12 @@ export class Interp {
     }
     return this.checked(e, this.evRaw(e));
   }
-  private checked(e: Expr, v: Value): Value {
+  checked(e: Expr, v: Value): Value {
     const rc = this.cr.rangeCheckedExprs.get(e);
     if (rc && typeof v === "bigint" && (v < BigInt(rc.min) || v > BigInt(rc.max))) this.panic(`${rc.typeName} out of range`);
     return v;
   }
-  private evRaw(e: Expr): Value {
+  evRaw(e: Expr): Value {
     if (this.cr.sharedStringExprs.has(e) && this.isPlaceExpr(e)) { // a second handle to a counted buffer
       return this.share(this.peek(e), describeExpr(e));
     }
@@ -574,6 +629,7 @@ export class Interp {
   }
   index(e: Expr & { kind: "IndexAccess" }): Value {
     const ot = this.T(e.object);
+    if (ot.tag === "ptr") return this.unsupported("raw pointer indexing");
     if (ot.tag === "string") { // a byte of a string
       const s = this.peek(e.object) as Str, i = this.ev(e.index) as bigint;
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
@@ -608,7 +664,8 @@ export class Interp {
   }
   arrayLit(e: Expr & { kind: "ArrayLit" }): Value {
     const pm = this.pend.length;
-    const xs = e.elements.map(x => this.pending(this.ev(x)));
+    const xs: Value[] = [];
+    for (const x of e.elements) xs.push(this.pending(this.ev(x)));
     this.settle(pm);
     const t = this.T(e);
     if (t.tag === "array" && !this.cr.arrayToVecCoercions.has(e)) return { k: "arr", e: xs };
@@ -634,7 +691,7 @@ export class Interp {
     }
     if (ctor) {
       const sig = this.cr.functions.get(ctor);
-      return this.callResolved(ctor, e.args, undefined, sig);
+      return this.callResolved(ctor, e.args, e, sig);
     }
     const reprInfo = this.cr.enums.get(e.enumName);
     if (e.variant === "tryFrom" && reprInfo?.reprType && type.tag === "enum") {
@@ -644,7 +701,8 @@ export class Interp {
     }
     const enumName = this.cr.rewrittenEnums.get(e) ?? e.enumName;
     const pm = this.pend.length;
-    const args = e.args.map(a => this.pending(this.ev(a)));
+    const args: Value[] = [];
+    for (const a of e.args) args.push(this.pending(this.ev(a)));
     this.settle(pm);
     return this.mkEnum(enumName, e.variant, args);
   }
@@ -766,6 +824,8 @@ export class Interp {
       if (typeof x === "number") return to.bits === 32 ? Math.fround(x) : x;
     }
     if (to.tag === "bool" && typeof v === "boolean") return v;
+    // R-PTR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
+    if (to.tag === "ptr" && (isRef(v) || typeof v === "bigint")) return v;
     if (to.tag === "string" && isStr(v)) return this.share(v, "cast");
     return this.unsupported(`cast ${from.tag} -> ${to.tag}`);
   }
@@ -938,6 +998,7 @@ export class Interp {
       case "forget": if (!shadow("forget")) { this.ev(e.args[0]!); return undefined; } break; // the move is recorded on the operand
       case "replace": if (!shadow("replace")) return this.memReplace(e.args[0]!, this.ev(e.args[1]!)); break;
       case "swap": if (!shadow("swap")) return this.memSwap(e.args[0]!, e.args[1]!); break;
+      case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
@@ -958,15 +1019,34 @@ export class Interp {
   callResolved(name: string, args: Expr[], e?: Expr, sig?: unknown, recv?: Expr): Value {
     const fn = this.fns.get(name);
     const all = recv ? [recv, ...args] : args;
-    const nat = nativeFor(normName(name));
+    const nat = this.lookupNative(normName(name));
     const flags = fn ? this.paramFlags(fn) : undefined;
     if (!nat && !fn) return this.unsupported(`call of ${name}`);
     const mark = this.temps.length;
     const argv = this.evalArgs(all, flags);
-    const r = nat ? nat(this, argv, e) : this.callFn(fn!, argv);
+    const r = nat ? this.runNative(nat, argv, e) : this.callFn(fn!, argv);
     this.dropTemps(mark, true);
     return r;
   }
+  lookupNative(name: string): Native | undefined { return nativeFor(name); }
+  // The one place a native runs. A task operation (nat.co, src/interp-co-natives.ts) is a
+  // generator that yields to the scheduler; only the task interpreter can run one.
+  runNative(nat: Native, args: Value[], e?: Expr): Value {
+    if (!nat.co) return nat(this, args, e);
+    // a task operation needs the scheduler: from the plain interpreter, ask for a rerun with tasks
+    if (!this.coMode) throw new NeedTasks();
+    // Reached from plain code (a global's initializer, a closure a library call runs): it can run only
+    // as far as it goes without parking.
+    const r = nat(this, args, e) as Value | Generator<unknown, Value, unknown>;
+    if (!r || typeof r !== "object" || typeof (r as { next?: unknown }).next !== "function") return r as Value;
+    const step = (r as Generator<unknown, Value, unknown>).next();
+    if (!step.done) return this.unsupported("a task parking inside a global initializer or a library callback");
+    return step.value;
+  }
+  coMode = false;
+  // R-CONTRACT: requires / ensures / loop invariants are checked only when asked, as a debug build checks them
+  contractChecks = false;
+  entryFile = "";
 
   methodCall(e: MethodE): Value {
     const ot0 = this.rawT(e.object);
@@ -1015,13 +1095,16 @@ export class Interp {
     try { return this.runStmts(stmts); }
     finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
+  runBlockIf(stmts: Stmt[] | undefined): Completion {
+    return stmts ? this.runBlock(stmts) : undefined;
+  }
   runStmt(s: Stmt): Completion {
     const mark = this.temps.length;
     try { return this.exec(s); }
     catch (u) { if (u instanceof Unwind) return u.c; throw u; }
     finally { this.dropTemps(mark); }
   }
-  private cond(e: Expr): boolean {
+  cond(e: Expr): boolean {
     const mark = this.temps.length;
     const c = this.peek(e) === true;
     this.dropTemps(mark);
@@ -1040,7 +1123,7 @@ export class Interp {
       case "MatchStmt": return this.matchCore(s.subject, s.arms.map(a => ({ pattern: a.pattern, run: () => this.runBlock(a.body) })));
       case "IfLetStmt": return this.matchCore<Completion>(s.subject, [
         { pattern: s.pattern, run: () => this.runBlock(s.thenBody) },
-        { pattern: { kind: "WildcardPattern" }, run: () => (s.elseBody ? this.runBlock(s.elseBody) : undefined) },
+        { pattern: { kind: "WildcardPattern" }, run: () => this.runBlockIf(s.elseBody) },
       ]);
       case "IfChainStmt": return this.ifChain(s);
       case "LetElseStmt": {
@@ -1082,7 +1165,9 @@ export class Interp {
     return undefined;
   }
   whileStmt(s: Stmt & { kind: "WhileStmt" }): Completion {
-    while (this.cond(s.cond)) {
+    for (;;) {
+      this.checkInvariants(s.invariants);
+      if (!this.cond(s.cond)) break;
       const r = this.runBlock(s.body);
       if (r?.k === "break") return undefined;
       if (r?.k === "return") return r;
@@ -1092,38 +1177,39 @@ export class Interp {
   // `if let P = a && cond && let Q = b { then } else { else }`: clauses nest left to right, each
   // inside the scope of the ones before it; the else runs once, after every clause scope is gone.
   ifChain(s: Stmt & { kind: "IfChainStmt" }): Completion {
-    const go = (i: number): { ran: boolean; c: Completion } => {
-      if (i === s.clauses.length) return { ran: true, c: this.runBlock(s.thenBody) };
-      const cl = s.clauses[i]!;
-      if (cl.kind === "CondClause") return this.cond(cl.cond) ? go(i + 1) : { ran: false, c: undefined };
-      return this.matchCore<{ ran: boolean; c: Completion }>(cl.subject, [
-        { pattern: cl.pattern, run: () => go(i + 1) },
-        { pattern: { kind: "WildcardPattern" }, run: () => ({ ran: false, c: undefined }) },
-      ]);
-    };
-    const r = go(0);
+    const r = this.ifChainFrom(s, 0);
     if (r.ran) return r.c;
     return s.elseBody ? this.runBlock(s.elseBody) : undefined;
   }
+  ifChainFrom(s: Stmt & { kind: "IfChainStmt" }, i: number): ChainStep {
+    if (i === s.clauses.length) return { ran: true, c: this.runBlock(s.thenBody) };
+    const cl = s.clauses[i]!;
+    if (cl.kind === "CondClause") return this.cond(cl.cond) ? this.ifChainFrom(s, i + 1) : { ran: false, c: undefined };
+    return this.matchCore<ChainStep>(cl.subject, [
+      { pattern: cl.pattern, run: () => this.ifChainFrom(s, i + 1) },
+      { pattern: { kind: "WildcardPattern" }, run: () => ({ ran: false, c: undefined }) },
+    ]);
+  }
 
+  loopBody(s: Stmt & { kind: "ForInStmt" }, bind: (scope: Scope) => void): Completion | "next" {
+    const scope: Scope = [];
+    this.frame.scopes.push(scope);
+    try {
+      bind(scope);
+      this.checkInvariants(s.invariants);
+      const r = this.runBlock(s.body);
+      if (r?.k === "break") return { k: "break" };
+      if (r?.k === "return") return r;
+      return "next";
+    } finally { this.frame.scopes.pop(); this.dropScope(scope); }
+  }
   // for-in: the loop variable is a reference to the element, or (consuming) the element moved out
   forIn(s: Stmt & { kind: "ForInStmt" }): Completion {
-    const loopBody = (bind: (scope: Scope) => void): Completion | "next" => {
-      const scope: Scope = [];
-      this.frame.scopes.push(scope);
-      try {
-        bind(scope);
-        const r = this.runBlock(s.body);
-        if (r?.k === "break") return { k: "break" };
-        if (r?.k === "return") return r;
-        return "next";
-      } finally { this.frame.scopes.pop(); this.dropScope(scope); }
-    };
     const fin = (r: Completion | "next"): Completion | "next" => (r === "next" ? "next" : r?.k === "break" ? undefined : r);
     if (s.iterable.kind === "RangeExpr") {
       const lo = this.ev(s.iterable.start) as bigint, hi = this.ev(s.iterable.end) as bigint;
       for (let i = lo; i < hi; i++) {
-        const r = fin(loopBody(sc => this.declare(s.varName, i, sc)));
+        const r = fin(this.loopBody(s, sc => this.declare(s.varName, i, sc)));
         if (r !== "next") return r;
       }
       return undefined;
@@ -1140,7 +1226,7 @@ export class Interp {
         for (;;) {
           const nx = this.callNamed(iter.nextMethod, [this.refTo(pl, true)]) as EnumV;
           if (nx.variant !== "Some") return undefined;
-          const r = fin(loopBody(sc => this.declare(s.varName, nx.a[0]!, sc)));
+          const r = fin(this.loopBody(s, sc => this.declare(s.varName, nx.a[0]!, sc)));
           if (r !== "next") return r;
         }
       }
@@ -1153,7 +1239,7 @@ export class Interp {
       if (it.tag === "hashmap") {
         const mv = (this.isPlaceExpr(iterE) ? this.peek(iterE) : this.declare("<iterable>", this.ev(iterE), holder).v) as MapV;
         for (const ent of [...mv.m.values()]) {
-          const r = fin(loopBody(sc => {
+          const r = fin(this.loopBody(s, sc => {
             this.declare(s.varName, { k: "ref", slot: ent.key, path: [] }, sc);
             if (s.varName2) this.declare(s.varName2, { k: s.mutRef ? "mut" : "ref", slot: ent.val, path: [] }, sc);
           }));
@@ -1169,7 +1255,7 @@ export class Interp {
       const strIter = it.tag === "string";
       const n = strIter ? (whole as Str).b.bytes.length : this.seqLen(whole);
       for (let i = 0; i < n; i++) {
-        const r = fin(loopBody(sc => {
+        const r = fin(this.loopBody(s, sc => {
           const ep: Place = { slot: pl.slot, path: [...pl.path, i], ro: pl.ro, viaRef: pl.viaRef };
           if (s.varName2) this.declare(s.varName, BigInt(i), sc);
           const el: Value = strIter ? BigInt((whole as Str).b.bytes[i]!)
@@ -1182,21 +1268,21 @@ export class Interp {
       return undefined;
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
   }
-  private takeOut(p: Place): Value { const v = this.getPlace(p); this.setPlace(p, MOVED); return v; }
+  takeOut(p: Place): Value { const v = this.getPlace(p); this.setPlace(p, MOVED); return v; }
 }
 
 // ── helpers ──
 export const NOT_NATIVE = Symbol("not native");
 export const isRef = (v: Value): v is Ref => !!v && typeof v === "object" && (v.k === "ref" || v.k === "mut");
 export const isStr = (v: Value): v is Str => !!v && typeof v === "object" && v.k === "str";
-const prefixOf = (a: Step[], b: Step[]) => { const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; return true; };
+export const prefixOf = (a: Step[], b: Step[]) => { const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; return true; };
 export function wrapInt(v: bigint, t: TypeKind & { tag: "int" }): bigint { return t.signed ? BigInt.asIntN(t.bits, v) : BigInt.asUintN(t.bits, v); }
 export function cmpBytes(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
   return a.length - b.length;
 }
-const normName = (n: string) => n.replace(/\$at\d+$/, "");
+export const normName = (n: string) => n.replace(/\$at\d+$/, "");
 function litEq(lit: bigint | number | string | boolean, kind: string, v: Value): boolean {
   if (kind === "string") return isStr(v) && cmpBytes(v.b.bytes, [...new TextEncoder().encode(lit as string)]) === 0;
   if (kind === "int" || kind === "char") {
@@ -1205,7 +1291,7 @@ function litEq(lit: bigint | number | string | boolean, kind: string, v: Value):
   }
   return v === lit;
 }
-function describe(v: Value): string {
+export function describe(v: Value): string {
   if (v === undefined) return "unit";
   if (typeof v !== "object") return typeof v;
   return v.k === "struct" ? `struct ${v.name}` : v.k === "enum" ? `enum ${v.en}.${v.variant}` : v.k;

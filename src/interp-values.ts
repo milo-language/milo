@@ -7,6 +7,8 @@
 //   string   a counted buffer (spec §5, strings): a copy shares it, the last drop frees it
 //   Vec      a header {buf,start,len,cap} owned by its slot over a buffer on the heap
 //   Heap<T>  box: one cell on the heap
+//   handle   a Channel, WaitGroup, atomic or Task: an object the library keeps in raw memory
+import type { Interp } from "./interp";
 
 export class InterpUnsupported extends Error {
   constructor(public what: string) { super(`interp: unsupported: ${what}`); }
@@ -39,6 +41,9 @@ export interface IfaceV { k: "iface"; concrete: string; inner: Value }
 // HashMap: one table block while non-empty; entries keep their key and value in slots so a reference can name them
 export interface MapEntry { key: Slot; val: Slot }
 export interface MapV { k: "map"; buf: number | null; m: Map<string, MapEntry>; view?: true }
+// A runtime object with identity that the library keeps in raw memory (Channel, WaitGroup, atomics, Task):
+// one handle per owner, `o.release` runs when an owner drops it (src/interp-co-natives.ts).
+export interface HandleV { k: "handle"; kind: string; o: { release(it: Interp): void }; ghost?: true }
 export interface FnRef { k: "fn"; name: string }
 export interface Slot { v: Value; dead?: boolean; stmt?: boolean }
 export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[] }
@@ -52,7 +57,7 @@ export interface ClosureV {
   ret: import("./types").TypeKind;
 }
 export type Step = string | number;
-export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | MapV | IfaceV | FnRef | ClosureV | Ref;
+export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | MapV | IfaceV | FnRef | ClosureV | Ref | HandleV;
 export interface Place { slot: Slot; path: Step[]; ro: boolean; viaRef: boolean }
 
 export const enc = new TextEncoder();
@@ -89,3 +94,7 @@ export function fmtFloat(x: number, bits = 64): string {
   if (exp >= 0) return sign + (ds.length <= exp + 1 ? ds.padEnd(exp + 1, "0") : `${ds.slice(0, exp + 1)}.${ds.slice(exp + 1)}`);
   return `${sign}0.${"0".repeat(-exp - 1)}${ds}`;
 }
+
+// Raised by the plain interpreter at the first task operation: the driver reruns the program in the
+// task interpreter (a run is deterministic and its output is buffered until the end, so nothing is lost).
+export class NeedTasks extends Error {}

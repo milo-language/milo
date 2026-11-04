@@ -4,14 +4,11 @@
 // interpreter has no model of, so each is replaced here by a native keyed by its function name.
 import type { Expr } from "./ast";
 import { ARRAY_COMBINATORS, SLICE_COMBINATORS, type TypeKind } from "./types";
-import { NOT_NATIVE, wrapInt, type Interp } from "./interp";
+import { NOT_NATIVE, isStr, strip, wrapInt, type CallE, type Interp, type MethodE } from "./interp";
+import { taskNativeFor } from "./interp-co-natives";
 import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
 
-export type Native = (it: Interp, args: Value[], e?: Expr) => Value;
-type CallE = Expr & { kind: "Call" };
-type MethodE = Expr & { kind: "MethodCall" };
-const strip = (t: TypeKind): TypeKind => (t.tag === "ref" ? strip(t.inner) : t);
-const isStr = (v: Value): v is Str => !!v && typeof v === "object" && v.k === "str";
+export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true };
 
 // ── display ──
 export function display(it: Interp, v: Value, ty: TypeKind, nested = false): string {
@@ -53,13 +50,13 @@ function unique(it: Interp, r: Ref): Str {
   it.dropValue(s);
   return copy;
 }
-function appendTo(it: Interp, r: Ref, bytes: number[]): void {
+export function appendTo(it: Interp, r: Ref, bytes: number[]): void {
   if (bytes.length === 0) return;
   const s = unique(it, r);
   if (s.b.id < 0) { it.setPlace(it.derefPlace(r), it.newStr([...s.b.bytes, ...bytes])); return; }
   s.b.bytes.push(...bytes);
 }
-function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
+export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
   if (a < 0n || b < a || b > BigInt(s.b.bytes.length)) it.panic(`string range ${a}..${b} out of bounds (len ${s.b.bytes.length})`);
   return [Number(a), Number(b)];
 }
@@ -67,7 +64,7 @@ function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
 // ── Vec ──
 const vecOf = (it: Interp, r: Value) => it.deref(r) as VecV;
 // size in bytes of a value of type t (the compiled layout), which decides a Vec's first capacity
-function sizeOf(it: Interp, t: TypeKind): number {
+export function sizeOf(it: Interp, t: TypeKind): number {
   switch (t.tag) {
     case "int": case "float": return t.bits / 8;
     case "bool": return 1;
@@ -107,8 +104,8 @@ function reserveTotal(it: Interp, h: VecV, need: number): void {
   if (h.cap >= need) return;
   setCap(it, h, h.cap * 2 > need ? h.cap * 2 : need);
 }
-const NONE = Symbol("none");
-const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Value => {
+export const NONE = Symbol("none");
+export const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Value => {
   const name = (it.T(e!) as { name: string }).name;
   return v === NONE ? it.mkEnum(name, "None", []) : it.mkEnum(name, "Some", [v]);
 };
@@ -118,7 +115,7 @@ const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   return Number(i);
 };
 // the Vec header behind a Vec, a slice or a fixed array (a fixed array is viewed whole)
-const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
+export const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
 export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bigint, hi: bigint): VecV {
   const n = v.k === "arr" ? v.e.length : v.len;
   if (lo < 0n || hi < lo || hi > BigInt(n)) it.panic(`slice ${lo}..${hi} out of bounds (len ${n})`);
@@ -134,7 +131,7 @@ function natCmp(it: Interp, a: Value, b: Value): number {
 
 // ── function natives, keyed by instantiated name (without a $atN call-site suffix) ──
 export const NATIVES: Map<string, Native> = new Map();
-const nat = (n: string, f: Native) => NATIVES.set(n, f);
+export const nat = (n: string, f: Native) => NATIVES.set(n, f);
 
 nat("string$push", (it, [self, b]) => { appendTo(it, self as Ref, [Number(b as bigint)]); return undefined; });
 nat("string$clone", (it, [self]) => it.newStr([...(it.deref(self) as Str).b.bytes]));
@@ -153,6 +150,28 @@ nat("string$substr", (it, [self, a, b]) => {
   return it.newStr(s.b.bytes.slice(lo, hi));
 });
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
+
+// R-ATOMIC: one task runs at a time, so an atomic is a plain read-modify-write of the place its pointer names.
+// R-REPLAY-OFF: the interpreter runs with record/replay off, as a binary does when neither MILO_RECORD nor MILO_REPLAY is set.
+nat("replay$replayModeNow", () => 1n);
+nat("replayOff", () => true);
+nat("replayActive", () => false);
+nat("replayRecording", () => false);
+for (const [w, bits] of [["I64", 64], ["I32", 32], ["Bool", 0]] as const) {
+  const wrap = (v: bigint) => (bits ? BigInt.asIntN(bits, v) : v);
+  const atom = (it: Interp, p: Value) => {
+    if (!p || typeof p !== "object" || (p.k !== "ref" && p.k !== "mut")) return it.unsupported("atomic access through a pointer that is not the address of a variable");
+    return it.derefPlace(p);
+  };
+  nat(`_atomicLoad${w}`, (it, [p]) => it.getPlace(atom(it, p)));
+  nat(`_atomicStore${w}`, (it, [p, v]) => { it.setPlace(atom(it, p), v); return undefined; });
+  nat(`_atomicSwap${w}`, (it, [p, v]) => { const pl = atom(it, p); const old = it.getPlace(pl); it.setPlace(pl, v); return old; });
+  nat(`_atomicCas${w}`, (it, [p, want, to]) => { const pl = atom(it, p); const old = it.getPlace(pl); if (old === want) it.setPlace(pl, to); return old; });
+  if (bits) {
+    nat(`_atomicAdd${w}`, (it, [p, v]) => { const pl = atom(it, p); const old = it.getPlace(pl) as bigint; it.setPlace(pl, wrap(old + (v as bigint))); return old; });
+    nat(`_atomicSub${w}`, (it, [p, v]) => { const pl = atom(it, p); const old = it.getPlace(pl) as bigint; it.setPlace(pl, wrap(old - (v as bigint))); return old; });
+  }
+}
 
 const VEC: Record<string, Native> = {
   push: (it, [self, x], e) => { const h = vecOf(it, self); growOne(it, h, elemSize(it, e)); h.buf!.elems[h.start + h.len++] = x; return undefined; },
@@ -251,6 +270,8 @@ const MAPS: Record<string, Native> = {
   },
 };
 export function nativeFor(name: string): Native | undefined {
+  const tk = taskNativeFor(name);
+  if (tk) return tk;
   if (/(^|\$)(mapNew|mapWithCapacity|mapWithSlots)/.test(name)) return () => ({ k: "map", buf: null, m: new Map() });
   const hm = /^HashMap_.+?\$([A-Za-z0-9_]+)$/.exec(name);
   if (hm && MAPS[hm[1]!]) return MAPS[hm[1]!];
@@ -305,14 +326,14 @@ export function builtinCall(it: Interp, e: CallE): Value {
 }
 
 // ── methods the compiler handles without a std body (src/lower.ts MethodCall) ──
-const STR_METHODS: Record<string, string> = {
+export const STR_METHODS: Record<string, string> = {
   contains: "strContains", startsWith: "strStartsWith", endsWith: "strEndsWith", split: "strSplit", trim: "strTrim",
   trimStart: "strTrimStart", trimEnd: "strTrimEnd", toLower: "strToLower", toUpper: "strToUpper", reverse: "strReverse",
   replace: "strReplace", replaceFirst: "strReplaceFirst", repeat: "strRepeat", padStart: "strPadStart", padEnd: "strPadEnd",
   isEmpty: "strIsEmpty", charAt: "strCharAt", parseInt: "strParseInt", parseF64: "strParseF64",
   splitWords: "strSplitWords", splitWhitespace: "strSplitWhitespace",
 };
-const INT_ARITH: Record<string, string> = {
+export const INT_ARITH: Record<string, string> = {
   wrappingAdd: "+", wrappingSub: "-", wrappingMul: "*", saturatingAdd: "+", saturatingSub: "-", saturatingMul: "*",
   checkedAdd: "+", checkedSub: "-", checkedMul: "*", checkedDiv: "/", checkedRem: "%",
 };
@@ -323,7 +344,7 @@ function callWith(it: Interp, f: Value, payload: Value[]): Value {
   const args = payload.map((p, i) => (c.paramRefs?.[i] ? ({ k: "ref", slot: it.tempOwn(p), path: [] } as Ref) : p));
   return it.callValue(f, args);
 }
-const take = (v: EnumV): Value => { const p = v.a[0]; v.a[0] = MOVED; return p; };
+export const take = (v: EnumV): Value => { const p = v.a[0]; v.a[0] = MOVED; return p; };
 
 export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typeof NOT_NATIVE {
   const m = e.method;
@@ -332,7 +353,10 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   const ot: TypeKind = objRaw.tag === "array" && (objRaw.size === null ? SLICE_COMBINATORS.has(m) : ARRAY_COMBINATORS.has(m)) ? { tag: "vec", element: objRaw.element } : objRaw;
   const type = it.T(e);
   const base = ot.tag === "enum" ? it.cr.enums.get(ot.name)?.baseName : undefined;
-  if (m === "addrOf" || (m === "ptr" && (ot.tag === "vec" || ot.tag === "heap"))) return it.unsupported(`.${m}()`);
+  // R-PTR: only the address of an integer or bool cell (what the atomic intrinsics take); any other layout is raw memory
+  if (m === "addrOf" && e.args.length === 0 && (ot.tag === "int" || ot.tag === "bool")) return it.refTo(it.resolve(e.object), true);
+  if (m === "addrOf") return it.unsupported(".addrOf()");
+  if (m === "ptr" && (ot.tag === "vec" || ot.tag === "heap")) return it.unsupported(`.${m}()`);
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, it.peek(e.object), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);

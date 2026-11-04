@@ -3,7 +3,7 @@ system: semantics
 purpose: Mini-Milo, the core calculus: operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
-last-verified: 2026-11-03 (src/interp.ts implements §2 and the rules added at the end; scripts/interp-vs-golden.ts is its gate)
+last-verified: 2026-11-03 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules; scripts/interp-vs-golden.ts is its gate)
 -->
 
 # Mini-Milo: the core calculus
@@ -189,7 +189,7 @@ the informal versions:
 | `for in` | a consumed iterable is dropped at loop exit | MILO-O-consumedForIn |
 | `swap`/`replace` | two places exchange values with no drop | MILO-O-replaceSwap |
 | strings | a shared, counted buffer: copy shares, last use moves | (no MILO-O rule yet) |
-| green tasks | a frame stack per task, a scheduler choosing which steps; T-REF-PARAM makes cross-task references impossible | (no MILO-O rule yet) |
+| green tasks | a frame stack per task, a scheduler choosing which steps; T-REF-PARAM makes cross-task references impossible | the R-TASK, R-CHAN, R-WG, R-ONCE rules below |
 | globals | the thread-global rule: a task may not read a global another task writes | checker thread pass |
 
 ### Rules the interpreter added
@@ -217,6 +217,55 @@ Each is implemented in `src/interp.ts` under its ID, and was needed to match a r
 | S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run, no live count is reported, and the exit status is 134 for a panic. |
 | T-STUCK | Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed. |
 
-Not modelled (reported as `InterpUnsupported`): extern and FFI calls, raw pointers and `unsafe`
-memory operations, tasks and async, atomics, contract checks, `sizeOf`/`zeroed`, record/replay
-wrappers.
+### Tasks, channels and atomics
+
+A program that reaches a task operation runs in `src/interp-co.ts` (the plain interpreter stops at the
+first one and the run starts over, which is invisible: a run is deterministic and its output is held
+until the end). Each task is a generator running the interpreter's generator twins
+(`src/interp-gen.ts`, generated from `src/interp.ts` by `scripts/gen-interp-co.ts`), so a task can stop in
+the middle of an expression. A task has its own frames, temporaries and pending operands. The library's
+Task, TaskScope, Channel, WaitGroup, Once and atomics are natives (`src/interp-co-natives.ts`) because
+std keeps them in raw memory under pthread locks. One task runs at a time and keeps the CPU until it
+parks, yields or ends: nothing preempts it, so no operation needs a lock.
+
+| Rule | Statement |
+|---|---|
+| R-TASK-MAIN | `main` is the first task. The program ends when it returns and every other task is abandoned where it stands: no drops run for it. |
+| R-TASK-ABANDON | Tasks left when main returns keep the library's own blocks allocated, because it leaves its scheduler up: five for the scheduler, three per abandoned task, three more for one asleep, one per idle stack context in its cache (at most 64). With no task left the scheduler is torn down and none remain. Counted so the live-block comparison with a compiled run holds. |
+| R-TASK-SPAWN | A spawned task is ready at the back of the run queue. It does not run until the spawner parks, yields or ends. |
+| R-TASK-PICK | Which ready task runs next is one method, `pickNext(ready)`, the hook for exploring schedules. The default is the front of the queue (FIFO, as std/runtime's run queue). Like the library's scheduler, the front task moves to the back after 32 task turns in a row. |
+| R-TASK-YIELD | `schedulerYield` puts the caller at the back of the queue. |
+| R-TASK-PARK, R-TASK-UNPARK | `schedulerPark` takes the caller off the queue; `schedulerUnpark` puts a parked task at the back. Unparking a task that is not parked does nothing (the library calls that a bug). |
+| R-TASK-JOIN | `join` parks the caller until the task has ended; a task already ended returns at once. |
+| R-TASK-SCOPE | `Task.scope` runs its body, then parks the caller until every task spawned on the scope has ended. |
+| R-TASK-DRAIN | `schedulerRunToCompletion` parks the caller until it is the only task left. |
+| R-TASK-PANIC | A panic in a task that is not main and is inside no `Task.scope` retires that task (its message goes to stderr, its frames are abandoned) and the program goes on; any other panic aborts the program. |
+| R-TASK-BLOCKING | A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread. |
+| R-TIME | Time is a virtual clock in milliseconds. `sleepMs` parks the task until the clock reaches now + ms; the clock moves only when no task is ready, to the earliest wake time. `sleepMs(0)` yields. |
+| S-DEADLOCK | If no task is ready and none sleeps, the run stops with a stuck error naming each parked task and what it waits for. |
+| R-CHAN | A Channel is a queue of at most `capacity` values. `send` on a full channel parks the sender, `recv` on an empty one parks the receiver. A task that parks joins the head of its wait list and a wake takes the head (the library's lists are stacks), so the latest waiter wakes first. A wake only readies the waiter, which rechecks its condition when it runs; `send` does not switch tasks. `close` wakes every waiter; queued values are still delivered, then `recv` returns Err. The last owner to drop destroys the queued values. |
+| R-WG | `add` and `done` move a counter; `done` leaving it at zero or below wakes every waiter; `wait` parks while it is positive. |
+| R-ONCE | The first `run` calls its closure; a caller that arrives meanwhile parks until it finishes. |
+| R-ATOMIC | An atomic operation is a plain read-modify-write, since one task runs at a time. `add` and `sub` wrap at the width. The `_atomic*` intrinsics do the same through a pointer. |
+| R-PTR | A raw pointer is what `x.addrOf()` gives (a reference to the place) or the integer 0; casts between pointer types keep it. Arithmetic on it is not modelled. |
+| R-REPLAY-OFF | Record/replay is off, as in a binary run with neither MILO_RECORD nor MILO_REPLAY set. |
+
+A task operation that would park cannot run where the interpreter is not on a task's own stack: in a
+global's initializer, a user `Drop`, or a closure a library call runs (`map`, `sort_by`). That is reported
+as unsupported, never run wrongly.
+
+### Contracts
+
+| Rule | Statement |
+|---|---|
+| R-CONTRACT-ENTRY | With contract checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order. |
+| R-CONTRACT-EXIT | At every return, with `result` naming the value returned and before the frame's variables drop, each `ensures` clause is checked. |
+| R-CONTRACT-LOOP | A `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only. |
+| R-CONTRACT-FAIL | A failed clause is a panic that prints `runtime error: <kind> clause violated at file:line` (the clause's own line, the path relative to the working directory) and aborts like any panic. |
+
+Struct `invariant` clauses are proved statically and have no runtime check in a compiled binary, so the
+interpreter does not check them either.
+
+Not modelled (reported as `InterpUnsupported`): extern and FFI calls, raw memory (malloc, pointer
+arithmetic, `.ptr()`), `unsafe` memory operations, async I/O (sockets, files), `sizeOf`/`zeroed`,
+record/replay wrappers.

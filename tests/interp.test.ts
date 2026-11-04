@@ -12,12 +12,15 @@ import { resolveImports } from "../src/resolver";
 import { TypeChecker } from "../src/checker";
 import { getHostTarget } from "../src/target";
 import { Interp } from "../src/interp";
+import { InterpCo, runChecked, type RunOptions, type Task } from "../src/interp-co";
 import { InterpStuck } from "../src/interp-values";
 import type { Program } from "../src/ast";
+import type { CheckResult } from "../src/checker";
 import { compareOne } from "../scripts/interp-vs-golden";
 
 const dir = mkdtempSync(join(tmpdir(), "milo-interp-test-"));
 let n = 0;
+const checkedOf = new Map<Program, CheckResult>();
 function check(src: string): { program: Program; interp: Interp } {
   const path = join(dir, `t${n++}.milo`);
   writeFileSync(path, src);
@@ -27,6 +30,7 @@ function check(src: string): { program: Program; interp: Interp } {
   const result = new TypeChecker().check(program);
   const errors = result.diagnostics.filter(d => d.severity === "error");
   if (errors.length) throw new Error(`checker rejected the test program: ${errors.map(e => e.message).join("; ")}`);
+  checkedOf.set(program, result);
   return { program, interp: new Interp(program, result) };
 }
 const run = (src: string) => {
@@ -137,6 +141,7 @@ const FIXTURES = [
   "forkTempReceiver", "forLoopReuse", "hashmapBasic", "hashmapGet", "hashmapGetOrDefault", "heapTempBoxRead",
   "matchLiteralExact", "matchLiterals", "resultPropagate", "resultPropagateDiffT", "structs", "vecTruncateClearStd", "whileLoop",
   "closureCaptureSelf",
+  "channelGreenPark", "greenThread", "asyncCallOrdering", "taskScopeBorrow", "waitGroup", "promiseAll", "onceGreenTasks", "contracts",
 ];
 test("interp-vs-golden: a slice of the fixtures is the same as the compiled run", async () => {
   const results = [];
@@ -144,3 +149,164 @@ test("interp-vs-golden: a slice of the fixtures is the same as the compiled run"
   const bad = results.filter(r => r.verdict !== "same");
   expect(bad.map(r => `${r.name}: ${r.verdict} ${r.detail}`)).toEqual([]);
 }, 120_000);
+
+// ── tasks (docs/semantics/mini-milo.md R-TASK-*, R-CHAN, R-WG) ──
+const runTasks = (src: string, opts: RunOptions = {}) => {
+  const { program } = check(src);
+  const { it, result: r } = runChecked(program, checkedOf.get(program)!, opts);
+  return { out: new TextDecoder().decode(r.stdout), err: r.stderr, code: r.code, live: r.live, co: it instanceof InterpCo };
+};
+
+test("R-TASK-SPAWN: a spawned task waits for its spawner to park; the run queue is FIFO and yield goes to the back", () => {
+  const r = runTasks(`
+from "std/runtime" import { Task, schedulerYield }
+fn main() {
+    let a = Task.spawn(move(): void => {
+        print("a1")
+        schedulerYield()
+        print("a2")
+    })
+    let b = Task.spawn(move(): void => {
+        print("b1")
+        schedulerYield()
+        print("b2")
+    })
+    print("main")
+    a.join()
+    b.join()
+    print("end")
+}`);
+  expect(r.out).toBe("main\na1\nb1\na2\nb2\nend\n");
+  expect(r.co).toBe(true);
+  expect(r.live).toBe(0);
+});
+
+test("R-CHAN: a full channel parks the sender, an empty one the receiver, and a send wakes without switching", () => {
+  const r = runTasks(`
+from "std/runtime" import { Task }
+from "std/sync" import { Channel }
+fn main() {
+    let ch = Channel<i64>.new(1)!
+    let tx = ch.clone()
+    let p = Task.spawn(move(): void => {
+        var i: i64 = 0
+        while i < 3 {
+            tx.send(i)!
+            print("sent ", i)
+            i = i + 1
+        }
+    })
+    var n: i64 = 0
+    while n < 3 {
+        let v = ch.recv()!
+        print("got ", v)
+        n = n + 1
+    }
+    p.join()
+}`);
+  // main parks on the empty channel; the producer sends 0 (waking main, which stays queued), then parks on the full slot;
+  // main takes 0 and wakes it, parks on the empty channel again, and the two alternate
+  expect(r.out).toBe("sent 0\ngot 0\nsent 1\ngot 1\nsent 2\ngot 2\n");
+  expect(r.live).toBe(0);
+});
+
+test("S-DEADLOCK: every task parked is a clear error naming the blocked tasks", () => {
+  const { program } = check(`
+from "std/sync" import { Channel }
+fn main() {
+    let ch = Channel<i64>.new(1)!
+    print(ch.recv()!)
+}`);
+  let msg = "";
+  try { runChecked(program, checkedOf.get(program)!); } catch (e) { msg = (e as Error).message; }
+  expect(msg).toContain("S-DEADLOCK");
+  expect(msg).toContain("task 1 (main) parked in Channel.recv");
+});
+
+test("R-TASK-PANIC: a panic retires its task and the program goes on", () => {
+  const r = runTasks(`
+from "std/runtime" import { Task }
+fn main() {
+    let t = Task.spawn(move(): void => {
+        let v: Vec<i64> = [1]
+        print(v[5])
+    })
+    t.join()
+    print("main goes on")
+}`);
+  expect(r.out).toBe("main goes on\n");
+  expect(r.err).toContain("index out of bounds");
+  expect(r.code).toBe(0);
+});
+
+test("R-ATOMIC and R-WG: tasks add to an atomic and the wait group releases the waiter", () => {
+  const r = runTasks(`
+from "std/runtime" import { Task }
+from "std/sync" import { AtomicI64, WaitGroup }
+fn main() {
+    let wg = WaitGroup.new()
+    let n = AtomicI64.new(0)
+    var i: i64 = 0
+    while i < 5 {
+        wg.add(1)
+        let w = wg.clone()
+        let c = n.clone()
+        Task.spawn(move(): void => {
+            c.add(2)
+            w.done()
+        })
+        i = i + 1
+    }
+    wg.wait()
+    print(n.load())
+}`);
+  expect(r.out).toBe("10\n");
+  expect(r.live).toBe(0);
+});
+
+test("R-TASK-PICK: the scheduling decision is one overridable method", () => {
+  const { program } = check(`
+from "std/runtime" import { Task }
+fn main() {
+    let a = Task.spawn(move(): void => { print("a") })
+    let b = Task.spawn(move(): void => { print("b") })
+    a.join()
+    b.join()
+}`);
+  class Lifo extends InterpCo { override pickNext(ready: readonly Task[]): number { return ready.length - 1; } }
+  const r = new Lifo(program, checkedOf.get(program)!).run();
+  expect(new TextDecoder().decode(r.stdout)).toBe("b\na\n");
+});
+
+// ── contracts (R-CONTRACT-*) ──
+test("R-CONTRACT: requires, ensures with result and old(), and loop invariants abort like a debug build", () => {
+  const src = (call: string) => `
+fn bump(n: &mut i64, by: i64): i64
+requires by >= 0
+ensures n == old(n) + by
+ensures result == n
+{
+    n = n + by
+    return n
+}
+fn main() {
+    var x: i64 = 1
+    var lo: i64 = 2
+    lo = lo - 3
+    ${call}
+    print("ok ", x)
+}`;
+  const good = runTasks(src("bump(&mut x, 2)"), { contractChecks: true, entryFile: "t.milo" });
+  expect(good.out).toBe("ok 3\n");
+  const bad = runTasks(src("bump(&mut x, lo)"), { contractChecks: true, entryFile: "t.milo" });
+  expect(bad.code).toBe(134);
+  expect(bad.out).toBe("");
+  expect(bad.err).toMatch(/^runtime error: requires clause violated at \S*t\d*\.milo:3\n$/);
+  // off by default, as in a release build
+  expect(runTasks(src("bump(&mut x, lo)")).out).toBe("ok 0\n");
+});
+
+test("the generated task twin (src/interp-gen.ts) is current", () => {
+  const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "scripts", "gen-interp-co.ts"), "--check"]);
+  expect(r.exitCode).toBe(0);
+});
