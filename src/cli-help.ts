@@ -159,6 +159,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
       { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
       { flag: "--coverage", help: "(.milo) run the @req tests with line counters and report covered/total lines of each fn body; with --strict an uncovered line fails (statement coverage only; needs llvm-cov)" },
+      { flag: "--refinement", help: "(.milo) z3 checks the requirements' own clauses, no fn bodies: each parent ensures clause against its descendants' clauses on the same fn (REFINED, NOT REFINED with a counterexample, UNKNOWN, NOT COMPARABLE), and each fn's contract for satisfiability; with --strict, NOT REFINED and UNSAT fail (baseline keys refinement:<id>:<hash>, unsat:<fn>)" },
       { flag: "--object <binary>", help: "(.milo) add the address ranges of a binary built with -g that implement each requirement" },
     ],
   },

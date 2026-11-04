@@ -218,6 +218,25 @@ How a requirement counts as verified follows DO-333 (the formal-methods suppleme
 
 A failing test is a strict error, and a requirement whose only tests fail is unverified.
 
+## Do the children deliver the parent? `--refinement`
+
+`milo trace --refinement` asks z3 whether a parent's `ensures` clause follows from the `requires`
+and the descendants' `ensures` clauses on the same fn. It needs no function bodies. On this
+example:
+
+```
+requirement refinement:
+  HLR-1 pid.milo:controlTick ensures result >= 0 && result <= 16711680
+    NOT COMPARABLE: no child clause on controlTick
+  0 refinement obligations checked: 0 refined, 0 not refined, 0 unknown; 1 not comparable (neither pass nor fail)
+contract satisfiability:
+  all 5 fns satisfiable
+```
+
+HLR-1's clause is on `controlTick`, while its children's clauses are on `clampI32` and
+`pidStep`, so nothing is compared and nothing passes. The check only speaks about clauses on a
+shared fn.
+
 ## A caller that breaks LLR-3
 
 `pid_bad_caller.milo` passes a raw sensor value straight to `pidStep`:

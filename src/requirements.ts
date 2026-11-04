@@ -417,6 +417,8 @@ export interface TraceReport {
   errors: string[];
   /** What strict mode adds. Listed in a report run too, but only fail it under strict. */
   strictFailures: string[];
+  /** `--refinement`: the z3 checks on the requirements' own clauses (src/refinement.ts); absent otherwise. */
+  refinement?: import("./refinement").RefinementReport;
   ok: boolean;
 }
 
@@ -815,6 +817,10 @@ export function formatTrace(r: TraceReport): string {
     }
     out.push(`line coverage: ${c.percent.toFixed(1)}% (${c.covered}/${c.total})`);
   }
+  if (r.refinement) {
+    const { formatRefinement } = require("./refinement") as typeof import("./refinement");
+    out.push(...formatRefinement(r.refinement));
+  }
   out.push(`unknown: ${r.unknown}`);
   for (const m of r.baselined) out.push(`warning: baselined gap: ${m}`);
   for (const k of r.staleBaseline) out.push(`warning: baseline lists a gap that is fixed, remove it: ${k}`);
@@ -875,6 +881,8 @@ export interface TraceArgs {
   writeBaseline?: string;
   /** Git ref to diff the spec (requirements, contracts) against; under strict an unsigned weakening fails (--spec-base). */
   specBase?: string;
+  /** Check each parent clause against its descendants' clauses, and each fn's contract for satisfiability (--refinement). */
+  refinement?: boolean;
   /** A binary built with -g: adds the object column (--object). */
   object?: string;
   /** The profile's minTraceDepth. */
@@ -892,6 +900,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     else if (a === "--solver=z3") continue; // accepted for compatibility; z3 is the only solver
     else if (a === "--no-run") out.noRun = true;
     else if (a === "--coverage") out.coverage = true;
+    else if (a === "--refinement") out.refinement = true;
     else if (a === "--baseline" || a === "--write-baseline") {
       const v = args[++i];
       if (!v) return `${a} expects a path`;
@@ -924,7 +933,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     else if (!out.entry) out.entry = a;
   }
   if (out.coverage && out.noRun) return "--coverage needs the tests to run: it cannot be combined with --no-run";
-  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--coverage] [--object <binary>] [--baseline <file>] [--write-baseline <file>]";
+  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--coverage] [--refinement] [--object <binary>] [--baseline <file>] [--write-baseline <file>]";
 }
 
 export interface BaselineFile { schema: 1; gaps: string[] }
@@ -977,6 +986,19 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   if (coverageErrors.length) {
     rep.errors.push(...coverageErrors);
     rep.ok = false;
+  }
+  if (a.refinement) {
+    const { checkRefinement } = require("./refinement") as typeof import("./refinement");
+    const ref = checkRefinement(program, a.entry, a.requirements);
+    rep.refinement = ref;
+    const listed = baseline ?? new Set<string>();
+    for (const g of ref.gaps) {
+      rep.gaps.push(g);
+      if (listed.has(g.key)) rep.baselined.push(g.message); else rep.strictFailures.push(g.message);
+    }
+    // buildTrace could not see these keys, so a baseline entry for one of them looked stale.
+    rep.staleBaseline = rep.staleBaseline.filter(k => !ref.gaps.some(g => g.key === k));
+    rep.ok = rep.errors.length === 0 && (!rep.strict || rep.strictFailures.length === 0);
   }
   // The spec lock (src/specLock.ts): only under strict and only when a base ref is given.
   if (a.strict && a.specBase) {

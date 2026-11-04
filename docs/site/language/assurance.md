@@ -86,6 +86,8 @@ each clause that formalizes it (a `requires` is judged at every call site), and 
 test and an unproved clause into errors; a dev `build --safety` only warns, and `--baseline` lets an
 existing codebase adopt a profile. A `verification` claim the tool cannot check (inspection, review, demonstration, or a test outside the unit env, such as `test@load`) is satisfied by an evidence record, committed beside `requirements.json` (`docs/schema/evidence.schema.json`); it goes stale when the requirement text or the code of the fns tagged `@req`/`@derived` changes (their callees are not hashed). `milo evidence add` is an attestation the tool cannot check; `milo evidence run -- <cmd>` captures a command's exit code and output, not whether the command measures the right thing. `--coverage` reports line coverage of the implementing code by the tests, and `--strict` fails on an uncovered line; branch and MC/DC coverage are not built. See [contracts & proofs](/language/safety#requirements).
 
+`milo trace --refinement` also checks the requirements themselves, with no function bodies: for each `ensures` clause of a parent requirement, Z3 asks whether the fn's `requires` plus the `ensures` clauses of its descendants on the same fn imply it (a counterexample when not), and whether each fn's `requires` and `ensures` can be satisfied at all. It reaches only requirements with a formal clause: a parent clause with no child clause on the same fn is reported NOT COMPARABLE, never as a pass. Under `--strict`, NOT REFINED and unsatisfiable contracts fail.
+
 ### Runtime-error proofs, with no annotations
 
 `milo prove --rte` generates its own proof obligations for every overflow, index and division,
