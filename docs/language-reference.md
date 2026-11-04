@@ -544,6 +544,8 @@ swap(v[0], v[2])                // v == [30, 20, 10] — exchange two elements i
 
 Functions can declare preconditions (`requires`), postconditions (`ensures`), loop invariants (`invariant`), and termination measures (`decreases`). These are type-checked at compile time — every clause must be a `bool` expression, except `decreases`, which must be an integer. In `ensures` clauses, `result` refers to the return value and `old(e)` to the value `e` held at entry.
 
+Contracts and `assert` conditions also take the implication operator `a ==> b` ("if `a` then `b`"): true when `a` is false, otherwise `b`. It binds looser than every other boolean operator and is right-associative, so `a && b ==> c ==> d` is `(a && b) ==> (c ==> d)`. Both sides are `bool`. It short-circuits like `!a || b`, so `b` is not evaluated when `a` is false (`requires n != 0 ==> 10 / n > 1` never divides by zero), and the prover reads it as SMT `=>`. In code outside a contract or `assert` it is an error: use `if` or `!a || b`.
+
 In debug builds (`--debug`), contracts are asserted at runtime: `requires` at function entry, `ensures` at every return, and `invariant` at each iteration (for a `while` loop that is the condition block, so entry, every iteration, and exit; a `for` loop checks the top of each iteration). `decreases` has no runtime meaning — it is discharged statically. A violation prints `runtime error: <kind> clause violated at file:line` and exits with code 1. Release builds compile contracts out entirely. Call-site `requires` violations with compile-time-constant arguments are still rejected at compile time.
 
 ```milo

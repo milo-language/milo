@@ -131,6 +131,7 @@ export const SYMBOL_DOCS: Record<string, string> = {
   PipePipe: "Logical or (short-circuit).",
   Eq: "Assignment and binding.",
   EqEq: "Equal.",
+  Implies: "Implication `a ==> b`, in contracts and `assert` only: true when `a` is false, else `b` (`b` is not evaluated when `a` is false). Loosest boolean operator, right-associative.",
   FatArrow: "A match arm `Pat => expr`; a closure body `(x: i32) => x * 2`.",
   ColonColon: "Not used by the grammar: paths use `.`, as in `Option.Some`.",
   Neq: "Not equal.",

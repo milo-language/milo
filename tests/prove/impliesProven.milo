@@ -1,0 +1,21 @@
+// @proven: 4
+// @failed: 0
+// `==>` in contracts: proven as SMT `=>`. Right-associative, lowest precedence.
+// Debug-built and run: the antecedent false means the consequent (a division by zero
+// at n == 0) is never evaluated.
+// @expect: 0
+// @expect: 5
+pub fn quotient(n: i64): i64
+requires n >= 0 && n <= 100
+ensures n != 0 ==> 100 / n >= 1
+ensures n > 5 ==> n > 3 ==> result >= 0
+{
+    if n == 0 { return 0 }
+    return 100 / n
+}
+
+pub fn main(): i32 {
+    print(quotient(0))
+    print(quotient(20))
+    return 0
+}

@@ -31,7 +31,7 @@ test("the catalog documents every distinct message", () => {
   const doc = readFileSync(join(ROOT, "docs", "site", "language", "errors.md"), "utf-8");
   const messages = new Set(cases().map(c => c.message));
   expect(messages.size).toBeGreaterThan(100);
-  expect([...messages].filter(m => !doc.includes(`## \`${m}\``))).toEqual([]);
+  expect([...messages].filter(m => !doc.includes(`## \`${m}\``) && !doc.includes(`## \`\` ${m} \`\``))).toEqual([]);
 });
 
 test("the annotation parser survives a CRLF checkout", () => {

@@ -4779,18 +4779,18 @@ class FnEmitter {
   }
 
   private binop(e: FormOf<"BinOp">): Val {
-    if (e.op === "&&" || e.op === "||") {
-      // `a && b` is `if a { b } else { false }`: b runs only when a does not decide it.
+    if (e.op === "&&" || e.op === "||" || e.op === "==>") {
+      // `a ==> b` is `if a { b } else { true }`. `a && b` is `if a { b } else { false }`: b runs only when a does not decide it.
       const l = this.expr(e.left);
       if (l.ty !== "i1") throw new MlirUnsupported("logical operand type");
       const ref = this.fresh();
-      const isAnd = e.op === "&&";
+      const isAnd = e.op !== "||";
       const rhs = () => {
         const r = this.expr(e.right);
         if (r.ty !== "i1") throw new MlirUnsupported("logical operand type");
         return r;
       };
-      const lit = () => this.def(`milo.const ${!isAnd}`, "i1");
+      const lit = () => this.def(`milo.const ${e.op !== "&&"}`, "i1");
       this.region(`${ref} = milo.if ${l.ref} -> i1 {`, isAnd ? rhs : lit);
       this.region("} else {", isAnd ? lit : rhs);
       this.emit("}");

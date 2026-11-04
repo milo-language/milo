@@ -118,3 +118,10 @@ test("`else` on its own source line rejoins its `}`", () => {
   expect(once).toBe(`fn f(a: bool) {\n    if a {\n        b()\n    } else {\n        c()\n    }\n}\n`);
   expect(format(once, "hugElse2")).toBe(once);
 }, 60000);
+
+test("`==>` in a contract is spaced like other binary operators", () => {
+  const mangled = `fn f(a: i32): i32\nensures a>0==>result>0\n{\n    return a\n}\n`;
+  const once = format(mangled, "implies1");
+  expect(once).toContain("ensures a > 0 ==> result > 0");
+  expect(format(once, "implies2")).toBe(once);
+}, 60000);

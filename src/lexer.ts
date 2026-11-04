@@ -317,6 +317,7 @@ export class Lexer {
     if (ch === "/" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.SlashEq, "/=", line, col); }
     if (ch === "%" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.PercentEq, "%=", line, col); }
     if (ch === "-" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.Arrow, "->", line, col); }
+    if (ch === "=" && next === "=" && next2 === ">") { this.advance(); this.advance(); this.advance(); return this.token(TokenKind.Implies, "==>", line, col); }
     if (ch === "=" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.EqEq, "==", line, col); }
     if (ch === "=" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.FatArrow, "=>", line, col); }
     if (ch === ":" && next === ":") { this.advance(); this.advance(); return this.token(TokenKind.ColonColon, "::", line, col); }

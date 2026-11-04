@@ -750,6 +750,7 @@ export class TypeChecker {
   private unsafeMethods = new Set<string>();
   // Which contract clause is being checked, if any. `old()` is legal only inside `ensures`,
   // and the error for it elsewhere reads better naming the clause it was found in.
+  private inAssertCond = false;
   private contractScope: "requires" | "ensures" | "invariant" | "decreases" | null = null;
   private genericFns = new Map<string, GenericFnInfo>();
   // fns already flagged for a reference return — the declaration scan and checkFunction
@@ -10554,7 +10555,10 @@ export class TypeChecker {
 
   private checkBinOpExpr(expr: ExprOf<"BinOp">): TypeKind {
     const sp = expr.span;
-    if (expr.op === "&&" || expr.op === "||") {
+    if (expr.op === "==>" && this.contractScope === null && !this.inAssertCond) {
+      this.error("`==>` is a contract operator; use `if` or `!a || b` in code", sp);
+    }
+    if (expr.op === "&&" || expr.op === "||" || expr.op === "==>") {
       const lt = this.checkExpr(expr.left);
       const rt = this.checkExpr(expr.right);
       if (lt.tag !== "bool" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${this.show(lt)}`, sp);
@@ -11553,7 +11557,10 @@ export class TypeChecker {
         this.error(`assert() expects 1-2 arguments, got ${expr.args.length}`, sp);
         return this.setType(expr, { tag: "void" });
       }
+      const prevAssert = this.inAssertCond;
+      this.inAssertCond = true;
       const condType = this.checkExpr(expr.args[0]);
+      this.inAssertCond = prevAssert;
       if (condType.tag !== "bool" && condType.tag !== "unknown") {
         this.error(`assert() condition must be bool, got ${this.show(condType)}`, sp);
       }

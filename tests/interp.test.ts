@@ -488,6 +488,25 @@ fn main() {
   expect(runTasks(src("bump(&mut x, lo)")).out).toBe("ok 0\n");
 });
 
+test("R-CONTRACT-IMPLIES: a false antecedent skips the consequent; a true one with a false consequent fails", () => {
+  const src = (n: string) => `
+fn f(n: i64): i64
+requires n != 0 ==> 10 / n >= 1
+ensures n > 5 ==> n > 3 ==> result == 0
+{
+    return 0
+}
+fn main() {
+    print("ok ", f(${n}))
+}`;
+  // n == 0: 10 / n would trap if the consequent ran
+  expect(runTasks(src("0"), { contractChecks: true, entryFile: "t.milo" }).out).toBe("ok 0\n");
+  expect(runTasks(src("2"), { contractChecks: true, entryFile: "t.milo" }).out).toBe("ok 0\n");
+  const bad = runTasks(src("20"), { contractChecks: true, entryFile: "t.milo" });
+  expect(bad.code).toBe(134);
+  expect(bad.err).toMatch(/requires clause violated/);
+});
+
 // ── schedule exploration (R-EXPLORE-*) ──
 const exploreOpts = (o: Partial<ExploreOptions> = {}): ExploreOptions =>
   ({ maxSchedules: 1000, seed: 1, allowNondeterministicOutput: false, entryFile: "t.milo", sys: {}, ...o });

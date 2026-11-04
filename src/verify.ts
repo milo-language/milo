@@ -1458,7 +1458,7 @@ function inferLiteralType(value: Expr | undefined): string | null {
   return null;
 }
 
-const BOOL_OPS = new Set(["==", "!=", "<", ">", "<=", ">=", "&&", "||"]);
+const BOOL_OPS = new Set(["==", "!=", "<", ">", "<=", ">=", "&&", "||", "==>"]);
 
 function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<string, string>, context?: SymExecContext): SymExecResult {
   const paths: SymPath[] = [];
@@ -1765,10 +1765,10 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
     switch (e.kind) {
       case "Closure": case "MatchExpr": return;
       case "BinOp": {
-        if (e.op === "&&" || e.op === "||") {
+        if (e.op === "&&" || e.op === "||" || e.op === "==>") {
           scanRte(e.left, conds, env, line);
           const l = exprToSmtWithEnv(e.left, env);
-          scanRte(e.right, [...conds, e.op === "&&" ? l : `(not ${l})`], env, line);
+          scanRte(e.right, [...conds, e.op === "&&" || e.op === "==>" ? l : `(not ${l})`], env, line);
           return;
         }
         scanRte(e.left, conds, env, line);
@@ -3318,6 +3318,7 @@ function binOpToSmt(op: string): string {
     case ">=": return ">=";
     case "&&": return "and";
     case "||": return "or";
+    case "==>": return "=>";
     default: return `UNSUPPORTED_OP_${op}`;
   }
 }

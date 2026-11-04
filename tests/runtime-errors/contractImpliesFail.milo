@@ -1,0 +1,12 @@
+// @runtime-error: ensures clause violated
+
+pub fn f(n: i32): i32
+ensures n > 0 ==> result < 0
+{
+    return n
+}
+
+pub fn main(): i32 {
+    print(f(3))
+    return 0
+}
