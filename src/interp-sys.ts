@@ -518,7 +518,7 @@ const isGen = (v: unknown): v is Generator<unknown, Value, unknown> => !!v && ty
 
 export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
   const sym = fn.linkName ?? fn.name;
-  const net = NET[sym], base = (SYS[sym] ?? LIBC[sym]) as SysFn | undefined;
+  const net = (NET as Record<string, (typeof NET)[string] | undefined>)[sym], base = (SYS[sym] ?? LIBC[sym]) as SysFn | undefined;
   const foreign = net || base ? undefined : it.sysOptions.foreign;
   if (!net && !base && !foreign?.handles(sym)) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
   const s = (it.sys ??= new Sys(it, it.sysOptions));
