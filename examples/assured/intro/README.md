@@ -137,6 +137,23 @@ In CI, `milo trace heater.milo --strict --spec-base <merge-base>` (and strict bu
 flag) fails on any unsigned change. Without `--spec-base` nothing changes. Review edits to
 `spec-signoff.json` like any change to the requirements.
 
+## 7. Test it independently
+
+Tests written by whoever wrote the code tend to mirror it. `milo spec --packet` writes everything a
+separate test author may see and nothing else: `requirements.json`, and a stub of each source file
+with declarations, signatures and contracts kept and every body replaced by `todo`.
+
+```text
+$ milo spec --packet /tmp/packet heater.milo
+/tmp/packet: 3 files
+$ milo check /tmp/packet/heater.milo
+/tmp/packet/heater.milo: ok
+```
+
+Private functions, `main` and comments are gone. The author writes `@req` tests against the
+requirement text and the contracts, type-checks them there, and drops them into the real project. A
+non-empty output directory is refused.
+
 ## Where to go next
 
 - Without `--strict`, gaps are warnings: use that while developing.

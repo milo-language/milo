@@ -161,9 +161,10 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     ],
   },
   {
-    name: "spec", usage: "spec <entry.milo>",
-    summary: "the spec lock: print the intent surface (requirements, contract clauses, invariants); --diff <ref> classifies changes since a git ref and asks z3 whether a changed clause only strengthens",
+    name: "spec", usage: "spec [--diff <git-ref> | --packet <outdir>] <entry.milo>",
+    summary: "the spec lock: print the intent surface (requirements, contract clauses, invariants); --diff <ref> classifies changes since a git ref and asks z3 whether a changed clause only strengthens; --packet <outdir> writes a clean-room packet for an independent test author",
     flags: [
+      { flag: "--packet <outdir>", help: "write requirements.json plus one stub .milo per source file (declarations and contracts verbatim, pub fn bodies replaced by a panic, private code and comments dropped); refuses a non-empty <outdir>" },
       { flag: "--diff <git-ref>", help: "compare with the spec at <ref>: additions and strengthenings are ok; removals, text changes, weakenings (with a z3 counterexample) and undecided changes need an entry in spec-signoff.json (id, hash, who, why); exit 1 if any is unsigned" },
       { flag: "--json", help: "the surface or the changes as data" },
     ],

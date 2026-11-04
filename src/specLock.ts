@@ -12,6 +12,7 @@ import { Parser } from "./parser";
 import type { Contract, Expr, Function as Fn } from "./ast";
 import { clauseImplies } from "./verify";
 import { findRequirementsFile, moduleDir } from "./requirements";
+import { writePacket } from "./specPacket";
 
 export interface SpecClause {
   id: string;
@@ -38,7 +39,7 @@ const canon = (e: unknown) => JSON.stringify(e, (k, v) => k === "span" ? undefin
 
 function skipDir(n: string) { return n === "node_modules" || n === ".git" || n.startsWith("."); }
 
-function fsSource(root: string): Source {
+export function fsSource(root: string): Source {
   return {
     read: rel => { const p = join(root, rel); return existsSync(p) ? readFileSync(p, "utf-8") : null; },
     milo: () => {
@@ -127,7 +128,7 @@ function collect(src: Source, requirementsRel: string | null): SpecSurface {
 }
 
 /** Where the entry's project lives, relative to the git top-level, and its requirements.json relative to the project dir. */
-function layout(entry: string): { projectDir: string; requirementsRel: string | null } {
+export function layout(entry: string): { projectDir: string; requirementsRel: string | null } {
   const own = moduleDir(entry);
   const projectDir = own ?? dirname(resolve(entry));
   const req = findRequirementsFile(entry);
@@ -249,17 +250,26 @@ export function formatDiff(ref: string, changes: SpecChange[]): string {
   return out.join("\n");
 }
 
-/** `milo spec [--diff <ref>] [--json] <entry>` */
+/** `milo spec [--diff <ref> | --packet <outdir>] [--json] <entry>` */
 export function runSpecCommand(args: string[]): number {
-  let ref: string | undefined, entry = "", json = false;
+  let ref: string | undefined, entry = "", json = false, packet: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--diff") ref = args[++i];
     else if (a.startsWith("--diff=")) ref = a.slice(7);
+    else if (a === "--packet") packet = args[++i];
+    else if (a.startsWith("--packet=")) packet = a.slice(9);
     else if (a === "--json") json = true;
     else if (!a.startsWith("-") && !entry) entry = a;
   }
-  if (!entry || (args.includes("--diff") && !ref)) { console.error("usage: milo spec [--diff <git-ref>] [--json] <entry.milo>"); return 1; }
+  if (!entry || (args.includes("--diff") && !ref) || (args.some(a => a === "--packet") && !packet)) { console.error("usage: milo spec [--diff <git-ref> | --packet <outdir>] [--json] <entry.milo>"); return 1; }
+  if (packet !== undefined) {
+    try {
+      const r = writePacket(entry, packet);
+      console.log(`${r.outdir}: ${r.files.length} files`);
+      return 0;
+    } catch (e) { console.error(`error: ${(e as Error).message}`); return 1; }
+  }
   if (ref === undefined) {
     const s = specSurface(entry);
     console.log(json ? JSON.stringify({ requirements: Object.fromEntries(s.requirements), clauses: [...s.clauses.values()].map(c => ({ id: c.id, kind: c.kind, text: c.text, hash: c.hash })) }, null, 2) : formatSpec(s));

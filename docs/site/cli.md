@@ -27,6 +27,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`test [file\|dir...]`](#test) | Run tests (\*\_test.milo, recursive in a dir; cwd by default). |
 | [`check <file>`](#check) | Type-check only, no codegen. |
 | [`fix <file>`](#fix) | Apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches. |
+| [`harden <file\|dir>`](#harden) | Rewrite into stricter Milo (index loop to for-in, match to ?, isSome to if let, last-use clone to move); prints a diff. |
 | [`emit-ast <file>`](#emit-ast) | Emit the parsed AST as JSON. |
 | [`emit-mlir <file>`](#emit-mlir) | Emit the milo dialect module before milo-opt (the source-faithful top layer). |
 | [`interp <file>`](#interp) | Run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck. |
@@ -44,6 +45,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`lang`](#lang) | The language's vocabulary as data: keywords, types, operators, builtins, warnings, attributes, commands. |
 | [`explain <name>`](#explain) | What one warning, @attribute or keyword means, with an example and how to silence it. |
 | [`trace <file>`](#trace) | A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records. |
+| [`spec [--diff <git-ref> \| --packet <outdir>] <entry.milo>`](#spec) | The spec lock: print the intent surface (requirements, contract clauses, invariants); --diff \<ref\> classifies changes since a git ref and asks z3 whether a changed clause only strengthens; --packet \<outdir\> writes a clean-room packet for an independent test author. |
 | [`trace-object <binary>`](#trace-object) | Per function of a binary built with -g: address range -\> source line -\> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
@@ -112,6 +114,18 @@ milo fix <file>
 ```
 
 Apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches.
+
+### harden
+
+```sh
+milo harden <file|dir>
+```
+
+Rewrite into stricter Milo (index loop to for-in, match to ?, isSome to if let, last-use clone to move); prints a diff. An edit is kept only if the result type-checks, `milo interp` output is unchanged, and a second run finds nothing.
+
+| Flag | Effect |
+|---|---|
+| `--write` | Apply the rewrites in place. |
 
 ### emit-ast
 
@@ -305,12 +319,28 @@ A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any o
 | `--strict` | (.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause. |
 | `--safety=<do178 profile>` | (.milo) same as --strict. |
 | `--baseline <file>` | (.milo) gaps listed in \<file\> stay warnings under --strict; new gaps fail (write one with --write-baseline \<file\>). |
+| `--spec-base <git-ref>` | (.milo) with --strict: fail on any unsigned spec weakening since \<ref\> (see milo spec). |
 | `--requirements <file>` | (.milo) requirements.json elsewhere than next to the entry. |
 | `--tests <file\|dir>` | (.milo) where the @req tests live (default: \*\_test.milo beside the entry). |
 | `--json` | (.milo) the matrix as data; (trace file) {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
 | `--kind <prefix>` | Only records whose kind starts with \<prefix\> (net., sched.). |
 | `--payload <seq>` | Write one record's payload bytes to stdout. |
 | `--object <binary>` | (.milo) add the address ranges of a binary built with -g that implement each requirement. |
+
+### spec
+
+```sh
+milo spec [--diff <git-ref>
+milo --packet <outdir>] <entry.milo>
+```
+
+The spec lock: print the intent surface (requirements, contract clauses, invariants); --diff \<ref\> classifies changes since a git ref and asks z3 whether a changed clause only strengthens; --packet \<outdir\> writes a clean-room packet for an independent test author.
+
+| Flag | Effect |
+|---|---|
+| `--packet <outdir>` | Write requirements.json plus one stub .milo per source file (declarations and contracts verbatim, pub fn bodies replaced by a panic, private code and comments dropped); refuses a non-empty \<outdir\>. |
+| `--diff <git-ref>` | Compare with the spec at \<ref\>: additions and strengthenings are ok; removals, text changes, weakenings (with a z3 counterexample) and undecided changes need an entry in spec-signoff.json (id, hash, who, why); exit 1 if any is unsigned. |
+| `--json` | The surface or the changes as data. |
 
 ### trace-object
 

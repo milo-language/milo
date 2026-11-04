@@ -69,6 +69,7 @@ Generated from the compiler's token table by `scripts/gen-lang-docs.ts`.
 | `\|\|` | Logical or (short-circuit). |
 | `=` | Assignment and binding. |
 | `==` | Equal. |
+| `==>` | Implication `a ==> b`, in contracts and `assert` only: true when `a` is false, else `b` (`b` is not evaluated when `a` is false). Loosest boolean operator, right-associative. |
 | `=>` | A match arm `Pat => expr`; a closure body `(x: i32) => x * 2`. |
 | `::` | Not used by the grammar: paths use `.`, as in `Option.Some`. |
 | `!=` | Not equal. |
