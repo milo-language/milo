@@ -18,7 +18,7 @@ import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
 import { lower } from "./lower";
-import { runInterp } from "./interp-run";
+import { runInterp, interpOptions } from "./interp-run";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
 import { generateHeader } from "./headergen";
@@ -1811,6 +1811,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--expect" && i + 1 < args.length) { expected.add(args[++i]); }
     // `--replay-holes`: list every extern call record/replay cannot capture, as warnings.
     else if (args[i] === "--replay-holes") { warned.add("replay-hole"); }
+    // `milo interp --explore` values: never the source file
+    else if (["--max-schedules", "--random", "--seed", "--schedule"].includes(args[i]) && i + 1 < args.length) { rest.push(args[i], args[++i]); }
     else if (args[i].startsWith("--allow=")) { allowed.add(args[i].slice(8)); }
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
     else if (args[i].startsWith("--max-stack-array=") || args[i] === "--max-stack-array") {
@@ -2246,10 +2248,11 @@ async function main() {
   } else if (cmd === "emit-hir") {
     emitHir(source!, output, target, emitAll, emitSpans, warningConfig);
   } else if (cmd === "interp") {
+    // --explore / --schedule: R-EXPLORE-* in docs/semantics/mini-milo.md section 5
     // The reference interpreter (src/interp.ts): runs the typed HIR, no codegen. Exit 3 means
     // the program uses something it does not model; exit 4 means a rule did not apply (stuck).
     let code = 0;
-    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), { contractChecks: contractChecks ?? args.includes("--debug"), entryFile: source!, hostFs: args.includes("--host-fs") }); });
+    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), interpOptions(args, source!, contractChecks)); });
     process.exit(code);
   } else if (cmd === "emit-ir") {
     const trapOnOverflow = overflowChecks ?? true;

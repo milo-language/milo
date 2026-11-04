@@ -22,7 +22,12 @@ const co = (name: string, f: CoNative) => { const n = f as unknown as Native; n.
 
 const handle = (kind: string, o: HandleV["o"]): HandleV => ({ k: "handle", kind, o });
 // the handle a `&Self` argument names
-const objOf = <T>(it: Interp, self: Value): T => (it.deref(self) as HandleV).o as unknown as T;
+// Touching the object tells the schedule explorer which steps share it (R-EXPLORE-INDEP); a task handle stands for its task.
+const objOf = <T>(it: Interp, self: Value): T => {
+  const o = (it.deref(self) as HandleV).o as unknown as T;
+  (it as Partial<InterpCo>).touch?.(o instanceof TaskH ? o.t : o);
+  return o;
+};
 const resultName = (it: Interp, e: Expr | undefined): string => (it.T(e!) as { name: string }).name;
 const ok = (it: Interp, e: Expr | undefined, v: Value) => it.mkEnum(resultName(it, e), "Ok", [v]);
 const err = (it: Interp, e: Expr | undefined, msg: string) => it.mkEnum(resultName(it, e), "Err", [staticStr(msg)]);

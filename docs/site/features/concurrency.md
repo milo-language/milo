@@ -557,6 +557,62 @@ pub fn main(): i32 {
 
 The same building block is public: `spawnWorker(f)` (std/runtime) starts an OS thread running `f` as the first task of a scheduler of its own, under the `Promise.blocking` Send rules.
 
+## Finding Interleaving Bugs: `milo interp --explore`
+
+A green task keeps the CPU until it parks, yields or ends, so a test run sees one interleaving. `milo interp --explore` runs the program under many and reports every schedule that deadlocks, panics, fails an `assert` or contract, or prints something other than the default run. This program passes when run normally, because `t2` yields before taking its first lock:
+
+```milo
+from "std/runtime" import { Task, schedulerYield }
+from "std/sync" import { Channel }
+
+// A capacity-1 channel is a lock: send takes it, recv releases it.
+fn main() {
+    let la = Channel<i64>.new(1)!
+    let lb = Channel<i64>.new(1)!
+    let la2 = la.clone()
+    let lb2 = lb.clone()
+    let t1 = Task.spawn(move(): void => {
+        la.send(1)!
+        schedulerYield()
+        lb.send(1)!
+        print("t1 done")
+        lb.recv()!
+        la.recv()!
+    })
+    let t2 = Task.spawn(move(): void => {
+        schedulerYield()
+        lb2.send(1)!
+        la2.send(1)!
+        print("t2 done")
+        la2.recv()!
+        lb2.recv()!
+    })
+    t1.join()
+    t2.join()
+}
+```
+
+```text
+$ milo interp locks.milo --explore
+explore: 3 schedules (exhaustive DFS up to 1000), 2 distinct outcomes, 2 choices skipped as independent
+
+FAIL deadlock: every task is blocked and none can wake another: task 1 (main) parked in Task.join; task 2 parked in Channel.send (channel full); task 3 parked in Channel.send (channel full)
+  schedule: 0,0,1
+  trace (task, where it stopped; * = choice point, chosen of ready):
+      1  task 1  stopped at locks.milo:26
+      2  task 2  * 0 of [2,3]  stopped at locks.milo:12
+      3  task 3  * 0 of [3,2]  stopped at locks.milo:19
+      4  task 3  * 1 of [2,3]  stopped at locks.milo:21
+      5  task 2  stopped at locks.milo:13
+  replay: milo interp locks.milo --schedule 0,0,1
+```
+
+The finding is a replayable schedule: `milo interp locks.milo --schedule 0,0,1` hits the same deadlock every time (exit 4). Each number is the index taken at a choice point, a moment when two or more tasks were ready; the list ends and the run goes on first-in-first-out.
+
+- Exit code 5 means a finding. Stdout that differs from the default run is reported as `nondeterministic-output`: not always a bug, so `--allow-nondeterministic-output` accepts it.
+- The default search tries every choice sequence up to `--max-schedules N` (1000), skipping a choice between two tasks whose next steps share no channel, `WaitGroup`, atomic, global or heap block. `--random N --seed S` runs N randomized-priority schedules instead, for programs too big to exhaust.
+- Contracts are checked, as with `--debug`. It sees only what the interpreter models; time is a virtual clock, so a race against real time is not explored.
+
 ## Pitfalls
 
 1. **`main` is a green task, in any program that can spawn one.** Every blocking std call in it parks and lets other tasks run, instead of wedging the single scheduler thread. A program with no reachable `Task.spawn` keeps the plain entry point and pays nothing for the scheduler.

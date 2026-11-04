@@ -13,6 +13,7 @@ import { TypeChecker } from "../src/checker";
 import { getHostTarget } from "../src/target";
 import { Interp } from "../src/interp";
 import { InterpCo, runChecked, type RunOptions, type Task } from "../src/interp-co";
+import { explore, type ExploreOptions } from "../src/interp-explore";
 import { InterpStuck } from "../src/interp-values";
 import type { Program } from "../src/ast";
 import type { CheckResult } from "../src/checker";
@@ -482,6 +483,134 @@ fn main() {
   expect(bad.err).toMatch(/^runtime error: requires clause violated at \S*t\d*\.milo:3\n$/);
   // off by default, as in a release build
   expect(runTasks(src("bump(&mut x, lo)")).out).toBe("ok 0\n");
+});
+
+// ── schedule exploration (R-EXPLORE-*) ──
+const exploreOpts = (o: Partial<ExploreOptions> = {}): ExploreOptions =>
+  ({ maxSchedules: 1000, seed: 1, allowNondeterministicOutput: false, entryFile: "t.milo", sys: {}, ...o });
+const exploreSrc = (src: string, o: Partial<ExploreOptions> = {}) => {
+  const { program } = check(src);
+  return explore(program, checkedOf.get(program)!, exploreOpts(o), "t.milo");
+};
+
+// Two tasks take two channel locks in opposite order. t2 yields once first, so the default (FIFO) run finishes
+// both; only the interleaving where t2 gets to its first lock before t1 takes its second deadlocks.
+const LOCK_ORDER = `
+from "std/runtime" import { Task, schedulerYield }
+from "std/sync" import { Channel }
+fn main() {
+    let la = Channel<i64>.new(1)!
+    let lb = Channel<i64>.new(1)!
+    let la2 = la.clone()
+    let lb2 = lb.clone()
+    let t1 = Task.spawn(move(): void => {
+        la.send(1)!
+        schedulerYield()
+        lb.send(1)!
+        print("t1 done")
+        lb.recv()!
+        la.recv()!
+    })
+    let t2 = Task.spawn(move(): void => {
+        schedulerYield()
+        lb2.send(1)!
+        la2.send(1)!
+        print("t2 done")
+        la2.recv()!
+        lb2.recv()!
+    })
+    t1.join()
+    t2.join()
+}`;
+
+test("R-EXPLORE: a deadlock only one interleaving reaches is found and its schedule replays", () => {
+  expect(runTasks(LOCK_ORDER).out).toBe("t1 done\nt2 done\n"); // the default schedule passes
+  const rep = exploreSrc(LOCK_ORDER);
+  expect(rep.findings.map(f => f.kind)).toEqual(["deadlock"]);
+  expect(rep.text).toMatch(/FAIL deadlock/);
+  expect(rep.text).toMatch(/stopped at t\d+\.milo:\d+/);
+  const sched = rep.findings[0]!.run.schedule;
+  expect(sched.length).toBeGreaterThan(0);
+  expect(rep.text).toContain(`replay: milo interp t.milo --schedule ${sched.join(",")}`);
+  // replaying the printed schedule reproduces the deadlock; the default schedule still passes
+  const { program } = check(LOCK_ORDER);
+  let rule = "";
+  try { runChecked(program, checkedOf.get(program)!, { schedule: sched }); } catch (e) { rule = (e as InterpStuck).rule; }
+  expect(rule).toBe("S-DEADLOCK");
+});
+
+test("R-EXPLORE: random PCT schedules find the lock-order deadlock too, from a seed", () => {
+  const { program } = check(LOCK_ORDER);
+  const go = () => explore(program, checkedOf.get(program)!, exploreOpts({ random: 60, seed: 7 }), "t.milo");
+  const rep = go();
+  expect(rep.findings.map(f => f.kind)).toContain("deadlock");
+  expect(go().text).toBe(rep.text); // same seed, same report
+});
+
+test("R-EXPLORE: stdout that depends on the schedule is flagged, and --allow-nondeterministic-output accepts it", () => {
+  const src = `
+from "std/runtime" import { Task }
+fn main() {
+    let a = Task.spawn(move(): void => { print("a") })
+    let b = Task.spawn(move(): void => { print("b") })
+    a.join()
+    b.join()
+}`;
+  const rep = exploreSrc(src);
+  expect(rep.findings.map(f => f.kind)).toEqual(["nondeterministic-output"]);
+  expect(rep.text).toMatch(/stdout differs/);
+  expect(exploreSrc(src, { allowNondeterministicOutput: true }).failures).toBe(0);
+});
+
+test("R-EXPLORE: tasks that share nothing are clean, and independent choices are not explored", () => {
+  const src = `
+from "std/runtime" import { Task, schedulerYield }
+from "std/sync" import { Channel }
+fn main() {
+    let c1 = Channel<i64>.new(1)!
+    let c2 = Channel<i64>.new(1)!
+    let r1 = c1.clone()
+    let r2 = c2.clone()
+    let a = Task.spawn(move(): void => { c1.send(1)!; schedulerYield(); c1.send(2)! })
+    let b = Task.spawn(move(): void => { c2.send(10)!; schedulerYield(); c2.send(20)! })
+    let c = Task.spawn(move(): void => { r1.recv()!; r1.recv()!; r2.recv()!; r2.recv()! })
+    a.join()
+    b.join()
+    c.join()
+    print("done")
+}`;
+  const rep = exploreSrc(src);
+  expect(rep.failures).toBe(0);
+  expect(rep.schedules).toBeGreaterThan(1);
+  expect(rep.text).toMatch(/^explore: \d+ schedules? /);
+  expect(rep.text).toMatch(/no deadlock, panic/);
+  expect(rep.text).toMatch(/[1-9]\d* choices? skipped as independent/);
+});
+
+test("R-EXPLORE: an assert only some schedules fail is reported with its kind", () => {
+  const rep = exploreSrc(`
+from "std/runtime" import { Task, schedulerYield }
+from "std/sync" import { AtomicI64 }
+fn main() {
+    let n = AtomicI64.new(0)
+    let n2 = n.clone()
+    let n3 = n.clone()
+    let a = Task.spawn(move(): void => {
+        let seen = n.load()
+        schedulerYield()
+        n.store(seen + 1)
+    })
+    let b = Task.spawn(move(): void => {
+        schedulerYield()
+        let seen = n2.load()
+        schedulerYield()
+        n2.store(seen + 1)
+    })
+    a.join()
+    b.join()
+    assert(n3.load() == 2, "lost update")
+}`);
+  expect(rep.findings.map(f => f.kind)).toEqual(["assert"]);
 });
 
 test("the generated task twin (src/interp-gen.ts) is current", () => {

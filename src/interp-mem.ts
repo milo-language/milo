@@ -86,6 +86,7 @@ export class Mem {
   private ids = 0;
   private layoutCache: Layout | undefined;
   private views = new WeakMap<object, Map<string, Alloc>>();
+  onAccess: ((a: Alloc) => void) | null = null; // the schedule explorer's view of shared heap (R-EXPLORE-INDEP)
   constructor(private it: Interp) {}
 
   // ── layout (the compiled program's sizes and offsets) ──
@@ -338,6 +339,7 @@ export class Mem {
   access(p: Value, n: number, align: number, write: boolean, what: string): { be: Backing; off: number } {
     const q = this.asPtr(p, what);
     const a = q.a;
+    this.onAccess?.(a);
     if (!a.isLive()) this.it.stuck("R-MEM-UAF", `${what} of ${n} bytes in freed ${this.describe(q)}`);
     if (q.off < 0 || q.off + n > a.size) this.it.stuck("R-MEM-OOB", `${what} of ${n} bytes outside ${this.describe(q)}`);
     if (align > 1 && (a.base + q.off) % align !== 0) this.it.stuck("R-MEM-ALIGN", `${what} of ${n} bytes at an address not a multiple of ${align} in ${this.describe(q)}`);

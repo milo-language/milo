@@ -53,12 +53,30 @@ export class InterpCo extends InterpGen {
 
   // R-TASK-PICK: the scheduling decision. Takes the ready tasks, front of the queue first, and returns
   // the index to run. FIFO by default, as the library's run queue is.
-  pickNext(ready: readonly Task[]): number { void ready; return 0; }
+  // With a `schedule` (R-EXPLORE-REPLAY) the n-th choice point (two or more tasks ready) takes schedule[n];
+  // past the list, or when an index does not fit the ready list, it falls back to the front.
+  schedule: number[] | null = null;
+  choicesMade = 0;
+  scheduleMismatch = false;
+  pickNext(ready: readonly Task[]): number {
+    if (!this.schedule || ready.length < 2) return 0;
+    const i = this.schedule[this.choicesMade++];
+    if (i === undefined) return 0;
+    if (i >= ready.length) { this.scheduleMismatch = true; return 0; }
+    return i;
+  }
+  // R-EXPLORE-INDEP: the exploration driver (src/interp-explore.ts) sets this to learn what each step touches.
+  // `key` is any object or string naming a shared thing: a channel, a task, a global, a heap block.
+  onTouch: ((key: unknown) => void) | null = null;
+  touch(key: unknown): void { if (this.onTouch) this.onTouch(key); }
+  // messages of panics that retired a task (R-TASK-PANIC) instead of ending the program
+  taskPanics: string[] = [];
 
   liveTasks(): number { return this.tasks.size; }
 
   spawnTask(f: ClosureV, scope: Task["scope"] = null, cacheable = true): Task {
     if (cacheable && this.cachedContexts > 0) this.cachedContexts--;
+    this.touch("spawn"); // task ids come from one counter, so two spawns do not commute
     const t: Task = { id: this.nextTaskId++, state: "ready", gen: null, ctx: { frames: [], temps: [], depth: 0, pend: [] }, isMain: false, joiner: null, scopesOpen: 0, scope, cacheable: true, why: "" };
     t.cacheable = cacheable;
     t.gen = this.taskBody(f);
@@ -88,6 +106,7 @@ export class InterpCo extends InterpGen {
   // R-TIME: sleepMs parks the task until the clock reaches now + ms; sleeping 0 or less is a yield.
   *sleep(ms: number): Gen<void> {
     if (ms <= 0) { yield* this.yieldNow(); return; }
+    this.touch("clock");
     this.sleepers.push({ t: this.cur, at: this.clock + ms });
     yield* this.park("sleepMs");
   }
@@ -102,6 +121,7 @@ export class InterpCo extends InterpGen {
   // R-TASK-UNPARK: a parked task becomes ready at the back of the queue; any other state is left alone.
   unpark(t: Task): void {
     if (t.state !== "parked") return;
+    this.touch(t);
     t.state = "ready";
     this.runq.push(t);
   }
@@ -121,6 +141,9 @@ export class InterpCo extends InterpGen {
   }
   private reap(t: Task): void {
     this.tasks.delete(t.id);
+    this.touch(t);
+    if (t.scope) this.touch(t.scope);
+    if (t.isMain) this.touch("exit"); // ends the program: every task still ready is abandoned
     // Measured on compiled programs with a plain main: the stack of a task reaped with no other task left does not
     // end up in the cache. (With a green main the main task is always still there.)
     const othersLeft = this.greenMain || [...this.tasks.values()].some(x => !x.isMain);
@@ -168,6 +191,7 @@ export class InterpCo extends InterpGen {
         // R-TASK-PANIC: a panic in a task that is not main and has no open scope retires that task, not the program
         if (!(e instanceof Panic) || task.isMain || task.scopesOpen > 0) throw e;
         this.err.push(...new TextEncoder().encode(e.message + "\n"));
+        this.taskPanics.push(e.message);
         this.aborted = false;
         r = { done: true, value: undefined };
       }
@@ -189,7 +213,8 @@ export class InterpCo extends InterpGen {
  * task interpreter; a run is deterministic and its output is buffered until the end, so the rerun
  * shows exactly what a run with tasks from the start would.
  */
-export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions }
+// schedule: replay these choices (R-EXPLORE-REPLAY); it runs under the task interpreter from the start
+export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions; schedule?: number[] }
 export function runChecked(program: Program, checked: CheckResult, opts: RunOptions = {}): { it: Interp; result: RunResult } {
   const make = (c: new (p: Program, r: CheckResult) => Interp): Interp => {
     const i = new c(program, checked);
@@ -199,12 +224,15 @@ export function runChecked(program: Program, checked: CheckResult, opts: RunOpti
     return i;
   };
   let it: Interp = make(Interp);
-  try {
-    return { it, result: it.run() };
-  } catch (e) {
-    if (!(e instanceof NeedTasks)) { (e as { interp?: Interp }).interp = it; throw e; }
+  if (!opts.schedule) {
+    try {
+      return { it, result: it.run() };
+    } catch (e) {
+      if (!(e instanceof NeedTasks)) { (e as { interp?: Interp }).interp = it; throw e; }
+    }
   }
   it = make(InterpCo);
+  if (opts.schedule) (it as InterpCo).schedule = opts.schedule;
   try {
     return { it, result: it.run() };
   } catch (e) {
