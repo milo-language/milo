@@ -3,7 +3,7 @@ system: safety-roadmap
 purpose: shipped safety mechanisms, explicit trust boundaries, and remaining soundness work
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/runtime.milo, std/sync.milo, tests/errors/, tests/runtime-errors/
 update-when: a safety check ships, a trust boundary changes, or a roadmap gap closes
-last-verified: 2026-08-24
+last-verified: 2026-11-04 (assurance track, z3 only, mutability hard errors, backlog parked)
 -->
 
 # Safety Roadmap: Closing the Gaps
@@ -18,6 +18,16 @@ non-Copy element out of a borrow" lived in `checker.ts` for fields and in
 double-freed in safe code (fixed 2026-08-01). `tests/aliasing-matrix.golden.md`
 pins one cell per container × operation so the next divergence shows up as a
 diff instead of as a crash.
+
+## Since 2026-08-24
+
+Status and commits live in [roadmap.md](roadmap.md). Safety-relevant:
+
+- Mutability lints are hard errors (`bf31a66f`); `==>` in contracts (`a664db76`); `milo harden` (`0f16ce16`).
+- z3 is the only prover (`cc3ffc85`); `prove --rte` and `prove --dead` (`27d65ee2`, `e3ba5056`).
+- Traceability and profiles: `@req`, `milo trace`, presets `app` and `hardened` ([verification-roadmap.md](verification-roadmap.md)).
+- Binary evidence: pinned build record (`93496aea`), `milo trace-object` (`60251edb`) ([plans/object-level-assurance.md](plans/object-level-assurance.md)).
+- Next: lock levels and the channel wait-graph rule ([plans/parallelism.md](plans/parallelism.md)). Parked 2026-11-04: timing chain (WCET budgets), evidence capture, cvc5 differential re-check of proofs.
 
 ## Phase 1: `unsafe` Blocks + Safe FFI Surface — DONE
 

@@ -54,6 +54,7 @@ test("the roadmap's stdlib list names every module, and no module it lacks", () 
   const real = new Set(
     execFileSync("git", ["ls-files", "std/*.milo"], { cwd: ROOT, encoding: "utf-8" })
       .split("\n").filter(Boolean)
+      .filter(f => !f.slice("std/".length).includes("/")) // std/json/json_test.milo is a test, not a module
       .map(f => f.slice("std/".length).split(".")[0]!),
   );
   expect(real.size).toBeGreaterThan(50); // the scan must actually find std

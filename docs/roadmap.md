@@ -3,7 +3,7 @@ system: planning
 purpose: canonical status — what shipped, what is in flight, what is planned, what was retired
 key-files: docs/backlog.md (ROI ordering over the open items), docs/safety-roadmap.md, docs/self-hosting.md, docs/verification-roadmap.md
 update-when: a feature ships, a track is abandoned, or a new track opens
-last-verified: 2026-10-12 (let-chains moved from Retired to Core Language, nested patterns added; earlier 2026-09-21 hygiene: three stale Planned checkboxes flipped, @pure moved to Completed, tuples row rewritten; every path returns; the import list restricts; earlier: prover: builtin container contracts, len kept across len-preserving loops, honest verdicts on contract-less havocs; earlier: self-host endgame decided proof-only and src-milo frozen; packages ecosystem at 8 published with an install-and-build gate; green main; counts re-measured)
+last-verified: 2026-11-04 (status brought current from git log since 2026-10-28: MLIR only backend, HIR deleted, interpreter oracle, assurance track, z3 only; MIR and std/smt retired; backlog parked)
 -->
 
 # Milo Roadmap
@@ -18,9 +18,26 @@ Shipped items are one-liners here — git history and the linked design docs kee
 
 ### Core Language
 
-Primitive types, `let`/`var`, if/else, while/for, functions, structs, enums with exhaustiveness-checked pattern matching (nested patterns such as `Ok(Some(v))` and `Some(0)` since 2026-10-12, checked by Maranget usefulness so a missing `Ok(None)` is named), generics with monomorphization and inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading, Go-style interfaces (structural typing, vtable dispatch), `Heap<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??`, auto-`From` error conversion through `?`, `let`-else, let-chains (`if let A = x && let B = a.f && cond`, in `while` too; shipped 2026-10-12 after the hackersonly port asked for them twice), string interpolation, bitwise ops, hex/binary literals, `as` casts, for-in over ranges/Vec/array/string/HashMap and any type with `next(&mut Self): Option<T>`, slicing on Vec/array/string, `pub`/private visibility with per-file enforcement, `@embedFile`, `@externalLinkage`, `@targetOs()`, HIR-based typed IR.
+Primitive types, `let`/`var`, if/else, while/for, functions, structs, enums with exhaustiveness-checked pattern matching (nested patterns such as `Ok(Some(v))` and `Some(0)` since 2026-10-12, checked by Maranget usefulness so a missing `Ok(None)` is named), generics with monomorphization and inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading, Go-style interfaces (structural typing, vtable dispatch), `Heap<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??`, auto-`From` error conversion through `?`, `let`-else, let-chains (`if let A = x && let B = a.f && cond`, in `while` too; shipped 2026-10-12 after the hackersonly port asked for them twice), string interpolation, bitwise ops, hex/binary literals, `as` casts, for-in over ranges/Vec/array/string/HashMap and any type with `next(&mut Self): Option<T>`, slicing on Vec/array/string, `pub`/private visibility with per-file enforcement, `@embedFile`, `@externalLinkage`, `@targetOs()`, typed IR is the checked AST lowered straight to the MLIR top layer (HIR deleted 2026-11-04, see Since 2026-10-28).
 
 Diagnostics carry "did you mean" suggestions on a missed method, field, or name — from an alias table for other languages' spellings (`length`, `toUpperCase`, `forEach`, `unwrap`) as well as edit distance — and a failed static call reports the real mistake (unknown type / no such static method / missing import, with the `from "std/x" import { Y }` line written out) instead of the old blanket "unknown enum". A plain string holding `${name}` warns (`missing-interpolation`) rather than silently emitting the characters.
+
+### Since 2026-10-28
+
+Commits: `git log --since=2026-10-28 --oneline`.
+
+- **MLIR is the only backend**, scaffold included: `2b34390d` (emit the whole module, delete `codegen.ts`), `786f9e1e` (scaffold merged, runtime linked in `milo-opt`). See [mlir-backend.md](mlir-backend.md).
+- **Top dialect replaces HIR**: `milo.for_in`, `milo.try`, `milo.interp` and the `milo-desugar` pass (`50303d38`); `hir` and `lower.ts` deleted, the emitter reads the checked AST (`75bdb0be`). See [plans/top-dialect.md](plans/top-dialect.md).
+- **Reference interpreter is the oracle**: `tests/golden` deleted (`8349da2f`), `mlir-same` compares against the interpreter (`d00787c2`); schedule exploration `--explore` / `--schedule` (`7e442f6c`); byte memory model and C layer for extern calls (`738b690c`); `gen-programs` differential fuzzer (`76c8d70d`). Semantics rules: [semantics/milo.md](semantics/milo.md).
+- **Requirements traceability**: `@req`, `requirements.json` schema, `milo trace`, strict/dev/baseline modes (`a344a4b3`, `8b7ce898`, `d008e667`); presets `app` and `hardened` from `milo.json` (`bac9c586`); coverage of formal analysis via `prove --dead` (`27d65ee2`). See [verification-roadmap.md](verification-roadmap.md).
+- **Object-level assurance**: pinned build record and binary call-graph checks (`93496aea`); source-to-object trace `milo trace-object` (`60251edb`). See [plans/object-level-assurance.md](plans/object-level-assurance.md).
+- **z3 is the only prover**; `std/smt` and `--solver native` removed (`cc3ffc85`). `prove --rte` learned element reads, literals, counters and unwrap (`e3ba5056`, [plans/rte-triage-2026-11.md](plans/rte-triage-2026-11.md)).
+- **`std/json` traced to RFC 8259** with requirements, proofs and the vendored JSONTestSuite (`7dea7bde`, `42694924`).
+- **`milo harden`** (`0f16ce16`), applied to std and examples (`4ba53060`).
+- **Mutability lints are hard errors**: `var-never-reassigned` and `unwritten-mut-param` (`bf31a66f`; [breaking-changes.md](breaking-changes.md)).
+- **`==>` implication** in contracts and `assert` (`a664db76`).
+- **Multicore workers**: a scheduler thread per worker (`e2a8eda0`), `ServeOptions.workers` (`74a7e9ed`), bench in `5edacd6b`. Plan: [plans/parallelism.md](plans/parallelism.md).
+- **Playground**: browser bundle of frontend plus interpreter (`089e3f18`).
 
 ### Type System & Safety
 
@@ -234,7 +251,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 
 ### MLIR parity gaps
 
-Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; each one's test is `test.failing` until it lands.
+Properties the old LLVM-text codegen (deleted 2026-11-04) had that the MLIR backend does not yet; each one's test is `test.failing` until it lands.
 
 - [ ] `!range`/`!noundef` on loads of ranged ints: `llvm.load` has no range attribute, so it needs a milo-opt translation hook (`tests/refParamAttrs.test.ts`)
 - [ ] DWARF for MLIR function bodies: line tables are done (with `-g` every `define` carries its `!dbg` DISubprogram and every instruction a DILocation; lldb binds `b file.milo:N`). Named locals and params are inspectable under `-g --debug` (`milo.dbg.var` to `dbg.declare` on a stack slot, `frame variable` reads them), including enums, niche Options, strings, Vecs, HashMaps and structs with drop glue. Remaining: pattern- and loop-bound variables, and DI types for closures, arrays and Heap
@@ -256,6 +273,15 @@ Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; 
 
 ---
 
+## Now / Next
+
+In order:
+
+1. tahoeroads requirements draft (awaiting user review)
+2. spec lock plus clean-room tests
+3. line-coverage gate
+4. lock levels plus the channel wait-graph rule ([plans/parallelism.md](plans/parallelism.md))
+
 ## Planned
 
 ### Language
@@ -271,7 +297,6 @@ Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; 
 - [ ] **C ABI layout control** — packed structs, alignment. `extern struct`, `sizeOf`/`offsetOf` already work
 - [ ] **`void` as a value (zero-sized types)** — `void` is a type tag with no runtime representation, so it cannot inhabit a generic. The checker now rejects that outright (`Vec<void>`, `Promise<void>`, an inferred `identity(nothing())`, a `let x: void`) where it used to reach LLVM and die at the link step with "void type only allowed for function results" against a temp `.ll` file and no span. std's answer is `Unit`, an empty struct in the prelude, and `Result<Unit, E>` is how every fallible command in `std/fs` spells "returns no data". That works, but it is two spellings for one idea, and it is the C++ mistake in miniature: `"void"` is special-cased 69 times in `checker.ts` and 59 in `codegen.ts`, and every one of those branches exists only because void is not a value. Making `void` a zero-sized value type with `Unit` as its alias would delete most of them. The cost is at the boundaries: ABI for zero-sized params and fields, `ret void` vs `ret {}`, closure return types, and `extern` decls where `void` must stay C's `void`
 - [ ] **Const / value generic params** — generics are type-only. The bun-rs audit found 1,120 `const B: bool` sites; the only real language gap that audit surfaced. Weigh against Ethos #3 when a concrete Milo need appears
-- [ ] **MIR** — lower-level IR for optimization passes, post self-hosting
 
 ### Standard Library
 
@@ -284,9 +309,9 @@ Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; 
 ### Tooling
 
 - [ ] **Cross-compilation for hosted targets** — `--target` reaches clang and fails loudly with a hint, but a real cross needs a target linker + sysroot; the compiler has no `-isysroot`/`--sysroot` notion. Bare-metal and Windows crosses already work
-- [ ] **Compile-time reduction** — profiled: the frontend is 0.38s and clang `-O2` is **7.3s, 95% of a self-host build**. Not generics (only 8 monomorphized instances). Levers, in order: interned method IDs instead of `src-milo/codegen`'s string-compare dispatch chains, `String`-by-value struct shredding, then MIR. `--fast` (~2x) exists as the edit-loop workaround
+- [ ] **Compile-time reduction** — profiled: the frontend is 0.38s and clang `-O2` is **7.3s, 95% of a self-host build**. Not generics (only 8 monomorphized instances). Levers, in order: interned method IDs instead of `src-milo/codegen`'s string-compare dispatch chains, `String`-by-value struct shredding. `--fast` (~2x) exists as the edit-loop workaround
 - [ ] **`@bench` annotations + `milo bench`** — the harness exists as a shell script; the in-language form does not
-- [ ] **Mutability lints become errors?** — `var-never-reassigned` and `unwritten-mut-param` (`src/checker-mutability.ts`) ship as warnings with `milo fix` fixes; `bun scripts/mutability-census.ts --fix` counts the corpus and proves every fix still checks. Flipping them to errors is a breaking change (record it in [breaking-changes.md](breaking-changes.md)); decide after the corpus is migrated
+- [x] **Mutability lints became errors** — `bf31a66f`, see Since 2026-10-28
 - [ ] **"The book"** — documentation and tutorials beyond the reference
 
 ### Safety Hardening
@@ -302,8 +327,24 @@ Phases 1–3a are done (see Type System & Safety). Remaining, from [safety-roadm
 
 ---
 
+## Backlog (parked 2026-11-04)
+
+Not active; each item is parked 2026-11-04.
+
+- **linux-arm64 `free(): invalid pointer`**: parked 2026-11-04, not reproduced since August (see Platform Coverage)
+- **Windows TLS, pipes, fd width**: parked 2026-11-04 (see Windows, Remaining Tiers)
+- **Dynamic `splitMut`**: parked 2026-11-04; ~30 lines of `unsafe` in `examples/games/flight` stand in
+- **Self-hosting frontend**: parked 2026-11-04; planned, not active
+- **Timing chain (WCET budgets)**: parked 2026-11-04
+- **Evidence capture**: parked 2026-11-04
+- **cvc5 differential re-check of proofs**: parked 2026-11-04
+- **DAIDALUS module**: parked 2026-11-04
+- **`MILO_RECORD` crash on std/http servers**: parked 2026-11-04
+
 ## Retired / Not Planned
 
+- **MIR**: superseded 2026-11-01 by the HIR to MLIR `milo` dialect path; the TypeScript MIR was deleted (`a795c09e`). HIR was itself replaced by the top dialect (see Since 2026-10-28)
+- **`std/smt`**: removed with the native solver; z3 is the only prover (`cc3ffc85`)
 - **JS backend (`milo emit-js`)** - removed 2026-09-21: a second implementation of the language's semantics (duck-typed interface dispatch, no destructors, a name clash with any fn called `process`) that cost a parity fix on most language changes. LLVM's `--target=wasm64` is the browser target; the docs-site playground and the in-browser emulator demos are paused until the emulators build for it
 - **`node-milo`** (the Node.js fork) — **frozen 2026-07-22, abandoned.** It was the runtime stress test that shaped the FFI and binary-data ordering above; that role now belongs to **milojs**, our own JS engine and runtime, which lives in [milo-language/milojs](https://github.com/milo-language/milojs) with its own roadmap and backlog. The V8-C-API-wrapper plan died with the fork. `docs/node-milo.md` is kept as the retrospective (the kqueue connect-failure and IPv6 gotchas generalize to any Milo runtime)
 - **Emulators (NES/SNES/Genesis), milojs, and the DAP debugger** moved out of this repo 2026-07-24 — [milo-language/emulators](https://github.com/milo-language/milo-emulators), [milo-language/milojs](https://github.com/milo-language/milojs), [milo-language/dapweb](https://github.com/milo-language/dapweb). The docs site builds the browser emulator cores from the emulators repo
