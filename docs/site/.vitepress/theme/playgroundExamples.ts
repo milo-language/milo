@@ -19,6 +19,10 @@ pub fn main(): i32 {
     id: "move-error",
     title: "Ownership: use after move (error)",
     code: `// One owner per value. consume(names) moves the Vec, so the later use is an error.
+//
+// How to fix it: consume only reads v, so borrow it instead of taking it.
+// Change the parameter to  v: &Vec<string>  and keep the call as  consume(names).
+// A shared borrow is implicit at the call site, and names stays usable afterwards.
 fn consume(v: Vec<string>): i64 {
     return v.len()
 }
@@ -27,9 +31,9 @@ pub fn main(): i32 {
     var names: Vec<string> = Vec.new()
     names.push("ada")
     names.push("grace")
-    let n = consume(names)
+    let n = consume(names)    // names moves into consume here
     print(n)
-    print(names.len())
+    print(names.len())        // error: use of moved variable 'names'
     return 0
 }
 `,

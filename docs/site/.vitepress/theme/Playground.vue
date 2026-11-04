@@ -1,19 +1,23 @@
 <template>
   <div class="pg">
+    <!-- Every example is one tap away: a row that wraps on desktop and swipes sideways on a
+         phone, instead of a select whose native picker hides the list. -->
+    <nav class="chips" aria-label="Examples">
+      <button
+        v-for="e in EXAMPLES" :key="e.id" class="chip"
+        :class="{ on: e.id === exampleId, bad: e.error }" :aria-pressed="e.id === exampleId"
+        @click="loadExample(e.id)"
+      >{{ e.title }}</button>
+    </nav>
     <div class="toolbar">
-      <label class="ex">
-        <span class="ex-label">Example</span>
-        <select v-model="exampleId" @change="loadExample">
-          <option v-for="e in EXAMPLES" :key="e.id" :value="e.id">{{ e.title }}</option>
-          <option v-if="exampleId === ''" value="" disabled>(edited)</option>
-        </select>
-      </label>
+      <span class="edited" v-if="exampleId === ''">edited</span>
       <span class="spacer"></span>
       <span class="hint">{{ mac ? '⌘' : 'Ctrl' }}+Enter to run</span>
       <button class="run-btn" :disabled="running" @click="run">{{ running ? 'Running…' : 'Run' }}</button>
     </div>
 
     <div class="editor">
+      <pre class="gutter" aria-hidden="true" ref="gutEl">{{ gutter }}</pre>
       <pre class="hl" aria-hidden="true" ref="hlEl"><code v-html="highlighted"></code></pre>
       <textarea
         ref="taEl" v-model="code" class="ta" spellcheck="false" autocomplete="off" autocapitalize="off"
@@ -26,7 +30,7 @@
       <span>Output</span>
       <span v-if="status" class="status" :class="{ bad: exitCode !== 0 }">{{ status }}</span>
     </div>
-    <pre class="out" aria-live="polite"><span v-for="(l, i) in lines" :key="i" :class="l.kind">{{ l.text }}
+    <pre class="out-pane" aria-live="polite"><span v-for="(l, i) in lines" :key="i" :class="l.kind">{{ l.text }}
 </span><span v-if="!lines.length" class="muted">Press Run to see output.</span></pre>
   </div>
 </template>
@@ -48,11 +52,17 @@ const running = ref(false)
 const mac = ref(false)
 const taEl = ref(null)
 const hlEl = ref(null)
+const gutEl = ref(null)
 
-function loadExample() {
-  const e = EXAMPLES.find(x => x.id === exampleId.value)
-  if (e) { code.value = e.code; lines.value = []; status.value = '' }
+function loadExample(id) {
+  const e = EXAMPLES.find(x => x.id === id)
+  if (e) { exampleId.value = id; code.value = e.code; lines.value = []; status.value = '' }
 }
+
+const gutter = computed(() => {
+  const n = code.value.split('\n').length
+  return Array.from({ length: n }, (_, i) => i + 1).join('\n')
+})
 
 // Highlighting reads the generated TextMate grammar (the same one the docs fences use), so a
 // keyword added to the language shows up here without a second list.
@@ -87,6 +97,7 @@ const highlighted = computed(() => {
 function syncScroll() {
   hlEl.value.scrollTop = taEl.value.scrollTop
   hlEl.value.scrollLeft = taEl.value.scrollLeft
+  gutEl.value.scrollTop = taEl.value.scrollTop
 }
 
 function onKey(e) {
@@ -184,11 +195,18 @@ onBeforeUnmount(() => { worker?.terminate(); worker = null })
 <style scoped>
 .pg { margin-top: 16px; }
 .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.ex { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.ex-label { color: var(--vp-c-text-2); }
-.ex select {
-  padding: 5px 8px; border: 1px solid var(--vp-c-divider); border-radius: 6px;
-  background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); font-size: 14px;
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chip {
+  padding: 5px 11px; border: 1px solid var(--vp-c-divider); border-radius: 999px;
+  background: var(--vp-c-bg-soft); color: var(--vp-c-text-2); font-size: 13px; white-space: nowrap;
+}
+.chip:hover { color: var(--vp-c-text-1); border-color: var(--vp-c-brand-2); }
+.chip.on { color: var(--vp-c-white); background: var(--vp-c-brand-2); border-color: var(--vp-c-brand-2); }
+.chip.bad:not(.on) { border-style: dashed; }
+.edited { font-size: 12px; color: var(--vp-c-text-3); }
+@media (max-width: 640px) {
+  .chips { flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; }
+  .chip { scroll-snap-align: start; }
 }
 .spacer { flex: 1; }
 .hint { font-size: 12px; color: var(--vp-c-text-3); }
@@ -204,10 +222,19 @@ onBeforeUnmount(() => { worker?.terminate(); worker = null })
   position: relative; height: 380px; border-radius: 8px; overflow: hidden;
   background: var(--vp-code-block-bg); border: 1px solid var(--vp-c-divider);
 }
-.hl, .ta {
-  position: absolute; inset: 0; margin: 0; padding: 14px 16px; border: 0; box-sizing: border-box;
+/* The gutter is GUTTER wide; the text layers start after it, with the same font metrics so
+   line N of the gutter sits next to line N of the code. */
+.editor { --gutter: 44px; }
+.gutter, .hl, .ta {
+  position: absolute; top: 0; bottom: 0; margin: 0; padding: 14px 16px; border: 0; box-sizing: border-box;
   font-family: var(--vp-font-family-mono); font-size: 13.5px; line-height: 1.6; tab-size: 4;
-  white-space: pre; overflow: auto; width: 100%; height: 100%;
+  white-space: pre; height: 100%;
+}
+.hl, .ta { left: var(--gutter); right: 0; width: calc(100% - var(--gutter)); overflow: auto; padding-left: 10px; }
+.gutter {
+  left: 0; width: var(--gutter); padding: 14px 8px 14px 0; text-align: right; overflow: hidden;
+  color: var(--vp-c-text-3); background: var(--vp-c-bg-alt); border-right: 1px solid var(--vp-c-divider);
+  user-select: none; pointer-events: none;
 }
 .hl { pointer-events: none; color: var(--vp-c-text-1); background: transparent; }
 .hl code { font: inherit; background: none; padding: 0; color: inherit; }
@@ -228,13 +255,13 @@ onBeforeUnmount(() => { worker?.terminate(); worker = null })
   border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--vp-code-block-bg);
 }
 .status.bad { color: var(--vp-c-danger-1); }
-.vp-doc .out {
+.vp-doc .out-pane {
   margin: 0; padding: 14px 16px; min-height: 90px; max-height: 320px; overflow: auto;
   border: 1px solid var(--vp-c-divider); border-radius: 0 0 8px 8px; background: var(--vp-code-block-bg);
   font-family: var(--vp-font-family-mono); font-size: var(--vp-code-font-size); line-height: var(--vp-code-line-height);
   color: var(--vp-c-text-1); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.out .err { color: var(--vp-c-danger-1); }
-.out .warn { color: var(--vp-c-warning-1); }
-.out .note, .out .loc, .out .muted { color: var(--vp-c-text-3); }
+.out-pane .err { color: var(--vp-c-danger-1); }
+.out-pane .warn { color: var(--vp-c-warning-1); }
+.out-pane .note, .out-pane .loc, .out-pane .muted { color: var(--vp-c-text-3); }
 </style>
