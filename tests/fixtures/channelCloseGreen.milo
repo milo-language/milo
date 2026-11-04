@@ -33,3 +33,4 @@ pub fn main(): i32 {
     schedulerRunToCompletion()
     return 0
 }
+// @rule: R-TASK-DRAIN

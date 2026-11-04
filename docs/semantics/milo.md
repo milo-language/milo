@@ -3,7 +3,7 @@ system: semantics
 purpose: Milo Semantics: the executable definition of Milo, with Core Milo (the proved core): operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
-last-verified: 2026-11-04 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
+last-verified: 2026-11-04 (scripts/trace-semantics.ts traces rules and interpreter both ways; src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
 -->
 
 # Milo Semantics
@@ -24,6 +24,11 @@ The interpreter (`src/interp.ts`) implements section 2 one function per rule, an
 function names its rule ID. It runs the merged AST on the checker's facts (types, resolved
 callees, move and borrow marks), never on the HIR. A difference between the interpreter and a compiled binary is a
 compiler bug, or a rule that is wrong.
+
+The trace runs both ways and is gated (`scripts/trace-semantics.ts`, `tests/traceSemantics.test.ts`): every rule ID
+defined here (a `[ID]` line in a code block, or the first cell of a table row) is cited by an interpreter function and
+exercised by a test whose title names it or a fixture tagged `// @rule: ID`; every interpreter function cites a rule
+or sits in the script's allowlist with a reason; every ID the interpreter cites is defined here.
 
 ## 1. Syntax
 
@@ -214,8 +219,26 @@ Each is implemented in `src/interp.ts` under its ID, and was needed to match a r
 | E-GLOBAL | A module global with a non-constant initializer runs at its first mention; one no function mentions runs before `main`, in declaration order. |
 | E-HASHMAP | A HashMap owns one table block while non-empty and its entries (key, then value, dropped in that order). Iteration order is unspecified; `get`/`m[k]` yield copies. |
 | E-NEW-ITER | The iterator temporary of a `next()` for-in (`for x in gen()`) is dropped once, when the scope around the loop ends. |
-| S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run, no live count is reported, and the exit status is 134 for a panic. |
+| S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run and no live count is reported. Every runtime failure ends the process the way the compiled runtime does (`panicTail` in `src/scaffold.ts`): the message goes to stderr, stdout is flushed, then `abort()`. The process dies of SIGABRT, which a shell reports as status 134 (128 + 6) and which `milo interp` exits with. Nothing in the runtime exits with status 1 for a failure; a driver that reports 1 for a signal death (as `scripts/guard.ts` does when it has no exit code) is reporting its own default, so a comparison maps a signal to 128 + its number first. `exit(n)` is the one failure-free stop: status `n & 255`, stdout flushed, and the live count still reported. The table below gives the message per kind. |
 | T-STUCK | Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed. |
+
+| Failure | Status | Compiled message (stderr) | Interpreter message |
+|---|---|---|---|
+| index out of bounds (Vec, array, slice) | 134 | `milo: array index out of bounds: I/LEN at FILE:LINE` | `array index out of bounds: I/LEN` |
+| slice or string range out of bounds | 134 | `milo: slice range out of bounds: A..B (len LEN) at FILE:LINE:COL` | `string range A..B out of bounds (len LEN)` |
+| integer overflow, negation overflow | 134 | `runtime error: integer overflow at FILE:LINE` | `integer overflow` |
+| value out of range (checked cast, ranged type) | 134 | `runtime error: value out of range at FILE:LINE` | `T out of range` |
+| division or remainder by zero | 134 | `milo: division by zero at FILE:LINE:COL` | `division by zero` |
+| shift amount out of range | 134 | `milo: shift amount out of range (>= BITS) at FILE:LINE:COL` | `shift amount out of range` |
+| `x!` on None or Err | 134 | `error at FILE:LINE:COL: unwrap called on None` (the error's text for Err) | `unwrap called on None` / `unwrap called on Err` |
+| `assert` | 134 | `assertion failed at FILE:LINE:COL: MSG` | `assertion failed: MSG` |
+| `todo` | 134 | `todo: 'FN' is not implemented (FILE:LINE:COL)` | `not yet implemented` |
+| contract clause (R-CONTRACT-FAIL) | 134 | `runtime error: requires clause violated at FILE:LINE` | the same text |
+| call stack too deep | 139 | none: the process dies of SIGSEGV | none, status 139 (the depth limit is 3000 frames, not the OS stack) |
+| `exit(n)` | `n & 255` | none | none |
+
+Only the status and stdout are compared between a compiled run and the interpreter; the stderr text is
+the runtime's and is not (the interpreter leaves out the source position, except for contracts).
 
 ### Tasks, channels and atomics
 
@@ -231,7 +254,7 @@ parks, yields or ends: nothing preempts it, so no operation needs a lock.
 | Rule | Statement |
 |---|---|
 | R-TASK-MAIN | `main` is the first task. The program ends when it returns and every other task is abandoned where it stands: no drops run for it. |
-| R-TASK-ABANDON | Tasks left when main returns keep the library's own blocks allocated, because it leaves its scheduler up: five for the scheduler, three per abandoned task, three more for one asleep, one per idle stack context in its cache (at most 64). With no task left the scheduler is torn down and none remain, but only when the compiled `main` is a green task (`Task.spawn` reachable from it); a program that only uses `Task.scope` keeps its five scheduler blocks, plus one per idle stack context (a task reaped with no other task left does not leave one). Counted so the live-block comparison with a compiled run holds. |
+| R-TASK-ABANDON | Tasks left when main returns, or when `exit` is called in any task, keep the library's own blocks allocated, because it leaves its scheduler up: four for the scheduler, three per task still there (main too when it is the one that called `exit`; a main that returned is gone), four more for one asleep (the Select behind `sleepMs`), one per idle stack context in its cache (at most 64; every finished default-stack task leaves one), one for the environment of each task whose closure captured something (freed when the task ends), one per open `Task.scope`, and one for the table of fd waiters once a task has waited on a descriptor. With no task left the scheduler is torn down and none remain, but only when the compiled `main` is a green task (`Task.spawn` reachable from it); a program that only uses `Task.scope` keeps its four scheduler blocks, plus the idle stack contexts. Counted (against allocation traces of compiled programs) so the live-block comparison holds. |
 | R-TASK-SPAWN | A spawned task is ready at the back of the run queue. It does not run until the spawner parks, yields or ends. |
 | R-TASK-PICK | Which ready task runs next is one method, `pickNext(ready)`, the hook for exploring schedules. The default is the front of the queue (FIFO, as std/runtime's run queue). Like the library's scheduler, the front task moves to the back after 32 task turns in a row. |
 | R-TASK-YIELD | `schedulerYield` puts the caller at the back of the queue. |
@@ -294,7 +317,7 @@ allocation it came from.
 | R-MEM-LOAD, R-MEM-STORE | `*p`, `p[i]` (at p + i * sizeOf T) read or write a value of type T at the pointer. Scalars, pointers, structs of those and fixed arrays of those have bytes; a field written through `p.f` is read-modified-written. |
 | R-MEM-ADDROF | `x.addrOf()` is a pointer to the bytes of the place x (a fixed array is its elements). Taking it twice gives equal pointers. A place with no byte layout (a string, Vec, enum) is unsupported. |
 | R-MEM-VECPTR | `v.ptr()` points at element 0 of a slice; an empty Vec, owning no block, gives null. A string's `_strDataPtr` points at its bytes. |
-| R-MEM-CSTR | `s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (R-MEM-DECAY), and so does a fixed array for a `*T` parameter, as a pointer to the array itself. |
+| R-MEM-CSTR | `s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (string and array decay), and so does a fixed array for a `*T` parameter, as a pointer to the array itself. |
 | R-MEM-ADDR | `p as i64` is the allocation's base + offset; `n as *T` is the allocation whose range holds n, with that offset, or null for 0. Comparing pointers compares addresses. An address no allocation of this run owns can be held and compared but not followed. |
 | R-MEM-COPY | `memcpy`, `memmove` and `memset` act on bytes, with the bounds of R-MEM-OOB at both ends. `sizeOf<T>()`, `offsetOf<T>("f")` and `zeroed<T>()` use the compiled layout. |
 | R-MEM-OOB | stuck: an access of n bytes at offset o of an allocation of size s with o < 0 or o + n > s (a view's size is its element count times the element size). |
@@ -343,3 +366,82 @@ stay replaced by the natives in `src/interp-natives.ts`.
 Not modelled (reported as `InterpUnsupported`): the extern functions above not in the list, `atexit`,
 `embedFile`, `jsonStringify`, record/replay wrappers, and a raw view of a value with no byte layout
 (strings, Vecs, HashMaps, enums, closures).
+
+### Interpreter gaps: library behaviour and the C layer, continued
+
+Rules added while closing the programs the interpreter reported as unsupported. The
+interpreter behaviour of `_natLess`, string pieces (`lines`, `splitView`), `?` boxing and `context`
+is the compiled one and is covered by E-VEC, E-NEW-ITER and E-IFACE above.
+
+| Rule | Statement |
+|---|---|
+| R-INT-BITS | `x.rotateLeft(n)` and `x.rotateRight(n)` rotate the bits of the integer's width by n mod width. `x.reverseBits()` reverses them. `x.checkedNeg()` is `Some(-x)`, or `None` when -x does not fit (any non-zero unsigned value, or the minimum of a signed width). |
+| R-JSON-STRINGIFY | `jsonStringify(s)` of a struct whose fields are strings, integers, floats and bools is `{"field":value,...}` in field order: a string is escaped as RFC 8259 (`"`, `\`, newline, tab, return, other bytes below 0x20 as `\u00xx`), numbers print as `print` shows them. A struct given to a `json(body: string)` method parameter is its `toJson()` when it has one, else the same text. |
+| R-EMBED-FILE | `@embedFile("p")` is the bytes of the file `p`, relative to the source file that names it, read when the call runs. Only a driver that hands in a host file reader (`milo interp`) can run it; elsewhere it is unsupported. A file that cannot be opened is stuck. |
+
+### Interpreter gaps: memory and C layer additions
+
+| Rule | Statement |
+|---|---|
+| R-MEM-ADOPT | `h.ptr()` of a `Heap<T>` is a pointer to the box's contents, a block of its own that `free` or `adopt` accepts. `h.addrOf()` is the address of the slot that holds the box: reading `*slot` gives `h.ptr()`. `adopt(p)` of a pointer a Heap gave out is that same box taken back; of a `malloc` block it is a box whose contents are the memory at p and whose drop frees the block. `adoptSlice(p, n)` of a pointer a Vec gave out is that Vec cut to n elements (capacity n); of a `malloc` block it is a Vec over the memory whose drop frees it. Any other pointer is R-MEM-FREE-INVALID. A user method named `ptr` on T wins over `Heap.ptr()`. |
+| R-MEM-NULLREF | `let g = p else { ... }` over a `?&T` or `?&mut T` parameter runs the else block when p is null, and otherwise binds g to a reference to the memory p names (a Milo caller's reference is bound as it is). |
+| R-SYS-LIBC | `strtoll`, `strtol` (64-bit), `strtoul`, `strtoull` skip leading space, take a sign, a `0x` prefix for base 16 (or 0) and digits of the base, set `*endptr` to the first byte not used (the start when there is no number) and saturate with errno ERANGE. `strtod` reads a decimal, `inf`, `nan` or `0x` integer prefix the same way. `setlocale` succeeds for the names "C", "POSIX", "" and any UTF-8 name and returns that name (the locale itself is always C); any other name returns null. `uname` fills `struct utsname` (256-byte fields on darwin, 65 on linux) with the host OS name, "milo", "0.0", "milo interpreter" and the architecture. `ioctl` fails with ENOTTY, since no descriptor is a terminal (`isatty` is 0). `proc_pidpath` writes the absolute path of the program file the driver was given. |
+| R-SYS-TIME | `localtime_r`, `gmtime_r`, `mktime` and `strftime` use a time zone that is UTC unless the program's `TZ` (its own environment, R-SYS-ENV) names another: "UTC", a POSIX `NAMEhh[:mm]` (hours west of Greenwich; a DST rule after it is ignored, there is no DST) or an IANA name resolved by the host's `Intl`. `struct tm` is the nine leading ints, `tm_gmtoff` at offset 40 and `tm_zone` at 48. `strftime` implements `%Y %y %C %m %d %e %H %I %M %S %j %a %A %b %B %h %p %u %w %Z %z %s %F %T %R %D %c %x %X %n %t %%` in the C locale, and returns 0 when the result and its NUL do not fit. |
+| R-SYS-PRINTF | `printf` writes to the stdout buffer (R-SYS-FD) and `snprintf` / `sprintf` to memory, with the conversions `d i u x X o c s p f F e E g G %`, flags `- + space # 0`, width, precision (both may be `*`) and the length modifiers `hh h l ll z j t`. A string passed where C takes `char *` (also as a variadic argument) is its NUL-terminated bytes. The result is the number of bytes the full output has. |
+| R-SYS-SYMLINK | The in-memory filesystem has symbolic links: `symlink(target, path)` makes a node holding the target path, `readlink` reads it back (EINVAL for anything else), `lstat` reports `S_IFLNK` and `readdir` reports `DT_LNK` for it, `unlink` removes the link itself. `stat`, `open`, `access`, `opendir`, `chdir` and `chmod` follow a chain of up to 8 links, a relative target being relative to the link's directory. `chmod(path, mode)` sets the permission bits `stat` reports. |
+
+### Foreign code (CLI only)
+
+Under `milo interp` (Bun) some externs run in the real library instead of being modelled: the sqlite3 C API, the
+CommonCrypto `CC_*` calls, and the functions of a `foo.c` beside `foo.milo`. The driver injects the foreign layer
+(`src/interp-ffi.ts`, which imports `bun:ffi`); the browser bundle has none, and there those externs are
+`InterpUnsupported` as before. An extern the interpreter models itself (R-SYS-*) is never sent to the foreign layer.
+Not supported through it: a struct passed or returned by value, a variadic call, a callback (a function pointer
+argument), OpenSSL, CoreFoundation.
+
+| Rule | Statement |
+|---|---|
+| R-FFI-LIB | The foreign layer handles `sqlite3_*` (the system libsqlite3), `CC_*` / `CCCrypt*` (libSystem, darwin) and, when a `foo.c` sits beside the program, every other extern symbol, looked up in that file compiled to a shared library with the system C compiler the first time one of its functions is called. A symbol the library does not have is unsupported. |
+| R-FFI-CALL | A foreign call passes integers, floats and bools by value. A pointer argument that is an interpreter pointer is copied, from the pointer to the end of its allocation, into a native buffer for the call and copied back afterwards when the library changed it (an out-parameter, a context struct); a null pointer or an address no allocation owns (a `sqlite3*`, a statement, `SQLITE_TRANSIENT`) goes through as the integer it is. A pointer result that points into an argument's buffer is a pointer into that argument; a C string result (`sqlite3_column_text`, `sqlite3_errmsg`, `sqlite3_column_name`) is a read-only interpreter copy, as long as `sqlite3_column_bytes` says for text; any other pointer result is an opaque address, held and compared but never followed (R-MEM-PROVENANCE). `sqlite3_bind_text` and `_blob` are always told the value is transient. |
+| R-FFI-SQLITE-PATH | The interpreter's filesystem is in memory, so a database file that `sqlite3_open*`, `ATTACH` or `VACUUM INTO` names by a path of it is made at the same path under a private directory of the host's temp directory, removed when the process exits. The file shows in the interpreter's filesystem (`stat`, read) once it exists, and deleting it there deletes it. `:memory:`, the empty name and `file:` URIs go to sqlite unchanged. |
+| R-FFI-COMPANION | The companion C file is compiled with `xcrun clang` (darwin) or `cc` to a shared library in a fresh temp directory; a compile error is reported as the run's failure. |
+
+### Regular expressions
+
+| Rule | Statement |
+|---|---|
+| R-SYS-REGEX | `regcomp` translates a POSIX extended regular expression to a JavaScript one in unicode mode (a character is a code point, as in the UTF-8 locale std/regex asks for; bracket classes such as `[[:alpha:]]`, `\<` and `\>`, `{n,m}`, REG_ICASE and REG_NEWLINE are translated), keeps it under an id written into the first 8 bytes of the `regex_t` (so a copy of the `regex_t` still works), and answers REG_BADPAT (2) for a pattern it cannot translate. `regexec` searches the byte range in `pmatch[0]` when REG_STARTEND is set and the bytes up to the NUL otherwise, with REG_NOTBOL keeping `^` from matching at the start of the range; it fills `pmatch` with byte offsets (-1 for a group that did not take part) and answers REG_NOMATCH (1) when nothing matches. JavaScript tries alternatives left to right where POSIX takes the longest match, so a pattern whose alternatives overlap can match shorter here. `regfree` forgets the expression. |
+
+### The network, pipes, signals and threads
+
+`src/interp-net.ts` adds to the C layer the descriptors that are not files, the process's signals and
+`pthread_*`. Everything is memory inside the run: no host socket, pipe, signal or thread exists. The calls
+are `pipe pipe2 socketpair socket bind listen accept connect shutdown getsockname getpeername setsockopt
+getsockopt send recv sendto recvfrom htons ntohs inet_pton getaddrinfo freeaddrinfo poll signal raise kill
+sigprocmask sched_yield`, `pthread_create pthread_join pthread_detach pthread_self` and the
+`pthread_mutex_*`, `pthread_cond_*` and `pthread_rwlock_*` families, plus `read write close dup dup2 fcntl
+ioctl usleep sleep nanosleep` when the descriptor or the program is one of these. The two plain interpreters
+share it: a call that cannot return yet is a generator the task interpreter (`src/interp-co.ts`) drives, and
+under the plain interpreter, where no other task exists to change anything, it is a stuck state. Left out on
+purpose, and reported as unsupported with the function's name: `fork exec* waitpid posix_spawn system`
+(there are no other processes), `epoll_* eventfd select` (std's green IO reaches readiness
+through natives, R-NET-BLOCK), `dlopen`, pty calls and TLS.
+
+| Rule | Statement |
+|---|---|
+| R-FNPTR | A function used as a value of pointer type (`f as *u8`) is a read-only 8-byte allocation, one per function, so its address is stable and equal to itself; C-layer calls that take a callback (`signal`, `pthread_create`, `qsort`) find the function from the pointer, or take the function value itself when the parameter has a function type, and call it by name. `p as extern (..) => R` gives back the function a pointer was made from (a pointer that is no function's is unsupported), and a C function pointer in a variable or field is called like a closure. The pointer of a closure (`f as *u8`) is one allocation per lambda and is not callable from C. `a[i].addrOf()` of an array element is a pointer into the array, not to a lone cell. |
+| R-NET-FD | A pipe end or a socket is a descriptor in the same table as files, lowest free number from 3; `/dev/fd` and `/proc/self/fd` list the table. The object behind it (an open file description) is shared by `dup`, `dup2` and `fcntl(F_DUPFD)`; the last `close` of it ends the endpoint, which every task waiting on the network then rechecks. `O_NONBLOCK` is a flag of the object. |
+| R-NET-PIPE | `pipe` and `pipe2` make a read end and a write end over one bounded byte queue (64 KiB). A read of an empty queue returns 0 once no write end is open; a write after the last read end closed is EPIPE and raises SIGPIPE (R-NET-SIG). |
+| R-NET-SOCK | `socket` accepts AF_UNIX, AF_INET, AF_INET6 with SOCK_STREAM or SOCK_DGRAM. `bind` records the address (port 0 takes the next free port from 49152; EADDRINUSE when another socket of the same type holds an overlapping address, unless both set SO_REUSEADDR and neither listens; AF_UNIX binds create an entry in the in-memory filesystem, EADDRINUSE if the path exists). `listen` readies the socket (an unbound one gets a wildcard address and a port). `connect` to an address a listening socket of the run accepts makes the connected pair at once and queues the server end for `accept`; with the backlog full a blocking connect parks and a non-blocking one fails ECONNREFUSED. An accepted socket has the listener's local address and inherits `O_NONBLOCK` as BSD does. `socketpair` makes two connected AF_UNIX sockets. `getsockopt(SO_ERROR)` reports and clears a pending error; other options read back what `setsockopt` stored. |
+| R-NET-ADDR | The world is closed: the loopback interface (127.0.0.0/8, ::1) and the wildcard addresses are all that exist. A bind to any other address is EADDRNOTAVAIL; a connect to a loopback or wildcard address nobody listens on is ECONNREFUSED, to any other address ENETUNREACH. A listener bound to an IPv4 or IPv6 wildcard accepts a connect to any local address of its family, and an IPv6 wildcard also accepts IPv4. `getaddrinfo` knows `localhost` (`::1` then `127.0.0.1`) and numeric addresses; any other name is EAI_NONAME. `sockaddr` bytes use the host OS's layout (std chose the platform arm). |
+| R-NET-IO | A stream socket is two bounded byte queues (64 KiB each). A read returns what is queued, up to the count, never waiting for more; 0 when the queue is empty and the peer has closed or shut down its write side; a write queues as much as fits and, on a blocking socket, goes on after each wake until all of it is queued, on a non-blocking one returns the part written or EAGAIN. A write when the peer's end is closed is EPIPE (R-NET-SIG). `shutdown` ends one direction. |
+| R-NET-DGRAM | A datagram socket delivers each `sendto` whole to the datagram socket bound to the destination, or drops it when there is none; `recvfrom` returns the oldest datagram, cut to the buffer, with the sender's address. |
+| R-NET-BLOCK | A call that cannot finish (an empty read, a full write, `accept` with nothing queued, `poll` with nothing ready, `pthread_join` of a running thread, a held mutex, a condition wait, a sleep once the program has threads) parks the calling task (R-TASK-PARK) on the network's wait list and is woken by any change to a descriptor, then rechecks. A non-blocking descriptor returns EAGAIN instead. The std functions green IO calls to wait (`schedulerWaitRead`, `schedulerWaitWrite`) park the same way until the descriptor is ready; the first such wait makes the scheduler allocate its table of fd waiters, one more block it leaves behind when main returns or exits with tasks left (R-TASK-ABANDON), and `exit` from a task leaves the scheduler and the other tasks as main returning does. Without the task interpreter the call is S-DEADLOCK, except one with a timeout, which moves the clock by it and times out. |
+| R-NET-POLL | A descriptor is readable when it has queued bytes, is at end of file, has a pending connection (a listener) or a datagram; writable when its outgoing queue has room (a pipe or socket whose reader is gone is an error, and writable); a file is always ready. `poll` reports these in `revents` (POLLIN 1, POLLOUT 4, POLLERR 8, POLLHUP 16, POLLNVAL 32) and, with nothing ready, parks until some descriptor changes or the timeout (virtual milliseconds, R-TIME) ends. |
+| R-NET-SIG | `signal` records a handler (a function pointer, SIG_DFL 0 or SIG_IGN 1) and returns the previous one; SIGKILL and SIGSTOP cannot be set. `raise` and `kill` to this process (pid 4242, 0 or its negative) run the handler at once, in the sending task, with the signal number; with SIG_IGN or a default that ignores (SIGCHLD, SIGURG, SIGWINCH, SIGCONT) nothing happens; any other default ends the program as killed by the signal, exit status 128 + the signal, with no drops (S-PANIC-ABORT). `kill` of another pid is ESRCH. `sigprocmask` keeps a mask; a masked signal waits and is delivered when it is unmasked. |
+| R-NET-THREAD | `pthread_create` runs the start routine, called by name with its argument, as one more task (R-TASK-BLOCKING): it does not run until the creator parks, yields or ends (R-TASK-SPAWN), and a panic in it ends the program. The `pthread_t` is the task's number. `pthread_join` parks until it has ended and stores its return value; a thread nobody joins is abandoned when main returns. Under the plain interpreter `pthread_create` asks for the task interpreter. |
+| R-NET-MUTEX | A `pthread_mutex_t` is an interpreter object keyed by the address of the memory the program gave (a zeroed one is an unlocked mutex). `lock` takes it or parks while another task holds it; `unlock` releases and wakes the waiters, who recheck in the order they parked; `trylock` returns EBUSY. `pthread_rwlock_*` is the same with many readers or one writer. |
+| R-NET-COND | `pthread_cond_wait` releases the mutex, parks until a signal or broadcast reaches it (`signal` wakes the longest waiter, `broadcast` all), then takes the mutex again. The timed forms give up after the span (darwin: relative `timespec`; linux: absolute against the wall clock, R-SYS-CLOCK) and return ETIMEDOUT, still holding the mutex. |
+| R-NET-SLEEP | `usleep`, `sleep` and `nanosleep` park the task for that many virtual milliseconds (R-TIME) once the program has created a thread, so others run meanwhile; before that they advance the clock and return (R-SYS-CLOCK). |
+| R-NET-KQUEUE | `kqueue` makes a descriptor holding a set of watches; `kevent` applies its change list (EV_ADD, EV_DELETE, EV_CLEAR, EV_ONESHOT) and returns up to `nevents` watches that are ready: EVFILT_READ and EVFILT_WRITE by the readiness of R-NET-POLL (level-triggered), EVFILT_USER once NOTE_TRIGGER has fired it (reset on delivery). With none ready it parks as R-NET-BLOCK until a change or the timeout; `ident` and `udata` come back as given. |
+| R-SELECT | `Select` is a native. Arms are kept in the order armed. `wait` returns the index of the first ready arm and parks until one is: a recv arm is ready when its channel holds a value or is closed, a send arm when it has room or is closed, an fd arm when a read (write) would not block (R-NET-POLL), a timer arm when the virtual clock has reached its deadline (set when armed, R-TIME). The value is fetched afterwards by the caller; an arm keeps its channel alive until the Select is dropped. A Select owns four heap blocks (three for its state, one for its nodes) and each channel arm one more, as in a compiled run (R-TASK-ABANDON counts them when a task is left in one). `ensureTimersLive` does nothing: the task interpreter always has a scheduler. |

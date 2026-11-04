@@ -1,12 +1,13 @@
 // `milo interp` driver: run a checked program in the reference interpreter and mirror what a
 // compiled binary would do with its stdout, stderr and exit code.
-import { readFileSync, writeSync } from "fs";
+import { existsSync, readFileSync, writeSync } from "fs";
 import { dirname, resolve } from "path";
 import type { Program } from "./ast";
 import type { CheckResult } from "./checker";
 import type { Interp } from "./interp";
 import { runChecked, type RunOptions } from "./interp-co";
 import { nodeHostFs } from "./interp-hostfs";
+import { BunForeign } from "./interp-ffi";
 import { InterpStuck, InterpUnsupported } from "./interp-values";
 import { explore, type ExploreOptions } from "./interp-explore";
 
@@ -47,12 +48,14 @@ export function interpOptions(args: string[], source: string, contractChecks: bo
   };
 }
 
+// S-PANIC-ABORT
 export function runInterp(program: Program, checked: CheckResult, reportLive: boolean, opts: RunInterpOptions = {}): number {
   let it: Interp | undefined;
   try {
     const home = dirname(resolve(opts.entryFile ?? "."));
     const sys = {
       hostFs: nodeHostFs,
+      foreign: new BunForeign(opts.entryFile && existsSync(opts.entryFile.replace(/\.milo$/, ".c")) ? resolve(opts.entryFile.replace(/\.milo$/, ".c")) : undefined),
       hostRoots: opts.hostFs ? ["/"] : [home],
       cwd: opts.hostFs ? process.cwd() : home,
       env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),

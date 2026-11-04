@@ -60,3 +60,4 @@ pub fn main(): i32 {
     vecCase()
     return 0
 }
+// @rule: E-ARRAY-DROP

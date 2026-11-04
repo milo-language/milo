@@ -3,15 +3,16 @@
 import { type Contract, type Expr, type Function as AstFn, type Pattern, type Stmt, floatNamespaceConst } from "./ast";
 import { relative } from "path";
 import { type TypeKind, ARRAY_COMBINATORS, SLICE_COMBINATORS } from "./types";
-import { callExtern } from "./interp-sys";
+import { isPtr, memSlot } from "./interp-mem";
+import { externNative } from "./interp-sys";
 
 import { Interp } from "./interp";
 import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
 import type { Completion, Scope, CallE, MethodE } from "./interp";
-import { display, appendTo, strRange, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
+import { display, jsonStringify, appendTo, strRange, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
 import type { Native } from "./interp-natives";
 import { ExitProgram, MOVED, enc, strText, staticStr } from "./interp-values";
-import type { Str, Struct, EnumV, VecV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
+import type { Str, Struct, EnumV, VecV, BoxV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
 
 export type Gen<T = any> = Generator<unknown, T, unknown>;
 // a thunk handed to a consumer returns a generator in the twin, or a plain value when it had nothing to suspend on
@@ -35,7 +36,7 @@ export class InterpGen extends Interp {
           const b = (yield* this.resolve$g(e.object));
           const i = (yield* this.ev$g(e.index)) as bigint;
           const n = this.seqLen(this.getPlace(b));
-          if (i < 0n || i >= BigInt(n)) this.panic(`index out of bounds: ${i} (len ${n})`);
+          if (i < 0n || i >= BigInt(n)) this.panic(`array index out of bounds: ${i}/${n}`);
           return { ...b, path: [...b.path, Number(i)] };
         }
         case "UnaryOp": {
@@ -57,6 +58,10 @@ export class InterpGen extends Interp {
     this.tempOwn(v);
     return v;
   }
+  *peekThroughRef$g(e: Expr): Gen {
+    const v = (yield* this.peek$g(e));
+    return v && typeof v === "object" && (v.k === "ref" || v.k === "mut") ? this.deref(v) : v;
+  }
   *readTempRooted$g(e: Expr): Gen {
     const { root, steps } = this.chain(e);
     const slot: Slot = { v: (yield* this.ev$g(root)) };
@@ -69,13 +74,13 @@ export class InterpGen extends Interp {
     return v;
   }
   *callFn$g(fn: AstFn, args: Value[]): Gen {
-    if (fn.isExtern) return callExtern(this, fn, args);
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (fn.isExtern) return (yield* this.runNative$g(externNative(fn), args));
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
-      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
+      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held, false) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) (yield* this.enterContracts$g(fn));
@@ -126,7 +131,7 @@ export class InterpGen extends Interp {
     this.panic(`runtime error: ${c.kind} clause violated at ${shown.startsWith("..") ? file : shown}:${c.span?.line ?? 0}`);
   }
   *callClosure$g(c: ClosureV, args: Value[]): Gen {
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn: this.frames.length ? this.frame.fn : null, ret: c.ret });
     const envScope = this.frame.scopes[0]!;
     try {
@@ -173,7 +178,7 @@ export class InterpGen extends Interp {
       const mark = this.cr.autoBorrowed.get(raw);
       const byRef = !!mark || !!f?.isRef || !!f?.isRefMut;
       if (!byRef) {
-        // R-MEM-DECAY: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
+        // R-MEM-CSTR: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
         if (f?.ptrParam && this.isPlaceExpr(a) && (this.T(a).tag === "array" || this.T(a).tag === "string")) return this.refTo((yield* this.resolve$g(a)), true);
         return this.pending((yield* this.ev$g(a)));
       }
@@ -199,6 +204,11 @@ export class InterpGen extends Interp {
     if (optName) return this.mkEnum(optName, "Some", [this.checked(e, (yield* this.evRaw$g(e)))]);
     const co = this.cr.interfaceCoercions.get(e);
     if (co) return { k: "iface", concrete: co.fromType, inner: (yield* this.evRaw$g(e)) };
+    const jt = this.cr.autoJsonStringify.get(e); // a struct given to a `json(body: string)` parameter is its JSON
+    if (jt) {
+      const codec = this.cr.autoJsonToJson.get(e);
+      return codec ? (yield* this.callNamed$g(codec, [this.refTo((yield* this.resolve$g(e)), false)])) : jsonStringify(this, (yield* this.peek$g(e)), jt);
+    }
     if (this.cr.arraySliceArgs.has(e)) { // a fixed array given to a slice parameter: a view of it
       const a = this.isPlaceExpr(e) ? (yield* this.peek$g(e)) : (v => (this.tempOwn(v, true), v))((yield* this.evRaw$g(e)));
       if (a && typeof a === "object" && a.k === "arr") return sliceView(this, a, 0n, BigInt(a.e.length));
@@ -282,7 +292,7 @@ export class InterpGen extends Interp {
     for (const d of this.structFields(name)) {
       if (given.has(d.name)) { f[d.name] = given.get(d.name)!; if (base) this.dropValue(base.f[d.name]!); }
       else if (base) f[d.name] = base.f[d.name]!;
-      else this.stuck("T-STRUCT", `${name}.${d.name} not given`);
+      else this.stuck("T-STUCK", `${name}.${d.name} not given`);
     }
     return { k: "struct", name, f };
   }
@@ -366,7 +376,6 @@ export class InterpGen extends Interp {
     return this.panic(v.variant === "None" ? "unwrap called on None" : "unwrap called on Err");
   }
   *propagate$g(e: Expr & { kind: "Propagate" }): Gen {
-    if (this.cr.propagateBoxings.has(e) || this.cr.propagateMessages.has(e)) this.unsupported("? with boxing or message conversion");
     const v = (yield* this.ev$g(e.operand)) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
     const rt = this.frame.ret as TypeKind & { name: string };
@@ -374,7 +383,14 @@ export class InterpGen extends Interp {
     if (v.variant === "None") ret = this.mkEnum(rt.name, "None", []);
     else {
       const c = this.cr.propagateConversions.get(e);
-      ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
+      const boxing = this.cr.propagateBoxings.get(e), msg = this.cr.propagateMessages.get(e);
+      if (boxing) ret = this.mkEnum(rt.name, "Err", [this.boxError(boxing, v.a[0]!)]);
+      else if (msg) { // into a Result<T, string> fn: the error's message()
+        const slot: Slot = { v: v.a[0]! };
+        const text = (yield* this.callNamed$g(this.concreteMethodFn(msg.name, "message"), [{ k: "ref", slot, path: [] } as Ref]));
+        this.dropValue(slot.v);
+        ret = this.mkEnum(rt.name, "Err", [text]);
+      } else ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
     }
     throw new Unwind({ k: "return", v: ret });
   }
@@ -461,7 +477,7 @@ export class InterpGen extends Interp {
           return (yield* runThunk(arm.run()));
         } finally { this.frame.scopes.pop(); this.dropScope(scope); }
       }
-      return this.stuck("S-MATCH", "no arm matched");
+      return this.stuck("E-MATCH", "no arm matched");
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
   }
   *callExpr$g(e: CallE): Gen {
@@ -469,6 +485,8 @@ export class InterpGen extends Interp {
     switch (e.func) {
       case "Heap": if (!shadow("Heap")) return { k: "box", id: this.alloc(), cell: { v: (yield* this.ev$g(e.args[0]!)) } }; break;
       case "forget": if (!shadow("forget")) { (yield* this.ev$g(e.args[0]!)); return undefined; } break; // the move is recorded on the operand
+      // sortByKey forgets a key that is a view of its element; here the closure returned a counted share of it, which is let go
+      case "_vecForget": if (!shadow("_vecForget")) { this.dropValue((yield* this.ev$g(e.args[0]!))); return undefined; } break;
       case "replace": if (!shadow("replace")) return (yield* this.memReplace$g(e.args[0]!, (yield* this.ev$g(e.args[1]!)))); break;
       case "swap": if (!shadow("swap")) return (yield* this.memSwap$g(e.args[0]!, e.args[1]!)); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone((yield* this.peek$g(e.args[0]!))); break; // the structural copy std/vec's clone and filter use; capacity = length
@@ -476,10 +494,15 @@ export class InterpGen extends Interp {
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
-      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)
+      case "_natLess": {
+        const a = (yield* this.peekThroughRef$g(e.args[0]!)), b = (yield* this.peekThroughRef$g(e.args[1]!));
+        return this.binValues("<", a, b, this.T(e.args[0]!), { tag: "bool" });
+      }
+      case "jsonStringify": if (!shadow("jsonStringify")) return jsonStringify(this, (yield* this.peek$g(e.args[0]!)), this.T(e.args[0]!)); break;
+      case "embedFile": return this.embedFile(e);
     }
-    if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
-    if (this.cr.closureCalls.has(e)) {
+    if (this.cr.closureCalls.has(e) || this.cr.cfnCalls.has(e)) { // R-FNPTR: a C function pointer held in a variable is called like a closure
       const mark = this.temps.length;
       const r = (yield* this.callValue$g((yield* this.peek$g({ kind: "Ident", name: e.func } as Expr)), (yield* this.evalArgs$g(e.args))));
       this.dropTemps(mark);
@@ -525,7 +548,7 @@ export class InterpGen extends Interp {
       if (this.cr.heapMethodReceivers.has(e)) recv = { kind: "UnaryOp", op: "*", operand: e.object } as Expr; // h.m() means (*h).m()
       return (yield* this.callResolved$g(resolved, e.args, e, undefined, recv));
     }
-    if (this.cr.fnFieldCalls.has(e)) {
+    if (this.cr.fnFieldCalls.has(e) || this.cr.cfnFieldCalls.has(e)) { // R-FNPTR: a C function pointer in a field is called like a closure
       const callee = (yield* this.peek$g({ kind: "FieldAccess", object: e.object, field: m } as Expr));
       return (yield* this.callValue$g(callee, (yield* this.evalArgs$g(e.args))));
     }
@@ -574,7 +597,8 @@ export class InterpGen extends Interp {
       ]));
       case "IfChainStmt": return (yield* this.ifChain$g(s));
       case "LetElseStmt": {
-        if (this.cr.nullRefUnwraps.has(s)) return this.unsupported("nullable extern reference unwrap");
+        const nr = this.cr.nullRefUnwraps.get(s);
+        if (nr) return (yield* this.nullRefUnwrap$g(s, nr));
         return (yield* this.matchCore$g(s.value, [
           { pattern: s.pattern, run: () => undefined, escape: true },
           { pattern: { kind: "WildcardPattern" }, run: () => this.runBlock$g(s.elseBody) },
@@ -583,6 +607,13 @@ export class InterpGen extends Interp {
       case "UnsafeBlock": return (yield* this.runBlock$g(s.body));
       case "ForInStmt": return (yield* this.forIn$g(s));
     }
+  }
+  *nullRefUnwrap$g(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Gen {
+    let v = (yield* this.peek$g(s.value));
+    if (v && typeof v === "object" && (v.k === "ref" || v.k === "mut")) v = this.deref(v); // a Milo caller's reference arrives as itself
+    if (v === 0n) return (yield* this.runBlock$g(s.elseBody));
+    this.declare(s.bindName!, isPtr(v) ? { k: nr.mutable ? "mut" : "ref", slot: memSlot(this.mem, v, nr.inner), path: [] } as Ref : v);
+    return undefined;
   }
   *letStmt$g(s: Stmt & { kind: "LetDecl" | "VarDecl" }): Gen {
     const t = this.rawT(s.value);
@@ -659,7 +690,7 @@ export class InterpGen extends Interp {
     this.frame.scopes.push(holder);
     try {
       const view = this.cr.stringViewForIns.get(s);
-      if (view && s.iterable.kind === "MethodCall") return this.unsupported("lines()/splitView() for-in");
+      if (view && s.iterable.kind === "MethodCall") return (yield* this.forStrView$g(s, view.mode, s.iterable, fin));
       const iter = this.cr.iteratorForIns.get(s);
       if (iter) {
         // an rvalue iterator dies once, when the scope around the loop ends
@@ -709,6 +740,31 @@ export class InterpGen extends Interp {
       return undefined;
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
   }
+  *forStrView$g(s: Stmt & { kind: "ForInStmt" }, mode: "lines" | "split", call: Expr & { kind: "MethodCall" }, fin: (r: Completion | "next") => Completion | "next"): Gen {
+    const bytes = ((yield* this.peek$g(call.object)) as Str).b.bytes.slice();
+    const split = mode === "split";
+    const sep = split ? ((yield* this.peek$g(call.args[0]!)) as Str).b.bytes.slice() : [10];
+    const find = (from: number): number => {
+      for (let i = from; i + sep.length <= bytes.length; i++) if (sep.every((c, k) => bytes[i + k] === c)) return i;
+      return -1;
+    };
+    let pos = 0, count = 0;
+    // lines stop at the end of the bytes; a split yields the piece after a trailing separator too, except for an empty separator
+    while (split ? pos <= bytes.length && (sep.length > 0 || pos < bytes.length) : pos < bytes.length) {
+      const at = split && sep.length === 0 ? pos + 1 : find(pos);
+      const end = at >= 0 ? at : bytes.length;
+      const viewEnd = !split && end > pos && bytes[end - 1] === 13 ? end - 1 : end; // CRLF: the \r ends the line
+      const piece = bytes.slice(pos, viewEnd);
+      pos = at >= 0 ? end + sep.length : bytes.length + 1;
+      const i = count++;
+      const r = fin((yield* this.loopBody$g(s, sc => {
+        if (s.varName2) this.declare(s.varName, BigInt(i), sc);
+        this.declare(s.varName2 ?? s.varName, { k: "ref", slot: { v: { k: "str", b: { bytes: piece, rc: 1, id: -1 } } }, path: [] }, sc);
+      })));
+      if (r !== "next") return r;
+    }
+    return undefined;
+  }
 }
 
 function* renderParts$g(it: InterpGen, e: CallE, sink?: number[]): Gen {
@@ -735,6 +791,7 @@ export function* builtinCall$g(it: InterpGen, e: CallE): Gen {
     }
     case "format": return it.newStr((yield* renderParts$g(it, e)));
     case "flush": return undefined;
+    case "isNull": { const v = (yield* it.peek$g(e.args[0]!)); return v === 0n || v === undefined; } // R-FNPTR: a null C function pointer or raw pointer
     case "exit": { const code = Number((yield* it.ev$g(e.args[0]!)) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if ((yield* it.peek$g(e.args[0]!)) === true) return undefined;
@@ -765,7 +822,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr((yield* it.resolve$g(e.object)), ot);
   if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, (yield* it.peek$g(e.object))), ot.element);
-  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
+  if (m === "ptr" && ot.tag === "heap" && !it.cr.resolvedMethods.has(e)) return it.mem.heapPtr((yield* it.peek$g(e.object)) as BoxV, ot.inner);
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, (yield* it.peek$g(e.object)), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
@@ -796,7 +853,20 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
       if (m.startsWith("saturating")) return r < lo ? lo : r > hi ? hi : r;
       return r < lo || r > hi ? opt(it, e, NONE) : opt(it, e, r);
     }
-    if (["reverseBits", "rotateLeft", "rotateRight", "checkedNeg"].includes(m)) return it.unsupported(`int .${m}()`);
+    if (m === "rotateLeft" || m === "rotateRight") { // R-INT-BITS
+      const bits = BigInt(t.bits), x = BigInt.asUintN(t.bits, (yield* it.peek$g(e.object)) as bigint);
+      const n = (((yield* it.ev$g(e.args[0]!)) as bigint) % bits + bits) % bits;
+      const k = m === "rotateLeft" ? n : (bits - n) % bits;
+      return wrapInt((x << k) | (x >> (bits - k)), t);
+    }
+    if (m === "reverseBits") { // R-INT-BITS
+      const x = BigInt.asUintN(t.bits, (yield* it.peek$g(e.object)) as bigint);
+      return wrapInt(BigInt("0b" + x.toString(2).padStart(t.bits, "0").split("").reverse().join("")), t);
+    }
+    if (m === "checkedNeg") { // R-INT-BITS: None when -x does not fit
+      const r = -((yield* it.peek$g(e.object)) as bigint);
+      return r < -(1n << BigInt(t.bits - 1)) && t.signed || (!t.signed && r !== 0n) || (t.signed && r > (1n << BigInt(t.bits - 1)) - 1n) ? opt(it, e, NONE) : opt(it, e, r);
+    }
   }
   if ((ot.tag === "vec" || ot.tag === "array") && m === "slice") {
     const v = (yield* it.peek$g(e.object)) as VecV | { k: "arr"; e: Value[] };
@@ -812,7 +882,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
       return opt(it, e, it.viewOf(v.buf!.elems[v.start + Number(i)]!)); // Option<&T>: a view of the element
     }
   }
-  if (ot.tag === "hashmap" && m === "len") return it.unsupported("hashmap");
+  if (ot.tag === "hashmap" && m === "len") return BigInt(((yield* it.peek$g(e.object)) as MapV).m.size); // E-HASHMAP
   if (ot.tag === "string") {
     switch (m) {
       case "pushStr": appendTo(it, it.refTo((yield* it.resolve$g(e.object)), true), ((yield* it.peek$g(e.args[0]!)) as Str).b.bytes); return undefined;
@@ -867,6 +937,15 @@ function* optionMethod$g(it: InterpGen, e: MethodE, ot: TypeKind & { name: strin
       else r = isOpt ? (it.dropValue(v), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
       it.dropValue(f);
       return r;
+    }
+    case "context": { // Result.context(note): the error boxed as Heap<Error> (as ? does) inside the prelude's ErrorContext
+      if (isOpt) return NOT_NATIVE;
+      const v = (yield* runThunk(recv())), note = (yield* runThunk(arg0()));
+      if (v.variant === okV) { it.dropValue(note); return it.mkEnum(resName, "Ok", v.a); }
+      const boxing = it.cr.contextBoxings.get(e);
+      const cause = boxing ? it.boxError(boxing, take(v)) : take(v);
+      const ctx: Value = { k: "struct", name: "ErrorContext", f: { note, cause } };
+      return it.mkEnum(resName, "Err", [it.boxError({ fromType: "ErrorContext", viaMessage: false }, ctx)]);
     }
     case "mapErr": {
       if (isOpt) return NOT_NATIVE;

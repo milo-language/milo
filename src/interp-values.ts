@@ -25,7 +25,8 @@ export class InterpStuck extends Error {
 
 // A runtime trap the program asked for (assert, bounds, overflow, unwrap of None).
 export class Panic extends Error {}
-export class ExitProgram { constructor(public code: number) {} }
+// killed: the process dies of a signal (no live count), as against exit(n)
+export class ExitProgram { constructor(public code: number, public killed = false) {} }
 
 export interface Moved { k: "moved" }
 export const MOVED: Moved = { k: "moved" };
@@ -39,7 +40,8 @@ export interface ArrV { k: "arr"; e: Value[] }
 export interface VecBuf { id: number; elems: Value[] }
 // `view`: a slice, which borrows the buffer and drops nothing. `buf` null: nothing allocated.
 export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number; cap: number; view: boolean }
-export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true }
+// raw: the malloc'd block an adopted box stands on; dropping the box frees that block
+export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true; raw?: { live: boolean } }
 export interface IfaceV { k: "iface"; concrete: string; inner: Value }
 // HashMap: one table block while non-empty; entries keep their key and value in slots so a reference can name them
 export interface MapEntry { key: Slot; val: Slot }

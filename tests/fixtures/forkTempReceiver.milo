@@ -116,3 +116,4 @@ fn main() {
     print((if s.len() > 5 { s } else { s + "x" }) + " " + s.len().toString())
     print("end")
 }
+// @rule: E-FORK-VIEW

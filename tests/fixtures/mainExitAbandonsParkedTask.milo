@@ -24,3 +24,4 @@ fn main() {
     schedulerYield()
     print("end")
 }
+// @rule: R-TASK-ABANDON

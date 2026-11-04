@@ -6,9 +6,10 @@ import type { Expr } from "./ast";
 import { ARRAY_COMBINATORS, SLICE_COMBINATORS, type TypeKind } from "./types";
 import { NOT_NATIVE, isStr, strip, wrapInt, type CallE, type Interp, type MethodE } from "./interp";
 import { taskNativeFor } from "./interp-co-natives";
-import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
+import { netNativeFor } from "./interp-net";
+import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type BoxV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
 
-export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true };
+export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true; maybeCo?: true };
 
 // ── display ──
 export function display(it: Interp, v: Value, ty: TypeKind, nested = false): string {
@@ -22,7 +23,7 @@ export function display(it: Interp, v: Value, ty: TypeKind, nested = false): str
     case "struct": {
       const name = it.displayName(v.name);
       const fs = it.structFields(v.name).map(f => `${f.name}: ${display(it, v.f[f.name]!, f.type, true)}`);
-      return fs.length ? `${name} { ${fs.join(", ")} }` : name;
+      return `${name} { ${fs.join(", ")} }`; // an empty struct is "Name {  }"
     }
     case "enum": {
       const decl = it.cr.enums.get(v.en)?.variants.get(v.variant);
@@ -34,14 +35,44 @@ export function display(it: Interp, v: Value, ty: TypeKind, nested = false): str
       const xs = v.k === "arr" ? v.e : v.buf ? v.buf.elems.slice(v.start, v.start + v.len) : [];
       return `[${xs.map(x => display(it, x, el, true)).join(", ")}]`;
     }
+    case "map": { // {k: v, ...} in table order, which the compiled run seeds per run, so insertion order is as good as any
+      const kt = ty.tag === "hashmap" ? ty.key : { tag: "unknown" } as TypeKind, vt = ty.tag === "hashmap" ? ty.value : { tag: "unknown" } as TypeKind;
+      return `{${[...v.m.values()].map(x => `${display(it, x.key.v, kt, true)}: ${display(it, x.val.v, vt, true)}`).join(", ")}}`;
+    }
     case "box": return display(it, v.cell.v, ty.tag === "heap" ? ty.inner : { tag: "unknown" }, nested);
   }
   return it.unsupported(`display of ${v.k}`);
 }
 
+// jsonStringify(struct): {"field":value,...} with the fields string, int, float and bool; a string is escaped as RFC 8259 (std/rt rtStringPushJson)
+// R-JSON-STRINGIFY
+export function jsonStringify(it: Interp, v: Value, ty: TypeKind): Str {
+  ty = strip(ty);
+  if (ty.tag !== "struct" || !v || typeof v !== "object" || v.k !== "struct") return it.unsupported("jsonStringify of a non-struct");
+  const out: number[] = [123];
+  it.structFields(v.name).forEach((f, i) => {
+    out.push(...enc.encode(`${i ? "," : ""}"${f.name}":`));
+    const x = v.f[f.name]!;
+    if (isStr(x)) {
+      out.push(34);
+      for (const c of x.b.bytes) {
+        if (c === 34 || c === 92) out.push(92, c);
+        else if (c === 10 || c === 9 || c === 13) out.push(92, c === 10 ? 110 : c === 9 ? 116 : 114);
+        else if (c < 32) out.push(...enc.encode("\\u00" + c.toString(16).padStart(2, "0")));
+        else out.push(c);
+      }
+      out.push(34);
+    } else out.push(...enc.encode(display(it, x, f.type)));
+  });
+  out.push(125);
+  return it.newStr(out);
+}
+
 // ── strings ──
+// E-STRING-SHARE
 export function concat(it: Interp, a: Str, b: Str): Str { return it.newStr([...a.b.bytes, ...b.b.bytes]); }
 // Make the string in `r` the only handle to a heap buffer (copy on write), then return it.
+// E-STRING-SHARE
 export function unique(it: Interp, r: Ref): Str {
   const s = it.deref(r) as Str;
   if (s.b.id >= 0 && s.b.rc === 1) return s;
@@ -50,12 +81,14 @@ export function unique(it: Interp, r: Ref): Str {
   it.dropValue(s);
   return copy;
 }
+// E-STRING-SHARE
 export function appendTo(it: Interp, r: Ref, bytes: number[]): void {
   if (bytes.length === 0) return;
   const s = unique(it, r);
   if (s.b.id < 0) { it.setPlace(it.derefPlace(r), it.newStr([...s.b.bytes, ...bytes])); return; }
   s.b.bytes.push(...bytes);
 }
+// S-PANIC-ABORT
 export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
   if (a < 0n || b < a || b > BigInt(s.b.bytes.length)) it.panic(`string range ${a}..${b} out of bounds (len ${s.b.bytes.length})`);
   return [Number(a), Number(b)];
@@ -64,6 +97,7 @@ export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, num
 // ── Vec ──
 const vecOf = (it: Interp, r: Value) => it.deref(r) as VecV;
 // size in bytes of a value of type t (the compiled layout), which decides a Vec's first capacity
+// R-MEM-COPY
 export function sizeOf(it: Interp, t: TypeKind): number {
   switch (t.tag) {
     case "int": case "float": return t.bits / 8;
@@ -89,17 +123,20 @@ const elemSize = (it: Interp, e: Expr | undefined): number => {
   const t = obj ? it.T(obj) : undefined;
   return t && (t.tag === "vec" || t.tag === "array") ? sizeOf(it, t.element) : 8;
 };
+// E-VEC
 function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
   else h.buf.elems.length = h.start + cap;
   h.cap = cap;
 }
 // std/vec vecGrowOne: the first buffer holds 8 elements (64 bytes' worth when they are bigger), then doubles
+// E-VEC
 function growOne(it: Interp, h: VecV, size: number): void {
   if (h.len < h.cap) return;
   setCap(it, h, h.cap === 0 ? (size > 8 ? Math.max(1, Math.floor(64 / size)) : 8) : h.cap * 2);
 }
 // std/vec vecReserveTotal: room for `need` elements in all, doubling when that suffices
+// E-VEC
 function reserveTotal(it: Interp, h: VecV, need: number): void {
   if (h.cap >= need) return;
   setCap(it, h, h.cap * 2 > need ? h.cap * 2 : need);
@@ -111,11 +148,12 @@ export const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Va
 };
 const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   const i = v as bigint;
-  if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`index out of bounds: ${i} (len ${n})`);
+  if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`array index out of bounds: ${i}/${n}`);
   return Number(i);
 };
 // the Vec header behind a Vec, a slice or a fixed array (a fixed array is viewed whole)
 export const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
+// E-VEC
 export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bigint, hi: bigint): VecV {
   const n = v.k === "arr" ? v.e.length : v.len;
   if (lo < 0n || hi < lo || hi > BigInt(n)) it.panic(`slice ${lo}..${hi} out of bounds (len ${n})`);
@@ -125,8 +163,21 @@ export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bi
 function natCmp(it: Interp, a: Value, b: Value): number {
   if (typeof a === "bigint" && typeof b === "bigint") return a < b ? -1 : a > b ? 1 : 0;
   if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "boolean" && typeof b === "boolean") return a === b ? 0 : a ? 1 : -1;
   if (isStr(a) && isStr(b)) return it.binValues("<", a, b, { tag: "string" }, { tag: "bool" }) ? -1 : it.equal(a, b) ? 0 : 1;
   return it.unsupported("sort of this element type");
+}
+// Vec.sort is std's stable insertion sort over _natLess. A NaN is less than nothing and nothing is less than it,
+// which no JS comparator sort handles, so a float run holding one is sorted by the insertion sort itself.
+function natSort(it: Interp, xs: Value[]): Value[] {
+  if (!xs.some(x => typeof x === "number" && Number.isNaN(x))) return xs.sort((a, b) => natCmp(it, a!, b!));
+  for (let i = 1; i < xs.length; i++) {
+    const t = xs[i]!;
+    let j = i;
+    while (j > 0 && (t as number) < (xs[j - 1] as number)) { xs[j] = xs[j - 1]!; j--; }
+    xs[j] = t;
+  }
+  return xs;
 }
 
 // ── function natives, keyed by instantiated name (without a $atN call-site suffix) ──
@@ -152,6 +203,7 @@ nat("string$substr", (it, [self, a, b]) => {
 // The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
 // Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
 const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+// R-MEM-LOAD
 function withPtr<T>(it: Interp, p: Value, f: (q: Value) => T): T {
   const held: Value[] = [];
   try { return f(it.mem.decay(p, PTR_U8, held)); } finally { for (const h of held) it.dropValue(h); }
@@ -180,6 +232,11 @@ for (const name of ["rawSlice", "rawSliceMut"]) {
     return { k: "vec", buf: { id: -1, elems }, start: 0, len: n, cap: n, view: true } as VecV;
   });
 }
+// adopt: the owned Heap or Vec for a pointer a Heap or Vec gave out with ptr() or malloc made (std/foreign)
+// R-MEM-ADOPT
+nat("adoptHeap", (it, [p], e) => it.mem.adoptHeap(p!, (it.T(e!) as { inner: TypeKind }).inner));
+// R-MEM-ADOPT
+nat("adoptVec", (it, [p, len], e) => it.mem.adoptVec(p!, Number(len as bigint), (it.T(e!) as { element: TypeKind }).element));
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
 
 // R-ATOMIC: one task runs at a time, so an atomic is a plain read-modify-write of the place its pointer names.
@@ -250,7 +307,7 @@ const VEC: Record<string, Native> = {
   },
   sort: (it, [self]) => {
     const h = vecOf(it, self);
-    const xs = h.buf ? h.buf.elems.slice(h.start, h.start + h.len).sort((a, b) => natCmp(it, a!, b!)) : [];
+    const xs = h.buf ? natSort(it, h.buf.elems.slice(h.start, h.start + h.len)) : [];
     xs.forEach((x, i) => { h.buf!.elems[h.start + i] = x; });
     return undefined;
   },
@@ -305,6 +362,8 @@ const MAPS: Record<string, Native> = {
 export function nativeFor(name: string): Native | undefined {
   const tk = taskNativeFor(name);
   if (tk) return tk;
+  const nn = netNativeFor(name);
+  if (nn) return nn;
   if (/(^|\$)(mapNew|mapWithCapacity|mapWithSlots)/.test(name)) return () => ({ k: "map", buf: null, m: new Map() });
   const hm = /^HashMap_.+?\$([A-Za-z0-9_]+)$/.exec(name);
   if (hm && MAPS[hm[1]!]) return MAPS[hm[1]!];
@@ -316,7 +375,7 @@ export function nativeFor(name: string): Native | undefined {
 }
 
 // ── builtin functions (print, format, exit, assert, ...) ──
-export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min"]);
+export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "isNull"]);
 // Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
 // that part is evaluated, so output from evaluating a later part comes after it (print-order).
 function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
@@ -332,6 +391,7 @@ function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
   }
   return out;
 }
+// S-PANIC-ABORT
 export function builtinCall(it: Interp, e: CallE): Value {
   switch (e.func) {
     case "print": case "eprint": {
@@ -343,6 +403,7 @@ export function builtinCall(it: Interp, e: CallE): Value {
     }
     case "format": return it.newStr(renderParts(it, e));
     case "flush": return undefined;
+    case "isNull": { const v = it.peek(e.args[0]!); return v === 0n || v === undefined; } // R-FNPTR: a null C function pointer or raw pointer
     case "exit": { const code = Number(it.ev(e.args[0]!) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if (it.peek(e.args[0]!) === true) return undefined;
@@ -373,6 +434,7 @@ export const INT_ARITH: Record<string, string> = {
 };
 
 // A closure parameter that is `&T` gets a reference to the value, otherwise the value itself.
+// E-CLOSURE
 function callWith(it: Interp, f: Value, payload: Value[]): Value {
   const c = f as ClosureV;
   const args = payload.map((p, i) => (c.paramRefs?.[i] ? ({ k: "ref", slot: it.tempOwn(p), path: [] } as Ref) : p));
@@ -390,7 +452,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr(it.resolve(e.object), ot);
   if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, it.peek(e.object)), ot.element);
-  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
+  if (m === "ptr" && ot.tag === "heap" && !it.cr.resolvedMethods.has(e)) return it.mem.heapPtr(it.peek(e.object) as BoxV, ot.inner);
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, it.peek(e.object), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
@@ -421,7 +483,20 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
       if (m.startsWith("saturating")) return r < lo ? lo : r > hi ? hi : r;
       return r < lo || r > hi ? opt(it, e, NONE) : opt(it, e, r);
     }
-    if (["reverseBits", "rotateLeft", "rotateRight", "checkedNeg"].includes(m)) return it.unsupported(`int .${m}()`);
+    if (m === "rotateLeft" || m === "rotateRight") { // R-INT-BITS
+      const bits = BigInt(t.bits), x = BigInt.asUintN(t.bits, it.peek(e.object) as bigint);
+      const n = ((it.ev(e.args[0]!) as bigint) % bits + bits) % bits;
+      const k = m === "rotateLeft" ? n : (bits - n) % bits;
+      return wrapInt((x << k) | (x >> (bits - k)), t);
+    }
+    if (m === "reverseBits") { // R-INT-BITS
+      const x = BigInt.asUintN(t.bits, it.peek(e.object) as bigint);
+      return wrapInt(BigInt("0b" + x.toString(2).padStart(t.bits, "0").split("").reverse().join("")), t);
+    }
+    if (m === "checkedNeg") { // R-INT-BITS: None when -x does not fit
+      const r = -(it.peek(e.object) as bigint);
+      return r < -(1n << BigInt(t.bits - 1)) && t.signed || (!t.signed && r !== 0n) || (t.signed && r > (1n << BigInt(t.bits - 1)) - 1n) ? opt(it, e, NONE) : opt(it, e, r);
+    }
   }
   if ((ot.tag === "vec" || ot.tag === "array") && m === "slice") {
     const v = it.peek(e.object) as VecV | { k: "arr"; e: Value[] };
@@ -437,7 +512,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
       return opt(it, e, it.viewOf(v.buf!.elems[v.start + Number(i)]!)); // Option<&T>: a view of the element
     }
   }
-  if (ot.tag === "hashmap" && m === "len") return it.unsupported("hashmap");
+  if (ot.tag === "hashmap" && m === "len") return BigInt((it.peek(e.object) as MapV).m.size); // E-HASHMAP
   if (ot.tag === "string") {
     switch (m) {
       case "pushStr": appendTo(it, it.refTo(it.resolve(e.object), true), (it.peek(e.args[0]!) as Str).b.bytes); return undefined;
@@ -457,6 +532,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   return NOT_NATIVE;
 }
 
+// E-MOVE
 function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, base: string, type: TypeKind): Value | typeof NOT_NATIVE {
   const m = e.method;
   const isOpt = base === "Option";
@@ -494,6 +570,15 @@ function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, b
       it.dropValue(f);
       return r;
     }
+    case "context": { // Result.context(note): the error boxed as Heap<Error> (as ? does) inside the prelude's ErrorContext
+      if (isOpt) return NOT_NATIVE;
+      const v = recv(), note = arg0();
+      if (v.variant === okV) { it.dropValue(note); return it.mkEnum(resName, "Ok", v.a); }
+      const boxing = it.cr.contextBoxings.get(e);
+      const cause = boxing ? it.boxError(boxing, take(v)) : take(v);
+      const ctx: Value = { k: "struct", name: "ErrorContext", f: { note, cause } };
+      return it.mkEnum(resName, "Err", [it.boxError({ fromType: "ErrorContext", viaMessage: false }, ctx)]);
+    }
     case "mapErr": {
       if (isOpt) return NOT_NATIVE;
       const v = recv(), f = arg0();
@@ -524,6 +609,7 @@ function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, b
 // A combinator's receiver: a view when it isn't consumed (MILO-O-combinatorReceiver), else its
 // value. A function of its own so the task twin can suspend inside it (gen-interp-co.ts only
 // rewrites an arrow whose whole body is one call).
+// E-MOVE
 function receiverOf(it: Interp, obj: Expr, inPlace: boolean): EnumV {
   return (inPlace ? it.viewOf(it.peek(obj)) : it.ev(obj)) as EnumV;
 }

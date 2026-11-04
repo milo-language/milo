@@ -9,8 +9,9 @@
 import type { Expr } from "./ast";
 import type { InterpCo, Task } from "./interp-co";
 import type { Interp } from "./interp";
-import { staticStr, type ClosureV, type HandleV, type Ref, type Value } from "./interp-values";
+import { staticStr, type ClosureV, type HandleV, type Ref, type Str, type Value } from "./interp-values";
 import type { Native } from "./interp-natives";
+import { fdReady, netWaiters } from "./interp-net";
 
 type CoNative = (it: InterpCo, args: Value[], e?: Expr) => Generator<unknown, Value, unknown>;
 
@@ -58,12 +59,14 @@ co("Task$join", function* (it, [self]) {
 // R-TASK-SCOPE: the body runs, then the caller parks until every task spawned on the scope has ended.
 co("Task$scope", function* (it, [body]) {
   const sc = new ScopeObj();
+  const scopeBlock = it.alloc(); // R-TASK-SCOPE: an open scope owns one block; a program that exits inside it leaves the block
   const slot = { v: handle("scope", sc) };
   const me = it.cur;
   me.scopesOpen++;
   yield* it.callValue$g(body, [{ k: "mut", slot, path: [] } as Ref]);
   while (sc.live > 0) { sc.waiter = me; yield* it.park("Task.scope (waiting for its tasks)"); }
   me.scopesOpen--;
+  it.free(scopeBlock);
   it.dropValue(body);
   return undefined;
 });
@@ -77,7 +80,13 @@ plain("TaskScope$spawn", (it, [self, f]) => {
 plain("TaskScope$live", (it, [self]) => BigInt(objOf<ScopeObj>(it, self).live));
 
 // ── scheduler entry points std exposes ──
-// R-TASK-CURRENT: a task pointer is the task's number; main is a task whenever the program can spawn.
+// R-TASK-PANIC: a connection task that panics answers its client first: `reply` is written to `fd`, which is then closed
+plain("taskOnPanicReply", (it, [fd, reply]) => {
+  (it as InterpCo).cur.panicReply = { fd: Number(fd as bigint), bytes: Uint8Array.from((it.deref(reply!) as Str).b.bytes) };
+  return undefined;
+});
+plain("taskOnPanicNote", () => undefined);
+// R-TASK-MAIN: a task pointer is the task's number; main is a task whenever the program can spawn.
 plain("schedulerCurrent", it => BigInt((it as InterpCo).cur.id));
 plain("schedulerExists", () => true);
 co("schedulerYield", function* (it) { yield* it.yieldNow(); return undefined; });
@@ -93,9 +102,13 @@ co("schedulerRunToCompletion", function* (it) {
 co("time$sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 co("sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 plain("sleepBlockingMs", (it, [ms]) => { (it as InterpCo).clock += Math.max(0, Number(ms as bigint)); return undefined; });
+// R-TIME: the scheduler is always up under the task interpreter, so making timers live is a no-op
+plain("ensureTimersLive", () => undefined);
+plain("schedulerEnsureInit", () => undefined);
 // A blocking-pool job or OS thread runs as one more task (R-TASK-BLOCKING): the interpreter has no second thread.
 plain("runtime$blockingPoolSubmit", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 plain("spawnOsThreadDetached", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
+plain("spawnWorkerAudited", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 
 // ── Channel ──
 // R-CHAN: a bounded queue. send parks while it is full, recv while it is empty. A task that parks joins its
@@ -108,6 +121,7 @@ class ChanObj {
   sendW: Task[] = [];
   rc = 1;
   constructor(public cap: number, public blocks: number[]) {}
+  // R-TASK-ABANDON
   release(it: Interp): void {
     if (--this.rc > 0) return;
     for (const v of this.q) it.dropValue(v);
@@ -177,6 +191,73 @@ const CHAN_CO: Record<string, CoNative> = {
   },
 };
 
+// ── Select ──
+// R-SELECT: arms are armed in order; wait returns the index of the first ready one and parks until some arm is. A recv arm is
+// ready when its channel has a value or is closed, a send arm when it has room or is closed, an fd arm when a read (write)
+// would not block, a timer arm when the virtual clock reaches its deadline. The value itself is fetched afterwards, per arm.
+interface Arm { kind: "recv" | "send" | "read" | "write" | "timer"; chan?: ChanObj; fd?: number; at?: number }
+class SelObj {
+  arms: Arm[] = [];
+  constructor(public blocks: number[]) {}
+  // R-SELECT
+  release(it: Interp): void {
+    for (const a of this.arms) a.chan?.release(it);
+    this.arms = [];
+    for (const b of this.blocks) it.free(b);
+    this.blocks = [];
+  }
+}
+const sel = (it: Interp, self: Value) => objOf<SelObj>(it, self);
+// R-SELECT
+const armReady = (it: InterpCo, a: Arm): boolean => {
+  switch (a.kind) {
+    case "recv": return a.chan!.q.length > 0 || a.chan!.closed;
+    case "send": return a.chan!.q.length < a.chan!.cap || a.chan!.closed;
+    case "read": case "write": return fdReady(it, a.fd!, a.kind === "write");
+    case "timer": return it.clock >= a.at!;
+  }
+};
+// a channel arm keeps its own reference to the channel (one block) and the arm list's buffer is made by the first one
+const armChan = (it: Interp, self: Value, ch: Value, kind: "recv" | "send"): Value => {
+  const c = chan(it, ch), o = sel(it, self);
+  c.rc++;
+  o.blocks.push(...count(it, 1));
+  o.arms.push({ kind, chan: c });
+  return undefined;
+};
+const SELECT_NATIVES: Record<string, Native> = {
+  new: it => handle("select", new SelObj(count(it, 4))), // measured on compiled programs: the state (three blocks) and the node array
+  onRecv: (it, [self, ch]) => armChan(it, self, ch, "recv"),
+  onSend: (it, [self, ch]) => armChan(it, self, ch, "send"),
+  onTimeout: (it, [self, ms]) => { sel(it, self).arms.push({ kind: "timer", at: (it as InterpCo).clock + Math.max(0, Number(ms as bigint)) }); return undefined; },
+};
+// onRead and onWrite are generic over AsFd: the descriptor is what the instantiated type's own rawFd method returns
+const fdArm = (kind: "read" | "write", ty: string | undefined): Native => (it, [self, h]) => {
+  const fn = it.fns.has(`${ty}$AsFd$rawFd`) ? `${ty}$AsFd$rawFd` : `${ty}$rawFd`;
+  sel(it, self).arms.push({ kind, fd: Number(it.callNamed(fn, [h!]) as bigint) });
+  return undefined;
+};
+const SELECT_WAIT: CoNative = function* (it, [self]) {
+  const o = sel(it, self);
+  for (;;) {
+    for (let i = 0; i < o.arms.length; i++) if (armReady(it, o.arms[i]!)) return BigInt(i);
+    const me = it.cur, net = netWaiters(it);
+    let at = Infinity, onNet = false;
+    for (const a of o.arms) {
+      if (a.kind === "recv") a.chan!.recvW.push(me);
+      else if (a.kind === "send") a.chan!.sendW.push(me);
+      else if (a.kind === "timer") at = Math.min(at, a.at!);
+      else if (!onNet) { net.ts.push(me); onNet = true; }
+    }
+    const entry = at < Infinity ? { t: me, at, quiet: true } : undefined;
+    if (entry) it.sleepers.push(entry);
+    yield* it.park("Select.wait");
+    for (const a of o.arms) { if (a.chan) { a.chan.recvW = a.chan.recvW.filter(t => t !== me); a.chan.sendW = a.chan.sendW.filter(t => t !== me); } }
+    if (onNet) net.ts = net.ts.filter(t => t !== me);
+    if (entry) { const k = it.sleepers.indexOf(entry); if (k >= 0) it.sleepers.splice(k, 1); }
+  }
+};
+
 // ── WaitGroup ──
 // R-WG: add/done move a counter; done at zero or below wakes every waiter; wait parks while the counter is positive.
 class WgObj {
@@ -243,6 +324,7 @@ class AtomObj {
   release(it: Interp): void { if (--this.rc === 0) it.free(this.block); }
 }
 const ATOM = /^Atomic(I64|I32|U64|Bool)\$([A-Za-z0-9_]+)$/;
+// R-ATOMIC
 function atomicNative(kind: string, m: string): Native | undefined {
   const wrap = (v: bigint) => (kind === "I64" ? BigInt.asIntN(64, v) : kind === "I32" ? BigInt.asIntN(32, v) : BigInt.asUintN(64, v));
   const a = (it: Interp, self: Value) => objOf<AtomObj>(it, self);
@@ -277,6 +359,14 @@ function lookup(name: string): Native | undefined {
     if (g) { const n = g as unknown as Native; n.co = true; return n; }
     return undefined;
   }
+  m = /^Select\$([A-Za-z]+)(?:_(.+))?$/.exec(name);
+  if (m) {
+    if (m[1] === "onRead" || m[1] === "onWrite") return fdArm(m[1] === "onRead" ? "read" : "write", m[2]);
+    if (m[1] === "wait") { const n = SELECT_WAIT as unknown as Native; n.co = true; return n; }
+    return SELECT_NATIVES[m[1]!];
+  }
+  if (name === "Select$Drop$drop") return () => undefined;
+  if (name === "ensureTimersLive") return () => undefined; // a scheduler always exists under the task interpreter
   if (/^Channel_.+?\$Drop\$drop$/.test(name) || /^(WaitGroup|Once|Atomic\w+)\$Drop\$drop$/.test(name)) return () => undefined;
   m = WG.exec(name);
   if (m) {

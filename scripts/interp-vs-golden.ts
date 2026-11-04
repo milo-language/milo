@@ -17,7 +17,7 @@
 // It cannot pass vacuously: zero programs compared exits 1.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { constants, tmpdir } from "os";
 import { guardedRun } from "./guard";
 
 const ROOT = join(import.meta.dir, "..");
@@ -60,8 +60,9 @@ export async function compareOne(p: { path: string; name: string; kind: "fixture
   if (r.guardKill || r.signal === "SIGKILL" || r.signal === "SIGTERM") return { name: p.name, verdict: "unsupported", detail: `too slow or too big: killed after ${TIMEOUT_MS / 1000}s or by the memory guard` };
   if (r.code === 1 && !r.stdout && /error/.test(r.stderr) && !/live blocks/.test(r.stderr)) return { name: p.name, verdict: "unsupported", detail: `frontend: ${r.stderr.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n")[0]}` };
   const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
-  const aborted = want.signal === "SIGABRT";
-  const code = aborted ? 134 : want.code;
+  // A recorded signal death has no exit code; its shell status is 128 + the signal (SIGABRT 6 = 134), the S-PANIC-ABORT status. Nothing else is remapped.
+  const aborted = want.signal !== null;
+  const code = want.signal ? 128 + (constants.signals as Record<string, number>)[want.signal]! : want.code;
   // a golden recorded before the fixture was edited: the fixture's own @expect lines are the newer oracle, and the interpreter meets them
   if (r.stdout !== want.stdout && existsSync(gpath)) {
     const lines = [...src.matchAll(/^\/\/ @expect: ?(.*)$/gm)].map(m => m[1]!);

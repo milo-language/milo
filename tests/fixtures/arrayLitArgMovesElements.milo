@@ -27,3 +27,4 @@ fn main() {
 // @expect: drop 2
 // @expect: sum 3
 // @expect: end
+// @rule: S-PENDING

@@ -28,3 +28,4 @@ fn main(): i32 {
     // @expect: 10
     return 0
 }
+// @rule: E-INDEX-COPY

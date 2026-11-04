@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can
-// reach a task switch, so the task interpreter (src/interp-co.ts) can suspend a task anywhere in the
+// reach a task switch.
+//
+// With it the task interpreter (src/interp-co.ts) can suspend a task anywhere in the
 // middle of an expression without a second hand-written evaluator. The plain interpreter keeps its
 // plain functions, so a program with no tasks pays nothing.
 //
@@ -21,7 +23,8 @@ const ROOT = join(import.meta.dir, "..");
 const SRC = join(ROOT, "src");
 const OUT = join(SRC, "interp-gen.ts");
 const SEEDS = new Set(["runNative"]);
-// user Drop bodies run as plain calls: a drop that parks its task is reported unsupported
+// user Drop bodies run as plain calls: a drop that parks its task is reported unsupported (making dropValue a suspender would
+// turn every callback that drops, such as a .map over deepClone, into a generator)
 const EXCLUDE = new Set(["userDrop", "globalSlot", "run", "runMain"]);
 // parameters / locals holding a thunk that returns a generator in the twin
 const THUNK_PARAMS = new Set(["arg0", "recv"]);

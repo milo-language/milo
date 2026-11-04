@@ -91,3 +91,4 @@ pub fn main(): i32 {
     print("scalar " + scalar.toString())
     return 0
 }
+// @rule: E-FORK-OWN

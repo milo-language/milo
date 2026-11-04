@@ -92,3 +92,4 @@ fn main() {
 // @expect: 400
 // @expect: end
 // @expect: drop 2
+// @rule: E-MATCH-INDEX

@@ -36,3 +36,4 @@ pub fn main(): i32 {
     print("sum ", sum)
     return 0
 }
+// @rule: R-TIME

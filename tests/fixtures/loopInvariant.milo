@@ -20,3 +20,4 @@ pub fn main(): i32 {
     print(sumTo(10))
     return 0
 }
+// @rule: R-CONTRACT-LOOP

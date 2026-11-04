@@ -12,9 +12,10 @@ import type { Function as AstFn, Program } from "./ast";
 import type { CheckResult } from "./checker";
 import { Interp, type Frame, type RunResult } from "./interp";
 import { InterpGen, type Gen } from "./interp-gen";
-import { NeedTasks, Panic, type ClosureV, type Slot, type Value } from "./interp-values";
+import { ExitProgram, NeedTasks, Panic, type ClosureV, type Slot, type Value } from "./interp-values";
 import type { Native } from "./interp-natives";
 import type { SysOptions } from "./interp-sys";
+import { replyAndClose } from "./interp-net";
 
 interface Ctx { frames: Frame[]; temps: Slot[]; depth: number; pend: Slot[] }
 export interface Task {
@@ -27,7 +28,9 @@ export interface Task {
   scopesOpen: number; // Task.scope calls this task is inside: a panic then aborts instead of retiring it
   scope: { live: number; waiter: Task | null } | null;
   cacheable: boolean; // spawned with the default stack size
+  envBlock?: number; // the heap block holding a capturing closure's environment, freed when the task ends
   why: string; // what a parked task waits for, for the deadlock report
+  panicReply?: { fd: number; bytes: Uint8Array }; // R-TASK-PANIC: sent on fd if the task panics
 }
 
 // The scheduler runs this many tasks before it moves the front of the queue to the back (std/runtime
@@ -41,7 +44,8 @@ export class InterpCo extends InterpGen {
   runq: Task[] = [];
   cur!: Task;
   drainWaiter: Task | null = null;
-  sleepers: { t: Task; at: number }[] = [];
+  // quiet: a timed wait that is not sleepMs (a Select timer arm, poll's timeout) costs no sleep-select blocks when abandoned
+  sleepers: { t: Task; at: number; quiet?: boolean }[] = [];
   private nextTaskId = 1;
   // contexts of finished default-stack tasks the scheduler keeps for the next spawn (at most 64, as std/runtime)
   cachedContexts = 0;
@@ -50,6 +54,8 @@ export class InterpCo extends InterpGen {
   // through spawnRaw and does not count. Approximated by whether either of those natives ran.
   greenMain = false;
   scopeSpawned = false;
+  // a task waited on a descriptor: the scheduler allocated its table of fd waiters, one more block it leaves behind (R-TASK-ABANDON)
+  fdWaited = false;
 
   // R-TASK-PICK: the scheduling decision. Takes the ready tasks, front of the queue first, and returns
   // the index to run. FIFO by default, as the library's run queue is.
@@ -58,6 +64,7 @@ export class InterpCo extends InterpGen {
   schedule: number[] | null = null;
   choicesMade = 0;
   scheduleMismatch = false;
+  // R-TASK-PICK
   pickNext(ready: readonly Task[]): number {
     if (!this.schedule || ready.length < 2) return 0;
     const i = this.schedule[this.choicesMade++];
@@ -74,16 +81,34 @@ export class InterpCo extends InterpGen {
 
   liveTasks(): number { return this.tasks.size; }
 
+  // R-TASK-SPAWN
   spawnTask(f: ClosureV, scope: Task["scope"] = null, cacheable = true): Task {
     if (cacheable && this.cachedContexts > 0) this.cachedContexts--;
     this.touch("spawn"); // task ids come from one counter, so two spawns do not commute
     const t: Task = { id: this.nextTaskId++, state: "ready", gen: null, ctx: { frames: [], temps: [], depth: 0, pend: [] }, isMain: false, joiner: null, scopesOpen: 0, scope, cacheable: true, why: "" };
     t.cacheable = cacheable;
+    if (f.env.length > 0) t.envBlock = this.alloc(); // R-TASK-ABANDON: a task whose closure captures owns its environment on the heap
     t.gen = this.taskBody(f);
     this.tasks.set(t.id, t);
     this.runq.push(t);
     return t;
   }
+  // R-NET-THREAD: pthread_create's start routine, by function name, as one more task. A panic in it ends the program (it is no green
+  // task: scopesOpen > 0), and `done` gets the routine's return value for pthread_join.
+  spawnThread(name: string, args: Value[], done: (ret: Value) => void): Task {
+    const t = this.spawnTask({ k: "closure", params: [], paramRefs: [], body: [], env: [], owning: false, ret: { tag: "void" } }, null, false);
+    t.scopesOpen = 1;
+    t.gen = this.threadBody(name, args, done);
+    return t;
+  }
+  // R-NET-THREAD
+  *threadBody(name: string, args: Value[], done: (ret: Value) => void): Gen {
+    const r = yield* this.callNamed$g(name, args);
+    this.dropTemps(0);
+    done(r);
+    return undefined;
+  }
+  // R-TASK-PANIC R-TASK-MAIN
   *taskBody(f: ClosureV): Gen {
     yield* this.callValue$g(f, []);
     this.dropTemps(0); // a body's last expression leaves its temporaries for the caller to drop; a task has no caller
@@ -110,6 +135,7 @@ export class InterpCo extends InterpGen {
     this.sleepers.push({ t: this.cur, at: this.clock + ms });
     yield* this.park("sleepMs");
   }
+  // R-TIME
   private wakeSleepers(): boolean {
     if (this.sleepers.length === 0) return false;
     this.clock = Math.min(...this.sleepers.map(x => x.at));
@@ -139,15 +165,15 @@ export class InterpCo extends InterpGen {
     t.ctx = { frames: this.frames, temps: this.temps, depth: this.depth, pend: this.pend };
     this.frames = []; this.temps = []; this.depth = 0; this.pend = [];
   }
+  // R-TASK-JOIN
   private reap(t: Task): void {
     this.tasks.delete(t.id);
+    if (t.envBlock !== undefined) this.free(t.envBlock);
     this.touch(t);
     if (t.scope) this.touch(t.scope);
     if (t.isMain) this.touch("exit"); // ends the program: every task still ready is abandoned
-    // Measured on compiled programs with a plain main: the stack of a task reaped with no other task left does not
-    // end up in the cache. (With a green main the main task is always still there.)
-    const othersLeft = this.greenMain || [...this.tasks.values()].some(x => !x.isMain);
-    if (t.cacheable && othersLeft && this.cachedContexts < 64) this.cachedContexts++;
+    // A finished default-stack task leaves its context in the cache (R-TASK-ABANDON).
+    if (t.cacheable && this.cachedContexts < 64) this.cachedContexts++;
     if (t.joiner) this.unpark(t.joiner);
     const sc = t.scope;
     if (sc && --sc.live === 0 && sc.waiter) { const w = sc.waiter; sc.waiter = null; this.unpark(w); }
@@ -161,9 +187,9 @@ export class InterpCo extends InterpGen {
   private leakRuntime(): void {
     // No task left: a green main tears the scheduler down; a plain main (scope-only programs) never does.
     if (this.tasks.size === 0 && (this.greenMain || !this.scopeSpawned)) return;
-    const asleep = new Set(this.sleepers.map(x => x.t));
-    let n = 5 + this.cachedContexts;
-    for (const t of this.tasks.values()) n += asleep.has(t) ? 6 : 3;
+    const asleep = new Set(this.sleepers.filter(x => !x.quiet).map(x => x.t));
+    let n = 4 + this.cachedContexts + (this.fdWaited ? 1 : 0);
+    for (const t of this.tasks.values()) n += asleep.has(t) ? 7 : 3; // asleep: sleepMs's Select, four blocks
     for (let i = 0; i < n; i++) this.alloc();
   }
   private deadlock(): never {
@@ -188,9 +214,12 @@ export class InterpCo extends InterpGen {
       let r: IteratorResult<unknown, Value>;
       try { r = task.gen!.next(); }
       catch (e) {
+        // R-TASK-ABANDON: exit from a task leaves the scheduler up and the other tasks where they stand, as main returning does
+        if (e instanceof ExitProgram && !e.killed) this.leakRuntime();
         // R-TASK-PANIC: a panic in a task that is not main and has no open scope retires that task, not the program
         if (!(e instanceof Panic) || task.isMain || task.scopesOpen > 0) throw e;
         this.err.push(...new TextEncoder().encode(e.message + "\n"));
+        if (task.panicReply) replyAndClose(this, task.panicReply.fd, task.panicReply.bytes);
         this.taskPanics.push(e.message);
         this.aborted = false;
         r = { done: true, value: undefined };
@@ -215,6 +244,7 @@ export class InterpCo extends InterpGen {
  */
 // schedule: replay these choices (R-EXPLORE-REPLAY); it runs under the task interpreter from the start
 export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions; schedule?: number[] }
+// R-TASK-MAIN
 export function runChecked(program: Program, checked: CheckResult, opts: RunOptions = {}): { it: Interp; result: RunResult } {
   const make = (c: new (p: Program, r: CheckResult) => Interp): Interp => {
     const i = new c(program, checked);

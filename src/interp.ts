@@ -20,8 +20,8 @@ import {
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
 import { Mem, isPtr, memSlot } from "./interp-mem";
-import { callExtern, type Sys, type SysOptions } from "./interp-sys";
-import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
+import { externNative, type Sys, type SysOptions } from "./interp-sys";
+import { BUILTIN_FNS, builtinCall, concat, jsonStringify, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
 // Control flow raised from expression position (`?`, a diverging if/match arm): caught by the
@@ -62,8 +62,9 @@ export class Interp {
   }
 
   // ── runner ──
+  // S-PANIC-ABORT
   run(): RunResult {
-    let code = 0;
+    let code = 0, panicked = false;
     try {
       const main = this.fns.get("main");
       if (!main || main.isExtern) throw new InterpUnsupported("no main");
@@ -81,17 +82,20 @@ export class Interp {
       if (typeof r === "bigint") code = Number(BigInt.asUintN(8, r));
     } catch (e) {
       this.aborted = true;
-      if (e instanceof ExitProgram) code = e.code;
-      else if (e instanceof Panic) { this.err.push(...new TextEncoder().encode(e.message + "\n")); code = 134; }
+      if (e instanceof ExitProgram) { code = e.code; panicked = e.killed; }
+      else if (e instanceof Panic) { this.err.push(...new TextEncoder().encode(e.message + "\n")); code = 134; panicked = true; }
       else if (e instanceof RangeError && /call stack/i.test(e.message)) throw new InterpUnsupported("host stack exhausted (very deep recursion)");
       else throw e;
     }
-    return { stdout: Uint8Array.from(this.out), stderr: new TextDecoder().decode(Uint8Array.from(this.err)), code, live: code === 134 ? null : this.blocks.size };
+    return { stdout: Uint8Array.from(this.out), stderr: new TextDecoder().decode(Uint8Array.from(this.err)), code, live: panicked ? null : this.blocks.size };
   }
 
   // The program's entry. The task interpreter (src/interp-co.ts) overrides it to run main as the first task.
   runMain(main: AstFn): Value { return this.callFn(main, []); }
+  // S-PANIC-ABORT: the compiled program dies of SIGSEGV (139) on a stack overflow, printing nothing.
+  stackOverflow(): never { this.aborted = true; throw new ExitProgram(139, true); }
   panic(msg: string): never { this.aborted = true; throw new Panic(msg); }
+  // T-STUCK
   stuck(rule: string, detail: string): never {
     const e = new InterpStuck(rule, detail);
     e.where = this.frames.slice(-5).reverse().map(f => f.fn?.name ?? "?").join(" < ");
@@ -108,14 +112,17 @@ export class Interp {
 
   // ── heap ──
   alloc(): number { const id = this.nextId++; this.blocks.add(id); return id; }
+  // E-VEC
   free(id: number): void {
     if (!this.blocks.delete(id)) this.stuck("heap", `block ${id} freed twice or never allocated`);
   }
   newBuf(cap: number): VecBuf { return { id: this.alloc(), elems: new Array(cap).fill(undefined) }; }
+  // E-STRING-SHARE
   newStr(bytes: number[]): Str {
     const id = bytes.length ? this.alloc() : -1; // an empty string owns no buffer
     return { k: "str", b: { bytes, rc: 1, id } };
   }
+  // E-VEC
   newVec(xs: Value[]): VecV {
     const buf = xs.length ? this.newBuf(xs.length) : null;
     if (buf) buf.elems = xs;
@@ -128,17 +135,19 @@ export class Interp {
   }
   mkEnum(en: string, variant: string, a: Value[]): EnumV {
     const v = this.cr.enums.get(en)?.variants.get(variant);
-    if (!v) this.stuck("E-ENUM", `no variant ${en}.${variant}`);
+    if (!v) this.stuck("E-STUCK", `no variant ${en}.${variant}`);
     return { k: "enum", en, variant, tag: v.tag, a };
   }
 
   // ── scopes and slots ──
   get frame(): Frame { return this.frames[this.frames.length - 1]!; }
+  // S-LET S-VAR T-LET
   declare(name: string, v: Value, scope?: Scope): Slot {
     const slot: Slot = { v };
     (scope ?? this.frame.scopes[this.frame.scopes.length - 1]!).push({ name, slot });
     return slot;
   }
+  // E-STUCK
   lookup(name: string): Slot | undefined {
     const f = this.frame;
     for (let i = f.scopes.length - 1; i >= 0; i--) {
@@ -147,6 +156,7 @@ export class Interp {
     }
     return this.globals.has(name) ? this.globalSlot(name) : undefined;
   }
+  // E-GLOBAL
   globalSlot(name: string): Slot {
     const g = this.globals.get(name)!;
     if (!g.slot) {
@@ -170,6 +180,7 @@ export class Interp {
   // [S-TEMP] a temporary lives until the end of the statement that made it.
   tempOwn(v: Value, stmt = false): Slot { const s: Slot = { v, stmt }; this.temps.push(s); return s; }
   // atCall: the end of a call, which keeps the temporaries that belong to the whole statement
+  // S-TEMP-CALL
   dropTemps(mark: number, atCall = false): void {
     if (this.aborted) { this.temps.length = mark; return; }
     const keep: Slot[] = [];
@@ -183,6 +194,7 @@ export class Interp {
 
   // ── drops ──
   // drop(v): user Drop first, then fields last-first (spec §2 Drops).
+  // E-ARRAY-DROP E-HASHMAP
   dropValue(v: Value): void {
     if (v === undefined || typeof v !== "object" || v === MOVED) return;
     if ((v.k === "struct" || v.k === "enum" || v.k === "box" || v.k === "handle") && v.ghost) return;
@@ -205,7 +217,7 @@ export class Interp {
         for (let i = 0; i < v.len; i++) this.dropValue(v.buf.elems[v.start + i]!);
         this.free(v.buf.id);
         return;
-      case "box": this.dropValue(v.cell.v); this.free(v.id); return;
+      case "box": this.dropValue(v.cell.v); this.free(v.id); if (v.raw) v.raw.live = false; return;
       case "iface": this.dropValue(v.inner); return;
       case "map":
         if (v.view) return;
@@ -219,7 +231,7 @@ export class Interp {
   }
   userDrop(typeName: string, v: Struct | EnumV): void {
     const fn = this.fns.get(this.concreteMethodFn(typeName, "drop"));
-    if (!fn) this.stuck("S-DROP", `no drop for ${typeName}`);
+    if (!fn) this.stuck("T-STUCK", `no drop for ${typeName}`);
     this.callFn(fn, [{ k: "mut", slot: { v }, path: [] }]);
   }
 
@@ -228,7 +240,7 @@ export class Interp {
   // the slot, so a reference to a place keeps meaning after the value inside is replaced.
   resolveIdent(name: string): Place {
     const slot = this.lookup(name);
-    if (!slot) this.stuck("E-VAR", `unbound variable ${name}`);
+    if (!slot) this.stuck("E-STUCK", `unbound variable ${name}`);
     const v = slot.v;
     if (isRef(v)) return { slot: v.slot, path: [...v.path], ro: v.k === "ref", viaRef: true };
     return { slot, path: [], ro: false, viaRef: false };
@@ -247,6 +259,7 @@ export class Interp {
     }
     return false;
   }
+  // T-STUCK
   resolve(e: Expr): Place {
     if (this.isPlaceExpr(e)) {
       switch (e.kind) {
@@ -263,7 +276,7 @@ export class Interp {
           const b = this.resolve(e.object);
           const i = this.ev(e.index) as bigint;
           const n = this.seqLen(this.getPlace(b));
-          if (i < 0n || i >= BigInt(n)) this.panic(`index out of bounds: ${i} (len ${n})`);
+          if (i < 0n || i >= BigInt(n)) this.panic(`array index out of bounds: ${i}/${n}`);
           return { ...b, path: [...b.path, Number(i)] };
         }
         case "UnaryOp": {
@@ -281,7 +294,7 @@ export class Interp {
       if (v.k === "vec") return v.len;
       if (v.k === "arr") return v.e.length;
     }
-    return this.stuck("T-INDEX", "index into something that is not a Vec or array");
+    return this.stuck("T-STUCK", "index into something that is not a Vec or array");
   }
   child(cur: Value, step: Step): { get(): Value; set(v: Value): void } {
     if (cur === MOVED) this.stuck("E-STUCK", "read through a moved value");
@@ -296,7 +309,7 @@ export class Interp {
       }
       if (cur.k === "iface") return { get: () => cur.inner, set: v => { cur.inner = v; } };
     }
-    return this.stuck("E-FIELD", `no step ${String(step)} into ${describe(cur)}`);
+    return this.stuck("T-STUCK", `no step ${String(step)} into ${describe(cur)}`);
   }
   getPlace(p: Place): Value {
     if (p.slot.dead) this.stuck("T-REF-PARAM", "a reference outlived the frame it names");
@@ -304,6 +317,7 @@ export class Interp {
     for (const s of p.path) cur = this.child(cur, s).get();
     return cur;
   }
+  // T-ASSIGN-MOVED-OK
   setPlace(p: Place, v: Value): void {
     if (p.slot.dead) this.stuck("T-REF-PARAM", "a reference outlived the frame it names");
     if (p.path.length === 0) { p.slot.v = v; return; }
@@ -330,6 +344,12 @@ export class Interp {
     this.tempOwn(v);
     return v;
   }
+  // peek, then follow a reference (a place of type &T reads as the T it names)
+  // E-VEC
+  peekThroughRef(e: Expr): Value {
+    const v = this.peek(e);
+    return v && typeof v === "object" && (v.k === "ref" || v.k === "mut") ? this.deref(v) : v;
+  }
   // a field / deref chain: its root expression and the steps from the root down to e
   chain(e: Expr): { root: Expr; steps: Step[] } {
     const steps: Step[] = [];
@@ -340,6 +360,7 @@ export class Interp {
       else return { root: x, steps };
     }
   }
+  // S-TEMP-FIELD
   tempRooted(e: Expr): boolean {
     const c = this.chain(e);
     return c.steps.length > 0 && !this.isPlaceExpr(c.root);
@@ -368,6 +389,7 @@ export class Interp {
     }
     return this.share(v, what, isMove && p.viaRef);
   }
+  // E-COPY
   copyable(v: Value): boolean {
     if (v === undefined || typeof v !== "object") return true;
     switch (v.k) {
@@ -381,6 +403,7 @@ export class Interp {
     }
   }
   // A copy of a value read without moving: Copy data duplicated, a string's buffer shared.
+  // E-STRING-SHARE
   share(v: Value, what: string, viaRef = false): Value {
     if (v === undefined || typeof v !== "object") return v;
     switch (v.k) {
@@ -405,6 +428,7 @@ export class Interp {
   }
 
   // A value that borrows what `v` owns: dropping it does nothing, reading it needs no move.
+  // E-FORK-VIEW
   viewOf(v: Value): Value {
     if (v === undefined || typeof v !== "object" || v === MOVED) return v;
     switch (v.k) {
@@ -420,6 +444,7 @@ export class Interp {
     }
   }
   // HashMap keys compare by value: a canonical text of the key
+  // E-HASHMAP
   keyOf(v: Value): string {
     if (v === undefined || typeof v !== "object") return typeof v + String(v);
     switch (v.k) {
@@ -430,6 +455,7 @@ export class Interp {
       default: return this.unsupported(`hashmap key of ${v.k}`);
     }
   }
+  // E-HASHMAP
   mapPut(m: MapV, key: Value, val: Value): void {
     const k = this.keyOf(key), old = m.m.get(k);
     if (old) { this.dropValue(key); this.dropValue(old.val.v); old.val.v = val; return; }
@@ -437,6 +463,7 @@ export class Interp {
     m.m.set(k, { key: { v: key }, val: { v: val } });
   }
   // An independent owned copy (no user Clone is run): what `[x; n]` makes of the repeated element.
+  // E-INDEX-COPY
   deepClone(v: Value): Value {
     if (v === undefined || typeof v !== "object" || v === MOVED) return v;
     switch (v.k) {
@@ -456,18 +483,19 @@ export class Interp {
   }
 
   // ── calls ──
+  // E-CALL
   paramFlags(fn: AstFn): { name: string; isRef: boolean; isRefMut: boolean; ptrParam: boolean }[] {
     return fn.params.map(p => { const t = declaredType(p); return { name: p.name, isRef: t.isRef && !t.isNullableRef, isRefMut: t.isRefMut && !t.isNullableRef, ptrParam: !!t.isPtr }; });
   }
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
-    if (fn.isExtern) return callExtern(this, fn, args);
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (fn.isExtern) return this.runNative(externNative(fn), args);
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
-      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
+      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held, false) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) this.enterContracts(fn);
@@ -511,6 +539,7 @@ export class Interp {
     if (!this.contractChecks) return;
     for (const c of invs ?? []) if (c.kind === "invariant") this.checkClause(c);
   }
+  // R-CONTRACT-FAIL
   checkClause(c: Contract): void {
     const mark = this.temps.length;
     const holds = this.peek(c.expr) === true;
@@ -520,8 +549,9 @@ export class Interp {
     const shown = file && !file.startsWith("/") ? file : relative(process.cwd(), file);
     this.panic(`runtime error: ${c.kind} clause violated at ${shown.startsWith("..") ? file : shown}:${c.span?.line ?? 0}`);
   }
+  // E-CLOSURE
   callClosure(c: ClosureV, args: Value[]): Value {
-    if (++this.depth > 3000) this.panic("stack overflow");
+    if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn: this.frames.length ? this.frame.fn : null, ret: c.ret });
     const envScope = this.frame.scopes[0]!;
     try {
@@ -543,6 +573,7 @@ export class Interp {
     if (callee && typeof callee === "object" && callee.k === "fn") return this.callNamed(callee.name, args);
     return this.stuck("E-CALL", `call of ${describe(callee)}`);
   }
+  // E-CALL
   callNamed(name: string, args: Value[]): Value {
     const fn = this.fns.get(name);
     if (!fn) this.unsupported(`call of unknown function ${name}`);
@@ -572,7 +603,7 @@ export class Interp {
       const mark = this.cr.autoBorrowed.get(raw);
       const byRef = !!mark || !!f?.isRef || !!f?.isRefMut;
       if (!byRef) {
-        // R-MEM-DECAY: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
+        // R-MEM-CSTR: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
         if (f?.ptrParam && this.isPlaceExpr(a) && (this.T(a).tag === "array" || this.T(a).tag === "string")) return this.refTo(this.resolve(a), true);
         return this.pending(this.ev(a));
       }
@@ -601,22 +632,30 @@ export class Interp {
   settle(mark: number): void { while (this.pend.length > mark) this.pend.pop()!.v = MOVED; }
 
   // ── expressions ──
+  // E-COPY E-MOVE T-MOVED
   ev(e: Expr): Value {
     const optName = this.cr.autoWrappedOption.get(e); // T -> Option<T>
     if (optName) return this.mkEnum(optName, "Some", [this.checked(e, this.evRaw(e))]);
     const co = this.cr.interfaceCoercions.get(e);
     if (co) return { k: "iface", concrete: co.fromType, inner: this.evRaw(e) };
+    const jt = this.cr.autoJsonStringify.get(e); // a struct given to a `json(body: string)` parameter is its JSON
+    if (jt) {
+      const codec = this.cr.autoJsonToJson.get(e);
+      return codec ? this.callNamed(codec, [this.refTo(this.resolve(e), false)]) : jsonStringify(this, this.peek(e), jt);
+    }
     if (this.cr.arraySliceArgs.has(e)) { // a fixed array given to a slice parameter: a view of it
       const a = this.isPlaceExpr(e) ? this.peek(e) : (v => (this.tempOwn(v, true), v))(this.evRaw(e));
       if (a && typeof a === "object" && a.k === "arr") return sliceView(this, a, 0n, BigInt(a.e.length));
     }
     return this.checked(e, this.evRaw(e));
   }
+  // S-PANIC-ABORT
   checked(e: Expr, v: Value): Value {
     const rc = this.cr.rangeCheckedExprs.get(e);
     if (rc && typeof v === "bigint" && (v < BigInt(rc.min) || v > BigInt(rc.max))) this.panic(`${rc.typeName} out of range`);
     return v;
   }
+  // E-COPY E-MOVE
   evRaw(e: Expr): Value {
     if (this.cr.sharedStringExprs.has(e) && this.isPlaceExpr(e)) { // a second handle to a counted buffer
       return this.share(this.peek(e), describeExpr(e));
@@ -653,6 +692,7 @@ export class Interp {
     }
   }
 
+  // E-FIELD-MOVE
   fieldAccess(e: Expr & { kind: "FieldAccess" }): Value {
     const fnc = floatNamespaceConst(e);
     if (fnc) return fnc.value;
@@ -696,10 +736,11 @@ export class Interp {
     for (const d of this.structFields(name)) {
       if (given.has(d.name)) { f[d.name] = given.get(d.name)!; if (base) this.dropValue(base.f[d.name]!); }
       else if (base) f[d.name] = base.f[d.name]!;
-      else this.stuck("T-STRUCT", `${name}.${d.name} not given`);
+      else this.stuck("T-STUCK", `${name}.${d.name} not given`);
     }
     return { k: "struct", name, f };
   }
+  // S-PENDING
   arrayLit(e: Expr & { kind: "ArrayLit" }): Value {
     const pm = this.pend.length;
     const xs: Value[] = [];
@@ -709,6 +750,7 @@ export class Interp {
     if (t.tag === "array" && !this.cr.arrayToVecCoercions.has(e)) return { k: "arr", e: xs };
     return this.newVec(xs);
   }
+  // E-INDEX-COPY
   arrayRepeat(e: Expr & { kind: "ArrayRepeat" }): Value {
     const first = this.ev(e.value);
     const xs: Value[] = [first];
@@ -719,6 +761,7 @@ export class Interp {
     if (e.count === 0) this.dropValue(first); else xs.push(first);
     return this.T(e).tag === "array" ? { k: "arr", e: e.count ? xs : [] } : this.newVec(e.count ? xs : []);
   }
+  // S-PENDING
   enumLit(e: Expr & { kind: "EnumLit" }): Value {
     const type = this.T(e);
     if (e.enumName === "Vec" && e.variant === "new" && type.tag === "vec") return this.newVec([]);
@@ -746,6 +789,7 @@ export class Interp {
   }
 
   // ── operators ──
+  // S-PANIC-ABORT
   binop(e: Expr & { kind: "BinOp" }): Value {
     const tc = this.cr.variantTagCompares.get(e);
     if (tc) { const is = (this.peek(tc.operand) as EnumV).tag === tc.tag; return e.op === "!=" ? !is : is; }
@@ -788,6 +832,7 @@ export class Interp {
     }
     return false;
   }
+  // S-PANIC-ABORT
   intOp(op: string, a: bigint, b: bigint, t: (TypeKind & { tag: "int" }) | null): Value {
     switch (op) {
       case "<": return a < b; case ">": return a > b; case "<=": return a <= b; case ">=": return a >= b;
@@ -799,13 +844,13 @@ export class Interp {
       case "-": r = a - b; break;
       case "*": r = a * b; break;
       case "/": if (b === 0n) this.panic("division by zero"); r = a / b; break;
-      case "%": if (b === 0n) this.panic("remainder by zero"); r = a % b; break;
+      case "%": if (b === 0n) this.panic("division by zero"); r = a % b; break;
       case "&": r = a & b; break;
       case "|": r = a | b; break;
       case "^": r = a ^ b; break;
       case "<<": case ">>": {
         const bits = t ? BigInt(t.bits) : 64n;
-        if (b < 0n || b >= bits) { if (!wrapping) this.panic("shift out of range"); b &= bits - 1n; }
+        if (b < 0n || b >= bits) { if (!wrapping) this.panic("shift amount out of range"); b &= bits - 1n; }
         r = op === "<<" ? a << b : a >> b;
         return t ? (op === "<<" ? wrapInt(r, t) : r) : r; // shl discards high bits, as a machine shift does
       }
@@ -816,6 +861,7 @@ export class Interp {
     if (wrapInt(r, t) !== r) this.panic("integer overflow");
     return r;
   }
+  // S-PANIC-ABORT
   isWrapping(): boolean {
     const f = this.frame.fn;
     return !!f && (!!f.fromWrappingModule || !!f.attributes?.some(a => a.name === "wrapping"));
@@ -864,13 +910,15 @@ export class Interp {
       if (typeof x === "number") return to.bits === 32 ? Math.fround(x) : x;
     }
     if (to.tag === "bool" && typeof v === "boolean") return v;
-    // R-PTR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
+    // R-MEM-ADDR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
     if (to.tag === "ptr") return this.mem.castToPtr(v, from, to);
+    if (to.tag === "cfn" && (isPtr(v) || v === 0n)) return this.mem.castToCfn(v, from); // R-FNPTR
     if (to.tag === "string" && isStr(v)) return this.share(v, "cast");
     return this.unsupported(`cast ${from.tag} -> ${to.tag} of ${describe(v)}`);
   }
 
   // ── Option / Result ──
+  // S-PANIC-ABORT
   unwrap(e: Expr & { kind: "Unwrap" }): Value {
     const v = this.ev(e.operand) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
@@ -878,8 +926,8 @@ export class Interp {
     return this.panic(v.variant === "None" ? "unwrap called on None" : "unwrap called on Err");
   }
   // `?`: forward the payload, or return the failure from the enclosing function.
+  // E-PROPAGATE
   propagate(e: Expr & { kind: "Propagate" }): Value {
-    if (this.cr.propagateBoxings.has(e) || this.cr.propagateMessages.has(e)) this.unsupported("? with boxing or message conversion");
     const v = this.ev(e.operand) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
     const rt = this.frame.ret as TypeKind & { name: string };
@@ -887,10 +935,37 @@ export class Interp {
     if (v.variant === "None") ret = this.mkEnum(rt.name, "None", []);
     else {
       const c = this.cr.propagateConversions.get(e);
-      ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
+      const boxing = this.cr.propagateBoxings.get(e), msg = this.cr.propagateMessages.get(e);
+      if (boxing) ret = this.mkEnum(rt.name, "Err", [this.boxError(boxing, v.a[0]!)]);
+      else if (msg) { // into a Result<T, string> fn: the error's message()
+        const slot: Slot = { v: v.a[0]! };
+        const text = this.callNamed(this.concreteMethodFn(msg.name, "message"), [{ k: "ref", slot, path: [] } as Ref]);
+        this.dropValue(slot.v);
+        ret = this.mkEnum(rt.name, "Err", [text]);
+      } else ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
     }
     throw new Unwind({ k: "return", v: ret });
   }
+  // @embedFile("rel/path"): the bytes of a file beside the source that names it, read when the call runs (the
+  // compiler embeds them at build time). Needs a host file reader, which only the CLI driver hands in.
+  // R-EMBED-FILE
+  embedFile(e: CallE): Value {
+    const rel = (e.args[0] as { value: string }).value;
+    if (!this.sysOptions.hostFs) return this.unsupported("builtin embedFile");
+    const dir = (e.span?.file ?? this.entryFile ?? "").replace(/[^/]*$/, "") || ".";
+    const parts: string[] = [];
+    for (const seg of (rel.startsWith("/") ? rel : dir + rel).split("/")) { if (seg === "..") parts.pop(); else if (seg !== "." && seg !== "") parts.push(seg); }
+    const bytes = this.sysOptions.hostFs!.readFile((rel.startsWith("/") || dir.startsWith("/") ? "/" : "") + parts.join("/"));
+    if (!bytes) this.stuck("R-EMBED-FILE", `@embedFile: cannot open '${rel}'`);
+    return { k: "str", b: { bytes: [...bytes], rc: 1, id: -1 } };
+  }
+  // an error value as a Heap<Interface>: a string is first an ErrorMessage, the box holds the interface pair
+  // E-IFACE
+  boxError(boxing: { fromType: string; viaMessage: boolean }, err: Value): Value {
+    const inner: Value = boxing.viaMessage ? { k: "struct", name: boxing.fromType, f: { text: err } } : err;
+    return { k: "box", id: this.alloc(), cell: { v: { k: "iface", concrete: boxing.fromType, inner } } };
+  }
+  // E-MOVE
   defaultValue(e: Expr & { kind: "DefaultValue" }): Value {
     const v = this.ev(e.operand) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
@@ -913,6 +988,7 @@ export class Interp {
   }
 
   // ── if / match / closures ──
+  // E-FORK-VIEW E-FORK-OWN
   ifExpr(e: Expr & { kind: "IfExpr" }): Value {
     const mark = this.temps.length;
     const c = this.peek(e.cond) === true;
@@ -920,6 +996,7 @@ export class Interp {
     return this.blockValue(c ? e.thenBody : e.elseBody, this.forkOwns([e.thenBody, e.elseBody]));
   }
   // [MILO-O-forkOwnership] a fork owns its result iff some arm yields an owned value
+  // E-FORK-OWN
   forkOwns(bodies: Stmt[][]): boolean {
     return bodies.some(b => {
       const last = b[b.length - 1];
@@ -988,9 +1065,10 @@ export class Interp {
           return arm.run();
         } finally { this.frame.scopes.pop(); this.dropScope(scope); }
       }
-      return this.stuck("S-MATCH", "no arm matched");
+      return this.stuck("E-MATCH", "no arm matched");
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
   }
+  // E-MATCH
   patternMatches(p: Pattern, v: Value): boolean {
     if (p.kind === "WildcardPattern") return true;
     if (p.kind === "LiteralPattern") return litEq(p.value, p.literalKind, v);
@@ -998,6 +1076,7 @@ export class Interp {
     return (p.args ?? []).every((sub, i) => !sub || this.patternMatches(sub, v.a[i]!));
   }
   // bindings in leaf order (patternLeafNames): payload i of the subject, nested ones by path
+  // E-MATCH
   bindPattern(p: Pattern, at: Place, borrowed: boolean, mut: boolean, scope: Scope): void {
     if (p.kind !== "EnumPattern") return;
     p.bindings.forEach((name, i) => {
@@ -1012,6 +1091,7 @@ export class Interp {
     });
   }
 
+  // E-CLOSURE
   closure(e: Expr & { kind: "Closure" }): Value {
     const caps = this.cr.closureCaptures.get(e) ?? [];
     const shared = this.cr.sharedStringCaptures.get(e);
@@ -1036,6 +1116,8 @@ export class Interp {
     switch (e.func) {
       case "Heap": if (!shadow("Heap")) return { k: "box", id: this.alloc(), cell: { v: this.ev(e.args[0]!) } }; break;
       case "forget": if (!shadow("forget")) { this.ev(e.args[0]!); return undefined; } break; // the move is recorded on the operand
+      // sortByKey forgets a key that is a view of its element; here the closure returned a counted share of it, which is let go
+      case "_vecForget": if (!shadow("_vecForget")) { this.dropValue(this.ev(e.args[0]!)); return undefined; } break;
       case "replace": if (!shadow("replace")) return this.memReplace(e.args[0]!, this.ev(e.args[1]!)); break;
       case "swap": if (!shadow("swap")) return this.memSwap(e.args[0]!, e.args[1]!); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone(this.peek(e.args[0]!)); break; // the structural copy std/vec's clone and filter use; capacity = length
@@ -1043,10 +1125,15 @@ export class Interp {
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
-      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)
+      case "_natLess": {
+        const a = this.peekThroughRef(e.args[0]!), b = this.peekThroughRef(e.args[1]!);
+        return this.binValues("<", a, b, this.T(e.args[0]!), { tag: "bool" });
+      }
+      case "jsonStringify": if (!shadow("jsonStringify")) return jsonStringify(this, this.peek(e.args[0]!), this.T(e.args[0]!)); break;
+      case "embedFile": return this.embedFile(e);
     }
-    if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
-    if (this.cr.closureCalls.has(e)) {
+    if (this.cr.closureCalls.has(e) || this.cr.cfnCalls.has(e)) { // R-FNPTR: a C function pointer held in a variable is called like a closure
       const mark = this.temps.length;
       const r = this.callValue(this.peek({ kind: "Ident", name: e.func } as Expr), this.evalArgs(e.args));
       this.dropTemps(mark);
@@ -1059,6 +1146,7 @@ export class Interp {
     return this.callResolved(name, e.args, e);
   }
   // call the function the checker resolved `name` to; `recv` is a method receiver passed first
+  // E-CALL
   callResolved(name: string, args: Expr[], e?: Expr, _sig?: unknown, recv?: Expr): Value {
     const fn = this.fns.get(name);
     const all = recv ? [recv, ...args] : args;
@@ -1074,10 +1162,11 @@ export class Interp {
   lookupNative(name: string): Native | undefined { return nativeFor(name); }
   // The one place a native runs. A task operation (nat.co, src/interp-co-natives.ts) is a
   // generator that yields to the scheduler; only the task interpreter can run one.
+  // E-CALL
   runNative(nat: Native, args: Value[], e?: Expr): Value {
-    if (!nat.co) return nat(this, args, e);
+    if (!nat.co && !nat.maybeCo) return nat(this, args, e);
     // a task operation needs the scheduler: from the plain interpreter, ask for a rerun with tasks
-    if (!this.coMode) throw new NeedTasks();
+    if (nat.co && !this.coMode) throw new NeedTasks();
     // Reached from plain code (a global's initializer, a closure a library call runs): it can run only
     // as far as it goes without parking.
     const r = nat(this, args, e) as Value | Generator<unknown, Value, unknown>;
@@ -1087,7 +1176,7 @@ export class Interp {
     return step.value;
   }
   coMode = false;
-  // R-CONTRACT: requires / ensures / loop invariants are checked only when asked, as a debug build checks them
+  // R-CONTRACT-ENTRY: requires / ensures / loop invariants are checked only when asked, as a debug build checks them
   contractChecks = false;
   entryFile = "";
 
@@ -1113,13 +1202,14 @@ export class Interp {
       if (this.cr.heapMethodReceivers.has(e)) recv = { kind: "UnaryOp", op: "*", operand: e.object } as Expr; // h.m() means (*h).m()
       return this.callResolved(resolved, e.args, e, undefined, recv);
     }
-    if (this.cr.fnFieldCalls.has(e)) {
+    if (this.cr.fnFieldCalls.has(e) || this.cr.cfnFieldCalls.has(e)) { // R-FNPTR: a C function pointer in a field is called like a closure
       const callee = this.peek({ kind: "FieldAccess", object: e.object, field: m } as Expr);
       return this.callValue(callee, this.evalArgs(e.args));
     }
     if (m === "clone" && e.args.length === 0) return this.ev(e.object);
     return this.unsupported(`method ${m} on ${ot.tag}`);
   }
+  // E-IFACE
   concreteMethodFn(typeName: string, method: string): string {
     if (this.fns.has(`${typeName}$${method}`)) return `${typeName}$${method}`;
     for (const n of this.fns.keys()) if (n.startsWith(`${typeName}$`) && n.endsWith(`$${method}`)) return n;
@@ -1127,6 +1217,7 @@ export class Interp {
   }
 
   // ── statements ──
+  // S-SCOPE-END
   runStmts(stmts: Stmt[]): Completion {
     for (const s of stmts) { const c = this.runStmt(s); if (c) return c; }
     return undefined;
@@ -1138,21 +1229,25 @@ export class Interp {
     try { return this.runStmts(stmts); }
     finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
+  // S-SCOPE-END
   runBlockIf(stmts: Stmt[] | null | undefined): Completion {
     return stmts ? this.runBlock(stmts) : undefined;
   }
+  // S-TEMP
   runStmt(s: Stmt): Completion {
     const mark = this.temps.length;
     try { return this.exec(s); }
     catch (u) { if (u instanceof Unwind) return u.c; throw u; }
     finally { this.dropTemps(mark); }
   }
+  // S-TEMP
   cond(e: Expr): boolean {
     const mark = this.temps.length;
     const c = this.peek(e) === true;
     this.dropTemps(mark);
     return c;
   }
+  // S-LET S-VAR S-ASSIGN
   exec(s: Stmt): Completion {
     switch (s.kind) {
       case "LetDecl": case "VarDecl": return this.letStmt(s);
@@ -1170,7 +1265,8 @@ export class Interp {
       ]);
       case "IfChainStmt": return this.ifChain(s);
       case "LetElseStmt": {
-        if (this.cr.nullRefUnwraps.has(s)) return this.unsupported("nullable extern reference unwrap");
+        const nr = this.cr.nullRefUnwraps.get(s);
+        if (nr) return this.nullRefUnwrap(s, nr);
         return this.matchCore<Completion>(s.value, [
           { pattern: s.pattern, run: () => undefined, escape: true },
           { pattern: { kind: "WildcardPattern" }, run: () => this.runBlock(s.elseBody) },
@@ -1181,6 +1277,15 @@ export class Interp {
     }
   }
 
+  // `let g = p else { ... }` over a `?&T` / `?&mut T` parameter: the null test, then g is a reference to the memory p names
+  // R-MEM-NULLREF
+  nullRefUnwrap(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Completion {
+    let v = this.peek(s.value);
+    if (v && typeof v === "object" && (v.k === "ref" || v.k === "mut")) v = this.deref(v); // a Milo caller's reference arrives as itself
+    if (v === 0n) return this.runBlock(s.elseBody);
+    this.declare(s.bindName!, isPtr(v) ? { k: nr.mutable ? "mut" : "ref", slot: memSlot(this.mem, v, nr.inner), path: [] } as Ref : v);
+    return undefined;
+  }
   // [S-LET] / [S-VAR]
   letStmt(s: Stmt & { kind: "LetDecl" | "VarDecl" }): Completion {
     const t = this.rawT(s.value);
@@ -1208,6 +1313,7 @@ export class Interp {
     if (old !== MOVED) this.dropValue(old);
     return undefined;
   }
+  // R-CONTRACT-LOOP S-SCOPE-END
   whileStmt(s: Stmt & { kind: "WhileStmt" }): Completion {
     for (;;) {
       this.checkInvariants(s.invariants);
@@ -1220,11 +1326,13 @@ export class Interp {
   }
   // `if let P = a && cond && let Q = b { then } else { else }`: clauses nest left to right, each
   // inside the scope of the ones before it; the else runs once, after every clause scope is gone.
+  // S-SCOPE-END
   ifChain(s: Stmt & { kind: "IfChainStmt" }): Completion {
     const r = this.ifChainFrom(s, 0);
     if (r.ran) return r.c;
     return s.elseBody ? this.runBlock(s.elseBody) : undefined;
   }
+  // S-SCOPE-END
   ifChainFrom(s: Stmt & { kind: "IfChainStmt" }, i: number): ChainStep {
     if (i === s.clauses.length) return { ran: true, c: this.runBlock(s.thenBody) };
     const cl = s.clauses[i]!;
@@ -1235,6 +1343,7 @@ export class Interp {
     ]);
   }
 
+  // S-SCOPE-END
   loopBody(s: Stmt & { kind: "ForInStmt" }, bind: (scope: Scope) => void): Completion | "next" {
     const scope: Scope = [];
     this.frame.scopes.push(scope);
@@ -1248,6 +1357,7 @@ export class Interp {
     } finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
   // for-in: the loop variable is a reference to the element, or (consuming) the element moved out
+  // E-NEW-ITER
   forIn(s: Stmt & { kind: "ForInStmt" }): Completion {
     const fin = (r: Completion | "next"): Completion | "next" => (r === "next" ? "next" : r?.k === "break" ? undefined : r);
     if (s.iterable.kind === "RangeExpr") {
@@ -1262,7 +1372,7 @@ export class Interp {
     this.frame.scopes.push(holder);
     try {
       const view = this.cr.stringViewForIns.get(s);
-      if (view && s.iterable.kind === "MethodCall") return this.unsupported("lines()/splitView() for-in");
+      if (view && s.iterable.kind === "MethodCall") return this.forStrView(s, view.mode, s.iterable, fin);
       const iter = this.cr.iteratorForIns.get(s);
       if (iter) {
         // an rvalue iterator dies once, when the scope around the loop ends
@@ -1311,6 +1421,33 @@ export class Interp {
       }
       return undefined;
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
+  }
+  // for line in s.lines() / for piece in s.splitView(sep): each piece is a borrowed view of the bytes (std/rt rtStrViewStep)
+  // E-NEW-ITER
+  forStrView(s: Stmt & { kind: "ForInStmt" }, mode: "lines" | "split", call: Expr & { kind: "MethodCall" }, fin: (r: Completion | "next") => Completion | "next"): Completion {
+    const bytes = (this.peek(call.object) as Str).b.bytes.slice();
+    const split = mode === "split";
+    const sep = split ? (this.peek(call.args[0]!) as Str).b.bytes.slice() : [10];
+    const find = (from: number): number => {
+      for (let i = from; i + sep.length <= bytes.length; i++) if (sep.every((c, k) => bytes[i + k] === c)) return i;
+      return -1;
+    };
+    let pos = 0, count = 0;
+    // lines stop at the end of the bytes; a split yields the piece after a trailing separator too, except for an empty separator
+    while (split ? pos <= bytes.length && (sep.length > 0 || pos < bytes.length) : pos < bytes.length) {
+      const at = split && sep.length === 0 ? pos + 1 : find(pos);
+      const end = at >= 0 ? at : bytes.length;
+      const viewEnd = !split && end > pos && bytes[end - 1] === 13 ? end - 1 : end; // CRLF: the \r ends the line
+      const piece = bytes.slice(pos, viewEnd);
+      pos = at >= 0 ? end + sep.length : bytes.length + 1;
+      const i = count++;
+      const r = fin(this.loopBody(s, sc => {
+        if (s.varName2) this.declare(s.varName, BigInt(i), sc);
+        this.declare(s.varName2 ?? s.varName, { k: "ref", slot: { v: { k: "str", b: { bytes: piece, rc: 1, id: -1 } } }, path: [] }, sc);
+      }));
+      if (r !== "next") return r;
+    }
+    return undefined;
   }
   takeOut(p: Place): Value { const v = this.getPlace(p); this.setPlace(p, MOVED); return v; }
 }
