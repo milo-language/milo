@@ -9,7 +9,8 @@ import { projectLints } from "./pkg";
 import { execSync, spawnSync, spawn } from "child_process";
 import { guardedRun, monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 import { fileURLToPath } from "url";
-import { basename, resolve, dirname } from "path";
+import { basename, resolve, dirname, relative } from "path";
+import { findDeadBranches, formatDead } from "./dead";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Lexer } from "./lexer";
@@ -343,6 +344,10 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
       const dir = dirname(resolve(entry)) + "/";
       const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any });
       return z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+    },
+    dead(program, check, entry, z3) {
+      const dir = dirname(resolve(entry)) + "/";
+      return findDeadBranches(program, check, { z3, onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry) });
     },
     // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
     runTests(file, names) {
@@ -2389,6 +2394,12 @@ async function main() {
   if (cmd === "prove") {
     const src = readFileSync(source!, "utf-8");
     const { program, check } = parseAndCheck(src, target, source!, warningConfig);
+    if (rest.includes("--dead")) {
+      const dead = findDeadBranches(program, check, { z3: rest.includes("--solver=z3"), onlyFile: rest.includes("--all") ? undefined : source! });
+      if (rest.includes("--json")) writeStdout(JSON.stringify({ schema: 1, dead }, null, 2) + "\n");
+      else console.log(display(program.displayNames, formatDead(dead, f => { const r = relative(process.cwd(), f); return r && !r.startsWith("..") ? r : f; })));
+      return;
+    }
     const vcs = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check, rte: rest.includes("--rte") });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.

@@ -40,6 +40,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/const-fold.ts` | Compile-time folding of module-global initializers: the one place that decides which globals get a static initializer and what it is. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |
+| `src/dead.ts` | Dead-branch detection (DO-178C: no dead code; DO-333: what the formal analysis covered). |
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct, plus `toJsonArray` / `fromJsonArray` for a document whose top level is an array of them. |
 | `src/derive-row.ts` | @derive(Row): `Struct.fromRow(st)` reads each field from the sqlite result column with the same name (the SQL alias), so a SELECT can reorder or add columns without breaking the mapping. |
 | `src/derive-table.ts` | @derive(Table): typed insert / get / update / delete for a `@table("name")` struct, as Milo source over checked SQL. |

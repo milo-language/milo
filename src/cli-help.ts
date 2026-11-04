@@ -102,6 +102,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     flags: [
       { flag: "--solver=z3", help: "use z3 instead (adds non-linear arithmetic)" },
       { flag: "--rte", help: "also prove no overflow, no out-of-bounds index, no division by zero" },
+      { flag: "--dead", help: "list branches and loop bodies the solver proves can never run (unknown is not reported)" },
       { flag: "--emit-smt", help: "print the SMT-LIB2 obligations instead of solving them" },
       { flag: "--all", help: "include imported stdlib" },
       { flag: "--json", help: "machine-readable report" },

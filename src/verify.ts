@@ -5,9 +5,9 @@ import { must } from "./must";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 
-interface VerificationCondition {
+export interface VerificationCondition {
   fn: string;
-  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert" | "overflow" | "bounds" | "division" | "unwrap";
+  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert" | "dead-branch" | "overflow" | "bounds" | "division" | "unwrap";
   smtlib: string;
   description: string;
   // Callees whose `ensures` this VC was allowed to ASSUME. Modular verification is
@@ -52,7 +52,24 @@ interface VerificationCondition {
   clause?: Contract;
   // Where a call-site precondition's call is written.
   site?: { file?: string; line: number };
+  // On a "dead-branch" probe: the query asks whether the branch's path condition is
+  // satisfiable, so `proven` (unsat) means the branch can never run. The parts are kept so
+  // dead.ts can re-ask with one condition removed and name the ones that contradict.
+  dead?: DeadProbe;
 }
+
+export interface DeadProbe {
+  file?: string;
+  line: number;
+  what: string;
+  conds: string[];     // the path conditions as SMT, in walk order (a prefix is an enclosing branch)
+  condSrc: string[];   // each condition as the program wrote it
+  reqSmt: string[];    // the function's `requires`, as asserted
+  reqSrc: string[];
+}
+
+// A branch the walker reached, with everything that has to hold for it to run.
+interface DeadSite { line: number; file?: string; what: string; conditions: string[] }
 
 // The reason a sat verdict on `vc` cannot be reported as `failed`, or null when the model
 // ranges only over symbols the program constrains. Shared by both solver back ends so the
@@ -70,6 +87,9 @@ export function unreproducibleCounterexample(vc: VerificationCondition): string 
 export interface VerifyResult {
   conditions: VerificationCondition[];
   stats: { functions: number; contracts: number; loops: number };
+  // Branch-reachability probes (`opts.dead`). Kept apart from `conditions`: their verdicts
+  // read the other way round (unsat is the finding) and must not show up as proofs.
+  deadProbes?: VerificationCondition[];
 }
 
 // Module-level immutable constants (top-level `let`), resolved once per run so
@@ -706,7 +726,11 @@ interface SymExecResult {
   structLits: StructLitSite[];
   asserts: AssertSite[];
   rte: RteSite[];
+  deadSites: DeadSite[];
 }
+
+// SMT path condition -> the source text it came from, for the "why" of a dead branch.
+let COND_SRC = new Map<string, string>();
 
 interface SymExecContext {
   havocSeq: number;
@@ -1443,6 +1467,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   const structLits: StructLitSite[] = [];
   const asserts: AssertSite[] = [];
   const rte: RteSite[] = [];
+  const deadSites: DeadSite[] = [];
   const rteSeen = new Set<string>();
   const ctx = context ?? { havocSeq: 0, havocDecls: [] };
   const loops: LoopObligation[] = [];
@@ -1931,8 +1956,19 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       if (stmt.kind === "IfStmt") {
         const cond = exprToSmtWithEnv(stmt.cond, localEnv);
         const remainder = stmts.slice(i + 1);
-        walkCapture([...stmt.thenBody, ...remainder], 0, [...pathConds, cond], new Map(localEnv));
         const negCond = `(not ${cond})`;
+        const condText = exprSource(stmt.cond);
+        COND_SRC.set(cond, condText);
+        COND_SRC.set(negCond, `!(${condText})`);
+        if (!/UNSUPPORTED/.test(cond)) {
+          const line = (stmt as any).span?.line ?? 0, file = (stmt as any).span?.file;
+          deadSites.push({ line, file, what: `then branch of 'if ${condText}'`, conditions: [...pathConds, cond] });
+          // An absent `else` is a path but holds no code to be dead.
+          if (stmt.elseBody && stmt.elseBody.length > 0) {
+            deadSites.push({ line: (stmt.elseBody[0] as any).span?.line ?? line, file, what: `else branch of 'if ${condText}'`, conditions: [...pathConds, negCond] });
+          }
+        }
+        walkCapture([...stmt.thenBody, ...remainder], 0, [...pathConds, cond], new Map(localEnv));
         walkCapture([...(stmt.elseBody ?? []), ...remainder], 0, [...pathConds, negCond], new Map(localEnv));
         return;
       }
@@ -1955,6 +1991,15 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
         const active = [...pathConds, ...assumed, ...(/UNSUPPORTED/.test(guard) ? [] : [guard])];
+        COND_SRC.set(guard, exprSource(stmt.cond));
+        for (const inv of (stmt.invariants ?? []).filter(c => c.kind === "invariant")) {
+          const t = exprToSmtWithEnv(inv.expr, havocEnv);
+          if (!COND_SRC.has(t)) COND_SRC.set(t, `invariant ${exprSource(inv.expr)}`);
+        }
+        if (!/UNSUPPORTED/.test(guard)) {
+          deadSites.push({ line: (stmt as any).span?.line ?? 0, file: (stmt as any).span?.file, what: `body of 'while ${exprSource(stmt.cond)}'`, conditions: active });
+        }
+        deadSites.push(...bodyRun.deadSites.map(d => ({ ...d, conditions: [...active, ...d.conditions] })));
         for (const s of bodyRun.rte) rte.push({ ...s, conditions: [...active, ...s.conditions] });
         loops.push({
           entryConds: [...pathConds],
@@ -2074,6 +2119,15 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
         const active = [...pathConds, ...assumed, ...(guard && !/UNSUPPORTED/.test(guard) ? [guard] : [])];
+        if (guard && !/UNSUPPORTED/.test(guard)) {
+          COND_SRC.set(guard, `'${stmt.varName}' within the range being iterated`);
+          deadSites.push({ line: (stmt as any).span?.line ?? 0, file: (stmt as any).span?.file, what: `body of 'for ${stmt.varName} in ...'`, conditions: active });
+        }
+        for (const inv of invariants) {
+          const t = exprToSmtWithEnv(inv.expr, havocEnv);
+          if (!COND_SRC.has(t)) COND_SRC.set(t, `invariant ${exprSource(inv.expr)}`);
+        }
+        deadSites.push(...bodyRun.deadSites.map(d => ({ ...d, conditions: [...active, ...d.conditions] })));
         for (const s of bodyRun.rte) rte.push({ ...s, conditions: [...active, ...s.conditions] });
         loops.push({
           entryConds: [...pathConds],
@@ -2131,7 +2185,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   }
 
   walkCapture(stmts, 0, [], new Map(env));
-  return { paths, finalEnvs, breakEnvs, continueEnvs, calls, havocDecls: ctx.havocDecls, loops, structLits, asserts, rte };
+  return { paths, finalEnvs, breakEnvs, continueEnvs, calls, havocDecls: ctx.havocDecls, loops, structLits, asserts, rte, deadSites };
 }
 
 // `x.len` on a string/Vec/array can never be negative, and the solver has no way to know
@@ -2489,7 +2543,7 @@ function constructsInvariantStruct(stmts: Stmt[]): boolean {
 
 // methods: the checker's bindings for method calls (see MethodBindings); without them
 // every method call havocs its receiver.
-export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string | ((file: string) => boolean); methods?: MethodBindings; rte?: boolean }): VerifyResult {
+export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string | ((file: string) => boolean); methods?: MethodBindings; rte?: boolean; dead?: boolean }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
@@ -2535,6 +2589,8 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
   FN_TABLE = new Map(allFns.map(f => [f.name, f]));
   PURE_FN_NAMES = new Set(allFns.filter(mutatesNothing).map(f => f.name));
   RTE = !!opts?.rte;
+  COND_SRC = new Map();
+  const deadProbes: VerificationCondition[] = [];
   METHOD_TARGETS = opts?.methods?.resolvedMethods ?? new Map();
   METHOD_DECLS = new Map((opts?.methods?.monomorphizedFns ?? []).map(f => [f.name, f]));
   BOOL_FIELDS = collectBoolFields(program);
@@ -2572,7 +2628,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     const touchesInvariantStruct = STRUCT_INVARIANTS.size > 0 &&
       (constructsInvariantStruct(fn.body) ||
        fn.params.some(p => (p.type?.isRefMut || p.type?.isPtr) && p.type?.name && STRUCT_INVARIANTS.has(p.type.name)));
-    if (!RTE && fn.contracts.length === 0 && !hasLoopInvariants(fn.body) && !callsContracted && !touchesInvariantStruct) continue;
+    if (!RTE && !opts?.dead && fn.contracts.length === 0 && !hasLoopInvariants(fn.body) && !callsContracted && !touchesInvariantStruct) continue;
     RTE_WRAPPING = !!(fn.fromWrappingModule || fn.attributes?.some(a => a.name === "wrapping"));
 
     const requires = fn.contracts.filter(c => c.kind === "requires");
@@ -3106,8 +3162,37 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
       }
     }
 
+    // Branch reachability: the path condition alone, no negated goal. Unsat = never runs.
+    if (opts?.dead) {
+      const reqSmt = requires.map(r => exprToSmt(r.expr));
+      const reqSrc = requires.map(r => exprSource(r.expr));
+      const fnFile = fn.span?.file ?? fn.sourceFile;
+      for (const site of symResult.deadSites) {
+        const guard = site.conditions.length > 0 ? `(assert (and true ${site.conditions.join(" ")}))` : "";
+        conditions.push({
+          fn: fn.name,
+          kind: "dead-branch",
+          description: `${site.what} in ${fn.name}${site.line ? `:${site.line}` : ""}`,
+          dead: { file: site.file ?? fnFile, line: site.line, what: site.what, conds: site.conditions, condSrc: site.conditions.map(c => COND_SRC.get(c) ?? c), reqSmt, reqSrc },
+          smtlib: [
+            `; Branch reachability: ${site.what} in ${fn.name}`,
+            `(set-logic ALL)`,
+            allDecls,
+            preAssumptions,
+            guard,
+            `(check-sat)`,
+          ].filter(Boolean).join("\n"),
+        });
+      }
+    }
+
     fillCallModel(conditions, vcStart);
     markUnconstrainedHavocs(conditions, vcStart);
+    if (opts?.dead) {
+      for (let i = conditions.length - 1; i >= vcStart; i--) {
+        if (conditions[i]!.kind === "dead-branch") deadProbes.unshift(...conditions.splice(i, 1));
+      }
+    }
     if (assumedInvariants.size > 0) {
       for (let i = vcStart; i < conditions.length; i++) {
         // The type's own obligations are not conditional on themselves.
@@ -3120,6 +3205,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
 
   return {
     conditions,
+    ...(opts?.dead ? { deadProbes } : {}),
     stats: {
       functions: allFns.filter(f => f.contracts.length > 0 || hasLoopInvariants(f.body)).length,
       contracts: contractCount,

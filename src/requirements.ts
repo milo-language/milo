@@ -24,6 +24,7 @@
 // (`--baseline <file>`, written by `--write-baseline`), which stay warnings so an existing
 // codebase can adopt a profile; a baseline entry that is no longer a gap is reported stale.
 // TODO(coverage): line/branch coverage of the implementing fns by the verifying tests.
+import type { DeadBranch } from "./dead";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
@@ -253,6 +254,9 @@ export interface RequirementRow {
   verified: boolean;
 }
 
+/** A branch the solver proved can never run (see dead.ts). `reason` is set when its fn is @deactivated. */
+export interface DeadRow { fn: string; file: string; line: number; what: string; why: string[]; reason?: string }
+
 export interface TraceReport {
   schema: 1;
   entry: string;
@@ -262,6 +266,8 @@ export interface TraceReport {
   untracedFns: SiteRow[];
   derived: SiteRow[];
   deactivated: (SiteRow & { reason: string })[];
+  /** DO-178C dead code: branches and loop bodies proved unreachable. Empty when the prover did not look. */
+  deadBranches: DeadRow[];
   assumptions: SiteRow[];
   noImplementation: string[];
   noVerifyingTest: string[];
@@ -309,6 +315,8 @@ export interface TraceOptions {
   strict: boolean;
   /** Gap keys that stay warnings under strict. */
   baseline?: Set<string>;
+  /** Provably dead branches (dead.ts); absent = not analysed. */
+  dead?: DeadBranch[];
   /** Verdict per "<abs file>:<test name>" when the tests were run; absent = not run. */
   testResults?: Map<string, { pass: boolean; output?: string }>;
 }
@@ -438,6 +446,16 @@ export function buildTrace(o: TraceOptions): TraceReport {
       : "a high-level requirement needs a passing test of its own";
     gap(`no-verifying-test:${r.id}`, `requirement ${r.id} is not verified: ${why}`);
   }
+  // A dead branch is code no test or proof can ever cover. Exempt only through its function's
+  // @deactivated("reason"): the reviewer then sees it in the deactivated list instead.
+  const deadBranches: DeadRow[] = (o.dead ?? []).map(d => {
+    const file = resolve(d.file);
+    const off = decls.find(x => x.decl === "fn" && x.name === d.fn && x.loc.file === file && x.deactivated !== undefined);
+    return { fn: d.fn, file: rel(file), line: d.line, what: d.what, why: d.why, ...(off ? { reason: off.deactivated! } : {}) };
+  });
+  for (const d of deadBranches) {
+    if (d.reason === undefined) gap(`dead:${d.file}:${d.fn}:${d.line}`, `${d.file}:${d.line}: dead code in '${d.fn}': ${d.what} can never run (${d.why.join(" AND ")}); remove it or mark the fn @deactivated("reason")`);
+  }
   const failedSeen = new Set<string>();
   for (const r of rows.values()) {
     for (const t of r.verifiedBy) {
@@ -474,6 +492,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
     untracedFns: untraced,
     derived: derivedFns,
     deactivated,
+    deadBranches,
     assumptions,
     noImplementation,
     noVerifyingTest,
@@ -550,6 +569,12 @@ export function formatTrace(r: TraceReport): string {
   if (r.derived.length) list("derived (feed back to the system level)", r.derived.map(u => `${u.file}:${u.line} ${u.fn}`));
   if (r.assumptions.length) list("assumptions (trusted, for review)", r.assumptions.map(u => `${u.file}:${u.line} ${u.fn}`));
   if (r.deactivated.length) list("deactivated code", r.deactivated.map(u => `${u.file}:${u.line} ${u.fn}: ${u.reason}`));
+  {
+    const live = r.deadBranches.filter(d => d.reason === undefined).length;
+    const off = r.deadBranches.length - live;
+    out.push(`dead branches: ${r.deadBranches.length === 0 ? "none" : `${live}${off ? ` (+${off} in @deactivated fns)` : ""}`}`);
+    for (const d of r.deadBranches) out.push(`  ${d.file}:${d.line} ${d.fn}: ${d.what}; ${d.why.join(" AND ")}${d.reason !== undefined ? `  [deactivated: ${d.reason}]` : ""}`);
+  }
   out.push(`unknown: ${r.unknown}`);
   for (const m of r.baselined) out.push(`warning: baselined gap: ${m}`);
   for (const k of r.staleBaseline) out.push(`warning: baseline lists a gap that is fixed, remove it: ${k}`);
@@ -571,6 +596,8 @@ export interface TraceDeps {
   frontend(entry: string): { program: Program; check: unknown };
   /** `milo prove` over the program, default solver unless `z3`. */
   prove(program: Program, check: unknown, entry: string, z3: boolean): ProveResult;
+  /** Provably dead branches over the program (dead.ts). Optional: a caller without a prover skips it. */
+  dead?(program: Program, check: unknown, entry: string, z3: boolean): DeadBranch[];
   /** Run the named tests of one file, each in its own process (`milo test`'s runner). Null: the file would not compile. */
   runTests(file: string, names: string[]): Map<string, { pass: boolean; output?: string }> | null;
 }
@@ -632,11 +659,12 @@ export function loadBaseline(path: string): Set<string> {
 export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   const { program, check } = deps.frontend(a.entry);
   const prove = deps.prove(program, check, a.entry, a.z3);
+  const dead = deps.dead?.(program, check, a.entry, a.z3);
   const baseline = a.baseline ? loadBaseline(a.baseline) : undefined;
   // The @req tests, run once: a first pass finds them, a second builds the report with verdicts.
   let testResults: Map<string, { pass: boolean; output?: string }> | undefined;
   if (!a.noRun) {
-    const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict });
+    const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, dead });
     const entryDir = dirname(resolve(a.entry));
     const byFile = new Map<string, Set<string>>();
     for (const r of first.requirements) for (const t of r.verifiedBy) {
@@ -653,7 +681,7 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
       }
     }
   }
-  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, baseline, testResults });
+  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, baseline, testResults, dead });
 }
 
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
