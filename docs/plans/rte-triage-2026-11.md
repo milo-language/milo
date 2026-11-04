@@ -134,3 +134,34 @@ Three fixes that cut the most noise and unknown, in order:
    state the callee writes instead of everything (`vmSeedFrame` alone is 212 unknowns).
 
 Also: print the counterexample model on failed sites, and bound proving time per function so the five largest files finish.
+
+## After the fixes (2026-11-03)
+
+`src/verify.ts` now (1) lowers `IndexAccess` as a fresh free symbol of the element type (one per read site; never
+shared, so it can make a proof but never a refutation), `CharLit` as its code point, and `StringLit` as a symbol with
+a known byte length; (2) assumes `i >= start` for a counter whose every write is `i = i + K` (K a positive literal)
+and `i <= start` for `i = i - K`, at the loop head and after the loop; (3) models a call with no `ensures` as a fresh
+free result of its scalar return type (its `&mut` writes were already havoced field-wise; a free result is flagged
+so a model over it is `unknown`, not `failed`); (4) reports `x!` as an `unwrap` obligation that is `unknown` with the
+reason "unmodelled Option/Result tags". Also fixed a latent bug: a havoced bool field got an Int sort.
+
+`scripts/rte-census.ts` (z3, examples/embedded + std; unwrap not counted there):
+
+| kind | before p/f/u | after p/f/u |
+|---|---|---|
+| overflow | 165/361/1720 | 388/330/1528 |
+| bounds | 166/280/1330 | 497/225/1054 |
+| division | 15/21/61 | 24/21/52 |
+| total | 346/662/3111 | 909/576/2634 |
+
+The milojs + tahoeroads run (same 60 per-file limit; 5 files skipped before, 7 after; distinct sites by description):
+
+| kind | before p/f/u | after p/f/u |
+|---|---|---|
+| bounds | 82/260/1161 | 327/174/810 |
+| overflow | 469/159/1046 | 580/110/732 |
+| division | 2/1/3 | 2/1/3 |
+| unwrap (new) | n/a | 0/0/10 |
+
+Still open: a `&mut [T; N]` parameter's fixed length, `indexOf`-style callee ensures, element-aware overflow typing
+(`v[i] + 1` has no rte type), the SPEC half (unwritten invariants), method calls, and counterexample printing.

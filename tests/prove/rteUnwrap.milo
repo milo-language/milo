@@ -1,0 +1,26 @@
+// @flags: --rte --solver=z3
+// @proven: 0
+// @failed: 0
+// @unknown: 2
+// `x!` traps when the operand is None/Err. There is no Option model in the encoding, so the
+// obligation "this is Some" cannot be stated; it is still reported, as `unknown` with the
+// reason "unmodelled Option/Result tags", rather than left out of the report as if the
+// unwrap could not trap. Neither site may come back `proven`, however guarded it looks:
+// `guarded` tests the Option first, and that is exactly the reasoning the encoding lacks.
+fn first(v: &mut Vec<i64>): i64 {
+    return v.pop()!
+}
+
+fn guarded(v: &mut Vec<i64>): i64 {
+    if v.len > 0 {
+        return v.pop()!
+    }
+    return 0
+}
+
+fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    print(first(&mut v))
+    return 0
+}

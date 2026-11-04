@@ -1,0 +1,82 @@
+// @flags: --rte --solver=z3
+// @proven: 2
+// @failed: 4
+// @unknown: 0
+// A loop crossed by induction forgets every variable it writes. A counter whose only writes
+// are `i = i + K` (K a positive literal) still cannot be below where it started, and one
+// that only does `i = i - K` cannot be above it. That is read straight off the body, so it
+// is assumed at the loop head without an invariant; anything else is forgotten as before.
+//
+// `up` and `down`: both bounds checks proven. `up` has the guard `i < len` and needs the
+// counter's lower bound for `i >= 0`; `down` has the guard `k >= 0` and needs the upper
+// bound for `k < len`.
+//
+// The three below are the cases the fact must NOT fire on, each with a real out-of-range
+// index that has to stay refuted:
+//   `resets`: a second write that is not an increment can drop the counter.
+//   `byVar`:  the step is a variable, which may be negative.
+//   `viaMut`: a `&mut` callee may write the counter.
+fn up(v: &Vec<i64>): i64 {
+    var i = 0
+    var acc = 0
+    while i < v.len {
+        acc = v[i]
+        i = i + 1
+    }
+    return acc
+}
+
+fn down(v: &Vec<i64>): i64 {
+    var k = v.len - 1
+    var acc = 0
+    while k >= 0 {
+        acc = v[k]
+        k = k - 1
+    }
+    return acc
+}
+
+fn resets(v: &Vec<i64>, flip: bool): i64 {
+    var i = 0
+    var acc = 0
+    while i < v.len {
+        acc = v[i]
+        if flip {
+            i = 0 - 5
+        }
+        i = i + 1
+    }
+    return acc
+}
+
+fn byVar(v: &Vec<i64>, step: i64): i64 {
+    var i = 0
+    var acc = 0
+    while i < v.len {
+        acc = v[i]
+        i = i + step
+    }
+    return acc
+}
+
+fn rewind(n: &mut i64): void {
+    n = 0 - 7
+}
+
+fn viaMut(v: &Vec<i64>): i64 {
+    var i = 0
+    var acc = 0
+    while i < v.len {
+        acc = v[i]
+        rewind(&mut i)
+        i = i + 1
+    }
+    return acc
+}
+
+fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    print(up(v))
+    return 0
+}

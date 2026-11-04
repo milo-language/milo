@@ -26,55 +26,22 @@ export interface Expected {
 }
 
 export const EXPECTED: Record<string, Expected> = {
-  // Untracked since it gained contracts: CI listed it under "Not in the ratchet" every run.
   "examples/basics/kvstore.milo": { proven: 4, unknown: 19, errors: 0 },
-  // Was 0 proven / 64 unknown — every VC in the file died on the first float literal,
-  // which the SMT translator had no rule for. With `FloatLit` translating and `Pid`
-  // carrying `invariant outMin < outMax`, the contracts are checked rather than decorative.
-  // The remaining unknowns are `readKey`/`clampF64` postconditions this run cannot see
-  // (they live in std, outside the entry file), not a solver limit.
-  "examples/embedded/flightController.milo": { proven: 11, unknown: 55, errors: 0 },
-  // 3 refuted here are baselined (unbounded-Int model of `setpoint - measured`).
+  "examples/embedded/flightController.milo": { proven: 64, unknown: 2, errors: 0 },
   "examples/embedded/pidStep.milo": { proven: 8, unknown: 0, errors: 0 },
-  // neon's stage-pacing rules. Both functions are shaped to stay inside what the
-  // bundled Fourier-Motzkin solver decides (<= 3 branches); the four-arm staircase
-  // they replaced reported `no integer witness (rational-only)` and needed z3.
   "examples/games/neon/director.milo": { proven: 3, unknown: 0, errors: 0 },
-  // Both AES-128 key-length preconditions into std/crypto, proven at the call site.
   "examples/net/termpair/encryption.milo": { proven: 2, unknown: 4, errors: 0 },
-  // `Arena`'s `invariant live >= 0` is discharged by construction and by the alloc paths;
-  // the free/set/modify paths cannot discharge it (they are gated by an IndexAccess the
-  // translator has no rule for), so `arenaLen` reports as a CONDITIONAL proof rather than
-  // a clean one. The `live`-delta postconditions on the mutators are what give a CALLER
-  // any fact at all about `live` after a call, since a `&mut` arg is otherwise havoced:
-  // arenaClear's `live == 0` proves, while arenaAlloc's (StructLit on the return path) and
-  // arenaFree's (IndexAccess in the generation check) are true but untranslatable, and are
-  // reported as assumed-callee conditionals wherever a caller leans on them.
-  "std/arena.milo": { proven: 5, unknown: 6, errors: 0 },
-  // The `impl Crypto` namespace wrappers restate the AES key/iv/tag-length `requires` of
-  // the private free fns they forward to, so each wrapper's call into the free fn proves
-  // its precondition at the wrapper's own call site (10 = 2 aesGcm + 2 aesGcm128 wrappers'
-  // encrypt/decrypt obligations across the length checks). The platform arms
-  // (std/cryptosys.*) carry no contracts; the facade holds them once for every platform.
+  "std/arena.milo": { proven: 9, unknown: 2, errors: 0 },
   "std/crypto.milo": { proven: 10, unknown: 0, errors: 0 },
-  // `fixed` was refuted here until `construct` grew frame conditions (`ensures h.count.len
-  // == old(h.count.len)`); the +6 proven is that baseline retiring.
-  "std/inflate.milo": { proven: 31, unknown: 44, errors: 0 },
-  // `impl Math` static-method postconditions (abs/clamp `ensures result >= ...`); a
-  // `Type.method()` call is normalized to a plain Call so the method's contracts verify
-  // exactly as the free fns they replaced did.
+  "std/inflate.milo": { proven: 64, unknown: 11, errors: 0 },
   "std/math.milo": { proven: 4, unknown: 1, errors: 0 },
   "std/mem.milo": { proven: 4, unknown: 2, errors: 0 },
-  // Free-fn VCs plus the `impl Pool` wrappers, which restate poolLive/poolAvailable's
-  // liveCount preconditions (Pool has no struct invariant to supply them). Was 22: the
-  // seven that went were `free`'s address-range requires and the asserts restating them,
-  // which no longer exist because a block is a generational PoolBlock, not an address.
-  "std/pool.milo": { proven: 15, unknown: 2, errors: 0 },
+  "std/pool.milo": { proven: 16, unknown: 1, errors: 0 },
   "std/process.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/process.windows.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.darwin.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.windows.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/sort.milo": { proven: 4, unknown: 0, errors: 0 },
-  "std/string.milo": { proven: 13, unknown: 21, errors: 0 },
+  "std/string.milo": { proven: 21, unknown: 13, errors: 0 },
   "std/sync.milo": { proven: 0, unknown: 0, errors: 0 },
 };

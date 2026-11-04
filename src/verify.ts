@@ -7,7 +7,7 @@ import { Parser } from "./parser";
 
 interface VerificationCondition {
   fn: string;
-  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert" | "overflow" | "bounds" | "division";
+  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert" | "overflow" | "bounds" | "division" | "unwrap";
   smtlib: string;
   description: string;
   // Callees whose `ensures` this VC was allowed to ASSUME. Modular verification is
@@ -107,6 +107,11 @@ interface CallModel {
   assumed: Set<string>;
   // Callee names modelled by an unconstrained shared symbol — see `opaqueCalls`.
   opaque: Set<string>;
+  // Element reads (`v[i]`), keyed like `bySite`: the same read lowered again in the same
+  // state is the same value; a different state (another index or receiver term) is not.
+  elems: WeakMap<object, Map<string, string>>;
+  // One symbol per string-literal text, so `s == "a"` can be stated at all.
+  strLits: Map<string, string>;
 }
 
 // Scalar sorts the SMT translation models exactly. `miloTypeToSmt` falls back to `Int` for
@@ -146,6 +151,27 @@ function symbolsResolve(smt: string, ctx: CallModel, extra?: string): boolean {
 }
 
 function modelCall(site: object, name: string, args: Expr[], env?: Map<string, string>): string | null {
+  return modelCallByContract(site, name, args, env) ?? freeCallResult(name, args);
+}
+
+// A call the contracts cannot describe still returns SOME value of its declared scalar
+// type, so its result is a fresh free symbol rather than a marker that poisons every
+// formula the call appears in. Never shared or cached: an impure callee may return a
+// different value at each evaluation, and one symbol per lowering can only separate two
+// evaluations that happen to agree, never merge two that differ. The callee's writes
+// through `&mut` arguments are havoced separately by the walker (collectMutations).
+// Free means a model over it is no counterexample (FREE_VALUE_SYMS), so this can turn an
+// unknown into a proof but never into a refutation.
+function freeCallResult(name: string, args: Expr[]): string | null {
+  const ctx = CALL_MODEL;
+  const callee = FN_TABLE.get(name);
+  if (!ctx || !callee || callee.params.length !== args.length) return null;
+  const ret = callee.retType;
+  if (!ret || !SCALAR_RET.has(ret.name) || ret.isPtr || ret.isArray || ret.typeArgs) return null;
+  return mintFreeValue(ctx, name, ret.name, `${name}(…)`, `a call to '${name}' (it declares no 'ensures' to model its result by)`);
+}
+
+function modelCallByContract(site: object, name: string, args: Expr[], env?: Map<string, string>): string | null {
   const ctx = CALL_MODEL;
   if (!ctx) return null;
   // A `@pure` callee with no `&mut` parameter depends on nothing but its arguments, so a
@@ -489,6 +515,24 @@ function walkNodes(node: unknown, visit: (n: any) => boolean | void, seen = new 
   }
 }
 
+// Does anything inside `node` introduce a binding that could be called `name`? Deliberately
+// blunt: any non-Ident object carrying that string under any key counts (a let, a for
+// variable, a closure parameter, a pattern binding), because a false "yes" only costs a
+// loop fact while a false "no" would argue about the wrong variable.
+function bindsName(node: unknown, name: string, seen = new Set<unknown>()): boolean {
+  if (!node || typeof node !== "object" || seen.has(node)) return false;
+  seen.add(node);
+  if (Array.isArray(node)) return node.some(x => (typeof x === "string" ? x === name : bindsName(x, name, seen)));
+  const n = node as Record<string, unknown>;
+  const ident = n.kind === "Ident";
+  for (const [k, v] of Object.entries(n)) {
+    if (k === "span") continue;
+    if (typeof v === "string") { if (!ident && v === name && k !== "field" && k !== "method" && k !== "func" && k !== "kind") return true; }
+    else if (bindsName(v, name, seen)) return true;
+  }
+  return false;
+}
+
 function collectAssignedVars(stmts: Stmt[], out: Set<string>): void {
   walkNodes(stmts, n => {
     if (n.kind !== "Assign") return;
@@ -509,6 +553,9 @@ interface LoopObligation {
   guard: string;                    // loop condition, lowered in havocEnv
   invariants: Contract[];
   variants: Contract[];             // `decreases` measures — termination, not correctness
+  // Counter facts that hold at every loop head (see counterFacts), assumed next to the
+  // invariants but never proved: their soundness is syntactic.
+  facts: string[];
   body: Stmt[];
   bodyRun: SymExecResult;
   // A for-in loop has no assignment that advances its binding, so the post-iteration state
@@ -560,7 +607,7 @@ interface AssertSite {
 // zero or MIN/-1 division, an out-of-range index. Recorded where the trap would fire, with
 // the same path conditions an `assert` there would get.
 interface RteSite {
-  kind: "overflow" | "bounds" | "division";
+  kind: "overflow" | "bounds" | "division" | "unwrap";
   cond: string;
   conditions: string[];
   what: string;   // "overflow", "division by zero", ...
@@ -989,11 +1036,31 @@ function isLenBearingType(t: MiloType | null | undefined): boolean {
   return !!t && (t.name === "string" || t.name === "Vec" || t.isArray);
 }
 
+// The integer element type of a string / Vec / array type, or null when it is not one the
+// translation can give a sort (a Vec of structs, a nested array, a bool).
+function elementTypeOf(t: MiloType): string | null {
+  // Array types reuse the element's MiloType with `isArray` set, so test that first: a
+  // `[string]` is an array of strings, not a string.
+  if (t.isArray) return !t.typeArgs && !t.isPtr && RTE_RANGES[t.name] ? t.name : null;
+  if (t.name === "string") return "u8";
+  const el = t.name === "Vec" ? t.typeArgs?.[0] : undefined;
+  return el && !el.isRef && !el.isPtr && !el.isArray && !el.typeArgs && RTE_RANGES[el.name] ? el.name : null;
+}
+
 function collectLenBearing(fn: Function): Set<string> {
   const out = new Set<string>();
+  ELEM_TYPES = new Map();
   const consider = (path: string, t: MiloType | null | undefined, depth = 0) => {
     if (!t) return;
-    if (isLenBearingType(t)) { out.add(path); return; }
+    if (isLenBearingType(t)) {
+      out.add(path);
+      // The same name can be declared twice with different types (shadowing in separate
+      // scopes); any disagreement drops the entry, since a wrong element range is a false proof.
+      const el = elementTypeOf(t) ?? "";
+      const prev = ELEM_TYPES.get(path);
+      ELEM_TYPES.set(path, prev === undefined || prev === el ? el : "");
+      return;
+    }
     // A struct's Vec fields are len-bearing places too; bounded because a recursive type
     // would otherwise never terminate here.
     if (depth >= 4) return;
@@ -1383,7 +1450,12 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
     // No annotation and no float literal to learn from means Int, matching how the rest
     // of this file treats an unknown type. A float local would be modelled as an integer
     // here, which is why floatish() also looks at the initializer.
-    const typeName = varTypes.get(target) ?? "i64";
+    // A flattened field path (`st_err`) has no entry in varTypes; its sort is its leaf
+    // field's, as fieldSort decides for the symbols the declaration block invents. Left as
+    // Int, `if st.err` after a `&mut st` call reached the solver as `(not <Int>)`.
+    const leaf = target.slice(target.lastIndexOf("_") + 1);
+    const fieldType = !target.includes("_") ? undefined : BOOL_FIELDS.has(leaf) ? "bool" : FLOAT_FIELDS.has(leaf) ? "f64" : undefined;
+    const typeName = varTypes.get(target) ?? fieldType ?? "i64";
     ctx.havocDecls.push(declareConst(fresh, typeName));
     const facts = [intRangeAssumption(fresh, typeName), isLenSymbol(fresh) ? `(assert (>= ${fresh} 0))` : null];
     for (const fact of facts) {
@@ -1401,7 +1473,9 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
 
   // The program has now stated something about every havoc symbol these terms mention.
   function constrainedBy(terms: string[]): void {
-    for (const t of terms) for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) UNCONSTRAINED_HAVOCS.delete(m[0]);
+    for (const t of terms) for (const m of t.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)) {
+      if (!FREE_VALUE_SYMS.has(m[0])) UNCONSTRAINED_HAVOCS.delete(m[0]);
+    }
   }
 
   // Replace one place, and every flattened field hanging off it (since `&mut c` may write
@@ -1466,6 +1540,46 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       if ([...preLen.matchAll(/[A-Za-z_][A-Za-z0-9_.$]*/g)].some(m => UNCONSTRAINED_HAVOCS.has(m[0]))) continue;
       ctx.havocDecls.push(`(assert (= ${fresh} ${preLen}))`);
       UNCONSTRAINED_HAVOCS.delete(fresh);
+    }
+    return out;
+  }
+
+  // Facts about a counter that hold at EVERY loop head, so they may be assumed wherever the
+  // havoced counter is read. Only the shape whose soundness is syntactic: every write to the
+  // name anywhere in `block` is `n = n + K` (or `K + n`) with K a positive literal, so the
+  // counter never drops below its pre-loop value (`n >= start`); symmetrically `n = n - K`
+  // everywhere keeps `n <= start`. Anything else stays unknown. Refused when:
+  //  - a nested binder reuses the name (the writes might be to another variable),
+  //  - a `&mut` argument, method receiver or closure could also write it,
+  //  - the function is wrapping (the add may wrap below `start`),
+  //  - the terms are not plain integers (a Real or bool counter, or an unusable start).
+  function counterFacts(block: Stmt[], preEnv: Map<string, string>, headEnv: Map<string, string>): string[] {
+    if (RTE_WRAPPING) return [];
+    const writes = new Map<string, { up: boolean; down: boolean; other: boolean }>();
+    walkNodes(block, n => {
+      if (n.kind !== "Assign" || n.target?.kind !== "Ident") return;
+      const name = n.target.name as string;
+      const w = writes.get(name) ?? { up: false, down: false, other: false };
+      const v = n.value;
+      const isName = (e: any) => e?.kind === "Ident" && e.name === name;
+      const posLit = (e: any) => e?.kind === "IntLit" && BigInt(e.value) > 0n;
+      if (v?.kind === "BinOp" && v.op === "+" && ((isName(v.left) && posLit(v.right)) || (posLit(v.left) && isName(v.right)))) w.up = true;
+      else if (v?.kind === "BinOp" && v.op === "-" && isName(v.left) && posLit(v.right)) w.down = true;
+      else w.other = true;
+      writes.set(name, w);
+    });
+    const mods = new Map<string, string>();
+    collectMutations(block, mods);
+    const out: string[] = [];
+    for (const [name, w] of writes) {
+      if (w.other || w.up === w.down) continue;
+      if (mods.has(name) || CLOSURE_ASSIGNED.has(name) || bindsName(block, name)) continue;
+      const ty = varTypes.get(name);
+      if (ty !== undefined && !RTE_RANGES[ty]) continue;
+      const start = preEnv.get(name), head = headEnv.get(name);
+      if (!start || !head || start === head || !isPlainSymbol(head)) continue;
+      if (/UNSUPPORTED/.test(start) || isRealSmt(start) || REAL_SYMS.has(head) || !NONREAL_SYMS.has(head)) continue;
+      out.push(w.up ? `(>= ${head} ${start})` : `(<= ${head} ${start})`);
     }
     return out;
   }
@@ -1658,6 +1772,16 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         add("bounds", `(and (>= ${i} 0) (< ${i} ${len}))`, "index out of bounds", rteSource(e));
         return;
       }
+      case "Unwrap": {
+        scanRte(e.operand, conds, env, line);
+        // There is no Option/Result model (the tag of a value is not a symbol anywhere in
+        // this encoding), so the obligation "the operand is Some/Ok" cannot be stated. It is
+        // still emitted, with a marker that makes it report `unknown` and say why, instead
+        // of leaving `x!` out of the report as if it could not trap. Not pushed onto `conds`:
+        // the marker would poison every later obligation on the path.
+        recordRte({ kind: "unwrap", cond: `(UNSUPPORTED_MODEL OptionTag)`, conditions: [...conds], what: "unwrap of None/Err", text: `${exprSource(e.operand)}!`, line: at });
+        return;
+      }
       case "IfExpr": {
         scanRte(e.cond, conds, env, line);
         const c = exprToSmtWithEnv(e.cond, env);
@@ -1807,10 +1931,14 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         // recorded before the havoc wipes it.
         const havocEnv = havoc(stmt.body, localEnv, stmt);
         const guard = exprToSmtWithEnv(stmt.cond, havocEnv);
-        const assumed = (stmt.invariants ?? [])
-          .filter(inv => inv.kind === "invariant")
-          .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
-          .filter(s => !/UNSUPPORTED/.test(s));
+        const facts = counterFacts(stmt.body, localEnv, havocEnv);
+        const assumed = [
+          ...(stmt.invariants ?? [])
+            .filter(inv => inv.kind === "invariant")
+            .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
+            .filter(s => !/UNSUPPORTED/.test(s)),
+          ...facts,
+        ];
         constrainedBy([guard, ...assumed]);
         if (RTE) scanRte(stmt.cond, [...pathConds, ...assumed], havocEnv, (stmt as any).span?.line ?? 0);
         const bodyRun = collectPaths(stmt.body, havocEnv, varTypes, ctx);
@@ -1825,6 +1953,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
           guard,
           invariants: (stmt.invariants ?? []).filter(c => c.kind === "invariant"),
           variants: (stmt.invariants ?? []).filter(c => c.kind === "decreases"),
+          facts,
           body: stmt.body,
           bodyRun,
         });
@@ -1919,9 +2048,13 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         const carried = invariants.filter(inv =>
           nextPatch.size > 0 ? !mentionsAnyIdent(inv.expr, new Set(stmt.varName2 ? [stmt.varName2] : []))
                              : !mentionsAnyIdent(inv.expr, new Set(boundNames)));
-        const assumed = invariants
-          .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
-          .filter(s => !/UNSUPPORTED/.test(s));
+        const facts = counterFacts(stmt.body, localEnv, havocEnv);
+        const assumed = [
+          ...invariants
+            .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
+            .filter(s => !/UNSUPPORTED/.test(s)),
+          ...facts,
+        ];
         constrainedBy([guard, ...assumed]);
         if (RTE && stmt.iterable.kind === "RangeExpr") {
           const t = rteTypeOf(stmt.iterable.start, varTypes) ?? rteTypeOf(stmt.iterable.end, varTypes);
@@ -1939,6 +2072,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
           guard,
           invariants,
           variants,
+          facts,
           body: stmt.body,
           bodyRun,
           nextPatch,
@@ -1954,9 +2088,12 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
           calls.push({ ...call, conditions: [...active, ...call.conditions] });
         }
         const remainder = stmts.slice(i + 1);
-        const exitAssumed = carried
-          .map(inv => exprToSmtWithEnv(inv.expr, postLoopEnv))
-          .filter(s => !/UNSUPPORTED/.test(s));
+        const exitAssumed = [
+          ...carried
+            .map(inv => exprToSmtWithEnv(inv.expr, postLoopEnv))
+            .filter(s => !/UNSUPPORTED/.test(s)),
+          ...facts,
+        ];
         walkCapture(remainder, 0, [...pathConds, ...exitAssumed], new Map(postLoopEnv));
         for (const exit of bodyRun.breakEnvs) {
           walkCapture(remainder, 0, [...active, ...exit.conditions], new Map(exit.env));
@@ -2114,6 +2251,11 @@ function rebaseFieldAccess(expr: Expr, env: Map<string, string>): { kind: "rebas
     const current = env.get(name);
     if (current && isPlainSymbol(current)) return { kind: "rebased", name: current };
     FIELD_REFS?.add(name);   // the query has to declare what this substitution invented
+    const litLen = STR_LIT_LEN.get(bound);
+    if (litLen !== undefined && name === `${bound}_len` && FIELD_REFS && CALL_MODEL) {
+      const fact = `(assert (= ${name} ${litLen}))`;
+      if (!CALL_MODEL.assumes.includes(fact)) CALL_MODEL.assumes.push(fact);
+    }
     const base = UNCONSTRAINED_HAVOCS.get(bound);
     if (base && !UNCONSTRAINED_HAVOCS.has(name) && !DERIVED_FROM.has(name)) {
       UNCONSTRAINED_HAVOCS.set(name, { place: [base.place, ...fields.slice(take)].join("_"), why: base.why });
@@ -2127,6 +2269,83 @@ function rebaseFieldAccess(expr: Expr, env: Map<string, string>): { kind: "rebas
 // Field symbols invented during lowering, collected so the enclosing function's
 // declaration block can declare them. Scoped to one function's VC build, like CALL_MODEL.
 let FIELD_REFS: Set<string> | null = null;
+
+// Integer element type per len-bearing place of the function being lowered (`s` -> u8,
+// `v` -> i32 for a `Vec<i32>`); a place with no entry has no element model.
+let ELEM_TYPES = new Map<string, string>();
+
+// Symbols standing for a value the program never states anything about: an element read, a
+// contract-less callee's result. They are free variables, so a model over one is not a
+// counterexample (same rule as a contract-less havoc), and a guard or invariant that merely
+// MENTIONS one does not make it described: constrainedBy leaves these alone.
+let FREE_VALUE_SYMS = new Set<string>();
+let STR_LIT_LEN = new Map<string, number>();
+// Names some closure in the function assigns. A closure can run anywhere, so a loop fact
+// about such a name (monotone counter) cannot be argued from the loop body alone.
+let CLOSURE_ASSIGNED = new Set<string>();
+
+function closureAssignedNames(body: Stmt[]): Set<string> {
+  const out = new Set<string>();
+  walkNodes(body, n => { if (n.kind === "Closure") collectAssignedVars(n.body, out); });
+  return out;
+}
+
+function mintFreeValue(ctx: CallModel, stem: string, typeName: string, place: string, why: string): string {
+  const sym = `${stem.replace(/[^A-Za-z0-9_]/g, "_")}__free${ctx.n++}`;
+  ctx.decls.push(declareConst(sym, typeName));
+  // What the type itself guarantees; i64 stays unbounded for the reason INT_RANGES gives.
+  const fact = typeName === "u64" ? `(assert (>= ${sym} 0))` : intRangeAssumption(sym, typeName);
+  if (fact) { ctx.assumes.push(fact); HAVOC_TYPING_FACTS.add(fact); }
+  ctx.scope.add(sym);
+  FREE_VALUE_SYMS.add(sym);
+  UNCONSTRAINED_HAVOCS.set(sym, { place, why });
+  return sym;
+}
+
+// `v[i]` as a value: a fresh symbol of the element type, one per (read site, receiver term,
+// index term). It is NOT an uninterpreted `select` shared across sites: nothing here tracks
+// a write to the contents except the receiver's own env entry, so two reads are only equal
+// when the walker can show the receiver and index terms are literally the same, and even
+// then each site gets its own symbol (losing `v[i] == v[i]` across sites is a precision
+// cost; sharing across a write would be a false proof). Null when the receiver has no
+// element model, so the caller keeps the UNSUPPORTED marker.
+function elementRead(expr: any, env: Map<string, string>, foreign: boolean, oldEnv?: Map<string, string>): string | null {
+  const ctx = CALL_MODEL;
+  // A callee's contract names its own places, and ELEM_TYPES describes this function's.
+  if (!ctx || foreign || expr.index?.kind === "RangeExpr") return null;
+  const place = flattenFieldAccess(expr.object);
+  const et = place ? ELEM_TYPES.get(place) : undefined;
+  if (!place || !et) return null;
+  const obj = exprToSmtWithEnv(expr.object, env, foreign, oldEnv);
+  const idx = exprToSmtWithEnv(expr.index, env, foreign, oldEnv);
+  if (/UNSUPPORTED/.test(obj) || /UNSUPPORTED/.test(idx)) return null;
+  const key = `${obj}[${idx}]`;
+  const perSite = ctx.elems.get(expr) ?? new Map<string, string>();
+  const hit = perSite.get(key);
+  if (hit) return hit;
+  const sym = mintFreeValue(ctx, place, et, exprSource(expr), "an element read (element contents are not modelled)");
+  perSite.set(key, sym);
+  ctx.elems.set(expr, perSite);
+  return sym;
+}
+
+const utf8Len = (s: string) => new TextEncoder().encode(s).length;
+
+// A string literal as a value: one symbol per distinct text, pairwise distinct (different
+// contents are different strings) and carrying its byte length for `.len`.
+function stringLiteral(expr: any): string {
+  const ctx = CALL_MODEL;
+  if (!ctx) return `(UNSUPPORTED StringLit)`;
+  const hit = ctx.strLits.get(expr.value);
+  if (hit) return hit;
+  const sym = `strlit${ctx.strLits.size}`;
+  ctx.decls.push(declareConst(sym, "i64"));
+  for (const other of ctx.strLits.values()) ctx.assumes.push(`(assert (distinct ${other} ${sym}))`);
+  ctx.scope.add(sym);
+  ctx.strLits.set(expr.value, sym);
+  STR_LIT_LEN.set(sym, utf8Len(expr.value));
+  return sym;
+}
 
 // `foreign` marks lowering of a CALLEE's contract under a parameter substitution, where
 // every name belongs to the callee's scope, not this query's. There a name the
@@ -2155,6 +2374,16 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>, foreign = false,
     if (konst) return konst;   // module-level const: shared by both scopes
     return foreign ? `(UNSUPPORTED Ident)` : expr.name;
   }
+  if (expr.kind === "CharLit") return numToSmt(BigInt(expr.value));
+  if (expr.kind === "StringLit") return stringLiteral(expr);
+  if (expr.kind === "IndexAccess") {
+    const read = elementRead(expr, env, foreign, oldEnv);
+    if (read) return read;
+    return `(UNSUPPORTED IndexAccess)`;
+  }
+  if (expr.kind === "FieldAccess" && expr.field === "len" && expr.object.kind === "StringLit") {
+    return String(utf8Len(expr.object.value));
+  }
   if (expr.kind === "FieldAccess") {
     const flat = flattenFieldAccess(expr);
     if (flat) {
@@ -2166,6 +2395,9 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>, foreign = false,
     }
   }
   if (expr.kind === "BinOp") {
+    // `+` on a string is concatenation; as integer addition of two identities it would prove
+    // `a + b == b + a`.
+    if (expr.op === "+" && (expr.left.kind === "StringLit" || expr.right.kind === "StringLit")) return `(UNSUPPORTED StringConcat)`;
     const left = exprToSmtWithEnv(expr.left, env, foreign, oldEnv);
     const bit = bitOpToSmt(expr.op, left, expr.right);
     if (bit) return bit;
@@ -2338,7 +2570,10 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     const decreases = fn.contracts.filter(c => c.kind === "decreases");
     contractCount += fn.contracts.length;
 
-    CALL_MODEL = { ensuresByFn, decls: [], assumes: [], n: 0, bySite: new WeakMap<object, Map<string, string>>(), byPureKey: new Map(), scope: new Set(), assumed: new Set(), opaque: new Set() };
+    CALL_MODEL = { ensuresByFn, decls: [], assumes: [], n: 0, bySite: new WeakMap<object, Map<string, string>>(), byPureKey: new Map(), scope: new Set(), assumed: new Set(), opaque: new Set(), elems: new WeakMap<object, Map<string, string>>(), strLits: new Map() };
+    FREE_VALUE_SYMS = new Set();
+    STR_LIT_LEN = new Map();
+    CLOSURE_ASSIGNED = closureAssignedNames(fn.body);
     const vcStart = conditions.length;
 
     // Sorts are per-function: the same Milo name is an i64 here and an f64 in the next
@@ -2759,9 +2994,12 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
       // has to re-establish them. Body paths that `return` leave the loop, so only the
       // fall-through environments have anything to preserve.
       const bodyRun = loop.bodyRun;
-      const assumed = loop.invariants
-        .map(inv => exprToSmtWithEnv(inv.expr, loop.havocEnv))
-        .filter(s => !/UNSUPPORTED/.test(s));
+      const assumed = [
+        ...loop.invariants
+          .map(inv => exprToSmtWithEnv(inv.expr, loop.havocEnv))
+          .filter(s => !/UNSUPPORTED/.test(s)),
+        ...loop.facts,
+      ];
       // A nested loop inside the body mints its own havoc constants; without these
       // declarations the preservation query would reference undeclared symbols.
       for (const inv of loop.invariants) {
@@ -2893,6 +3131,8 @@ function exprToSmt(expr: Expr): string {
   switch (expr.kind) {
     case "IntLit": return expr.value.toString();
     case "FloatLit": return floatLitToSmt(expr.value);
+    case "CharLit": return numToSmt(BigInt(expr.value));
+    case "StringLit": return stringLiteral(expr);
     case "BoolLit": return expr.value ? "true" : "false";
     case "Ident":
       if (expr.name === "result") return "result";
@@ -2900,6 +3140,7 @@ function exprToSmt(expr: Expr): string {
     case "CastExpr":
       return castToSmt(exprToSmt(expr.operand), expr.targetType?.name ?? "i64");
     case "BinOp": {
+      if (expr.op === "+" && (expr.left.kind === "StringLit" || expr.right.kind === "StringLit")) return `(UNSUPPORTED StringConcat)`;
       const left = exprToSmt(expr.left);
       const bit = bitOpToSmt(expr.op, left, expr.right);
       if (bit) return bit;
@@ -2929,6 +3170,7 @@ function exprToSmt(expr: Expr): string {
       return `(UNSUPPORTED Call)`;
     }
     case "FieldAccess": {
+      if (expr.field === "len" && expr.object.kind === "StringLit") return String(utf8Len(expr.object.value));
       const flat = flattenFieldAccess(expr);
       if (flat) return flat;
       return `(${exprToSmt(expr.object)}.${expr.field})`;
@@ -3044,6 +3286,7 @@ export function untranslatable(smtlib: string): string[] {
   for (const m of smtlib.matchAll(/\(UNSUPPORTED_UNARY (\S+?)\)/g)) out.add(`unary '${m[1]}'`);
   for (const m of smtlib.matchAll(/UNSUPPORTED_OP_(\S+?)[\s)]/g)) out.add(`operator '${m[1]}'`);
   for (const m of smtlib.matchAll(/\(UNSUPPORTED_CALL (\S+?)\)/g)) out.add(`calls to '${m[1]}' (it declares no 'ensures' to model its result by)`);
+  for (const m of smtlib.matchAll(/\(UNSUPPORTED_MODEL (\w+)\)/g)) out.add(`unmodelled ${m[1] === "OptionTag" ? "Option/Result tags (no model of Some/None or Ok/Err)" : m[1]}`);
   for (const m of smtlib.matchAll(/\(UNSUPPORTED_METHOD (\S+?)\)/g)) out.add(`method calls ('.${m[1]}')`);
   return [...out];
 }
@@ -3253,7 +3496,7 @@ export function formatProveReport(pr: ProveResult): string {
     if (cuts.length) parts.push(`the proof ${cuts.length === 1 ? "cut" : "cuts"} ${cuts.join(", ")}, which this run did not discharge`);
     const note = parts.length === 0 ? "" : ` — conditional: assumes ${parts.join("; and ")}`;
     // The rte kinds have many sites per fn, so the fn name alone would not say which one failed.
-    const site = r.vc.kind === "overflow" || r.vc.kind === "bounds" || r.vc.kind === "division" ? ` (${r.vc.description})` : "";
+    const site = r.vc.kind === "overflow" || r.vc.kind === "bounds" || r.vc.kind === "division" || r.vc.kind === "unwrap" ?` (${r.vc.description})` : "";
     lines.push(`  ${icon} [${r.vc.kind}] ${r.vc.fn}${site}: ${r.status}${r.detail ? ` — ${r.detail}` : ""}${note}`);
   }
   if (conditional.size > 0) {

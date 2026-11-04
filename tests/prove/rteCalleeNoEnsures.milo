@@ -1,0 +1,58 @@
+// @flags: --rte --solver=z3
+// @proven: 2
+// @failed: 1
+// @unknown: 4
+// A callee with no `ensures` still returns SOME value of its declared type. That value used
+// to be an UNSUPPORTED_CALL marker, which poisoned every formula it appeared in, including
+// the obligations of code that never used it. It is now a fresh free symbol of the return
+// type: enough to carry the rest of the function, and not enough to prove or refute
+// anything about the value itself.
+//
+// `unrelated`: the facts about `a` and `v` survive the call, and `v[0]` is proven in range.
+// `eachCallIsFresh`: two calls are not assumed equal (the callee may be impure), so the
+//   FALSE postcondition `result == 0` is not proven.
+// `claimsValue` is FALSE too (`probe` could return anything): not proven either way.
+// `writesArg`: the callee writes through `&mut`, so what the caller knew about `n` is gone
+//   and the claim `result == 3` must not be proven.
+fn probe(x: i64): i64 {
+    return x
+}
+
+fn unrelated(v: &Vec<i64>, a: i64): i64
+requires v.len >= 1
+{
+    let r = probe(a)
+    if r > 0 {
+        return v[0]
+    }
+    return v[0] + 0
+}
+
+fn eachCallIsFresh(a: i64): i64
+ensures result == 0
+{
+    return probe(a) - probe(a)
+}
+
+fn claimsValue(a: i64): i64
+ensures result == 5
+{
+    return probe(a)
+}
+
+fn bump(n: &mut i64): void {
+    n = n + 100
+}
+
+fn writesArg(): i64
+ensures result == 3
+{
+    var n = 3
+    bump(&mut n)
+    return n
+}
+
+fn main(): i32 {
+    print(probe(1))
+    return 0
+}

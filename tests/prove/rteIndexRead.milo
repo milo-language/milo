@@ -1,0 +1,58 @@
+// @flags: --rte --solver=z3
+// @proven: 3
+// @failed: 2
+// @unknown: 1
+// An element read (`s[i]`, `v[i]`) and a char literal used to have no translation, so a
+// branch condition like `s[i] == '&'` put an UNSUPPORTED marker on every path through it and
+// every later obligation in the function went unknown.
+//
+// The read is a fresh symbol of the element type (a `u8` for a string), one per read site:
+// nothing about the contents is assumed, so it can make a proof but never a refutation.
+//
+// `scan`: both bounds checks are proven off the loop guard, the counter's lower bound and
+// the read in the branch condition no longer poisoning the path.
+// `unguarded`: still failed, the translation does not hide a real out-of-range index.
+// `claimsFirstIsZero` is FALSE (the first byte can be anything). The model is over a read
+// the program never describes, so the verdict must not be `proven`; it is `unknown`
+// because that counterexample is not one anybody can reproduce.
+fn scan(s: &string): i64 {
+    var i = 0
+    var hits = 0
+    while i < s.len {
+        if s[i] == '&' {
+            hits = 1
+        }
+        i = i + 1
+    }
+    return hits
+}
+
+fn unguarded(v: &Vec<u8>, i: i64): u8 {
+    return v[i]
+}
+
+fn claimsFirstIsZero(v: &Vec<u8>): u8
+requires v.len >= 1
+ensures result == 0
+{
+    return v[0]
+}
+
+// A char literal is its code point: 'a' is 97. The first postcondition is true, the second
+// FALSE and must stay refuted (not merely "some number").
+fn rightChar(): u8
+ensures result == 97
+{
+    return 'a'
+}
+
+fn wrongChar(): u8
+ensures result == 98
+{
+    return 'a'
+}
+
+fn main(): i32 {
+    print(scan("a&b"))
+    return 0
+}

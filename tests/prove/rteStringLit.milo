@@ -1,0 +1,37 @@
+// @flags: --rte --solver=z3
+// @proven: 2
+// @failed: 1
+// @unknown: 0
+// A string literal is a symbol with a known byte length, so `.len` of a literal (directly or
+// through a `let`) is a number, and `s == "x"` in a branch condition is a comparison the
+// solver can carry instead of an UNSUPPORTED marker.
+//
+// `third`: indexing a 3-byte literal at 2 is in range, through a let binding.
+// `branch`: the equality against a literal no longer poisons the obligations after it.
+// `wrongLen` is FALSE ("abc" is 3 bytes, not 4): it must stay refuted, so the literal's
+// length is the real one and not just "something non-negative".
+fn third(): u8 {
+    let t = "abc"
+    return t[2]
+}
+
+fn branch(s: &string, v: &Vec<i64>): i64
+requires v.len >= 1
+{
+    if s == "x" {
+        return v[0]
+    }
+    return 0
+}
+
+fn wrongLen(): i64
+ensures result == 4
+{
+    let t = "abc"
+    return t.len
+}
+
+fn main(): i32 {
+    print(third())
+    return 0
+}

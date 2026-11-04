@@ -1,6 +1,8 @@
-// @proven: 1
+// @proven: 2
 // @failed: 1
-// @unknown: 1
+// @unknown: 0
+// (`main` passes a 16-byte string literal, whose length the prover now knows: that call was
+// unknown while StringLit had no translation.)
 // A callee's `requires` is checked in the CALLER's query, so every name in it has to be
 // translated into the caller's scope. `key.len` used to flatten to the literal string
 // `key_len` — the CALLEE's parameter name — which nothing in the caller declared. Both
