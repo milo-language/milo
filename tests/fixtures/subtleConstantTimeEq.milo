@@ -36,13 +36,13 @@ pub fn main(): i32 {
     check("high-bytes", high, high2)
 
     var withNul = "ab"
-    withNul.push(0 as u8)
+    withNul.push(0)
     withNul.push('c')
     var sameNul = "ab"
-    sameNul.push(0 as u8)
+    sameNul.push(0)
     sameNul.push('c')
     var otherNul = "ab"
-    otherNul.push(0 as u8)
+    otherNul.push(0)
     otherNul.push('d')
     check("nul-bytes", withNul, sameNul)
     check("nul-differs", withNul, otherNul)

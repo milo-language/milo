@@ -376,7 +376,7 @@ pub fn fmtFixed(v: f64, decimals: i64): string {
 // "6240 m/s" is harder to compare against a budget than "6,240 m/s".
 pub fn commas(v: f64): string {
     let n = Math.abs(v) as i64
-    var digits = $"{n}"
+    let digits = $"{n}"
     var out = ""
     var count = 0
     var i = digits.len - 1

@@ -86,7 +86,7 @@ pub fn main(): i32 {
 
         // One axis at a time: diagonal drilling would let you cut corners through
         // solid ground, and it makes the tunnels messy.
-        var ix = inp.moveX
+        let ix = inp.moveX
         var iy = inp.moveY
         if ix != 0.0 && iy != 0.0 {
             iy = 0.0

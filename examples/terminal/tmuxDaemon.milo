@@ -281,7 +281,7 @@ pub fn serveMulti(listener: &TcpListener, shell: &string, rows: i64, cols0: i64)
     reTile(ptys, &mut terms, paneWin, activeWin, cols, gridRows)
 
     var clientFd: i32 = -1
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     var focus: i64 = 0
     var prefixArmed = false
     var ctrlMode = false
@@ -626,7 +626,7 @@ pub fn sendSize(sockFd: i32): void {
 }
 
 pub fn attachLoop(sockFd: i32, winch: &SignalPipe): void {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     var one: [u8; 1] = [0; 1]
     var prefixArmed = false
     var done = false

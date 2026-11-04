@@ -22,7 +22,7 @@ from "std/os" import {
 pub fn main(): i32 {
     // Raw descriptor IO is what this fixture exercises, and every raw-fd call in std is @unsafe.
     unsafe {
-        var fds: [u8; 8] = [0; 8]
+        let fds: [u8; 8] = [0; 8]
         var rfd: i32 = 0
         var wfd: i32 = 0
         unsafe {
@@ -33,7 +33,7 @@ pub fn main(): i32 {
         }
 
         Task.spawn(move(): void => {
-            var buf: [u8; 16] = [0; 16]
+            let buf: [u8; 16] = [0; 16]
             let n = readFd(rfd, buf, 16)
             var s = ""
             for i in 0..n {

@@ -887,8 +887,8 @@ pub fn placeMarkRing(w: &mut World) {
         px = w.marks[prev].x
         pz = w.marks[prev].z
     }
-    var dx = mx - px
-    var dz = mz - pz
+    let dx = mx - px
+    let dz = mz - pz
     let l = Math.sqrt(dx * dx + dz * dz) + 0.0001
     // Kept only so anything that wants a heading for the target has one.
     let heading = Math.atan2(dx / l, dz / l)
@@ -1000,7 +1000,7 @@ fn autoSteer(w: &mut World, dt: f64) {
     // way in and the bank oscillated up to 45 degrees on a four-second period,
     // growing. The yaw rate is already clamped, so the step it defended against
     // was never able to become a twitch in the first place.
-    var diff = wrapPi(want - w.plane.yaw)
+    let diff = wrapPi(want - w.plane.yaw)
     w.plane.yaw = w.plane.yaw + Math.clampF64(diff * 1.1, 0.0 - 0.6, 0.6) * dt
     // Shallower bank, eased in more slowly. A 60-degree wing-over reads as
     // aerobatics; this is meant to read as an airliner turning onto final.

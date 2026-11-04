@@ -18,7 +18,7 @@ fn f(c: string, o: Option<i64>): Option<string> {
 }
 
 pub fn main(): i32 {
-    let _a = f("x", Option.Some(3 as i64))
+    let _a = f("x", Option.Some(3))
     let _b = f("y", Option.None)
     return 0
 }

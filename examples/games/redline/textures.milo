@@ -689,7 +689,7 @@ fn makeFacade(): TexData {
             let grime = fbm(u, v, 6, 14, 3, 9101)
             let grain = grainOf(x, y, 9102, 0.030, 0.018)
             // Panel: warm precast, dirtier toward the bottom of each floor.
-            var lum = 0.300 + (grime - 0.5) * 0.070 + grain
+            let lum = 0.300 + (grime - 0.5) * 0.070 + grain
             var rr = lum * 1.06
             var gg = lum * 0.99
             var bb = lum * 0.88

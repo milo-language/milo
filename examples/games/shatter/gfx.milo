@@ -451,9 +451,9 @@ pub fn present(c: &mut Canvas, bloomGain: f64, exposure: f64) {
             let i00 = row0 + bx
             let i10 = row1 + bx
 
-            var v0 = (c.hdr[s] + (c.b0[i00] * w00 + c.b0[i00 + 3] * w01 + c.b0[i10] * w10 + c.b0[i10 + 3] * w11) * gain) * expo
-            var v1 = (c.hdr[s + 1] + (c.b0[i00 + 1] * w00 + c.b0[i00 + 4] * w01 + c.b0[i10 + 1] * w10 + c.b0[i10 + 4] * w11) * gain) * expo
-            var v2 = (c.hdr[s + 2] + (c.b0[i00 + 2] * w00 + c.b0[i00 + 5] * w01 + c.b0[i10 + 2] * w10 + c.b0[i10 + 5] * w11) * gain) * expo
+            let v0 = (c.hdr[s] + (c.b0[i00] * w00 + c.b0[i00 + 3] * w01 + c.b0[i10] * w10 + c.b0[i10 + 3] * w11) * gain) * expo
+            let v1 = (c.hdr[s + 1] + (c.b0[i00 + 1] * w00 + c.b0[i00 + 4] * w01 + c.b0[i10 + 1] * w10 + c.b0[i10 + 4] * w11) * gain) * expo
+            let v2 = (c.hdr[s + 2] + (c.b0[i00 + 2] * w00 + c.b0[i00 + 5] * w01 + c.b0[i10 + 2] * w10 + c.b0[i10 + 5] * w11) * gain) * expo
             c.hdr[s] = 0.0
             c.hdr[s + 1] = 0.0
             c.hdr[s + 2] = 0.0

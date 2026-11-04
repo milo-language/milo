@@ -58,7 +58,7 @@ pub struct CloudField {
 }
 
 pub fn cloudEmpty(): CloudField {
-    var t: Vec<f32> = Vec.filled(CLOUD_N * CLOUD_N * 3, 0.0)
+    let t: Vec<f32> = Vec.filled(CLOUD_N * CLOUD_N * 3, 0.0)
     return CloudField {
         n: CLOUD_N,
         texel: t,

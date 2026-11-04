@@ -137,8 +137,8 @@ fn writeShot(path: &string, dw: i64, dh: i64) {
 pub fn main(): i32 {
     let shot = argValue("--shot", "")
     let headless = shot.len > 0
-    var winW: i64 = 1440
-    var winH: i64 = 900
+    let winW: i64 = 1440
+    let winH: i64 = 900
     // How bright the room itself is, before any of the neon. Turning this up
     // does not make the tubes glow more, it makes everything else compete with
     // them, which is the one thing that can kill this look.
@@ -269,7 +269,7 @@ pub fn main(): i32 {
     logo.setAnisotropy(16.0)
     let logoIdx = gfx.addTexture(logo)
 
-    var world = buildWorld(&mut gl, marqueeIdx, flatIdx, bannerIdx, logoIdx)
+    let world = buildWorld(&mut gl, marqueeIdx, flatIdx, bannerIdx, logoIdx)
     var targets = newTargets(&mut gl, faceIdx, flatIdx)
     let staticLights = roomLights()
     var gun = newGun(&mut gl)
@@ -289,7 +289,7 @@ pub fn main(): i32 {
 
     let model = identity()
     var quit = false
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
     var last = SDL_GetTicks()
 
     // Game state. One round is 60 seconds; between rounds the town is quiet and
@@ -739,7 +739,7 @@ fn drawHud(hud: &mut Hud, dw: f64, dh: f64, running: bool, timeLeft: f64, score:
     let tenths = ((timeLeft - (secs as f64)) * 10.0) as i64
     // Under ten seconds it goes red and pulses, because at that point the clock
     // is the thing you are playing against.
-    var cr = 1.0
+    let cr = 1.0
     var cg = 0.95
     var cb = 0.72
     if running && timeLeft < 10.0 {

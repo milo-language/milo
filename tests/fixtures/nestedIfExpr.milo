@@ -6,7 +6,7 @@
 pub fn main(): i32 {
     let c1 = true
     let c2 = false
-    var fc: i64 = if c1 {
+    let fc: i64 = if c1 {
         if c2 {
             6
         } else {
@@ -22,7 +22,7 @@ pub fn main(): i32 {
     print($"{fc | 0x10}")
 
     let v: i64 = 100
-    var gc = if c1 {
+    let gc = if c1 {
         if c2 {
             v
         } else {

@@ -139,28 +139,22 @@ pub struct Ball {
 pub fn buildScene(scene: &mut Vec<Ball>) {
     scene.push(Ball {
         pos: v3(-1.6, 0.7, 0.2), vel: v3(1.2, 0.0, 0.4), r: 0.7, albedo: v3(0.93, 0.86, 0.74), refl: 0.82, invMass: 1.0 / 0.49
-    }
-    ) // cream chrome
+    }) // cream chrome
     scene.push(Ball {
         pos: v3(0.4, 1.4, -0.6), vel: v3(-0.6, 0.0, 0.8), r: 0.6, albedo: v3(0.45, 0.27, 0.14), refl: 0.28, invMass: 1.0 / 0.36
-    }
-    ) // chocolate
+    }) // chocolate
     scene.push(Ball {
         pos: v3(1.7, 0.6, 0.7), vel: v3(-0.4, 0.0, -0.5), r: 0.55, albedo: v3(0.80, 0.55, 0.30), refl: 0.25, invMass: 1.0 / 0.30
-    }
-    ) // caramel
+    }) // caramel
     scene.push(Ball {
         pos: v3(-0.6, 1.0, -1.2), vel: v3(0.5, 0.0, 0.6), r: 0.5, albedo: v3(0.88, 0.70, 0.42), refl: 0.4, invMass: 1.0 / 0.25
-    }
-    ) // tan
+    }) // tan
     scene.push(Ball {
         pos: v3(0.9, 0.5, 1.3), vel: v3(0.3, 0.0, -0.7), r: 0.5, albedo: v3(0.90, 0.84, 0.76), refl: 0.9, invMass: 1.0 / 0.25
-    }
-    ) // polished chrome
+    }) // polished chrome
     scene.push(Ball {
         pos: v3(-1.9, 0.5, 1.1), vel: v3(0.7, 0.0, -0.3), r: 0.45, albedo: v3(0.32, 0.19, 0.11), refl: 0.35, invMass: 1.0 / 0.20
-    }
-    ) // espresso
+    }) // espresso
 }
 
 pub let lightPos: Vec3 = Vec3 {
@@ -420,7 +414,7 @@ pub fn main(): i32 {
     }
 
     var fb: [u32; 43200] = [0; 43200] // 240 * 180
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
 
     var scene: Vec<Ball> = Vec.new()
     buildScene(&mut scene)

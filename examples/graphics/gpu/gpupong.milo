@@ -440,7 +440,7 @@ pub fn main(): i32 {
     // Owns every GL object made through it; one call at the end sweeps whatever
     // was not freed by hand.
     var gl = GlContext.new()
-    var sh = match Shader.compile(&mut gl, VERT, FRAG) {
+    let sh = match Shader.compile(&mut gl, VERT, FRAG) {
         Ok(s) => s
         Err(e) => {
             print(e)
@@ -458,7 +458,7 @@ pub fn main(): i32 {
     var g = gameNew()
     serve(&mut g, true)
     var verts: Vec<f32> = Vec.new()
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
     var quit = false
     var last = SDL_GetTicks()
 

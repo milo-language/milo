@@ -45,10 +45,10 @@ fn fillBand(base: i64, y0: i64, y1: i64): i64 {
 }
 
 pub fn main(): i32 {
-    var serial: Vec<f32> = Vec.filled(W * H, 0.0)
+    let serial: Vec<f32> = Vec.filled(W * H, 0.0)
     let _ = fillBand(serial.ptr() as i64, 0, H)
 
-    var par: Vec<f32> = Vec.filled(W * H, 0.0)
+    let par: Vec<f32> = Vec.filled(W * H, 0.0)
     let bands: i64 = 8
     let base = par.ptr() as i64
     var ps: Vec<Promise<i64>> = Vec.new()

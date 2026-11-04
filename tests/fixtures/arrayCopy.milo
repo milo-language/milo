@@ -39,7 +39,7 @@ pub fn main() {
     print(sumX(pts))
 
     // The copy is a snapshot: mutating the callee's copy can't reach the caller's array.
-    var mine: [u8; 4] = [1, 2, 3, 4]
+    let mine: [u8; 4] = [1, 2, 3, 4]
     let _ = firstByte(mine)
     // @expect: 1
     print(mine[0])

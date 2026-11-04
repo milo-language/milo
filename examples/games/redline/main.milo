@@ -145,8 +145,8 @@ fn mph(v: f64): i64 {
 pub fn main(): i32 {
     let shot = argValue("--shot", "")
     let headless = shot.len > 0
-    var winW: i64 = 1440
-    var winH: i64 = 900
+    let winW: i64 = 1440
+    let winH: i64 = 900
     let skyLight = argValue("--sky", "1").parseF64() ?? 1.0
     let scalePct = argValue("--scale", "100").parseF64() ?? 100.0
     let skipBucket = argValue("--skip", "-1").parseInt() ?? -1
@@ -247,7 +247,7 @@ pub fn main(): i32 {
     print($"circuit: {(track.length as i64)} m over {track.n} samples")
 
     var world = buildWorld(&mut gl, track)
-    var rain = buildRain(&mut gl)
+    let rain = buildRain(&mut gl)
     // How hard it is raining, 0 to 1. A constant for now: the wet road, the
     // reflections and the spray are all keyed off it, so turning it down is the
     // one knob that makes the night dry again.
@@ -274,7 +274,7 @@ pub fn main(): i32 {
     var hud = newHud()
 
     var quit = false
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
     var last = SDL_GetTicks()
     var prevF = false
     var fullscreen = false

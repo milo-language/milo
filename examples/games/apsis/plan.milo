@@ -295,8 +295,8 @@ pub fn searchWindow(bodies: &Vec<Body>, m: &Mission, fromT: f64): Plan {
     var spanF = (m.tofSearchHi - m.tofSearchLo) * SEC_PER_DAY / 14.0
     var round = 0
     while round < 2 {
-        var ct = bestT
-        var cf = bestF
+        let ct = bestT
+        let cf = bestF
         var a = -4
         while a <= 4 {
             let t = ct + spanT * (a as f64) / 4.0

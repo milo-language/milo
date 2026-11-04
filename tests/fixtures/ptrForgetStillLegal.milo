@@ -6,7 +6,7 @@ from "std/os" import {
 }
 
 fn giveBuffer(): *u8 {
-    var v: Vec<u8> = [72, 105, 0]
+    let v: Vec<u8> = [72, 105, 0]
     let p = v.ptr()
     forget(v)
     return p

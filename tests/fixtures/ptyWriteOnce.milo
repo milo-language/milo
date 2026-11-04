@@ -25,11 +25,11 @@ from "std/io" import {
 
 pub fn main(): i32 {
     var cat = Pty.open()!
-    var catArgs: Vec<string> = Vec.new()
+    let catArgs: Vec<string> = Vec.new()
     let _p = cat.spawn("cat", catArgs)!
     // blocking master: waits for the child to open its side, as write(2) does
     print($"wrote {cat.writeOnce("hi\n")}")
-    var buf: [u8; 64] = [0; 64]
+    let buf: [u8; 64] = [0; 64]
     var n: i64 = 0
     unsafe { n = readFd(cat.rawFd(), buf, 64) }
     var s = ""

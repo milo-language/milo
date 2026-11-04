@@ -226,7 +226,7 @@ fn main(): i32 {
     let cols = ts.cols
 
     // open PTY and spawn shell
-    var shellArgs: Vec<string> = []
+    let shellArgs: Vec<string> = []
     var pty: Pty = match openAndSpawn(shell, shellArgs) {
         Ok(v) => v
         Err(e) => {
@@ -244,7 +244,7 @@ fn main(): i32 {
     pty.resize(ptyRows as u16, cols as u16)
 
     // connect to server
-    var ws: WsConn = match connectWs(useTls, ip, port, host, connectPath) {
+    let ws: WsConn = match connectWs(useTls, ip, port, host, connectPath) {
         Ok(v) => v
         Err(e) => {
             print($"error: could not connect to server: {e}")
@@ -321,7 +321,7 @@ fn main(): i32 {
 
     let termState = enableRawMode()
 
-    var done = AtomicBool.new(false)
+    let done = AtomicBool.new(false)
 
     // extract raw values so each move-closure gets its own copy
     // (move zeroes the source — can't move the same var into multiple closures).
@@ -364,8 +364,8 @@ fn main(): i32 {
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move(): void => {
         unsafe {
-            var sendWs = WsConn.view(wsFd1, wsSsl1, true)
-            var buf: [u8; 4096] = [0; 4096]
+            let sendWs = WsConn.view(wsFd1, wsSsl1, true)
+            let buf: [u8; 4096] = [0; 4096]
             var msgCount: i64 = 0
             while !done1.load() {
                 unsafe {
@@ -418,7 +418,7 @@ fn main(): i32 {
 
     // task 2: stdin → PTY (local keyboard input → shell)
     Task.spawn(move(): void => {
-        var buf: [u8; 256] = [0; 256]
+        let buf: [u8; 256] = [0; 256]
         while !done2.load() {
             unsafe {
                 schedulerWaitRead(0)
@@ -441,7 +441,7 @@ fn main(): i32 {
     // task 3: WebSocket → control handling (browser joins, resize requests)
     Task.spawn(move(): void => {
         unsafe {
-            var recvWs = WsConn.view(wsFd3, wsSsl3, true)
+            let recvWs = WsConn.view(wsFd3, wsSsl3, true)
             var bootstrapCount: i64 = 0
             var browserCount: i64 = 0
             while !done3.load() {

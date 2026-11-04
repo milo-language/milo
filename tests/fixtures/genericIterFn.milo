@@ -38,12 +38,12 @@ fn countIter<I: Iterator>(it: I): i64 {
 }
 
 fn main() {
-    var a = Counter {
+    let a = Counter {
         n: 0, max: 5
     }
     // @expect: 10
     print(sumIter(a)) // 0+1+2+3+4
-    var b = Counter {
+    let b = Counter {
         n: 0, max: 5
     }
     // @expect: 5

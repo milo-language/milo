@@ -39,7 +39,7 @@ fn echoVar(name: string): string {
 // (Windows pipe readiness has no green-scheduler path yet).
 fn drain(child: &Child): string {
     var out: string = String.withCapacity(64)
-    var buf: [u8; 256] = [0; 256]
+    let buf: [u8; 256] = [0; 256]
     while true {
         var n: i64 = 0
         unsafe {

@@ -28,7 +28,7 @@ extern fn socketpair(domain: i32, kind: i32, protocol: i32, fds: *i32): i32
 
 pub fn main(): i32 {
     let total: i64 = 1048576
-    var fds: [i32; 2] = [-1; 2]
+    let fds: [i32; 2] = [-1; 2]
     unsafe {
         // AF_UNIX = 1 and SOCK_STREAM = 1 on darwin and linux.
         socketpair(1, 1, 0, fds as *i32)
@@ -38,7 +38,7 @@ pub fn main(): i32 {
 
     // Parks reading `a`: nothing arrives until the driver writes one byte to `b`.
     Task.spawn(move(): void => {
-        var buf: [u8; 1] = [0; 1]
+        let buf: [u8; 1] = [0; 1]
         unsafe {
             readFd(a, buf, 1)
         }

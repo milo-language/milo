@@ -13,7 +13,7 @@ pub fn sumAll(v: &Vec<i64>): i64 {
 // rather than read past the end. (Aborting is covered by tests/errors — here we
 // only prove the loop that does NOT shrink still gets the right answer.)
 pub fn sumWhileGrowing(): i64 {
-    var v: Vec<i64> = Vec.filled(4, 2)
+    let v: Vec<i64> = Vec.filled(4, 2)
     var s: i64 = 0
     for i in 0..v.len {
         s = s + v[i]
@@ -62,7 +62,7 @@ pub fn main(): i32 {
     // @expect: 15
 
     // Empty container: the loop body must not run at all.
-    var e: Vec<i64> = Vec.new()
+    let e: Vec<i64> = Vec.new()
     print(sumAll(e).toString())
     // @expect: 0
 

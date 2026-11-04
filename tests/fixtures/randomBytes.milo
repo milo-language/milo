@@ -23,7 +23,7 @@ fn main(): i32 {
         all = all && s
     }
     print($"every byte value seen: {all}")
-    var key: [u8; 16] = [0; 16]
+    let key: [u8; 16] = [0; 16]
     unsafe { Random.fillRaw(key as *u8, 16) }
     var raw = ""
     for b in key {

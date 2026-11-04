@@ -32,7 +32,7 @@ pub fn main(): i32 {
     print(firstByte(q), " ", w.len)
 
     var s = "hi".clone()
-    s.push(33 as u8)
+    s.push(33)
     let base = s.cstr() as i64
     unsafe {
         print(strlen(base as *u8))

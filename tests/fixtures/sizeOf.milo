@@ -20,9 +20,9 @@ pub fn main(): i32 {
     print(sizeOf<Point>())
 
     unsafe {
-        var z: i64 = zeroed<i64>()
+        let z: i64 = zeroed<i64>()
         print(z)
-        var p: Point = zeroed<Point>()
+        let p: Point = zeroed<Point>()
         print(p.x)
     }
     return 0

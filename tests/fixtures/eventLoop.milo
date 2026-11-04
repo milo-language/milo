@@ -17,7 +17,7 @@ from "std/event" import {
 }
 
 pub fn main(): i32 {
-    var fds: [u8; 8] = [0; 8]
+    let fds: [u8; 8] = [0; 8]
     unsafe {
         pipe(fds as *i32)
         let readFd = (fds as *i32) [0]
@@ -30,11 +30,11 @@ pub fn main(): i32 {
         let msg = "hi"
         write(writeFd, msg, msg.len)
 
-        var readyBuf: [u8; 16] = [0; 16]
+        let readyBuf: [u8; 16] = [0; 16]
         let n = eventPoll(el, readyBuf as *i32, 4, 1000)
         if n > 0 {
             print("ready")
-            var buf: [u8; 64] = [0; 64]
+            let buf: [u8; 64] = [0; 64]
             let bytesRead = read(readFd, buf as *u8, 64)
             print(bytesRead.toString())
         }

@@ -76,7 +76,7 @@ pub fn sphereMesh(segments: i64, rings: i64): Vec<f32> {
 // drawn with the depth test on and back-face culling still enabled, so showing
 // only its far side puts the halo behind the planet where a limb glow belongs.
 pub fn invertedSphereMesh(segments: i64, rings: i64): Vec<f32> {
-    var src = sphereMesh(segments, rings)
+    let src = sphereMesh(segments, rings)
     var v: Vec<f32> = Vec.new()
     var t = 0
     while t + 24 <= src.len {

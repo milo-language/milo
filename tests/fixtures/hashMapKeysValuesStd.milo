@@ -44,7 +44,7 @@ fn main() {
     sorted.sort()
     print(sorted[0].toString() + " " + sorted[sorted.len - 1].toString())
 
-    var e: HashMap<string, i64> = HashMap.new()
+    let e: HashMap<string, i64> = HashMap.new()
     print(e.keys().len.toString() + " " + e.values().len.toString())
 
     var s: HashMap<string, Bag> = HashMap.new()

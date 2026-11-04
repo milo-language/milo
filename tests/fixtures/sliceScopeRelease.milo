@@ -10,7 +10,7 @@ pub fn main(): i32 {
         let sl = s[0..3]
         print(sl)
     }
-    s.push(65 as u8)
+    s.push(65)
     var items: Vec<i64> = Vec.new()
     items.push(1)
     for x in items {

@@ -2,7 +2,7 @@
 // Regression: `!=` was lowered to `fcmp one` (ordered), making both `x == x`
 // and `x != x` false for NaN.
 pub fn main() {
-    var z = 0.0
+    let z = 0.0
     let nan = z / z
 
     // @expect: false

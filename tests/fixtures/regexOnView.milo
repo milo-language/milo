@@ -13,7 +13,7 @@ pub fn main(): i32 {
         print("compile failed")
         return 1
     }
-    var re = compiled
+    let re = compiled
 
     // Views: a line with no match must report none, even though the text AFTER
     // it in the same buffer matches.
@@ -53,7 +53,7 @@ pub fn main(): i32 {
         print("compile failed")
         return 1
     }
-    var re2 = anchored
+    let re2 = anchored
     print(re2.findAll("xax").len.toString())
     // @expect: 1
     print(re2.findAll("axa").len.toString())

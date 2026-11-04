@@ -27,7 +27,7 @@ fn pongFrame(): string {
 }
 
 pub fn main(): i32 {
-    var fds: [i32; 2] = [0; 2]
+    let fds: [i32; 2] = [0; 2]
     unsafe {
         if pipe(fds as *i32) != 0 {
             return 1

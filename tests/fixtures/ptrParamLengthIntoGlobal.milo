@@ -20,9 +20,9 @@ fn count(p: *u8, n: i64): void {
 
 fn main(): void {
     var v: Vec<u8> = Vec.new()
-    v.push(1 as u8)
-    v.push(0 as u8)
-    v.push(3 as u8)
+    v.push(1)
+    v.push(0)
+    v.push(3)
     count(v.ptr(), v.len)
     print(total)
 }

@@ -3,8 +3,8 @@
 from "std/runtime" import { Task, schedulerYield }
 
 pub fn main(): i32 {
-    var v: Vec<string> = ["aaa".clone(), "bbb".clone()]
-    var w: Vec<string> = ["ccc".clone()]
+    let v: Vec<string> = ["aaa".clone(), "bbb".clone()]
+    let w: Vec<string> = ["ccc".clone()]
     Task.scope((s) => {
         s.spawn(() => {
             for x in v {

@@ -201,8 +201,7 @@ pub fn addCon(nodes: &Vec<Node>, cons: &mut Vec<Con>, a: i64, b: i64, stiff: f64
     let dy = nb.py - na.py
     cons.push(Con {
         a: a, b: b, rest: Math.sqrt(dx * dx + dy * dy), stiff: stiff, draw: draw
-    }
-    )
+    })
 }
 
 pub fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
@@ -217,8 +216,7 @@ pub fn buildCloth(nodes: &mut Vec<Node>, cons: &mut Vec<Con>) {
             let py = startY + (row as f64) * spacing
             nodes.push(Node {
                 px: px, py: py, ppx: px, ppy: py, pinned: row == 0
-            }
-            )
+            })
             coli += 1
         }
         row += 1
@@ -322,7 +320,7 @@ pub fn main(): i32 {
     }
 
     var fb: [u32; 172800] = [0; 172800]
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
 
     var nodes: Vec<Node> = Vec.new()
     var cons: Vec<Con> = Vec.new()

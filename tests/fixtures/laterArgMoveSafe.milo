@@ -21,10 +21,10 @@ pub fn main(): i32 {
     var w: Vec<string> = Vec.new()
     w.push("beta".clone())
     show(v[0], consume(w))
-    var w2: Vec<string> = Vec.new()
+    let w2: Vec<string> = Vec.new()
     show2(v, consume(w2))
     pair(v.len, consume(v))
-    var p = P { name: "carol".clone(), age: 41 }
+    let p = P { name: "carol".clone(), age: 41 }
     let f = () => { print(p.age.toString()) }
     print(eat(p.name).toString())
     f()
@@ -32,7 +32,7 @@ pub fn main(): i32 {
     a.push("dave".clone())
     var b: Vec<string> = Vec.new()
     b.push("erin".clone())
-    var h = H { items: a, other: b }
+    let h = H { items: a, other: b }
     show(h.items[0], consume(h.other))
     let s = "frank".clone()
     let t = "fr".clone()

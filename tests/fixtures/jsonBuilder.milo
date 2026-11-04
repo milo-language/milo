@@ -28,7 +28,7 @@ pub fn main(): i32 {
 
     // control chars must be escaped (RFC 8259) — terminal streams contain ESC
     var ctl: string = "esc:"
-    ctl.push(27 as u8)
+    ctl.push(27)
     print(Json.obj().str("t", ctl).build())
     // @expect: {"t":"esc:\u001b"}
 

@@ -5,10 +5,10 @@
 // @expect: bcd
 pub fn main(): i32 {
     let s = "hello"
-    var a: i32 = 1
-    var b: i32 = 4
+    let a: i32 = 1
+    let b: i32 = 4
     print(s[a..b])
-    var v: Vec<i32> = Vec.filled(6, 0)
+    let v: Vec<i32> = Vec.filled(6, 0)
     let sl = v[a..b]
     print(sl.len() as i32)
     let owned = "abcdef".substr(a, b)

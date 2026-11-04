@@ -17,7 +17,7 @@ impl Drop for Res {
     }
 }
 
-fn firstId(w: &mut Vec<Option<Res>>): i64 {
+fn firstId(w: &Vec<Option<Res>>): i64 {
     match w[0] {
         Option.Some(r) => {
             return r.id
@@ -49,7 +49,7 @@ fn main() {
         }
     }
     print("b")
-    print(firstId(&mut w))
+    print(firstId(w))
     print("c")
     let n = match w[0] {
         Option.Some(r) => r.id + 10,

@@ -7,13 +7,13 @@
 @!wrapping
 
 fn overflowingAdd(): i32 {
-    var a: i32 = 2147483647
+    let a: i32 = 2147483647
     return a + 1 // wraps -> INT_MIN, no trap
 }
 
 fn overshift(): i32 {
-    var one: i32 = 1
-    var n: i32 = 40
+    let one: i32 = 1
+    let n: i32 = 40
     return one << n // shift amount masked 40&31=8 -> 256
 }
 

@@ -102,8 +102,7 @@ pub fn spawnBall(balls: &mut Vec<Ball>, s: &mut u64, x: f64, y: f64) {
         cr: (60.0 + randF(&mut s) * 195.0) as u32,
         cg: (60.0 + randF(&mut s) * 195.0) as u32,
         cb: (60.0 + randF(&mut s) * 195.0) as u32,
-    }
-    )
+    })
 }
 
 pub fn resetScene(balls: &mut Vec<Ball>, s: &mut u64) {
@@ -277,7 +276,7 @@ pub fn main(): i32 {
     }
 
     var fb: [u32; 76800] = [0; 76800] // 320 * 240
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
 
     var seed: u64 = 0x9E3779B97F4A7C15
     var balls: Vec<Ball> = Vec.new()

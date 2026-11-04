@@ -107,10 +107,10 @@ fn tinyCity(): string {
     }
     putI32(&mut out, VERSION)
     putI32(&mut out, 4)
-    out.push(84 as u8) // T
-    out.push(111 as u8) // o
-    out.push(119 as u8) // w
-    out.push(110 as u8) // n
+    out.push(84) // T
+    out.push(111) // o
+    out.push(119) // w
+    out.push(110) // n
     putI32(&mut out, 377897000) // origin lat, 1e-7 degrees
     putI32(&mut out, 0 - 1224000000) // origin lon
     putCm(&mut out, 500.0) // reach
@@ -123,7 +123,7 @@ fn tinyCity(): string {
     putCm(&mut out, 20.0)
     putCm(&mut out, 0.0 - 500.0)
     putCm(&mut out, 0.0 - 500.0)
-    out.push(0 as u8) // one cover cell: urban
+    out.push(0) // one cover cell: urban
     putI32(&mut out, 1) // one building
     putCm(&mut out, 24.0) // its height
     putI32(&mut out, 3) // three points

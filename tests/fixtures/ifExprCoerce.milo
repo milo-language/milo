@@ -56,7 +56,7 @@ pub fn main(): void {
     print(k.toString())
 
     // concrete non-literal arm + literal arm unify with no annotation.
-    var v: u8 = 5
+    let v: u8 = 5
     let w = if true {
         v
     } else {

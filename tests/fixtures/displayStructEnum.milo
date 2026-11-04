@@ -24,11 +24,11 @@ pub fn main(): i32 {
     print(u)
 
     let c1 = Color.Red
-    let c2 = Color.Rgb(255 as u8, 128 as u8, 0 as u8)
+    let c2 = Color.Rgb(255, 128, 0)
     print(c1)
     print(c2)
 
-    let someVal: Option<i64> = Option.Some(42 as i64)
+    let someVal: Option<i64> = Option.Some(42)
     let noVal: Option<i64> = Option.None
     print(someVal)
     print(noVal)

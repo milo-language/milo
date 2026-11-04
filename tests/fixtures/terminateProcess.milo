@@ -16,7 +16,7 @@ from "std/fs" import {
 // @expect: alive false
 pub fn main(): i32 {
     let f = "/tmp/milo_terminate_process_pid"
-    var sh = Command.new("sh").arg("-c").arg($"sleep 30 >/dev/null 2>&1 & echo $! > {f}").spawn()!
+    let sh = Command.new("sh").arg("-c").arg($"sleep 30 >/dev/null 2>&1 & echo $! > {f}").spawn()!
     let _w = sh.wait()
     let pid = readFile(f)!.trim().parseInt()!as i32
     print("alive ", processAlive(pid).toString())

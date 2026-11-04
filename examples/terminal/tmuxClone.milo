@@ -346,7 +346,7 @@ pub fn splash(cols: i64, rows: i64): void {
 
     // drain any input already buffered (e.g. the keystrokes that launched us) so
     // it can't dismiss the splash before it's even seen
-    var junk: [u8; 256] = [0; 256]
+    let junk: [u8; 256] = [0; 256]
     unsafe {
         var d = read(0, junk as *u8, 256)
         while d == 256 {
@@ -514,7 +514,7 @@ pub fn drawFooter(prefixArmed: bool, paneRows: i64): void {
 // Non-blocking read of a PTY master, fed into the pane's emulator. Returns true
 // if new bytes arrived (fd is O_NONBLOCK, so this never blocks).
 pub fn drainInto(pty: &Pty, term: &mut Term): bool {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = pty.read(buf as *u8, 4095)
         if n > 0 {
@@ -645,7 +645,7 @@ pub fn main(): void {
 
                             // A wakeup means at least one source is ready, but not
                             // which; every fd is O_NONBLOCK, so just try all three.
-                            var inbuf: [u8; 256] = [0; 256]
+                            let inbuf: [u8; 256] = [0; 256]
                             var n: i64 = 0
                             unsafe {
                                 n = read(0, inbuf as *u8, 256)

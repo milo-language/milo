@@ -421,7 +421,7 @@ pub fn newTargets(gl: &mut GlContext, faceTex: i64, flatTex: i64): Targets {
     shardMat.emissive = v3(1.0, 1.0, 1.0)
 
     let rigs = placeRigs()
-    var eligible: Vec<bool> = Vec.filled(rigs.len, true)
+    let eligible: Vec<bool> = Vec.filled(rigs.len, true)
     return Targets {
         rigs: rigs,
         eligible: eligible,
@@ -746,8 +746,7 @@ impl Targets {
                 maxLife: self.rng.range(0.9, 1.9),
                 floorY: deck,
                 onGround: false,
-            }
-            )
+            })
         }
     }
 

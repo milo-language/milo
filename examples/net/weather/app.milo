@@ -523,7 +523,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     var ttl = DEFAULT_TTL_SECS
     // Blocking-shaped, but this is a green task: the scheduler runs every other
     // connection while this one waits on the socket.
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "GET",
         headers: "User-Agent: " + contactUa + "\r\nAccept: application/geo+json,application/json,image/png,*/*",
         body: "",

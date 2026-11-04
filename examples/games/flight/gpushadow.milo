@@ -239,7 +239,7 @@ pub fn shadowNew(gl: &mut GlContext, size: i64): Result<ShadowMap, string> {
 }
 
 pub fn shadowFree(gl: &mut GlContext, sm: ShadowMap) {
-    var own = sm
+    let own = sm
     own.target.free(&mut gl)
     own.shader.free(&mut gl)
 }

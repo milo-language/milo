@@ -29,7 +29,7 @@ fn zeros(n: i64): Vec<f64> {
 }
 
 fn sized<T>(n: i64): Vec<T> {
-    var v: Vec<T> = Vec.withCapacity(n)
+    let v: Vec<T> = Vec.withCapacity(n)
     return v
 }
 

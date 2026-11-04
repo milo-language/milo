@@ -405,21 +405,21 @@ pub fn main(): i32 {
     // Owns every GL object made through it; one call at the end sweeps whatever
     // was not freed by hand.
     var gl = GlContext.new()
-    var ocean = match Shader.compile(&mut gl, QUAD_VERT, OCEAN_FRAG) {
+    let ocean = match Shader.compile(&mut gl, QUAD_VERT, OCEAN_FRAG) {
         Ok(s) => s
         Err(e) => {
             print(e)
             return 4
         }
     }
-    var blit = match Shader.compile(&mut gl, QUAD_VERT, BLIT_FRAG) {
+    let blit = match Shader.compile(&mut gl, QUAD_VERT, BLIT_FRAG) {
         Ok(s) => s
         Err(e) => {
             print(e)
             return 5
         }
     }
-    var quad = Mesh.fullscreenQuad(&mut gl)
+    let quad = Mesh.fullscreenQuad(&mut gl)
 
     var dw: i32 = 0
     var dh: i32 = 0
@@ -439,7 +439,7 @@ pub fn main(): i32 {
     Gpu.depthTest(false)
     Gpu.blendOff()
 
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
     var quit = false
     var paused = false
     var spaceHeld = false

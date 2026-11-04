@@ -375,7 +375,7 @@ pub fn main(): i32 {
 
     var paused = false
     var quit = false
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
     var lastTicks = SDL_GetTicks()
     var fpsAvg = 0.0
 

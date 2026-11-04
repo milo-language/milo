@@ -10,16 +10,16 @@
 // @expect: 7
 @wrapping
 fn modular() {
-    var a: i32 = 2147483647
+    let a: i32 = 2147483647
     print(a + 1) // wrap -> INT_MIN
-    var b: i32 = -2147483648
+    let b: i32 = -2147483648
     print(b - 1) // wrap -> INT_MAX
     print(0 - b) // negate INT_MIN -> INT_MIN
-    var one: i32 = 1
-    var sh: i32 = 40
+    let one: i32 = 1
+    let sh: i32 = 40
     print(one << sh) // shift amount masked 40&31=8 -> 256
-    var min: i32 = -2147483648
-    var neg1: i32 = -1
+    let min: i32 = -2147483648
+    let neg1: i32 = -1
     print(min / neg1) // INT_MIN / -1 wraps -> INT_MIN
     print(min % neg1) // -> 0
     print(3 + 4) // ordinary arithmetic unaffected

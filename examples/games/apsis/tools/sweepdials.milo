@@ -27,7 +27,7 @@ fn round0(v: f64): string {
 }
 
 pub fn main(): i32 {
-    var bodies = bodyTable()
+    let bodies = bodyTable()
     var missions = missionTable()
     var bad = 0
     // Calibrated by index, before the scan: a for-in element is a shared borrow,

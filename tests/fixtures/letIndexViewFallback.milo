@@ -118,7 +118,7 @@ fn pop() {
 fn closure() {
     var v = fresh()
     let x = v[0]
-    var zap = () => {
+    let zap = () => {
         v[0] = "z"
     }
     zap()

@@ -23,7 +23,7 @@ pub fn bumpX(b: ?&mut Bump): i32 {
 }
 
 pub fn main(): i32 {
-    var slot = Bump {
+    let slot = Bump {
         x: 41, y: 7
     }
     let nothing = 0 as *Bump

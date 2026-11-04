@@ -378,7 +378,7 @@ fn drawBody(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, id: i64, t
     }
 }
 
-fn drawSky(r: &mut Renderer, g: &Game, v: &View, time: f64) {
+fn drawSky(r: &Renderer, g: &Game, v: &View, time: f64) {
     let dirGl = toGl(v.at - v.eye).norm()
     let right = dirGl.cross(v3(0.0, 1.0, 0.0)).norm()
     let camUp = right.cross(dirGl).norm()
@@ -423,9 +423,9 @@ fn drawSky(r: &mut Renderer, g: &Game, v: &View, time: f64) {
 // Draw the scene and hand back where every body landed, so the overlay can put
 // markers and labels on exactly the same pixels.
 pub fn drawScene(gl: &mut GlContext, r: &mut Renderer, g: &Game, v: &View, time: f64): Vec<Marker> {
-    drawSky(&mut r, g, v, time)
+    drawSky(r, g, v, time)
     let t = displayTime(g)
-    var ids = missionBodies(g)
+    let ids = missionBodies(g)
     var out: Vec<Marker> = Vec.new()
     var i = 0
     while i < ids.len {

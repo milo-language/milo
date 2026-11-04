@@ -88,7 +88,7 @@ pub fn loadMap(gl: &mut GlContext, id: i64): Texture2D {
 // been decoded. Freeing a shared dummy eight times would delete one live name and
 // seven bogus ones, so each slot gets its own.
 pub fn dummyTexture(gl: &mut GlContext): Texture2D {
-    var px: Vec<u32> = Vec.filled(1, 0xFF303840)
+    let px: Vec<u32> = Vec.filled(1, 0xFF303840)
     return Texture2D.rgba8(&mut gl, 1, 1, px, false)
 }
 

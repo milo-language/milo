@@ -322,7 +322,7 @@ pub fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFil
 // a worker thread, where printing would both interleave with other workers and put the
 // formatting cost back on the critical path it was moved off of.
 pub fn searchContent(content: &string, filePath: &string, re: &mut Regex, opts: &RgOpts, multiFile: bool, knownMatch: bool): FileResult {
-    var res = emptyResult()
+    let res = emptyResult()
     if !knownMatch && isBinary(content) {
         return res
     }

@@ -29,7 +29,7 @@ struct Pipe {
 }
 
 fn makePipe(): Pipe {
-    var fds: [i32; 2] = [0; 2]
+    let fds: [i32; 2] = [0; 2]
     unsafe {
         pipe(fds as *i32)
         // pipe() returns two fresh descriptors nothing else owns.

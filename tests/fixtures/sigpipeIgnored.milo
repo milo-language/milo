@@ -24,7 +24,7 @@ from "std/net" import {
 
 pub fn main(): i32 {
     ignoreSigpipe()
-    var fds: [i32; 2] = [0; 2]
+    let fds: [i32; 2] = [0; 2]
     unsafe {
         if pipe(fds as *i32) != 0 {
             print("pipe() failed")
@@ -32,7 +32,7 @@ pub fn main(): i32 {
         }
         // drop the read end: any write now raises SIGPIPE
         let _closedRead = close(fds[0])
-        var payload: [u8; 4] = [65; 4]
+        let payload: [u8; 4] = [65; 4]
         let n = write(fds[1], payload as *u8, 4)
         if n < 0 {
             print("write to closed pipe returned -1")

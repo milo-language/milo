@@ -18,7 +18,7 @@ impl Drop for Res {
 }
 
 fn main() {
-    var r = Res {
+    let r = Res {
         id: 1, v: Vec.new()
     }
     print("made ", r.id)

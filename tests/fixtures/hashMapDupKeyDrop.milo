@@ -6,7 +6,7 @@
 // handed in has no owner and must be dropped here. It used to leak its buffer on
 // every duplicate — a rebuild-in-a-loop grew without bound.
 pub fn main(): i32 {
-    var v: Vec<string> = ["a", "b", "a"]
+    let v: Vec<string> = ["a", "b", "a"]
     var m: HashMap<string, string> = HashMap.new()
     for x in v {
         m.insert(x.clone(), "old".clone())

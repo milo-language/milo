@@ -14,7 +14,7 @@ impl Drop for Wrapper {
 }
 
 pub fn tryMake(): Wrapper {
-    var conn = Wrapper {
+    let conn = Wrapper {
         value: "hello"
     }
     return conn

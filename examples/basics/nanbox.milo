@@ -137,7 +137,7 @@ fn main() {
     print("string bytes, none of them copied: " + totalStringBytes(strings, arr).toString())
 
     // ── real NaN and infinity are still numbers, not tags ──
-    var zero: f64 = 0.0
+    let zero: f64 = 0.0
     print("NaN is a number: " + Value.num(zero / zero).isNum().toString() + ", inf is a number: " + Value.num(1.0 / zero).isNum().toString())
 
     // ── a freed string is caught, not dereferenced ──

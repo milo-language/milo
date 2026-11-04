@@ -24,7 +24,7 @@ pub fn main(): i32 {
     print(Sha384.hash("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"))
     var m = ""
     for _i in 0..1000000 {
-        m.push(97 as u8)
+        m.push(97)
     }
     print(Sha512.hash(m))
     print(Sha384.hash(m))

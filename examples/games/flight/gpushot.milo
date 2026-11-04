@@ -197,7 +197,7 @@ pub fn main(): i32 {
     if w.city.orthoLoaded {
         setOrtho(&mut gl, &mut gw, w.city.ortho)
     }
-    var p = match postNew(&mut gl, W, H, W, H) {
+    let p = match postNew(&mut gl, W, H, W, H) {
         Ok(x) => x
         Err(e) => {
             print("post: " + e)

@@ -37,12 +37,12 @@ pub fn doClient(port: u16, id: i32): void {
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
         let fd = socket(AF_INET, SOCK_STREAM, 0)
-        var addr = makeSockaddr(port, 16777343)
+        let addr = makeSockaddr(port, 16777343)
         connectFdIn(fd, addr)
         print("client ", id, " connected")
         let msg = format("hello from ", id)
         sendFd(fd, msg, msg.len)
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         let n = recvFd(fd, buf, 4096)
         if n > 0 {
             var resp: string = ""
@@ -65,9 +65,9 @@ pub fn main(): i32 {
         let SOCK_STREAM: i32 = 1
 
         let serverFd = socket(AF_INET, SOCK_STREAM, 0)
-        var one: i32 = 1
+        let one: i32 = 1
         setsockopt(serverFd, solSocket(), soReuseaddr(), one, 4)
-        var addr = makeSockaddr(0 as u16, 0)
+        let addr = makeSockaddr(0, 0)
         bindIn(serverFd, addr)
         listen(serverFd, 128)
 
@@ -85,7 +85,7 @@ pub fn main(): i32 {
                 }
                 let fd = clientFd
                 Task.spawn(move(): void => {
-                    var buf: [u8; 4096] = [0; 4096]
+                    let buf: [u8; 4096] = [0; 4096]
                     let n = recvFd(fd, buf, 4096)
                     if n > 0 {
                         var msg: string = ""

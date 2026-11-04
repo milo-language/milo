@@ -74,12 +74,12 @@ fn phaseName(p: i64): string {
     return "fly"
 }
 
-fn report(g: &mut Game, phase: i64, failures: &mut i64) {
+fn report(g: &Game, phase: i64, failures: &mut i64) {
     let v = viewOf(g, W, H)
     var line = pad(phaseName(phase), 8)
 
     // Every body the mission draws has to be somewhere a player can see.
-    var ids = missionBodies(g)
+    let ids = missionBodies(g)
     var i = 0
     while i < ids.len {
         let p = bodyPoint(g, ids[i], g.departT)
@@ -162,15 +162,15 @@ pub fn main(): i32 {
         startMission(&mut g, mi)
         print("== " + g.missions[mi].name)
         settle(&mut g)
-        report(&mut g, PHASE_DEPART, &mut failures)
+        report(g, PHASE_DEPART, &mut failures)
 
         setPhase(&mut g, PHASE_TARGET)
         settle(&mut g)
-        report(&mut g, PHASE_TARGET, &mut failures)
+        report(g, PHASE_TARGET, &mut failures)
 
         setPhase(&mut g, PHASE_PLAN)
         settle(&mut g)
-        report(&mut g, PHASE_PLAN, &mut failures)
+        report(g, PHASE_PLAN, &mut failures)
 
         // Mid-flight, with the ship half way round the arc. The dials have to be
         // snapped to a plan that fits first, because that is the only kind of
@@ -183,7 +183,7 @@ pub fn main(): i32 {
         }
         g.flightT = g.tof * 0.5
         settle(&mut g)
-        report(&mut g, PHASE_FLY, &mut failures)
+        report(g, PHASE_FLY, &mut failures)
         let sp = shipPoint(g)
         let v = viewOf(g, W, H)
         let pr = projectPoint(v, sp)

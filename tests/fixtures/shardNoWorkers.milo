@@ -27,7 +27,7 @@ pub fn main(): i32 {
     for k in 1..6 {
         c.push(k)
     }
-    var noStates: Vec<Env> = Vec.new()
+    let noStates: Vec<Env> = Vec.new()
     match parallelMapWith(c, 4, noStates, double) {
         Result.Ok(_m) => {
             print("WRONG: mapped with no workers")

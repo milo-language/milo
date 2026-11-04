@@ -3,7 +3,7 @@
 // @expect: 2: 30
 
 pub fn main(): i32 {
-    var v: Vec<i32> = [10, 20, 30]
+    let v: Vec<i32> = [10, 20, 30]
     for i, val in v {
         print($"{i}: {val}")
     }

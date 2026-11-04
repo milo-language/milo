@@ -25,7 +25,7 @@ fn double(window: Shard<f64>, e: &mut Env): Shard<f64> {
 }
 
 pub fn main(): i32 {
-    var v: Vec<f64> = Vec.filled(2, 1.0)
+    let v: Vec<f64> = Vec.filled(2, 1.0)
     var envs: Vec<Env> = Vec.new()
     for k in 0..2 {
         envs.push(Env {

@@ -192,7 +192,7 @@ fn extsPtr(store: &mut CStore, exts: Vec<Ext>): *ExtensionBlock {
             }
             Some(e) => {
                 var block = e
-                var payload = replace(block.bytes, Vec.new())
+                let payload = replace(block.bytes, Vec.new())
                 let byteCount = payload.len as i32
                 let payloadPtr = payload.ptr()
                 store.bytes.push(payload)
@@ -229,7 +229,7 @@ fn publish(doc: &mut Doc, store: &mut CStore, gif: &mut GifFileType) {
             Some(img) => {
                 var image = img
                 let mapPtr = palettePtr(&mut store, image.map)
-                var raster = replace(image.raster, Vec.new())
+                let raster = replace(image.raster, Vec.new())
                 let rasterPtr = raster.ptr()
                 store.bytes.push(raster)
                 let blocks = replace(image.exts, Vec.new())
@@ -330,7 +330,7 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
     }
     let gif89 = stamp[4] == 0x39
 
-    var lzw = Lzw.new()
+    let lzw = Lzw.new()
     var doc = Doc.new()
     match getScreenDesc(&mut rd, &mut doc) {
         Ok(_) => {

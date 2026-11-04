@@ -12,7 +12,7 @@ pub fn main(): i32 {
 
     // RFC 8259: bare control chars (e.g. ESC from pty streams) become \u00XX
     var s = "a"
-    s.push(27 as u8)
+    s.push(27)
     s = s + "b"
     let e = Msg {
         kind: "k", raw: s, n: 0, ok: true

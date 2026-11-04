@@ -38,17 +38,17 @@ from "std/runtime" import {
 
 // A ticker dropped without stop() must cancel its task, not tick forever.
 fn dropWithoutStop(): void {
-    var tk = Ticker.every(Duration.millis(5))
+    let tk = Ticker.every(Duration.millis(5))
     let _first = tk.recv()
 }
 
 pub fn main(): i32 {
     let started = now()
-    var timer = Timer.after(Duration.millis(60))
+    let timer = Timer.after(Duration.millis(60))
     print("timer fired ", timer.recv().isSome())
     print("timer waited ", since(started).toMillis() >= 55)
 
-    var tk = Ticker.every(Duration.millis(20))
+    let tk = Ticker.every(Duration.millis(20))
     let tickStart = now()
     var ticks = 0
     var monotonic = true
@@ -95,7 +95,7 @@ pub fn main(): i32 {
     })
     print("recv got ", recvTimeout(ch, Duration.secs(5))!)
 
-    var tk2 = Ticker.every(Duration.millis(15))
+    let tk2 = Ticker.every(Duration.millis(15))
     let tickChannel = tk2.channel()
     var sel = Select.new()
     sel.onRecv(tickChannel)

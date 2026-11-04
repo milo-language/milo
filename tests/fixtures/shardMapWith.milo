@@ -30,7 +30,7 @@ fn scale(window: Shard<f64>, e: &mut Env): Shard<f64> {
 }
 
 pub fn main(): i32 {
-    var data: Vec<f64> = Vec.filled(1000, 1.0)
+    let data: Vec<f64> = Vec.filled(1000, 1.0)
     var envs: Vec<Env> = Vec.new()
     for k in 0..4 {
         envs.push(Env {

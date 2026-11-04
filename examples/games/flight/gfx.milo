@@ -291,10 +291,10 @@ pub fn thickLine(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, wide: f64, 
 // for the panel behind the checklist: over a bright drape, adding to it makes
 // the text less readable, not more.
 pub fn shadeRect(c: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, k: f64) {
-    var ix0 = Math.maxI64(0, x0 as i64)
-    var iy0 = Math.maxI64(0, y0 as i64)
-    var ix1 = Math.minI64(c.w, x1 as i64)
-    var iy1 = Math.minI64(c.h, y1 as i64)
+    let ix0 = Math.maxI64(0, x0 as i64)
+    let iy0 = Math.maxI64(0, y0 as i64)
+    let ix1 = Math.minI64(c.w, x1 as i64)
+    let iy1 = Math.minI64(c.h, y1 as i64)
     var y = iy0
     while y < iy1 {
         var x = ix0

@@ -1081,7 +1081,7 @@ fn fetchBridges(bbox: &string, lat: f64, lon: f64, mPerLon: f64, cacheKey: &stri
                             count += 1
                         }
                         // Half the carriageway plus a parapet.
-                        var halfW = lanes * 3.65 * 0.5 + 1.5
+                        let halfW = lanes * 3.65 * 0.5 + 1.5
                         // A dual carriageway is TWO OSM ways eight metres apart,
                         // and two overlapping decks at almost the same height
                         // z-fight into a dashed line. One deck wide enough to

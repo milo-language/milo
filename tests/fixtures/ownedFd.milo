@@ -43,7 +43,7 @@ fn main() {
     print(acc.trim())
 
     print(processAlive(pid()))
-    print(processAlive(-12345 as i32))
+    print(processAlive(-12345))
 }
 // @expect: true
 // @expect: -1

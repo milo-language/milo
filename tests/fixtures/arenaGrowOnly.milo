@@ -61,7 +61,7 @@ pub fn main(): i32 {
         }
         Result.Err(rej) => {
             print("refused: freed")
-            var recovered = rej.arena
+            let recovered = rej.arena
             let _still = recovered.get(c1)!
         }
     }

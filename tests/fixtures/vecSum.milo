@@ -21,7 +21,7 @@ fn main() {
     // @expect: 4
     print(f.sum())
 
-    var e: Vec<i64> = Vec.new()
+    let e: Vec<i64> = Vec.new()
     // @expect: 0
     print(e.sum())
 }

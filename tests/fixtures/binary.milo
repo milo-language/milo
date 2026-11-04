@@ -139,10 +139,10 @@ fn hexDump(b: &string): string {
 fn main(): void {
     // ── unsigned round trips, little endian ──
     var le: string = ""
-    Bytes.writeU8(&mut le, 0xab as u8)
-    Bytes.writeU16Le(&mut le, 0x1234 as u16)
-    Bytes.writeU32Le(&mut le, 0xdeadbeef as u32)
-    Bytes.writeU64Le(&mut le, 0x0123456789abcdef as u64)
+    Bytes.writeU8(&mut le, 0xab)
+    Bytes.writeU16Le(&mut le, 0x1234)
+    Bytes.writeU32Le(&mut le, 0xdeadbeef)
+    Bytes.writeU64Le(&mut le, 0x0123456789abcdef)
     print(le.len)
     showU("u8", widenU8(Bytes.readU8(le, 0)))
     showU("u16le", widenU16(Bytes.readU16Le(le, 1)))
@@ -151,9 +151,9 @@ fn main(): void {
 
     // ── unsigned round trips, big endian ──
     var be: string = ""
-    Bytes.writeU16Be(&mut be, 0x1234 as u16)
-    Bytes.writeU32Be(&mut be, 0xdeadbeef as u32)
-    Bytes.writeU64Be(&mut be, 0x0123456789abcdef as u64)
+    Bytes.writeU16Be(&mut be, 0x1234)
+    Bytes.writeU32Be(&mut be, 0xdeadbeef)
+    Bytes.writeU64Be(&mut be, 0x0123456789abcdef)
     print(be.len)
     showU("u16be", widenU16(Bytes.readU16Be(be, 0)))
     showU("u32be", widenU32(Bytes.readU32Be(be, 2)))
@@ -161,17 +161,17 @@ fn main(): void {
 
     // ── the orders really are different on the wire ──
     var o1: string = ""
-    Bytes.writeU32Le(&mut o1, 0x11223344 as u32)
-    Bytes.writeU32Be(&mut o1, 0x11223344 as u32)
+    Bytes.writeU32Le(&mut o1, 0x11223344)
+    Bytes.writeU32Be(&mut o1, 0x11223344)
     print(hexDump(o1))
 
     // ── signed forms reinterpret the same bytes ──
     var neg: string = ""
-    Bytes.writeI8(&mut neg, -1 as i8)
-    Bytes.writeI16Le(&mut neg, -2 as i16)
-    Bytes.writeI16Be(&mut neg, -2 as i16)
-    Bytes.writeI32Le(&mut neg, -3 as i32)
-    Bytes.writeI32Be(&mut neg, -3 as i32)
+    Bytes.writeI8(&mut neg, -1)
+    Bytes.writeI16Le(&mut neg, -2)
+    Bytes.writeI16Be(&mut neg, -2)
+    Bytes.writeI32Le(&mut neg, -3)
+    Bytes.writeI32Be(&mut neg, -3)
     Bytes.writeI64Le(&mut neg, -4)
     Bytes.writeI64Be(&mut neg, -4)
     print(neg.len)
@@ -187,8 +187,8 @@ fn main(): void {
 
     // ── floats ──
     var fl: string = ""
-    Bytes.writeF32Le(&mut fl, 1.5 as f32)
-    Bytes.writeF32Be(&mut fl, 1.5 as f32)
+    Bytes.writeF32Le(&mut fl, 1.5)
+    Bytes.writeF32Be(&mut fl, 1.5)
     Bytes.writeF64Le(&mut fl, -0.15625)
     Bytes.writeF64Be(&mut fl, -0.15625)
     print(fl.len)
@@ -199,7 +199,7 @@ fn main(): void {
 
     // ── out of bounds is Option.None, not a trap and not a zero ──
     var four: string = ""
-    Bytes.writeU32Le(&mut four, 0xffffffff as u32)
+    Bytes.writeU32Le(&mut four, 0xffffffff)
     showU("exact", widenU32(Bytes.readU32Le(four, 0)))
     showU("short", widenU32(Bytes.readU32Le(four, 1)))
     showU("atEnd", widenU8(Bytes.readU8(four, 4)))
@@ -214,6 +214,6 @@ fn main(): void {
     print(Bytes.has(four, -1, 0))
     print(Bytes.f64ToBits(1.5))
     print(Bytes.f64FromBits(4609434218613702656))
-    print(Bytes.f32ToBits(1.5 as f32) as i64)
+    print(Bytes.f32ToBits(1.5) as i64)
     print(Bytes.f32FromBits(1069547520) as f64)
 }

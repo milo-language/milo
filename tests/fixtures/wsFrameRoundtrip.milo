@@ -22,7 +22,7 @@ from "std/os" import {
 }
 
 pub fn main(): i32 {
-    var fds: [i32; 2] = [0; 2]
+    let fds: [i32; 2] = [0; 2]
     unsafe {
         if pipe(fds as *i32) != 0 {
             return 1
@@ -34,7 +34,7 @@ pub fn main(): i32 {
         // Client masks outgoing frames, server does not — so this also exercises the
         // masked path. Views on both ends so neither Drop closes the pipe fds.
         let sender = WsConn.view(fds[1], 0, true)
-        var receiver = WsConn.view(fds[0], 0, false)
+        let receiver = WsConn.view(fds[0], 0, false)
 
         let _ = sender.sendText("hello ws")
         let msg = receiver.recv()!

@@ -296,7 +296,7 @@ fn stage(g: &mut Game, o: &Options) {
 pub fn main(): i32 {
     let opt = parseOptions()
     let shooting = opt.shot.len > 0
-    var host = hostNew("APSIS - you can be a rocket scientist too", WIN_W, WIN_H, !shooting)
+    let host = hostNew("APSIS - you can be a rocket scientist too", WIN_W, WIN_H, !shooting)
     if !host.ok {
         print(host.err)
         return 1
@@ -402,7 +402,7 @@ pub fn main(): i32 {
 
         let view = viewOf(g, w, h)
         post.beginScene()
-        var marks = drawScene(&mut gl, &mut renderer, g, view, time)
+        let marks = drawScene(&mut gl, &mut renderer, g, view, time)
         post.resolve(opt.gain, titleLevel(g), 0.36, size.w, size.h)
 
         drawOverlay(&mut ui, g, view, marks)

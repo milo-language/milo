@@ -42,7 +42,7 @@ fn main() {
     print(v.filter((x: i64) => x > 0), " ", v.filter((x: &i64) => false))
     let odd = v.filter(isOdd)
     print(odd, " ", odd.capacity())
-    var s: Vec<string> = ["a", "bb" + "c", "dd"]
+    let s: Vec<string> = ["a", "bb" + "c", "dd"]
     var long = s.filter((w: &string) => w.len() > 1)
     long[0] = "zz"
     print(s, " ", long)

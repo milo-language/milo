@@ -364,7 +364,7 @@ pub fn main(): i32 {
         }
         placeIdx = pick
     }
-    var places = placesFor(o, placeIdx)
+    let places = placesFor(o, placeIdx)
     var w = worldIn(SEED, places, easy)
     // Before the window opens and long before the first frame: this is several
     // network round trips and nothing on the frame path may ever wait on a public

@@ -9,7 +9,7 @@ from "std/process" import {
 }
 
 pub fn main(): i32 {
-    var args: Vec<string> = Vec.new()
+    let args: Vec<string> = Vec.new()
     let prog = if @targetOs() == "windows" {
         "sort"
     } else {
@@ -21,7 +21,7 @@ pub fn main(): i32 {
             child.closeStdin()
 
             var out: string = String.withCapacity(64)
-            var buf: [u8; 256] = [0; 256]
+            let buf: [u8; 256] = [0; 256]
             while true {
                 var n: i64 = 0
                 unsafe {

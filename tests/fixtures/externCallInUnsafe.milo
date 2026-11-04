@@ -12,7 +12,7 @@ fn rawPid(): i32 {
 
 fn main() {
     print(rawPid() == pid())
-    print(htons(1 as u16) != 0 as u16)
+    print(htons(1) != 0 as u16)
 }
 // @expect: true
 // @expect: true

@@ -53,7 +53,7 @@ pub fn main() {
     // long run of one byte collapses to a tiny frame (overlapping LZ77 match)
     var run = ""
     for _i in 0..20000 {
-        run.push(65 as u8)
+        run.push(65)
     }
     // @expect: true
     print(roundtrips(run))

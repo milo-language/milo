@@ -24,7 +24,7 @@ pub fn main(): i32 {
                 Result.Ok(_pid) => {
                     print("child spawned")
 
-                    var buf: [u8; 256] = [0; 256]
+                    let buf: [u8; 256] = [0; 256]
                     unsafe {
                         let _n = pty.read(buf as *u8, 255)
                     }

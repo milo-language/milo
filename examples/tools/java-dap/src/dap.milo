@@ -506,7 +506,7 @@ pub fn classNameForSource(path: &string): string {
             for line in lines {
                 let t = line.trim()
                 if t.startsWith("package ") {
-                    var p = t.substr(8, t.len)
+                    let p = t.substr(8, t.len)
                     // strip trailing ';' and whitespace
                     var end = p.len
                     while end > 0 && (p[end - 1] == ';' || p[end - 1] == ' ') {
@@ -1030,7 +1030,7 @@ impl Sess {
                 Ok(fields) => {
                     for fld in fields {
                         if fld.name == "detailMessage" {
-                            var ids: Vec<i64> = [fld.fieldId]
+                            let ids: Vec<i64> = [fld.fieldId]
                             match self.io.objectGetValues(excId, ids) {
                                 Ok(vals) => {
                                     if vals.len > 0 && vals[0].num != 0 {
@@ -1545,8 +1545,8 @@ impl Sess {
             for s in slots {
                 if s.name == parts[0] && fr.codeIndex >= s.codeIndex
                 && fr.codeIndex < s.codeIndex + s.length {
-                    var slotIdxs: Vec<i64> = [s.slot]
-                    var slotTags: Vec<i64> = [s.signature[0] as i64]
+                    let slotIdxs: Vec<i64> = [s.slot]
+                    let slotTags: Vec<i64> = [s.signature[0] as i64]
                     if let Ok(vals) = self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) && vals.len > 0 {
                         cur = vals[0]
                         found = true
@@ -1604,7 +1604,7 @@ impl Sess {
         }
         for f in fields {
             if f.name == name && (f.modBits & 8) == 0 {
-                var ids: Vec<i64> = [f.fieldId]
+                let ids: Vec<i64> = [f.fieldId]
                 if let Ok(vals) = self.io.objectGetValues(objectId, ids) && vals.len > 0 {
                     return Some(vals[0])
                 }

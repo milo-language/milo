@@ -21,7 +21,7 @@ pub fn main(): i32 {
             }
         }
     }
-    var z: i32 = 42
+    let z: i32 = 42
     match z {
         _ => {
             print(z)

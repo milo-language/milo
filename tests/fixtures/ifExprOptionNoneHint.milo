@@ -5,12 +5,12 @@
 // @expect: 0 7 8 3 8
 pub fn main(): i32 {
     let c = false
-    let a: Option<i64> = if c { Option.Some(5 as i64) } else { Option.None }
+    let a: Option<i64> = if c { Option.Some(5) } else { Option.None }
     var b: Option<i64> = Option.None
-    b = if !c { Option.Some(7 as i64) } else { Option.None }
+    b = if !c { Option.Some(7) } else { Option.None }
     let w: Option<u8> = if c { 16 } else { 8 }
-    let n: Option<i64> = if c { Option.None } else { if !c { Option.Some(3 as i64) } else { Option.None } }
+    let n: Option<i64> = if c { Option.None } else { if !c { Option.Some(3) } else { Option.None } }
     let h: i64 = if c { 16 } else { 8 }
-    print((a ?? (0 as i64)).toString(), " ", (b ?? (0 as i64)).toString(), " ", (w ?? (0 as u8)).toString(), " ", (n ?? (0 as i64)).toString(), " ", h.toString())
+    print((a ?? 0).toString(), " ", (b ?? 0).toString(), " ", (w ?? 0).toString(), " ", (n ?? 0).toString(), " ", h.toString())
     return 0
 }

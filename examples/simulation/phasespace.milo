@@ -268,11 +268,9 @@ pub fn drawChar(fb: &mut Vec<u32>, x0: i64, y0: i64, ch: u8, scale: i64, col: u3
     if c >= 48 && c <= 57 {
         base = (c - 48) * 5
         useDigit = true
-    } 
-    else if c >= 65 && c <= 90 {
+    } else if c >= 65 && c <= 90 {
         base = (c - 65) * 5
-    } 
-    else if c >= 97 && c <= 122 {
+    } else if c >= 97 && c <= 122 {
         base = (c - 97) * 5
     } // lowercase -> uppercase glyph
     if base < 0 {
@@ -409,7 +407,7 @@ pub fn main(): i32 {
         fb.push(0)
         fbz += 1
     }
-    var ev: [u8; 64] = [0; 64]
+    let ev: [u8; 64] = [0; 64]
 
     // external field E(x_i) = 2*A*sin(2*x_i), precomputed once
     var evec: Vec<f64> = Vec.new()

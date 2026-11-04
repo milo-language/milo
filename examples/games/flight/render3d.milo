@@ -1277,8 +1277,8 @@ fn arcPoint(w: &World, b: i64, t: f64): ArcPoint {
 // ribbon disappears whenever you look along its plane. The cross costs four
 // triangles and is visible from everywhere.
 fn cableSeg(s: &mut Scene, v: &View, ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64, rad: f64, col: &Rgb) {
-    var dx = bx - ax
-    var dz = bz - az
+    let dx = bx - ax
+    let dz = bz - az
     let dl = Math.sqrt(dx * dx + dz * dz)
     if dl < 0.0001 {
         return
@@ -1758,7 +1758,7 @@ fn prism(s: &mut Scene, w: &World, v: &View, facade: &Texture, px: &mut Vec<f64>
         // was giving by accident, and does it on purpose.
         let qx = (w.city.bMaxX[b] - w.city.bMinX[b]) * 0.25
         let qz = (w.city.bMaxZ[b] - w.city.bMinZ[b]) * 0.25
-        var rs = cityOrthoLocal(w.city, lmx, lmz)
+        let rs = cityOrthoLocal(w.city, lmx, lmz)
         let s1 = cityOrthoLocal(w.city, lmx - qx, lmz - qz)
         let s2 = cityOrthoLocal(w.city, lmx + qx, lmz - qz)
         let s3 = cityOrthoLocal(w.city, lmx - qx, lmz + qz)

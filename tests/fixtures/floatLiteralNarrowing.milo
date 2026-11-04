@@ -14,7 +14,7 @@ fn main(): i32 {
     // @expect: 25
     print((lerp(0.0, 100.0, t) as i64) + 0)
 
-    var v: Vec<f32> = Vec.filled(3, 1.5)
+    let v: Vec<f32> = Vec.filled(3, 1.5)
     // @expect: 3
     print(scale(v, 0) as i64)
 

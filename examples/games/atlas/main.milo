@@ -136,7 +136,7 @@ fn shortName(s: &string): string {
 // been decoded. Freeing a shared dummy ten times would delete one live name and
 // nine bogus ones, so each slot gets its own.
 fn dummyTexture(gl: &mut GlContext): Texture2D {
-    var px: Vec<u32> = Vec.filled(1, 0xFF303840)
+    let px: Vec<u32> = Vec.filled(1, 0xFF303840)
     return Texture2D.rgba8(&mut gl, 1, 1, px, false)
 }
 
@@ -396,7 +396,7 @@ fn drawInfoPanel(ui: &mut Ui, app: &App, u: f64) {
     if app.level == 1 {
         blurb = app.worlds[app.wi].big
     }
-    var lines = wrapText(blurb, body, panelW - 44.0 * u)
+    let lines = wrapText(blurb, body, panelW - 44.0 * u)
     var rows = 8
     if app.worlds[app.wi].distanceOf.len == 0 {
         rows = 7
@@ -453,7 +453,7 @@ fn drawLandmarkCard(ui: &mut Ui, app: &App, u: f64, w: f64) {
         text = app.worlds[app.wi].landmarks[app.sel].big
     }
     let body = 9.5 * u
-    var lines = wrapText(text, body, cardW - 48.0 * u)
+    let lines = wrapText(text, body, cardW - 48.0 * u)
     let cardH = 106.0 * u + (lines.len as f64) * lineHeight(body) + 34.0 * u
 
     ui.roundRect(x, y, cardW, cardH, 18.0 * u, 0.02, 0.035, 0.065, 0.88)
@@ -723,7 +723,7 @@ fn parseOptions(): Options {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 pub fn main(): i32 {
-    var host = hostNew("ATLAS - explore the solar system", WIN_W, WIN_H)
+    let host = hostNew("ATLAS - explore the solar system", WIN_W, WIN_H)
     if !host.ok {
         print(host.err)
         return 1
@@ -733,28 +733,28 @@ pub fn main(): i32 {
     // Owns every GL object the app makes, so teardown is one sweep while the
     // context is still current.
     var gl = GlContext.new()
-    var planetSh = match Shader.compile(&mut gl, PLANET_VERT, PLANET_FRAG) {
+    let planetSh = match Shader.compile(&mut gl, PLANET_VERT, PLANET_FRAG) {
         Ok(s) => s
         Err(e) => {
             print("planet shader: " + e)
             return 2
         }
     }
-    var atmoSh = match Shader.compile(&mut gl, PLANET_VERT, ATMO_FRAG) {
+    let atmoSh = match Shader.compile(&mut gl, PLANET_VERT, ATMO_FRAG) {
         Ok(s) => s
         Err(e) => {
             print("atmosphere shader: " + e)
             return 2
         }
     }
-    var ringSh = match Shader.compile(&mut gl, PLANET_VERT, RING_FRAG) {
+    let ringSh = match Shader.compile(&mut gl, PLANET_VERT, RING_FRAG) {
         Ok(s) => s
         Err(e) => {
             print("ring shader: " + e)
             return 2
         }
     }
-    var skySh = match Shader.compile(&mut gl, QUAD_VERT, SKY_FRAG) {
+    let skySh = match Shader.compile(&mut gl, QUAD_VERT, SKY_FRAG) {
         Ok(s) => s
         Err(e) => {
             print("sky shader: " + e)
@@ -787,9 +787,9 @@ pub fn main(): i32 {
     attrs3.push(2)
     attrs3.push(3)
     var ring = Mesh.new(&mut gl, attrs3)
-    var skyQuad = Mesh.fullscreenQuad(&mut gl)
+    let skyQuad = Mesh.fullscreenQuad(&mut gl)
 
-    var worlds = allWorlds()
+    let worlds = allWorlds()
     ring.upload(ringMesh(256, worlds[W_SATURN].ringInner, worlds[W_SATURN].ringOuter))
 
     var tex: Vec<Texture2D> = Vec.new()

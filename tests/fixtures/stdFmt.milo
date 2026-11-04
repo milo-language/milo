@@ -22,8 +22,8 @@ pub fn main(): i32 {
     let age = 30
     print(fmt2("name: {}, age: {}", "Alice", age.toString()))
 
-    print(padLeft("42", 6, 48 as u8))
-    print(padRight("hi", 6, 46 as u8))
+    print(padLeft("42", 6, 48))
+    print(padRight("hi", 6, 46))
     print(zeroPad(7, 3))
 
     var parts: Vec<string> = Vec.new()

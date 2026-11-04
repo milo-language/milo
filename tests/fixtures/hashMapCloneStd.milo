@@ -37,14 +37,14 @@ fn main() {
     var t = s.clone()
     t.modify("w1", (v: &mut Vec<string>): void => { v.push("more") })
     print(s.get("w1")!.len.toString() + " " + t.get("w1")!.len.toString())
-    var u = t.clone()
+    let u = t.clone()
     print(u.get("w1")!.len)
 
     var p: HashMap<Pt, i64> = HashMap.new()
     p.insert(Pt { x: 1, y: 2 }, 3)
     print(p.clone().get(Pt { x: 1, y: 2 }) ?? 0)
 
-    var e: HashMap<string, i64> = HashMap.new()
+    let e: HashMap<string, i64> = HashMap.new()
     print(e.clone().len)
     print(squares(50).clone().len)
 }

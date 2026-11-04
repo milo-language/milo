@@ -22,29 +22,29 @@ pub fn dup(v: &Vec<string>): Vec<string> {
 }
 
 pub fn main() {
-    var v: Vec<string> = ["a", "b"]
+    let v: Vec<string> = ["a", "b"]
     var w = v.clone()
     w.push("c")
     print($"{v.len()} {w.len()} {v[0]} {w[2]}")
 
-    var nums: Vec<i64> = [1, 2, 3]
+    let nums: Vec<i64> = [1, 2, 3]
     var n2 = nums.clone()
     n2.swap(0, 2)
     print($"{nums[0]} {n2[0]}")
 
-    var nested: Vec<Vec<string>> = [["x"], ["y"]]
+    let nested: Vec<Vec<string>> = [["x"], ["y"]]
     var n3 = nested.clone()
     n3[0].push("z")
     print($"{nested[0].len()} {n3[0].len()}")
 
-    var people: Vec<Person> = [Person {
+    let people: Vec<Person> = [Person {
         name: "a", tags: ["t1"]
     }]
     var people2 = people.clone()
     people2[0].tags.push("t2")
     print($"{people[0].tags.len()} {people2[0].tags.len()}")
 
-    var empty: Vec<string> = []
+    let empty: Vec<string> = []
     let empty2 = empty.clone()
     print($"{empty2.len()}")
 

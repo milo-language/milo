@@ -16,7 +16,7 @@ pub fn main() {
     lo = 0.0 - (lo * lo) // -1e20, far below i32::MIN
     print(lo as i32)
 
-    var z: f64 = 0.0
+    let z: f64 = 0.0
     let nan = z / z
     print(nan as i32)
 

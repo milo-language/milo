@@ -13,7 +13,7 @@ from "std/time" import {
 }
 
 fn main(): i32 {
-    var ticks: i64 = 0
+    let ticks: i64 = 0
     let t = Task.spawn(move(): void => {
         let cmd = Command.new("sh").arg("-c").arg("sleep 0.6")
         let child = cmd.spawn()!

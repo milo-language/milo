@@ -9,7 +9,7 @@ pub struct Entry {
 }
 
 pub fn makeEntry(): Entry {
-    var s = "hello"
+    let s = "hello"
     return Entry {
         name: s, value: 42
     }

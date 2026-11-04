@@ -29,7 +29,7 @@ from "std/platform" import {
 // SignalPipe.drain because the test needs to know whether a byte was there.
 pub fn drained(p: &SignalPipe): bool {
     unsafe {
-        var buf: [u8; 8] = [0; 8]
+        let buf: [u8; 8] = [0; 8]
         return read(p.rawFd(), buf as *u8, 8) > 0
     }
 }

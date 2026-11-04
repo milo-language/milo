@@ -272,7 +272,7 @@ pub fn lbmStep(src: &Vec<f64>, dst: &mut Vec<f64>, solid: &Vec<bool>, interior: 
                 let xd = x + dxT[i]
                 let yd = y + dyT[i]
 
-                var offGrid = xd < 0 || xd >= nx || yd < 0 || yd >= ny
+                let offGrid = xd < 0 || xd >= nx || yd < 0 || yd >= ny
                 var hitSolid = false
                 if !offGrid {
                     hitSolid = solid[yd * nx + xd]

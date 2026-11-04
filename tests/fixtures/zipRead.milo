@@ -34,9 +34,9 @@ pub fn main(): i32 {
     var bad = ""
     for i in 0..243 {
         if i == cdOffField {
-            bad.push(240 as u8)
+            bad.push(240)
         } else if i > cdOffField && i < cdOffField + 4 {
-            bad.push(0 as u8)
+            bad.push(0)
         } else {
             bad.push(bytes[i] as u8)
         }

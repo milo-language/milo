@@ -112,7 +112,7 @@ pub struct World {
 }
 
 pub fn worldNew(vw: f64, vh: f64): World {
-    var w = World {
+    let w = World {
         y: 300.0, vy: 0.0, spin: 0.0,
         state: ST_READY, t: 0.0, flapT: 9.0, bobT: 0.0,
         gates: Vec.new(), parts: Vec.new(),

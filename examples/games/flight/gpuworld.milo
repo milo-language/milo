@@ -392,7 +392,7 @@ pub fn gpuWorldNew(gl: &mut GlContext, ground: &Texture, skin: &Texture, facade:
     // mean different things downstream.
     let fall = Shader.compile(&mut gl, WORLD_VERT, fallFrag())?
     let sky = Shader.compile(&mut gl, QUAD_VERT_LOCAL, skyboxFrag())?
-    var white: Vec<f32> = Vec.filled(3, 1.0)
+    let white: Vec<f32> = Vec.filled(3, 1.0)
     return Ok(GpuWorld {
         shader: shader,
         fall: fall,
@@ -687,11 +687,11 @@ pub fn drawStreams(g: &mut GpuWorld, s: &mut Scene, v: &View, w: f64, h: f64, ti
     g.shader.uniformF("uCloudReach", s.cloudReach)
     g.shader.uniformF("uCloudOn", s.cloudOn)
 
-    drawSlot(&mut g, &mut s, SLOT_NONE)
-    drawSlot(&mut g, &mut s, SLOT_GROUND)
-    drawSlot(&mut g, &mut s, SLOT_FACADE)
-    drawSlot(&mut g, &mut s, SLOT_ORTHO)
-    drawSlot(&mut g, &mut s, SLOT_SKIN)
+    drawSlot(g, s, SLOT_NONE)
+    drawSlot(g, s, SLOT_GROUND)
+    drawSlot(g, s, SLOT_FACADE)
+    drawSlot(g, s, SLOT_ORTHO)
+    drawSlot(g, s, SLOT_SKIN)
 
     // Water last, and translucent.
     //
@@ -756,7 +756,7 @@ fn drawMesh(g: &GpuWorld, s: &Scene, slot: i64) {
     }
 }
 
-fn drawSlot(g: &mut GpuWorld, s: &mut Scene, slot: i64) {
+fn drawSlot(g: &GpuWorld, s: &Scene, slot: i64) {
     if s.streams[slot].len == 0 {
         return
     }

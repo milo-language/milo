@@ -16,7 +16,7 @@ fn main() {
     // @expect: P { y: 0.1, z: 0.1 }
     print($"{p}")
 
-    var v: f32 = 3.14159
+    let v: f32 = 3.14159
     // @expect: 3.14159
     print(v.toString())
 

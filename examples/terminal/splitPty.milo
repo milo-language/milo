@@ -186,7 +186,7 @@ pub fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void 
 
 // Returns true if new data was read
 pub fn drainPty(pty: &Pty, output: &mut string): bool {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = pty.read(buf as *u8, 4095)
         if n > 0 {

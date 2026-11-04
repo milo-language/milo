@@ -598,7 +598,7 @@ fn drawMissionHeader(ui: &mut Ui, g: &Game, u: f64, alpha: f64) {
     label(&mut ui, x, 44.0 * u, u, missionTag(g), fade(colDim(), alpha))
     let name = g.missions[g.mi].name
     title(&mut ui, x, 64.0 * u, 21.0 * u, name.toUpper(), fade(colInk(), alpha))
-    var lines = wrapText(g.missions[g.mi].blurb, 9.0 * u, 430.0 * u)
+    let lines = wrapText(g.missions[g.mi].blurb, 9.0 * u, 430.0 * u)
     var y = 120.0 * u
     var i = 0
     while i < lines.len {
@@ -643,7 +643,7 @@ fn drawBrief(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     title(&mut ui, cx - titleWidth(head, size) * 0.5, y, size, head, fade(colInk(), a))
     y = y + size * 2.4
 
-    var lines = wrapText(m.blurb, 11.0 * u, 620.0 * u)
+    let lines = wrapText(m.blurb, 11.0 * u, 620.0 * u)
     var i = 0
     while i < lines.len {
         ui.textCentered(cx, y, 11.0 * u, lines[i], fade(colDim(), a))
@@ -681,7 +681,7 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     y = y + 34.0 * u
     title(&mut ui, x, y, 31.0 * u, displayName(id), fade(colInk(), a))
     y = y + 78.0 * u
-    var lines = wrapText(note, 10.0 * u, 460.0 * u)
+    let lines = wrapText(note, 10.0 * u, 460.0 * u)
     var i = 0
     while i < lines.len {
         ui.text(x, y, 10.0 * u, lines[i], fade(colInk(), a * 0.72))
@@ -807,7 +807,7 @@ fn drawTitle(ui: &mut Ui, g: &Game, u: f64, w: f64, h: f64) {
     y = y + 116.0 * u
     ui.text(x, y, 15.0 * u, "You can be a rocket scientist too.", colAccent())
     y = y + 56.0 * u
-    var lines = wrapText("Six trips, from the Moon out to Saturn. Real gravity, real launch windows, one tank of fuel. You never type a velocity - you turn a dial until the number is small enough, and then you go.", 10.0 * u, 460.0 * u)
+    let lines = wrapText("Six trips, from the Moon out to Saturn. Real gravity, real launch windows, one tank of fuel. You never type a velocity - you turn a dial until the number is small enough, and then you go.", 10.0 * u, 460.0 * u)
     var i = 0
     while i < lines.len {
         ui.text(x, y, 10.0 * u, lines[i], colDim())

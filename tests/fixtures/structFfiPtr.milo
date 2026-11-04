@@ -14,7 +14,7 @@ pub fn dump(addr: &SockAddrIn): void {
 }
 
 pub fn main(): i32 {
-    var addr = SockAddrIn {
+    let addr = SockAddrIn {
         sinLen: 16,
         sinFamily: 2,
         sinPort: 8080,

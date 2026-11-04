@@ -22,7 +22,7 @@ fn writeBoth(c: &mut Child): void {
 }
 
 fn main() {
-    var args: Vec<string> = []
+    let args: Vec<string> = []
     var c = Child.spawn("cat", args, false)!
     let out = c.takeStdout()
     writeBoth(&mut c)

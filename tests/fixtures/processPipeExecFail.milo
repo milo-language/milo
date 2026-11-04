@@ -11,7 +11,7 @@ from "std/process" import {
 }
 
 pub fn main(): i32 {
-    var args: Vec<string> = Vec.new()
+    let args: Vec<string> = Vec.new()
     match Child.spawn("milo_no_such_binary_xyz", args, true) {
         Result.Ok(child) => {
             match child.wait() {

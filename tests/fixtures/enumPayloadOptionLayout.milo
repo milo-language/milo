@@ -25,7 +25,7 @@ fn main() {
     // `guard` and `count` are ordinary locals. If Option<Wide> is sized one slot
     // short, storing into it writes past its own storage and corrupts one of them.
     var count: i64 = 0
-    var guard: i64 = 777
+    let guard: i64 = 777
 
     var slot: Option<Wide> = Option.None
     for i in 0..4 {

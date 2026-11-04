@@ -14,7 +14,7 @@ pub fn main(): i32 {
     print(Sha256.hash("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
     var m = ""
     for _i in 0..1000000 {
-        m.push(97 as u8)
+        m.push(97)
     }
     print(Sha256.hash(m))
     return 0

@@ -43,7 +43,7 @@ pub fn main(): i32 {
     var t: HashSet<i64> = HashSet<i64>.new()
     t.add(2)
     t.add(3)
-    var u = s.union(t)
+    let u = s.union(t)
     var uv = u.toVec()
     uv.sort()
     print(uv)

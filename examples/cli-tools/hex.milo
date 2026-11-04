@@ -45,8 +45,8 @@ pub fn main(): i32 {
     let plain = args.getBool("plain")
     let cols: i64 = 16
 
-    var maxLength: i64 = args.getI64("length")
-    var skipBytes: i64 = args.getI64("skip")
+    let maxLength: i64 = args.getI64("length")
+    let skipBytes: i64 = args.getI64("skip")
 
     let content = match readFile(args.getString("file") ?? "") {
         Ok(data) => data
@@ -56,7 +56,7 @@ pub fn main(): i32 {
         }
     }
 
-    var start: i64 = skipBytes
+    let start: i64 = skipBytes
     var end: i64 = content.len
     if maxLength > 0 && start + maxLength < end {
         end = start + maxLength

@@ -54,7 +54,7 @@ pub fn main(): i32 {
         Result.Err(rej) => {
             // The refusal hands the arena back, so nothing is lost.
             print("refused: freed")
-            var recovered = rej.arena
+            let recovered = rej.arena
             print("ok after refusal: " + recovered.get(c1)!.toString())
         }
     }

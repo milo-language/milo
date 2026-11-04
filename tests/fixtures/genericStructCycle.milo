@@ -30,7 +30,7 @@ impl Owner<T> {
         if ok {
             return Result.Ok(self.v)
         }
-        var r: Rejected<T> = Rejected {
+        let r: Rejected<T> = Rejected {
             owner: self, why: 7
         }
         return Result.Err(r)
@@ -38,14 +38,14 @@ impl Owner<T> {
 }
 
 fn viaGeneric<T, S>(x: T, s: Vec<S>): Result<T, Rejected<T>> {
-    var o: Owner<T> = Owner {
+    let o: Owner<T> = Owner {
         v: x
     }
     if s.len == 0 {
-        var idle: Owner<T> = Owner {
+        let idle: Owner<T> = Owner {
             v: o.take(true)!
         }
-        var r: Rejected<T> = Rejected {
+        let r: Rejected<T> = Rejected {
             owner: idle, why: 0
         }
         return Result.Err(r)

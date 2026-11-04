@@ -31,7 +31,7 @@ fn showRefusal(a: &Shared): void {
 }
 
 pub fn main(): i32 {
-    var buf = "the quick brown fox jumps over the lazy dog".clone()
+    let buf = "the quick brown fox jumps over the lazy dog".clone()
     let src = seal(buf)
     let a = src.share()
     print(a.len().toString())

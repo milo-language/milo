@@ -4,7 +4,7 @@ pub extern fn write(fd: i32, buf: *u8, len: i64): i64
 
 pub fn main(): i32 {
     // array arg to *T param — safe, auto-decays
-    var buf: [u8; 3] = [104, 105, 10]
+    let buf: [u8; 3] = [104, 105, 10]
     write(1, buf, 3)
 
     // string arg to *u8 param — safe, auto-coerces

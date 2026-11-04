@@ -243,7 +243,7 @@ pub fn main(): i32 {
         exit((code >> 8) & 255)
     }
 
-    var status: [u8; 4] = [0; 4]
+    let status: [u8; 4] = [0; 4]
     var timedOut = false
     while true {
         let remainMs = deadlineMs - epochMillis()
