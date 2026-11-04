@@ -16,10 +16,18 @@ ensures result.len() >= 0
     return s
 }
 
-@req(HLR-1)
-pub fn main(): i32
+// A test cannot import main, so the entry's logic lives here.
+@req(LLR-2)
+pub fn entry(): i32
 ensures result >= 0
 {
     let s: string = banner(5)
     return s.len() as i32
+}
+
+@req(LLR-2)
+pub fn main(): i32
+ensures result >= 0
+{
+    return entry()
 }

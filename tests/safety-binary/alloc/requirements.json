@@ -2,6 +2,7 @@
   "$schema": "../../../docs/schema/requirements.schema.json",
   "requirements": [
     { "id": "HLR-1", "text": "The program shall return the length of the banner." },
-    { "id": "LLR-1", "parent": "HLR-1", "text": "banner shall build a string of 2n bytes." }
+    { "id": "LLR-1", "parent": "HLR-1", "text": "banner shall build a string of 2n bytes." },
+    { "id": "LLR-2", "parent": "HLR-1", "text": "entry shall return the banner length for n = 5." }
   ]
 }

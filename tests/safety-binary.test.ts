@@ -75,7 +75,7 @@ describe("pinned build", () => {
 describe("checks on the binary", () => {
   test("noDynamicAllocation: a hidden heap allocation fails the build and removes the binary", () => {
     const out = join(dir, "alloc.elf");
-    const b = milo(["build", join(FIX, "alloc", "alloc.milo"), ...M3, "--safety=do178c-a", "-o", out]);
+    const b = milo(["build", join(FIX, "alloc", "alloc.milo"), ...M3, "--safety=do178c-a", "--strict", "-o", out]);
     expect(b.code).toBe(1);
     expect(b.out).toMatch(/FAIL \[allocation\] .*main.* -> malloc/);
     expect(existsSync(out)).toBe(false);
