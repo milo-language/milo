@@ -2356,8 +2356,8 @@ function closureAssignedNames(body: Stmt[]): Set<string> {
 function mintFreeValue(ctx: CallModel, stem: string, typeName: string, place: string, why: string): string {
   const sym = `${stem.replace(/[^A-Za-z0-9_]/g, "_")}__free${ctx.n++}`;
   ctx.decls.push(declareConst(sym, typeName));
-  // What the type itself guarantees; i64 stays unbounded for the reason INT_RANGES gives.
-  const fact = typeName === "u64" ? `(assert (>= ${sym} 0))` : intRangeAssumption(sym, typeName);
+  // What the type itself guarantees.
+  const fact = intRangeAssumption(sym, typeName);
   if (fact) { ctx.assumes.push(fact); HAVOC_TYPING_FACTS.add(fact); }
   ctx.scope.add(sym);
   FREE_VALUE_SYMS.add(sym);
@@ -2820,11 +2820,6 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
       });
     }
 
-    // i64/u64 params carry no range in allDecls (see INT_RANGES), so an
-    // rte query states it itself: otherwise a counterexample could be a value no i64 holds.
-    const wideRanges = fn.params
-      .filter(p => p.type?.name && RTE_RANGES[p.type.name] && !INT_RANGES[p.type.name])
-      .map(p => { const [lo, hi] = RTE_RANGES[p.type!.name]!; return `(assert (and (>= ${p.name} ${smtInt(lo)}) (<= ${p.name} ${smtInt(hi)})))`; });
     for (const s of symResult.rte) {
       const guard = s.conditions.length > 0 ? `(assert (and true ${s.conditions.join(" ")}))` : "";
       const leansOn = cutsIn(s.conditions);
@@ -2837,7 +2832,6 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
           `; Runtime error: ${s.what} in ${fn.name}: ${s.text}`,
           `(set-logic ALL)`,
           allDecls,
-          ...wideRanges,
           preAssumptions,
           guard,
           `(assert (not ${s.cond}))`,
@@ -3325,9 +3319,7 @@ function binOpToSmt(op: string): string {
 // "refute" a contract like `requires a >= -2147483648` that no i32 can actually violate.
 // It is an assumption about the inputs, so it only ever makes a proof easier — it cannot
 // turn a proven VC into a failing one.
-// i64/u64 are absent for a historical reason: the removed std/smt solver could not take
-// bounds at ±2^63. z3 can, so this is now only an unrevisited choice (rte queries add the
-// wide ranges themselves, see wideRanges). The narrow types carry the weight anyway.
+// Every fixed-width int is bounded (z3 takes the ±2^63 and 2^64 bounds).
 const INT_RANGES: Record<string, [string, string]> = {
   i8: ["(- 128)", "127"],
   i16: ["(- 32768)", "32767"],
@@ -3335,6 +3327,8 @@ const INT_RANGES: Record<string, [string, string]> = {
   u8: ["0", "255"],
   u16: ["0", "65535"],
   u32: ["0", "4294967295"],
+  i64: ["(- 9223372036854775808)", "9223372036854775807"],
+  u64: ["0", "18446744073709551615"],
 };
 
 function intRangeAssumption(name: string, typeName: string | undefined): string | null {
