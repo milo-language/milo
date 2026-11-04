@@ -19,7 +19,7 @@ import {
   ExitProgram, InterpStuck, type MapV, InterpUnsupported, MOVED, NeedTasks, Panic, staticStr,
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
-import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, numberToString, sliceView, type Native } from "./interp-natives";
+import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
 // Control flow raised from expression position (`?`, a diverging if/match arm): caught by the
@@ -1016,7 +1016,7 @@ export class Interp {
     return this.callResolved(name, e.args, e);
   }
   // call the function the checker resolved `name` to; `recv` is a method receiver passed first
-  callResolved(name: string, args: Expr[], e?: Expr, sig?: unknown, recv?: Expr): Value {
+  callResolved(name: string, args: Expr[], e?: Expr, _sig?: unknown, recv?: Expr): Value {
     const fn = this.fns.get(name);
     const all = recv ? [recv, ...args] : args;
     const nat = this.lookupNative(normName(name));
@@ -1056,9 +1056,9 @@ export class Interp {
     if (special !== NOT_NATIVE) return special;
     const ifc = this.cr.interfaceMethodCalls.get(e);
     if (ifc) {
-      let obj = this.peek(e.object) as { k: "iface"; concrete: string; inner: Value };
-      if (obj && obj.k === "box") obj = (obj as unknown as { cell: { v: Value } }).cell.v as typeof obj; // Heap<Interface>
-      if (!obj || obj.k !== "iface") this.stuck("E-IFACE", "method call on a non-interface value");
+      let obj: Value = this.peek(e.object);
+      if (obj && typeof obj === "object" && obj.k === "box") obj = obj.cell.v; // Heap<Interface>
+      if (!obj || typeof obj !== "object" || obj.k !== "iface") this.stuck("E-IFACE", "method call on a non-interface value");
       const fnName = this.concreteMethodFn(obj.concrete, ifc.methodName);
       const pl = this.resolve(e.object);
       const self: Ref = isRef(obj.inner) ? obj.inner : { k: "mut", slot: pl.slot, path: [...pl.path, "iface"] as Step[] };
@@ -1095,7 +1095,7 @@ export class Interp {
     try { return this.runStmts(stmts); }
     finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
-  runBlockIf(stmts: Stmt[] | undefined): Completion {
+  runBlockIf(stmts: Stmt[] | null | undefined): Completion {
     return stmts ? this.runBlock(stmts) : undefined;
   }
   runStmt(s: Stmt): Completion {
@@ -1231,7 +1231,7 @@ export class Interp {
         }
       }
       const delegate = this.cr.iterDelegates.get(s);
-      let iterE = s.iterable;
+      let iterE: Expr = s.iterable;
       if (delegate) iterE = { kind: "FieldAccess", object: s.iterable, field: delegate } as Expr;
       // a synthesized delegate access has no recorded type: read it off the struct
       const st = this.T(s.iterable);

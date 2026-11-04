@@ -24,7 +24,7 @@ const plainAst = (t: MiloType | null | undefined): t is MiloType => !!t && !!t.i
 // A slot: where the value goes, and the declared type to rewrite when the source has one.
 interface Slot { what: string; ast?: MiloType; plainTy?: boolean }
 
-export function checkPlainClosureEnv(host: ProgramPassHost, program: Program, view: ProgramView): void {
+export function checkPlainClosureEnv(host: ProgramPassHost, program: Program, _view: ProgramView): void {
   const seen = new Set<string>();
   const structs = new Map(program.structs.map(s => [s.name, s]));
   const report = (value: Expr, slot: Slot) => {

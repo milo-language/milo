@@ -35,7 +35,7 @@ const BATCH = 32;
 const isGen = (v: unknown): v is Generator<unknown, Value, unknown> => !!v && typeof v === "object" && typeof (v as { next?: unknown }).next === "function";
 
 export class InterpCo extends InterpGen {
-  coMode = true;
+  override coMode = true;
   tasks = new Map<number, Task>();
   runq: Task[] = [];
   cur!: Task;
@@ -103,7 +103,7 @@ export class InterpCo extends InterpGen {
   }
 
   // A native runs here; a task operation is a generator (or a plain function that needs the scheduler).
-  *runNative$g(nat: Native, args: Value[], e?: import("./ast").Expr): Gen {
+  override *runNative$g(nat: Native, args: Value[], e?: import("./ast").Expr): Gen {
     const r = nat(this, args, e) as Value | Generator<unknown, Value, unknown>;
     return isGen(r) ? yield* r : r;
   }
@@ -141,7 +141,7 @@ export class InterpCo extends InterpGen {
   }
 
   // R-TASK-MAIN: main runs as the first task; the program ends when it returns.
-  runMain(main: AstFn): Value {
+  override runMain(main: AstFn): Value {
     const t: Task = { id: this.nextTaskId++, state: "ready", gen: null, ctx: { frames: [], temps: [], depth: 0, pend: [] }, isMain: true, joiner: null, scopesOpen: 0, scope: null, cacheable: false, why: "" };
     t.gen = this.callFn$g(main, []);
     this.tasks.set(t.id, t);
@@ -169,7 +169,7 @@ export class InterpCo extends InterpGen {
         task.state = "done";
         this.reap(task);
         if (task.isMain) { this.leakRuntime(); return r.value; }
-      } else if (task.state === "ready") this.runq.push(task);
+      } else if ((task.state as string) === "ready") this.runq.push(task);
     }
   }
 }
