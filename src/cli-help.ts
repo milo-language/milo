@@ -151,12 +151,21 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       { flag: "--strict", help: "(.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause" },
       { flag: "--safety=<do178 profile>", help: "(.milo) same as --strict" },
       { flag: "--baseline <file>", help: "(.milo) gaps listed in <file> stay warnings under --strict; new gaps fail (write one with --write-baseline <file>)" },
+      { flag: "--spec-base <git-ref>", help: "(.milo) with --strict: fail on any unsigned spec weakening since <ref> (see milo spec)" },
       { flag: "--requirements <file>", help: "(.milo) requirements.json elsewhere than next to the entry" },
       { flag: "--tests <file|dir>", help: "(.milo) where the @req tests live (default: *_test.milo beside the entry)" },
       { flag: "--json", help: "(.milo) the matrix as data; (trace file) {version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
       { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
       { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
       { flag: "--object <binary>", help: "(.milo) add the address ranges of a binary built with -g that implement each requirement" },
+    ],
+  },
+  {
+    name: "spec", usage: "spec <entry.milo>",
+    summary: "the spec lock: print the intent surface (requirements, contract clauses, invariants); --diff <ref> classifies changes since a git ref and asks z3 whether a changed clause only strengthens",
+    flags: [
+      { flag: "--diff <git-ref>", help: "compare with the spec at <ref>: additions and strengthenings are ok; removals, text changes, weakenings (with a z3 counterexample) and undecided changes need an entry in spec-signoff.json (id, hash, who, why); exit 1 if any is unsigned" },
+      { flag: "--json", help: "the surface or the changes as data" },
     ],
   },
   {

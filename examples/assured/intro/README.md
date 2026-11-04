@@ -93,6 +93,50 @@ strict: 3 failures
 The proof fails (there is an input that breaks R-1) and the test fails too, and the report says
 which requirement broke, not just which line.
 
+## 6. Lock the spec
+
+Code may change freely; intent may not change silently. `milo spec heater.milo` prints the intent
+surface (every requirement, contract clause and invariant, with its `@req`), and
+`milo spec --diff <git-ref> heater.milo` compares it with the spec at a ref. Additions and
+strengthenings pass; removals, requirement text changes and weakenings need a sign-off.
+
+Weaken R-1's `ensures` to `result >= 0` (drop the upper bound) and diff against the last commit:
+
+```text
+$ milo spec --diff HEAD heater.milo
+spec diff against HEAD: 1 change
+  NEEDS SIGN-OFF: clause weakened: heater.milo:heaterPercent ensures @R-1  [hash 753e36230c02]
+      was: result >= 0 && result <= 100
+      now: result >= 0
+      weakened: an outcome the new contract allows and the old one forbade
+      counterexample: result = 101, target = 0, reading = 0
+1 change needs sign-off in spec-signoff.json
+```
+
+z3 found an outcome (101) the old contract forbade and the new one allows. Now strengthen instead
+(`result >= 0 && result <= 80`):
+
+```text
+$ milo spec --diff HEAD heater.milo
+spec diff against HEAD: 1 change
+  ok: clause strengthened: heater.milo:heaterPercent ensures @R-1  [hash 1256feec3787]
+      was: result >= 0 && result <= 100
+      now: result >= 0 && result <= 80
+      new implies old under the old requires
+spec lock: ok
+```
+
+A human accepts a weakening by adding it to `spec-signoff.json` beside `requirements.json`, with the
+id and hash the diff printed:
+
+```json
+{ "signoffs": [{ "id": "heater.milo:heaterPercent ensures @R-1", "hash": "753e36230c02", "who": "cs", "why": "the actuator clamps at 100" }] }
+```
+
+In CI, `milo trace heater.milo --strict --spec-base <merge-base>` (and strict builds given the same
+flag) fails on any unsigned change. Without `--spec-base` nothing changes. Review edits to
+`spec-signoff.json` like any change to the requirements.
+
 ## Where to go next
 
 - Without `--strict`, gaps are warnings: use that while developing.

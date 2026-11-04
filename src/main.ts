@@ -362,6 +362,8 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
 
 // `--strict` and `--baseline <file>` for build and verify. Taken out before parseArgs so a
 // baseline path is never mistaken for the source file.
+// --spec-base <ref> rides along in SPEC_BASE: enforceTraceability and verify read it (src/specLock.ts).
+let SPEC_BASE: string | undefined;
 function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; baseline?: string } {
   const out: string[] = [];
   let strict = false;
@@ -371,6 +373,8 @@ function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; base
     if (a === "--strict") strict = true;
     else if (a === "--baseline") baseline = args[++i];
     else if (a.startsWith("--baseline=")) baseline = a.slice(11);
+    else if (a === "--spec-base") SPEC_BASE = args[++i];
+    else if (a.startsWith("--spec-base=")) SPEC_BASE = a.slice(12);
     else out.push(a);
   }
   return { args: out, strict, baseline };
@@ -386,7 +390,7 @@ function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; base
 function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, strict: boolean, baseline?: string): void {
   const under = parsePreset(level) ? `profile ${level}` : `--safety=${level}`;
   const lv = parseSafetyLevel(level);
-  const rep = traceEntry({ entry, json: false, strict, noRun: !strict, ...(lv ? { minTraceDepth: minTraceDepthOf(lv) } : {}), ...(baseline ? { baseline } : {}) }, traceDeps(target, warningConfig));
+  const rep = traceEntry({ entry, json: false, strict, noRun: !strict, ...(lv ? { minTraceDepth: minTraceDepthOf(lv) } : {}), ...(baseline ? { baseline } : {}), ...(SPEC_BASE ? { specBase: SPEC_BASE } : {}) }, traceDeps(target, warningConfig));
   if (!rep.ok) {
     console.error(formatTrace(rep));
     console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under ${under}`);
@@ -487,7 +491,7 @@ function runVerify(args: string[]): number {
   if (errs.length) { console.log(display(program.displayNames, formatSafetyReport(violations, level))); ok = false; }
 
   // verify is the release path: a strict-traceability profile is always enforced here.
-  const rep = traceEntry({ entry, json: false, strict: traceabilityOf(level) === "strict", minTraceDepth: minTraceDepthOf(level), ...(tf.baseline ? { baseline: tf.baseline } : {}) }, traceDeps(target, wc));
+  const rep = traceEntry({ entry, json: false, strict: traceabilityOf(level) === "strict", minTraceDepth: minTraceDepthOf(level), ...(tf.baseline ? { baseline: tf.baseline } : {}), ...(SPEC_BASE ? { specBase: SPEC_BASE } : {}) }, traceDeps(target, wc));
   for (const m of rep.baselined) console.log(`  warning: baselined gap: ${m}`);
   for (const k of rep.staleBaseline) console.log(`  warning: baseline lists a gap that is fixed, remove it: ${k}`);
   if (rep.requirementsFile || rep.strict) {
@@ -2174,6 +2178,10 @@ async function main() {
   // anything else is a record/replay trace file (src/trace.ts).
   if (cmd === "trace" && args.slice(1).some(a => a.endsWith(".milo"))) {
     process.exit(runTraceCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
+  }
+
+  if (cmd === "spec") {
+    process.exit(require("./specLock").runSpecCommand(args.slice(1)));
   }
 
   if (cmd === "trace-object") {
