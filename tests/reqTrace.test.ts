@@ -650,3 +650,11 @@ test("milo safety --list names the presets", () => {
   expect(out).toMatch(/\n\s+app\s+requirements reported/);
   expect(out).toMatch(/\n\s+hardened\s+app, plus prove --rte/);
 });
+
+// trace hands `milo test` an absolute path, where names are module-mangled; a test tagging a derived
+// requirement must still count as a test, or the whole file stops compiling under trace.
+test("a test may @req a derived requirement when reached by absolute path", () => {
+  const file = join(import.meta.dir, "..", "std", "json", "json_test.milo");
+  const r = spawnSync(process.execPath, [join(import.meta.dir, "..", "src", "main.ts"), "test", "--json", file, "-t", "^(testAccessors)$"], { encoding: "utf-8" });
+  expect(JSON.parse(r.stdout).passed).toBe(1);
+});

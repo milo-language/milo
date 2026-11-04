@@ -280,7 +280,8 @@ function declUses(fns: { fn: Function; name: string }[], structs: Program["struc
     out.push({
       name, loc: { file, line: fn.span?.line ?? 0 }, decl: "fn",
       // A test follows the `milo test` convention: top-level `test*`, no parameters.
-      isTest: fn.name.startsWith("test") && fn.params.length === 0 && fn.typeParams.length === 0,
+      // A test file reached by absolute path has module-mangled names (json_test$testX).
+      isTest: fn.name.slice(fn.name.lastIndexOf("$") + 1).startsWith("test") && fn.params.length === 0 && fn.typeParams.length === 0,
       implements: idsOf(a, "req"), ownReq: idsOf(a, "req", false), canFail: canFail(fn), derived: idsOf(a, "derived"), assumes: idsOf(a, "assume"),
       ...(idsOf(a, "deactivated").length ? { deactivated: idsOf(a, "deactivated")[0] } : {}),
       clauses: clausesOf(fn.contracts, file),
