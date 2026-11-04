@@ -4,8 +4,7 @@
 //   populateScalarToLLVMPatterns  milo arithmetic, casts, locals, return -> LLVM dialect,
 //                             used by convert-milo-to-llvm
 //
-// The traps print what the legacy backend printed, byte for byte on stderr (the goldens in
-// tests/golden hold them): overflow calls the module's `__milo_overflow_fail(file, line)`,
+// The traps print what the legacy backend printed, byte for byte on stderr: overflow calls the module's `__milo_overflow_fail(file, line)`,
 // every other panic calls `__milo_mlir_panic(msg)`, which prints msg and then aborts
 // through the panic hook. Both routines are the scaffold's (src/scaffold.ts).
 #include "Milo.h"

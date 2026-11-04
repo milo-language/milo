@@ -1,6 +1,6 @@
-// Random Milo program generator for scripts/gen-programs.ts: deterministic from a seed, biased
-// to ownership edge cases (moves in branches, field moves, reassigned moved places, closures,
-// `?` with live locals, early exits holding owned values, Drop order, green tasks).
+// Random Milo program generator for scripts/gen-programs.ts, deterministic from a seed.
+// It is biased to ownership edge cases (moves in branches, field moves, reassigned moved places,
+// closures, `?` with live locals, early exits holding owned values, Drop order, green tasks).
 //
 // The generator tracks which variables are moved (whole or by field) as it goes, so most
 // programs are accepted by the checker; the runner still checks each one and drops rejects.

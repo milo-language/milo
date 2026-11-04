@@ -73,8 +73,8 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-interp-co.ts` | Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can reach a task switch. |
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |
 | `scripts/gen-lang-docs.ts` | Renders the published language reference from `milo lang --json`. |
-| `scripts/gen-programs-grammar.ts` | Random Milo program generator for scripts/gen-programs.ts: deterministic from a seed, biased to ownership edge cases (moves in branches, field moves, reassigned moved places, closures, `?` with live… |
-| `scripts/gen-programs.ts` | Differential fuzzer: random well-typed Milo programs (scripts/gen-programs-grammar.ts) run in the reference interpreter, as a -O0 binary (live heap blocks counted with scripts/livecount.c, darwin) an… |
+| `scripts/gen-programs-grammar.ts` | Random Milo program generator for scripts/gen-programs.ts, deterministic from a seed. |
+| `scripts/gen-programs.ts` | Differential fuzzer over random well-typed Milo programs (scripts/gen-programs-grammar.ts). |
 | `scripts/gen-scripts-doc.ts` | Regenerates the Index table in docs/scripts.md from each script's own first comment line, so the index cannot fall behind the directory. |
 | `scripts/gen-spec.ts` | Generates docs/spec.md — the normative language specification, from the suites that already decide what the compiler does. |
 | `scripts/gen-src-doc.ts` | Regenerates the compiler-source index in docs/src.md from each src/*.ts file's own first comment line, so the map of the compiler cannot fall behind the directory. |
@@ -86,7 +86,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/hir-cover.ts` | Which fixtures exercise which HIR expression kinds? |
 | `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
 | `scripts/interp-coverage.ts` | What the reference interpreter (src/interp.ts, `milo interp`) can run, and whether what it prints is what the fixture's author wrote down. |
-| `scripts/interp-vs-golden.ts` | Second-oracle gate: run every fixture through the reference interpreter (src/interp.ts, `milo interp`) and compare stdout, exit code and live heap blocks at exit with the recorded golden (tests/golde… |
 | `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
 | `scripts/ir-same.ts` | Byte-identical IR gate: proves a codegen refactor changed no emitted LLVM IR, by emitting IR for every fixture and example in both a base commit and the working tree and comparing the bytes. |
 | `scripts/jpeg-grade.ts` | Grades std/jpeg against libjpeg-turbo: decoder pixels vs djpeg, encoder bytes vs cjpeg, and decode/encode speed. |
@@ -97,7 +96,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-census.ts` | Compile-only MLIR coverage census: emit-ir with MILO_MLIR_LOG over every fixture and example with a main plus milojs's two entry points, then the function-instance coverage and the top legacy reasons. |
 | `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend: each program's LLVM IR for a non-host target must be for that target. |
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
-| `scripts/mutability-census.ts` | Corpus census for `var-never-reassigned` and `unwritten-mut-param`: how many hits each has over examples/**, tests/fixtures and std, and whether `milo fix` leaves every file that checked before still… |
+| `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
 | `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
@@ -119,7 +118,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/selfhost.sh` | Build milo-self (the Milo compiler written in Milo) with the TS compiler. |
 | `scripts/stamp-version.ts` | Stamps the current commit into src/version.ts so a released binary can report which commit built it. |
 | `scripts/strip-string-clones.ts` | Deletes `.clone()` calls on strings: strings are values (copy on write, shared by count where the code reads them again), so every string clone is redundant and removing one changes no behaviour. |
-| `scripts/trace-semantics.ts` | Two-way trace between the written semantics (docs/semantics/milo.md) and the reference interpreter (src/interp*.ts), so neither can drift from the other unseen: (a) every rule ID the doc defines is c… |
+| `scripts/trace-semantics.ts` | Two-way trace between docs/semantics/milo.md and the reference interpreter (src/interp*.ts). |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |

@@ -1,7 +1,7 @@
 // Live heap blocks at exit, for scripts/mlir-same.ts --owned: injected with
 // DYLD_INSERT_LIBRARIES (darwin), it counts malloc/calloc/realloc/free and writes the
 // number of blocks still allocated at exit to $MILO_LIVECOUNT_OUT. The same program built
-// through MLIR must end with the number recorded in its golden: one more is a
+// through MLIR must end with the number the reference interpreter ends with: one more is a
 // missing drop, one fewer an extra free. A count, not a leak report, so unlike `leaks` it
 // needs no task port (which this machine's lldb and `leaks` cannot get).
 //

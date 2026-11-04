@@ -1,7 +1,7 @@
 #!/bin/sh
 # Correctness gates for the milo dialect, fast enough for CI (~1 min): FileCheck tests,
 # dialect hygiene, round-trip of every test file and every emitted program module, and the
-# golden gate on test/programs. mlir/run.sh adds the kernel benchmarks on top.
+# interpreter-oracle gate on test/programs. mlir/run.sh adds the kernel benchmarks on top.
 # Every count is checked against what exists on disk, so a gate that silently stops
 # matching files fails instead of reporting a smaller "ok".
 set -eu
@@ -57,6 +57,6 @@ done
 [ "$m" -eq "$progs" ] || { echo "FAIL: $m emitted modules for $progs programs"; exit 1; }
 echo "ok ($n test files, $m emitted modules)"
 
-echo "== golden: test/programs built through MLIR match tests/golden (stdout, stderr, exit)"
+echo "== oracle: test/programs built through MLIR match the reference interpreter (stdout, exit)"
 out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 1; }
 echo "$out" | tail -1

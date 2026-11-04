@@ -262,9 +262,8 @@ src/emit-mlir.ts, src/mlir-glue.ts, mlir/Drops.cpp). Only the atomics stay IR te
 ## Gates
 
 - **Corpus diff**: `bun test tests/run.test.ts` passes. `bun scripts/mlir-same.ts` builds
-  every fixture through MLIR and compares stdout, stderr and exit status with the recorded
-  goldens in `tests/golden` (the frozen oracle; never re-record from MLIR output except
-  deliberately, with a note in the commit), and prints coverage and build time; it fails when
+  every fixture through MLIR and compares stdout, exit code and live heap blocks with the reference
+  interpreter (`milo interp`; no recorded output is kept), and prints coverage and build time; it fails when
   nothing went through MLIR. `--programs` runs only `mlir/test/programs/` (scalar programs and
   one per trap, seconds), which `mlir/run.sh` runs too.
 - **FileCheck tests** per pass and per lowering, in `mlir/test/`, each run by its own
@@ -274,7 +273,7 @@ src/emit-mlir.ts, src/mlir-glue.ts, mlir/Drops.cpp). Only the atomics stay IR te
 - **Ownership**, required for any commit touching ownership lowering (owned slots, scopes,
   moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs --owned` before
   committing, the full corpus with `--owned` in the background. For every program, live heap
-  blocks at exit must equal the golden's (`scripts/livecount.c`, a malloc/free counter
+  blocks at exit must equal the interpreter's (`scripts/livecount.c`, a malloc/free counter
   injected with DYLD_INSERT_LIBRARIES; on Linux LeakSanitizer covers it), at -O2 and on
   `--fast` (-O0) builds, and the binary must run clean under ASan
   (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs on macOS). The
@@ -306,5 +305,5 @@ Linux), cached on the hash of `mlir/` sources and the LLVM version.
 ## History
 
 The migration ran in milestones M0 to M7 from 2026-10-31 to 2026-11-02. The legacy LLVM-text
-backend was deleted at 7d2dd24c; `tests/golden` is the recorded oracle that replaced the
-legacy/MLIR differential. The full log is in git history: `git log -p -- docs/mlir-backend.md`.
+backend was deleted at 7d2dd24c; the reference interpreter is the oracle that replaced the
+legacy/MLIR differential (recorded goldens were used in between, and are deleted). The full log is in git history: `git log -p -- docs/mlir-backend.md`.

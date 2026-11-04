@@ -15,7 +15,7 @@ import { InterpCo, runChecked } from "../src/interp-co";
 import { InterpStuck } from "../src/interp-values";
 import type { Program } from "../src/ast";
 import type { CheckResult } from "../src/checker";
-import { compareOne } from "../scripts/interp-vs-golden";
+import { compareOne } from "../scripts/interp-coverage";
 
 const dir = mkdtempSync(join(tmpdir(), "milo-interp-net-"));
 let n = 0;

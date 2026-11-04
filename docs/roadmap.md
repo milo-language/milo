@@ -177,7 +177,7 @@ and ASCII byte APIs state their representation.
 CLI: `argparse`, `color`, `log`
 Time: `time`, `datetime`, `uuid`
 Testing: `testing`
-Prelude: `prelude`
+Prelude: `prelude`, `rt` (runtime routines the compiler calls by name; not public API)
 
 (100 files — several modules are platform splits.) Discover signatures with `milo api <terms>`; dump a module with `milo api --module std/<name>`.
 

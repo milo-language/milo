@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// Differential fuzzer: random well-typed Milo programs (scripts/gen-programs-grammar.ts) run in
-// the reference interpreter, as a -O0 binary (live heap blocks counted with scripts/livecount.c,
-// darwin) and as a -O2 binary under ASan. Any difference in stdout, exit code or live blocks,
+// Differential fuzzer over random well-typed Milo programs (scripts/gen-programs-grammar.ts).
+// Each runs in the reference interpreter, as a -O0 binary (live heap blocks counted with
+// scripts/livecount.c, darwin) and as a -O2 binary under ASan. Any difference in stdout, exit code or live blocks,
 // or any ASan report, is a compiler bug, a checker bug or an interpreter bug. A divergent
 // program is reduced (statements and blocks dropped while the same divergence persists) and
 // saved to tests/fixtures/gen/ (--save) or printed.

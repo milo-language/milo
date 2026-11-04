@@ -59,7 +59,7 @@ jobs:
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
       - run: bun test
-      # Dialect gates (FileCheck, hygiene, round-trip, test/programs goldens). Until
+      # Dialect gates (FileCheck, hygiene, round-trip, test/programs against the reference interpreter). Until
       # 2026-11-03 they lived only in mlir/run.sh, which CI never ran.
       - name: MLIR dialect gates
         run: sh mlir/check.sh

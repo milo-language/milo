@@ -1,7 +1,7 @@
 // The reference interpreter (src/interp.ts) against docs/semantics/milo.md: small programs
 // whose output pins one rule each (move, field move, drop order, &mut write-back, temporaries),
-// a program the checker would reject run anyway to see it get stuck, and the golden comparison
-// (scripts/interp-vs-golden.ts) over a slice of the fixtures.
+// a program the checker would reject run anyway to see it get stuck, and the @expect comparison
+// (scripts/interp-coverage.ts) over a slice of the fixtures.
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -17,7 +17,7 @@ import { explore, type ExploreOptions } from "../src/interp-explore";
 import { InterpStuck } from "../src/interp-values";
 import type { Program } from "../src/ast";
 import type { CheckResult } from "../src/checker";
-import { compareOne } from "../scripts/interp-vs-golden";
+import { compareOne } from "../scripts/interp-coverage";
 
 const dir = mkdtempSync(join(tmpdir(), "milo-interp-test-"));
 let n = 0;
@@ -325,7 +325,7 @@ const FIXTURES = [
 // every fixture tagged `// @rule: ID` stands as the test for that rule (scripts/trace-semantics.ts check (c)), so it runs too
 const FIXDIR = join(import.meta.dir, "fixtures");
 const TAGGED = readdirSync(FIXDIR).filter(f => f.endsWith(".milo") && /^\/\/ @rule:/m.test(readFileSync(join(FIXDIR, f), "utf-8"))).map(f => f.slice(0, -5));
-test("interp-vs-golden: a slice of the fixtures, and every fixture tagged with a rule, is the same as the compiled run", async () => {
+test("interp-coverage: a slice of the fixtures, and every fixture tagged with a rule, prints what its @expect lines say", async () => {
   const results = [];
   for (const name of new Set([...FIXTURES, ...TAGGED])) results.push(await compareOne({ path: join(import.meta.dir, "fixtures", `${name}.milo`), name, kind: "fixtures" }, dir));
   const bad = results.filter(r => r.verdict !== "same");

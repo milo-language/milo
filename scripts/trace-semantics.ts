@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// Two-way trace between the written semantics (docs/semantics/milo.md) and the reference
-// interpreter (src/interp*.ts), so neither can drift from the other unseen:
+// Two-way trace between docs/semantics/milo.md and the reference interpreter (src/interp*.ts).
+// Neither can drift from the other unseen:
 //   (a) every rule ID the doc defines is cited by at least one interpreter function;
 //   (b) every interpreter function cites a rule, or is in ALLOW below with a reason (plumbing);
 //   (c) every rule ID is exercised by a test: its ID appears in a test title in
