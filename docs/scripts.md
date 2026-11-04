@@ -100,6 +100,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/render-formula.ts` | Renders the Homebrew formula for a release and prints it to stdout. |
 | `scripts/rgbench.sh` | rgbench — compare our rg against real ripgrep, honestly. |
 | `scripts/rgdiff.sh` | Differential test: our Milo port of ripgrep (examples/cli-tools/rg.milo) vs real `rg`. |
+| `scripts/rte-census.ts` | Silver-progress number: `milo prove --rte` over examples/embedded and std, tallied per runtime-error site and kind (overflow / bounds / division) as proven / failed / unknown(+error). |
 | `scripts/run-examples.ts` | Compiles every example entrypoint and runs the ones marked runnable. |
 | `scripts/selfhost-asan.ts` | Is the code milo-self GENERATES memory-safe? |
 | `scripts/selfhost-examples.ts` | Compile every examples/ entrypoint with milo-self (the Milo compiler written in Milo) and bucket the failures — the examples-side counterpart to scripts/selfhost-sweep.ts. |

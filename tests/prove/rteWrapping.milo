@@ -1,0 +1,18 @@
+// @flags: --rte --solver=z3
+// @proven: 0
+// @failed: 1
+// @unknown: 0
+// `@wrapping` arithmetic is modular and cannot trap, so it owes no overflow condition. The plain
+// twin beside it still does (and is refuted), which keeps this from passing on an empty report.
+@wrapping
+pub fn wrapAdd(a: i32, b: i32): i32 {
+    return a + b * a - b
+}
+
+pub fn plainAdd(a: i32, b: i32): i32 {
+    return a + b
+}
+
+pub fn main() {
+    print(0)
+}

@@ -3,6 +3,9 @@
 // fixture in tests/prove/ annotates the expected proven/failed/unknown tallies;
 // the driver runs the default (std/smt) engine and asserts the report matches.
 //
+// A `// @flags: --rte --solver=z3` header adds those flags to the prove command. Fixtures that
+// name `--solver=z3` are skipped when z3 is not installed.
+//
 // A fixture that also carries `// @expect:` lines is built with `--debug` and RUN, and its
 // stdout must match line for line. `--debug` turns every contract into a runtime assert,
 // so the same clauses the prover reasoned about are checked against real execution: a
@@ -11,7 +14,7 @@
 // proves: the builtin container contracts in verify.ts, above all.
 import { test, expect, describe, beforeAll } from "bun:test";
 import { readdirSync, readFileSync, mkdtempSync } from "fs";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { guardedRun } from "../scripts/guard";
@@ -33,14 +36,18 @@ function annCount(src: string, key: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+const HAVE_Z3 = spawnSync("z3", ["--version"]).status === 0;
+
 describe("prove (std/smt engine)", () => {
   const files = readdirSync(PROVE_DIR).filter(f => f.endsWith(".milo"));
 
   for (const file of files) {
-    test(file.replace(".milo", ""), async () => {
+    const flags = (readFileSync(join(PROVE_DIR, file), "utf-8").match(/\/\/\s*@flags:\s*(.*)$/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
+    const run = flags.includes("--solver=z3") && !HAVE_Z3 ? test.skip : test;
+    run(file.replace(".milo", ""), async () => {
       const src = readFileSync(join(PROVE_DIR, file), "utf-8");
       // prove exits 1 when a contract is refuted; the report still prints first.
-      const r = await guardedRun(MILOC, ["prove", join(PROVE_DIR, file)], {
+      const r = await guardedRun(MILOC, ["prove", join(PROVE_DIR, file), ...flags], {
         env: CHILD_ENV,
         virtualMemMb: 8192,
       });

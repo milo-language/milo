@@ -97,6 +97,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     summary: "prove contracts hold, via std/smt, the milo-native prover",
     flags: [
       { flag: "--solver=z3", help: "use z3 instead (adds non-linear arithmetic)" },
+      { flag: "--rte", help: "also prove no overflow, no out-of-bounds index, no division by zero" },
       { flag: "--emit-smt", help: "print the SMT-LIB2 obligations instead of solving them" },
       { flag: "--all", help: "include imported stdlib" },
       { flag: "--json", help: "machine-readable report" },

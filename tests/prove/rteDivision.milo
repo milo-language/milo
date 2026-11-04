@@ -1,0 +1,25 @@
+// @flags: --rte --solver=z3
+// @proven: 3
+// @failed: 3
+// @unknown: 0
+// Division has two traps: a zero divisor and, for signed types, MIN / -1. `requires b != 0`
+// removes only the first; the second needs the dividend or divisor excluded as well.
+pub fn bare(a: i64, b: i64): i64 {
+    return a / b
+}
+
+pub fn nonzero(a: i64, b: i64): i64
+requires b != 0
+{
+    return a / b
+}
+
+pub fn total(a: i64, b: i64): i64
+requires b != 0 && a != -9223372036854775807 - 1
+{
+    return a / b
+}
+
+pub fn main() {
+    print(0)
+}

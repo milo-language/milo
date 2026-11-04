@@ -1,0 +1,22 @@
+// @flags: --rte --solver=z3
+// @proven: 3
+// @failed: 1
+// @unknown: 0
+// `lo + (hi - lo) / 2` avoids the sum, but `hi - lo` still overflows when lo may be negative
+// (hi = MAX, lo = -1). `requires lo <= hi` alone is therefore refuted on the subtraction; adding
+// lo >= 0 makes both operations provably in range.
+pub fn midLoOnly(lo: i32, hi: i32): i32
+requires lo <= hi
+{
+    return lo + (hi - lo) / 2
+}
+
+pub fn midSafe(lo: i32, hi: i32): i32
+requires lo >= 0 && lo <= hi
+{
+    return lo + (hi - lo) / 2
+}
+
+pub fn main() {
+    print(0)
+}

@@ -1,0 +1,15 @@
+// @flags: --rte --solver=z3
+// @proven: 0
+// @failed: 1
+// @unknown: 0
+// The classic binary-search bug: `lo + hi` overflows i32 even though lo <= hi. Nothing in the
+// contract says so, so only --rte can see it; the overflow condition must come back refuted.
+pub fn midpoint(lo: i32, hi: i32): i32
+requires lo <= hi
+{
+    return (lo + hi) / 2
+}
+
+pub fn main() {
+    print(0)
+}

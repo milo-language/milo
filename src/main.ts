@@ -2171,7 +2171,7 @@ async function main() {
   if (cmd === "prove") {
     const src = readFileSync(source!, "utf-8");
     const { program, check } = parseAndCheck(src, target, source!, warningConfig);
-    const vcs = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check });
+    const vcs = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check, rte: rest.includes("--rte") });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.
     const useZ3 = rest.includes("--solver=z3");

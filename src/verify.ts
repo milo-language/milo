@@ -7,7 +7,7 @@ import { Parser } from "./parser";
 
 interface VerificationCondition {
   fn: string;
-  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert";
+  kind: "precondition" | "postcondition" | "loop-invariant" | "termination" | "struct-invariant" | "assert" | "overflow" | "bounds" | "division";
   smtlib: string;
   description: string;
   // Callees whose `ensures` this VC was allowed to ASSUME. Modular verification is
@@ -556,6 +556,56 @@ interface AssertSite {
   line: number;
 }
 
+// A runtime trap the program does not state itself (`--rte`): an arithmetic overflow, a
+// zero or MIN/-1 division, an out-of-range index. Recorded where the trap would fire, with
+// the same path conditions an `assert` there would get.
+interface RteSite {
+  kind: "overflow" | "bounds" | "division";
+  cond: string;
+  conditions: string[];
+  what: string;   // "overflow", "division by zero", ...
+  text: string;   // "lo + hi (i32)"
+  line: number;
+}
+
+const RTE_RANGES: Record<string, [bigint, bigint]> = {
+  i8: [-(1n << 7n), (1n << 7n) - 1n], i16: [-(1n << 15n), (1n << 15n) - 1n],
+  i32: [-(1n << 31n), (1n << 31n) - 1n], i64: [-(1n << 63n), (1n << 63n) - 1n],
+  u8: [0n, (1n << 8n) - 1n], u16: [0n, (1n << 16n) - 1n],
+  u32: [0n, (1n << 32n) - 1n], u64: [0n, (1n << 64n) - 1n],
+};
+const smtInt = (n: bigint) => (n < 0n ? `(- ${-n})` : `${n}`);
+let RTE = false;          // `prove --rte`: generate runtime-error VCs
+let RTE_WRAPPING = false; // current fn is @wrapping: its + - * cannot trap
+
+// exprSource flattens precedence ("lo + (hi - lo) / 2" reads back as "lo + hi - lo / 2"),
+// which would make an rte description name a different expression than the one that traps.
+function rteSource(e: any): string {
+  if (e?.kind !== "BinOp") return e?.kind === "IndexAccess" ? `${rteSource(e.object)}[${rteSource(e.index)}]` : exprSource(e);
+  const side = (x: any) => (x?.kind === "BinOp" ? `(${rteSource(x)})` : rteSource(x));
+  return `${side(e.left)} ${e.op} ${side(e.right)}`;
+}
+
+// The fixed-width integer type of an expression, or null when it is not known to be one.
+// Never guesses: a literal alone has no type, and an unknown operand makes the result unknown.
+function rteTypeOf(e: any, varTypes: Map<string, string>): string | null {
+  if (!e) return null;
+  switch (e.kind) {
+    case "Ident": { const t = varTypes.get(e.name); return t && RTE_RANGES[t] ? t : null; }
+    case "CastExpr": { const t = e.targetType?.name; return t && RTE_RANGES[t] ? t : null; }
+    case "UnaryOp": return e.op === "-" ? rteTypeOf(e.operand, varTypes) : null;
+    case "BinOp":
+      return ["+", "-", "*", "/", "%"].includes(e.op) ? (rteTypeOf(e.left, varTypes) ?? rteTypeOf(e.right, varTypes)) : null;
+    case "Call": { const t = typeof e.func === "string" ? FN_TABLE.get(e.func)?.retType?.name : undefined; return t && RTE_RANGES[t] ? t : null; }
+    case "FieldAccess": {
+      const owner = e.object?.kind === "Ident" ? varTypes.get(e.object.name) : undefined;
+      const t = owner ? STRUCT_FIELD_TYPES.get(owner)?.get(e.field)?.name : undefined;
+      return t && RTE_RANGES[t] ? t : null;
+    }
+    default: return null;
+  }
+}
+
 // The condition of a statement that is exactly `assert(E)` — nothing else. Deliberately
 // narrow: `assert` is variadic (a second argument is the failure message), and an assert
 // buried in a larger expression is not a statement-level cut.
@@ -601,6 +651,7 @@ interface SymExecResult {
   loops: LoopObligation[];
   structLits: StructLitSite[];
   asserts: AssertSite[];
+  rte: RteSite[];
 }
 
 interface SymExecContext {
@@ -1315,6 +1366,8 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   const calls: CallSite[] = [];
   const structLits: StructLitSite[] = [];
   const asserts: AssertSite[] = [];
+  const rte: RteSite[] = [];
+  const rteSeen = new Set<string>();
   const ctx = context ?? { havocSeq: 0, havocDecls: [] };
   const loops: LoopObligation[] = [];
   const varTypes = new Map(types ?? []);
@@ -1544,6 +1597,85 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
     }
   }
 
+  function recordRte(site: RteSite): void {
+    const key = `${site.what}|${site.line}|${site.text}|${site.cond}|${site.conditions.join(" ")}`;
+    if (rteSeen.has(key)) return;
+    rteSeen.add(key);
+    rte.push(site);
+  }
+
+  // Walk one expression in evaluation order, recording the traps it can hit. `conds` is
+  // what holds when evaluation reaches each point: it grows as obligations are met (a trap
+  // fires before anything after it runs) and forks at `&&`, `||` and `if`, whose right
+  // operands only run under the left's outcome.
+  function scanRte(e: any, conds: string[], env: Map<string, string>, line: number): void {
+    if (!e || typeof e !== "object" || typeof e.kind !== "string") return;
+    const at = (e.span?.line as number | undefined) ?? line;
+    const add = (kind: RteSite["kind"], cond: string, what: string, text: string) => {
+      recordRte({ kind, cond, conditions: [...conds], what, text, line: at });
+      conds.push(cond);
+    };
+    switch (e.kind) {
+      case "Closure": case "MatchExpr": return;
+      case "BinOp": {
+        if (e.op === "&&" || e.op === "||") {
+          scanRte(e.left, conds, env, line);
+          const l = exprToSmtWithEnv(e.left, env);
+          scanRte(e.right, [...conds, e.op === "&&" ? l : `(not ${l})`], env, line);
+          return;
+        }
+        scanRte(e.left, conds, env, line);
+        scanRte(e.right, conds, env, line);
+        const src = rteSource(e);
+        if (e.op === "+" || e.op === "-" || e.op === "*") {
+          const ty = rteTypeOf(e, varTypes);
+          if (!ty || RTE_WRAPPING) return;
+          const [lo, hi] = RTE_RANGES[ty]!;
+          const v = exprToSmtWithEnv(e, env);
+          add("overflow", `(and (>= ${v} ${smtInt(lo)}) (<= ${v} ${smtInt(hi)}))`, "overflow", `${src} (${ty})`);
+        } else if (e.op === "/" || e.op === "%") {
+          const ty = rteTypeOf(e, varTypes);
+          if (!ty) return;
+          const l = exprToSmtWithEnv(e.left, env), r = exprToSmtWithEnv(e.right, env);
+          const k = resolveConstNum(e.right);
+          if (k === null || k === 0n) add("division", `(distinct ${r} 0)`, "division by zero", src);
+          // MIN / -1 is the one signed quotient that does not fit; a literal divisor other than -1 rules it out.
+          if (ty.startsWith("i") && (k === null || k === -1n) && !RTE_WRAPPING) {
+            add("division", `(not (and (= ${l} ${smtInt(RTE_RANGES[ty]![0])}) (= ${r} (- 1))))`, "division overflow", `${src} (${ty})`);
+          }
+        }
+        return;
+      }
+      case "IndexAccess": {
+        scanRte(e.object, conds, env, line);
+        scanRte(e.index, conds, env, line);
+        const flat = flattenFieldAccess(e.object);
+        if (!flat || !LEN_BEARING.has(flat) || e.index?.kind === "RangeExpr") return;
+        FIELD_REFS?.add(`${flat}_len`);
+        const len = exprToSmtWithEnv({ kind: "FieldAccess", object: e.object, field: "len", span: e.span } as Expr, env);
+        if (/UNSUPPORTED/.test(len)) return;
+        const i = exprToSmtWithEnv(e.index, env);
+        add("bounds", `(and (>= ${i} 0) (< ${i} ${len}))`, "index out of bounds", rteSource(e));
+        return;
+      }
+      case "IfExpr": {
+        scanRte(e.cond, conds, env, line);
+        const c = exprToSmtWithEnv(e.cond, env);
+        const t = ifExprArm(e.thenBody), f = ifExprArm(e.elseBody);
+        if (t) scanRte(t, [...conds, c], env, line);
+        if (f) scanRte(f, [...conds, `(not ${c})`], env, line);
+        return;
+      }
+    }
+    for (const key of Object.keys(e)) {
+      if (key === "span" || /body|arms/i.test(key)) continue;
+      const v = e[key];
+      for (const item of Array.isArray(v) ? v : [v]) {
+        if (item && typeof item === "object") scanRte(typeof item.kind === "string" ? item : item.value, conds, env, line);
+      }
+    }
+  }
+
   // for void functions, we need to capture final env state
   const finalEnvs: { conditions: string[]; env: Map<string, string> }[] = [];
   const breakEnvs: { conditions: string[]; env: Map<string, string> }[] = [];
@@ -1558,6 +1690,11 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       // than a VC built on conditions we cannot see.
       const st = stmt as any;
       const own = ownExprs(st);
+      // A while condition runs in the loop's havoced state, not the entry one; scanned below.
+      if (RTE && stmt.kind !== "WhileStmt") {
+        const conds = [...pathConds];
+        for (const e of own) scanRte(e, conds, localEnv, st.span?.line ?? 0);
+      }
       for (const e of own) {
         collectCallsInExpr(e, pathConds, localEnv, calls);
         collectStructLitsInExpr(e, pathConds, localEnv, structLits);
@@ -1586,7 +1723,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
       if (stmt.kind === "LetDecl" || stmt.kind === "VarDecl") {
         if (stmt.type?.name) varTypes.set(stmt.name, stmt.type.name);
         else {
-          const inferred = inferLiteralType(stmt.value);
+          const inferred = inferLiteralType(stmt.value) ?? (RTE ? rteTypeOf(stmt.value, varTypes) : null);
           if (inferred) varTypes.set(stmt.name, inferred);
         }
         // A struct literal binds each field, not just the whole value: `Huff { count:
@@ -1675,10 +1812,12 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
           .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
           .filter(s => !/UNSUPPORTED/.test(s));
         constrainedBy([guard, ...assumed]);
+        if (RTE) scanRte(stmt.cond, [...pathConds, ...assumed], havocEnv, (stmt as any).span?.line ?? 0);
         const bodyRun = collectPaths(stmt.body, havocEnv, varTypes, ctx);
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
         const active = [...pathConds, ...assumed, ...(/UNSUPPORTED/.test(guard) ? [] : [guard])];
+        for (const s of bodyRun.rte) rte.push({ ...s, conditions: [...active, ...s.conditions] });
         loops.push({
           entryConds: [...pathConds],
           entryEnv: new Map(localEnv),
@@ -1784,10 +1923,15 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
           .map(inv => exprToSmtWithEnv(inv.expr, havocEnv))
           .filter(s => !/UNSUPPORTED/.test(s));
         constrainedBy([guard, ...assumed]);
+        if (RTE && stmt.iterable.kind === "RangeExpr") {
+          const t = rteTypeOf(stmt.iterable.start, varTypes) ?? rteTypeOf(stmt.iterable.end, varTypes);
+          if (t) varTypes.set(idxName, t);
+        }
         const bodyRun = collectPaths(stmt.body, havocEnv, varTypes, ctx);
         structLits.push(...bodyRun.structLits);
         asserts.push(...bodyRun.asserts);
         const active = [...pathConds, ...assumed, ...(guard && !/UNSUPPORTED/.test(guard) ? [guard] : [])];
+        for (const s of bodyRun.rte) rte.push({ ...s, conditions: [...active, ...s.conditions] });
         loops.push({
           entryConds: [...pathConds],
           entryEnv,
@@ -1840,7 +1984,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
   }
 
   walkCapture(stmts, 0, [], new Map(env));
-  return { paths, finalEnvs, breakEnvs, continueEnvs, calls, havocDecls: ctx.havocDecls, loops, structLits, asserts };
+  return { paths, finalEnvs, breakEnvs, continueEnvs, calls, havocDecls: ctx.havocDecls, loops, structLits, asserts, rte };
 }
 
 // `x.len` on a string/Vec/array can never be negative, and the solver has no way to know
@@ -2103,7 +2247,7 @@ function constructsInvariantStruct(stmts: Stmt[]): boolean {
 
 // methods: the checker's bindings for method calls (see MethodBindings); without them
 // every method call havocs its receiver.
-export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string; methods?: MethodBindings }): VerifyResult {
+export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string; methods?: MethodBindings; rte?: boolean }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
@@ -2148,6 +2292,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
 
   FN_TABLE = new Map(allFns.map(f => [f.name, f]));
   PURE_FN_NAMES = new Set(allFns.filter(mutatesNothing).map(f => f.name));
+  RTE = !!opts?.rte;
   METHOD_TARGETS = opts?.methods?.resolvedMethods ?? new Map();
   METHOD_DECLS = new Map((opts?.methods?.monomorphizedFns ?? []).map(f => [f.name, f]));
   BOOL_FIELDS = collectBoolFields(program);
@@ -2185,7 +2330,8 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     const touchesInvariantStruct = STRUCT_INVARIANTS.size > 0 &&
       (constructsInvariantStruct(fn.body) ||
        fn.params.some(p => (p.type?.isRefMut || p.type?.isPtr) && p.type?.name && STRUCT_INVARIANTS.has(p.type.name)));
-    if (fn.contracts.length === 0 && !hasLoopInvariants(fn.body) && !callsContracted && !touchesInvariantStruct) continue;
+    if (!RTE && fn.contracts.length === 0 && !hasLoopInvariants(fn.body) && !callsContracted && !touchesInvariantStruct) continue;
+    RTE_WRAPPING = !!(fn.fromWrappingModule || fn.attributes?.some(a => a.name === "wrapping"));
 
     const requires = fn.contracts.filter(c => c.kind === "requires");
     const ensures = fn.contracts.filter(c => c.kind === "ensures");
@@ -2367,6 +2513,32 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
           preAssumptions,
           guard,
           `(assert (not ${a.cond}))`,
+          `(check-sat)`,
+        ].filter(Boolean).join("\n"),
+      });
+    }
+
+    // i64/u64 params carry no range in allDecls (the native solver cannot take 2^63), so an
+    // rte query states it itself: otherwise a counterexample could be a value no i64 holds.
+    const wideRanges = fn.params
+      .filter(p => p.type?.name && RTE_RANGES[p.type.name] && !INT_RANGES[p.type.name])
+      .map(p => { const [lo, hi] = RTE_RANGES[p.type!.name]!; return `(assert (and (>= ${p.name} ${smtInt(lo)}) (<= ${p.name} ${smtInt(hi)})))`; });
+    for (const s of symResult.rte) {
+      const guard = s.conditions.length > 0 ? `(assert (and true ${s.conditions.join(" ")}))` : "";
+      const leansOn = cutsIn(s.conditions);
+      conditions.push({
+        fn: fn.name,
+        kind: s.kind,
+        ...(leansOn.length ? { assumesCuts: leansOn } : {}),
+        description: `${s.what} in ${fn.name}${s.line ? `:${s.line}` : ""}: ${s.text}`,
+        smtlib: [
+          `; Runtime error: ${s.what} in ${fn.name}: ${s.text}`,
+          `(set-logic ALL)`,
+          allDecls,
+          ...wideRanges,
+          preAssumptions,
+          guard,
+          `(assert (not ${s.cond}))`,
           `(check-sat)`,
         ].filter(Boolean).join("\n"),
       });
@@ -3080,7 +3252,9 @@ export function formatProveReport(pr: ProveResult): string {
     if (invariants.length) parts.push(`${invariants.join(", ")}, which this run did not establish at every construction and mutation`);
     if (cuts.length) parts.push(`the proof ${cuts.length === 1 ? "cut" : "cuts"} ${cuts.join(", ")}, which this run did not discharge`);
     const note = parts.length === 0 ? "" : ` — conditional: assumes ${parts.join("; and ")}`;
-    lines.push(`  ${icon} [${r.vc.kind}] ${r.vc.fn}: ${r.status}${r.detail ? ` — ${r.detail}` : ""}${note}`);
+    // The rte kinds have many sites per fn, so the fn name alone would not say which one failed.
+    const site = r.vc.kind === "overflow" || r.vc.kind === "bounds" || r.vc.kind === "division" ? ` (${r.vc.description})` : "";
+    lines.push(`  ${icon} [${r.vc.kind}] ${r.vc.fn}${site}: ${r.status}${r.detail ? ` — ${r.detail}` : ""}${note}`);
   }
   if (conditional.size > 0) {
     lines.push("");

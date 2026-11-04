@@ -1,0 +1,27 @@
+// @flags: --rte --solver=z3
+// @proven: 2
+// @failed: 1
+// @unknown: 0
+// An index with nothing said about it can be out of range (refuted); a `requires` that bounds it
+// proves, and so does a for loop whose range is the length itself.
+pub fn at(v: Vec<i32>, i: i32): i32 {
+    return v[i]
+}
+
+pub fn atChecked(v: Vec<i32>, i: i32): i32
+requires i >= 0 && i < v.len
+{
+    return v[i]
+}
+
+pub fn last(v: Vec<i32>): i32 {
+    var s = 0
+    for i in 0..v.len {
+        s = v[i]
+    }
+    return s
+}
+
+pub fn main() {
+    print(0)
+}

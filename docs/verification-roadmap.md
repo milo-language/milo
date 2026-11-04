@@ -29,12 +29,26 @@ That set is, near enough, SPARK's — `Pre`, `Post`, `Loop_Invariant`, `Type_Inv
 `Loop_Variant`/`Subprogram_Variant`, `'Old`. Two of SPARK's are absent by choice: `Global`/
 `Depends` (Milo's ownership rules make most of it unnecessary) and quantifiers.
 
-**Where that lands us:** user-written contracts, termination and simple data invariants. That
-is short of SPARK's "silver": silver means no runtime error is possible, and `milo prove`
-generates no conditions of its own for overflow, index bounds or division by zero (checked
-2026-11-03: a function doing `v[i]` and `a / b` with no `requires` gives "0 conditions"). Those
-are trapped at runtime, not proven absent. Generating those conditions is the step to silver;
-quantifiers are the step after it, toward functional correctness ("gold").
+**Where that lands us:** user-written contracts, termination and simple data invariants, plus
+`milo prove --rte`, which generates the runtime-error conditions the program does not state: no
+overflow in fixed-width `+ - *` (not under `@wrapping`), no zero divisor and no MIN / -1 in
+integer `/ %`, and `0 <= i < len` on every index of a Vec, string or array. Each is a
+`overflow` / `division` / `bounds` condition under the path conditions that reach it. Not yet
+covered: unwrap, shifts, casts, unary minus, and any expression whose integer type is not known
+(never guessed). Silver means all of these proven, and we are not there: `bun scripts/rte-census.ts`
+(z3, `examples/embedded` + `std`, each source site counted once at its worst verdict) measured
+2026-11-03:
+
+| kind | proven | failed | unknown |
+|---|---|---|---|
+| overflow | 165 | 361 | 1720 |
+| bounds | 166 | 280 | 1330 |
+| division | 15 | 21 | 61 |
+| total | 346 | 662 | 3111 |
+
+Most unknowns are callees with no `ensures` (the result is unmodelled) and `IndexAccess` values,
+not the conditions themselves; most failures are real missing `requires`, since nothing in std
+states input ranges. Quantifiers are the step after silver, toward functional correctness ("gold").
 
 **The one structural gap: quantifiers.** `forall`/`exists` over container contents, and the
 sequence theory to go with them. Without it, sortedness is not merely hard to prove, it is
