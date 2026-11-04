@@ -60,7 +60,7 @@ Add a new test by dropping a `.milo` file with the appropriate annotation in the
 ### Architecture
 
 ```
-Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → emit-mlir (milo dialect) → milo-opt passes → LLVM IR → clang → Binary
+Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → emit-mlir (milo dialect) + scaffold (LLVM dialect) → milo-opt passes → LLVM IR (runtime sections linked in) → clang → Binary
 ```
 
 | File | Purpose |
@@ -75,7 +75,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering |
 | `src/emit-mlir.ts` | HIR → milo MLIR dialect text (milo-opt then lowers it to LLVM IR; `src/mlir-backend.ts` drives it) |
-| `src/codegen.ts` | Module scaffold around the MLIR bodies: stubs, drop glue, ABI, strings, process entry, LLVM text (itables and module globals are emitted by MLIR; `src/const-fold.ts` folds their initializers) |
+| `src/scaffold.ts` | Process scaffold as an LLVM-dialect module: entry point, panic routines, lazy globals, stdio, C ABI shims (`src/mlir-ctx.ts` holds the module facts, `src/startup.ts` the init plan) |
 | `src/diagnostics.ts` | Elm-style error formatting with source context and carets |
 | `src/target.ts` | Host platform detection, target triple resolution |
 | `src/lsp.ts` | LSP server (diagnostics, hover, go-to-definition) |
@@ -94,7 +94,7 @@ has no home.
 - **Shared borrows are implicit — there is no `&x` expression.** A `&T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
 - **A `&mut T` argument is spelled `foo(&mut x)`** (non-receiver arguments only; `v.push(1)` stays implicit). The marker is stripped by the checker before the argument is checked (`takeExplicitMutArgs`), so borrow rules and codegen never see it. The bare form is the hard error `implicit-mut-borrow` (no flag silences it); `bun scripts/explicit-mut.ts [--closure] <file>` rewrites a file from the checker's resolved signatures.
 - User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
-- No GC, no pointers in safe code. The only reference count is a heap string buffer's (atomic, copy on write; `codegen.ts` strRt), which keeps `string` a value while making copies out of a borrow cheap
+- No GC, no pointers in safe code. The only reference count is a heap string buffer's (atomic, copy on write; `src/runtime/str.ll` milo.str.*), which keeps `string` a value while making copies out of a borrow cheap
 - Arenas for cyclic data via `std/arena` (`Arena<T>` + generational `Handle<T>`)
 - Strings: UTF-8 byte buffers with value semantics. Copying one out of a borrow, a global or a container element, or reusing an owned one after passing or storing it, shares the buffer by count (no `.clone()` needed); `Vec` and structs keep unique ownership
 

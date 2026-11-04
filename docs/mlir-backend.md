@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: mlir-backend
 purpose: design reference for the backend: HIR -> milo MLIR dialect -> LLVM, the only backend (the legacy LLVM-text codegen is deleted)
-key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
+key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, mlir/Link.cpp, src/emit-mlir.ts, src/mlir-backend.ts, src/scaffold.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: the pass pipeline, the gates or the dialect's design rules change
-last-verified: 2026-11-03 (rewritten from the migration log as a current design reference; pipeline checked against src/mlir-backend.ts)
+last-verified: 2026-11-03 (scaffold moved into MLIR, codegen.ts deleted; pipeline checked against src/mlir-backend.ts)
 -->
 
 # MLIR backend
@@ -20,7 +20,7 @@ Source -> Lexer -> Parser -> Resolver -> Checker -> HIR  (TypeScript)
 HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
     -> milo-opt (C++, mlir/): the passes below
     -> LLVM IR (--emit-llvmir)
-    -> spliced into the module scaffold src/codegen.ts emits (src/mlir-backend.ts) -> clang
+    -> the runtime sections linked in (mlir/Link.cpp) -> clang
 ```
 
 - **The TypeScript side is a thin printer** of a high-level `milo` dialect that mirrors the
@@ -40,17 +40,14 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
 - **Textual MLIR.** The emitter prints MLIR text and `milo-opt` runs as a subprocess. If
   compile time demands it, switch to the MLIR C API over `bun:ffi` or to bytecode; the
   emitter's output does not change.
-- **Splice.** Every function compiles through MLIR: `emitMlirFunction` in `src/emit-mlir.ts`
-  throws `MlirUnsupported` for a construct the dialect does not cover, and the build fails
-  naming the reason (no per-function fallback). The MLIR function's LLVM body replaces the
-  stub `src/codegen.ts` emits, textually inside one module (`src/mlir-backend.ts`), under
-  the `define` line from the scaffold, so linkage, attributes and the ABI come from the
-  scaffold. Not llvm-link: non-exported fns are `internal`, and internal symbols do not
-  resolve across modules.
+- **One module.** Every function compiles through MLIR: `emitMlirFunction` in
+  `src/emit-mlir.ts` throws `MlirUnsupported` for a construct the dialect does not cover,
+  and the build fails naming the reason (no per-function fallback). The scaffold around the
+  functions is MLIR too (see The module below).
 - **Targets.** MLIR is on for every target (cross builds, Windows, wasm64, Cortex-M).
   milo-opt emits for the target: the module carries `llvm.target_triple` and
   `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang
-  once per build), and the splice refuses a triple or layout the two halves disagree on.
+  once per build); the runtime sections are linked with the module's triple and layout.
   Sizes come from the target layout, so 32-bit Cortex-M has 4-byte pointers.
   `bun scripts/mlir-cross.ts` is the gate for non-host targets.
 
@@ -211,20 +208,53 @@ per-function compile cache.
 
 ## Open items
 
-- DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, `ensure-debug-info-scope-on-llvm-func`, DILocations spliced into codegen-dwarf.ts's subprograms); named locals and params of every type but closures, arrays and Heap are done (`milo.dbg.var`, under `-g` only: a stack slot per named binding, lowered to `dbg.declare` by `milo-lower-debug-vars` after the function has its subprogram; enums are a tag enumeration plus a per-variant payload union, niche Options the payload alone, strings, Vecs and HashMaps their header fields, all laid out from the converted LLVM types). Still open: pattern- and loop-bound variables (`match` arms, `for` indices) have no `milo.dbg.var`, and closure, array and Heap values have no DI type.
+- DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, subprograms from src/mlir-debug.ts); named locals and params of every type but closures, arrays and Heap are done (`milo.dbg.var`, under `-g` only: a stack slot per named binding, lowered to `dbg.declare` by `milo-lower-debug-vars` after the function has its subprogram; enums are a tag enumeration plus a per-variant payload union, niche Options the payload alone, strings, Vecs and HashMaps their header fields, all laid out from the converted LLVM types). Still open: pattern- and loop-bound variables (`match` arms, `for` indices) have no `milo.dbg.var`, and closure, array and Heap values have no DI type.
 - `!range`/`!noundef` on loads of ranged ints (`tests/refParamAttrs.test.ts`).
 
 Both open items above are tracked under "MLIR parity gaps" in `docs/roadmap.md`.
 
-## Scaffold into MLIR
+## The module
 
-src/codegen.ts still emits the module scaffold as LLVM text and src/mlir-backend.ts splices the MLIR function bodies into it. The goal is to emit the scaffold from MLIR, piece by piece, until the splice and codegen.ts are deleted. Each piece is a pure function of HIR plus src/layout.ts.
+milo-opt's LLVM IR is the whole module; there is no LLVM text written in TypeScript and no
+splice. `MlirPlan.compile` (src/mlir-backend.ts) prints one MLIR module:
 
-Done:
-- Itables: `milo.itable` (module-level, symbol `itable.T.I`: method pointers in interface order, then the destructor slot or null), from `itableOps` in src/emit-mlir.ts. A drop helper or method MLIR does not define is declared at lowering and resolves against the scaffold after the splice. codegen.ts keeps only `ensureStructDropHelper` for the types whose slot is non-null.
-- Module globals: `milo.global.def` (internal, `thread_local` kept), from `globalOps`. src/const-fold.ts is the one folder (`isFullyConstInit` splits static from run-time-initialized globals for codegen; `globalInit` is the static part MLIR emits, a partial struct literal included). Run-time-initialized and lazy globals are defined here too, as zero plus their constant fields; their init functions are still codegen's.
+- **Globals and itables**: `milo.global.def` (src/const-fold.ts is the one folder: a
+  run-time-initialized global is zero plus its constant fields) and `milo.itable`, whose
+  destructor slot is the type's drop glue (`milo.drop.<key>`, src/mlir-glue.ts).
+- **Every function** through the milo dialect, the init functions of src/startup.ts among
+  them (`__milo.global_init` for globals nothing reads, `__milo.lazyinit.G` for the
+  rest). A function's linkage (internal unless exported or `main`), `alwaysinline`, and
+  its by-ref params' `nonnull dereferenceable align` and `noalias` are func.func and
+  argument attributes (src/mlir-ctx.ts). `noalias` is decided on the HIR (src/noalias.ts).
+- **The glue**: display, eq, clone, drop and hash per type, in the dialect.
+- **The scaffold**, `module @milo.scaffold` in the LLVM dialect (src/scaffold.ts, through
+  the typed builder src/mlir-llvm.ts): process globals, `__milo_process_init` (argc/argv,
+  record/replay start, MILO_LINE_BUFFERED, the hash seed's replay mode, global init), the
+  real `main` when main runs as a green task (`schedulerRunMainRaw` + `__milo_main_task`;
+  the analysis is src/startup.ts's, on the HIR), the panic routines and panic tail, string
+  writes, the hash seed source, the lazy-global machinery, and a `milo.cabi.<f>` shim per
+  extern passing a struct by value (byval/sret/coerce from src/abi.ts). It is a module of
+  its own so each side verifies alone: a C symbol a user extern also declares is one
+  declaration after `milo-merge-scaffold` (mlir/Link.cpp) folds it in, after
+  convert-milo-to-llvm. Scaffold symbols are on demand: whatever nothing uses is deleted.
+- **Module attributes** milo-opt applies after translation (mlir/Link.cpp `finishModule`):
+  `milo.runtime_ir`, the runtime sections of src/runtime/*.ll for the target
+  (src/runtime-ir.ts), parsed and linked with `llvm::Linker` (names promoted for the link
+  and made internal again); `milo.link_names`, per-module extern views of one C symbol;
+  `milo.sanitize`, the `sanitize_*` attribute on every defined function; and
+  `milo.replay_heap`, std/replay's allocator family on every allocation call.
+- **-g**: the compile unit is fused into the module's loc and a subprogram into each Milo
+  function's and closure body's loc (src/mlir-debug.ts); glue and the scaffold get none,
+  so their code takes the caller's line when inlined. `milo-lower-debug-vars` turns
+  `milo.dbg.var` into `dbg.declare` in those subprograms.
 
-Remaining, in order: string constants, process entry/main wrapper, type definitions, panic routines, lazy globals (the init machinery), runtime declares last.
+Types are the identified LLVM structs mlir/Scalar.cpp's converter builds from src/layout.ts's
+names; the scaffold spells the ones it needs the same way (src/mlir-ctx.ts dialectType), and
+the converter's `setBody` refuses a body that differs.
+
+The runtime sections stay LLVM IR text: they are fixed per target, need no Milo layout
+beyond `%String`, and a typed builder would add lines, not checks. Linking them in milo-opt
+keeps them inlinable into the program (one module), which a separate object would not.
 
 ## Gates
 

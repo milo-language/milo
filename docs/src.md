@@ -65,7 +65,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
-| `src/mlir-backend.ts` | MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies replace the stub… |
+| `src/mlir-backend.ts` | MLIR driver (the build path) (docs/mlir-backend.md): HIR -> milo MLIR (src/emit-mlir.ts), one module holding every function, the module globals and itables, the type-directed glue (src/mlir-glue.ts)… |
 | `src/mlir-ctx.ts` | What every part of a build reads about the module as a whole: type layout (src/layout.ts), function signatures and which of them return through an sret pointer, the C ABI class of each extern that pa… |
 | `src/mlir-debug.ts` | -g: the module's DICompileUnit and a DISubprogram per Milo function and closure body, as LLVM-dialect debug attributes fused into their locs. |
 | `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
@@ -81,7 +81,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
 | `src/runtime-ir.ts` | The fixed runtime helpers (string buffers, int and float formatting, map buffers, atomics), kept as LLVM IR text in src/runtime/*.ll and linked into milo-opt's module (mlir/Link.cpp). |
-| `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/codegen-runtime.ts). |
+| `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/runtime-ir.ts). |
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
 | `src/scaffold.ts` | The process scaffold around the program's functions, as an LLVM-dialect module (`milo.scaffold`, folded into the program by milo-opt's milo-merge-scaffold): - the process entry: argc/argv, record/rep… |
 | `src/skill.ts` | `milo skill`: the agent guide. |
