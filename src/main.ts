@@ -30,7 +30,7 @@ import { generateVerificationConditions, formatVerifyReport, proveWithZ3, format
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
-import { inEntryProject, requirementsDiagnostics, runTraceCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
+import { inEntryProject, requirementsDiagnostics, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
 import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -2144,6 +2144,10 @@ async function main() {
   // anything else is a record/replay trace file (src/trace.ts).
   if (cmd === "trace" && args.slice(1).some(a => a.endsWith(".milo"))) {
     process.exit(runTraceCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
+  }
+
+  if (cmd === "trace-object") {
+    process.exit(runTraceObjectCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
   }
 
   // `milo verify` checks a source (`.milo`: profile rules, the requirement matrix, prove --rte)

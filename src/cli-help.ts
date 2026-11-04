@@ -149,6 +149,18 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       { flag: "--json", help: "(.milo) the matrix as data; (trace file) {version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
       { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
       { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
+      { flag: "--object <binary>", help: "(.milo) add the address ranges of a binary built with -g that implement each requirement" },
+    ],
+  },
+  {
+    name: "trace-object", usage: "trace-object <binary>",
+    summary: "per function of a binary built with -g: address range -> source line -> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces",
+    flags: [
+      { flag: "--strict", help: "fail on object code with no source line and no rule (untraced object code)" },
+      { flag: "--safety=<do178 profile>", help: "same as --strict" },
+      { flag: "--entry <file.milo>", help: "the source, when the binary's DWARF does not name it" },
+      { flag: "--fn <name>", help: "list only this function (repeatable); the totals still cover the whole binary" },
+      { flag: "--json", help: "the trace as data" },
     ],
   },
   {

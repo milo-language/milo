@@ -44,13 +44,31 @@ less ceremony, needs this track to be credible.
    name changed is refused). Not pinned yet: the milo-opt hash is recorded, not compared
    (there is no registry of qualified hashes), and an attacker who rewrites the record in the
    binary defeats it; this is evidence for an honest build, not tamper-proofing.
-2. **Traceability report** (DO-178C 6.4.4.2b source-to-object). Every compiler-generated
+2. **Traceability report. DONE 2026-11-04** (src/object-trace.ts, `milo trace-object`, `milo trace --object`; DO-178C 6.4.4.2b source-to-object). Every compiler-generated
    construct (drop, bounds check, overflow trap, runtime call, clone) is a numbered
    `MILO-O-`/`MILO-B-` rule with tests, carried as an MLIR location tag through every pass
    into DWARF. Report per function: object range -> op -> source line, plus the list of
    generated constructs by rule. Needs DWARF from MLIR locations (a parity gap today).
    Gate: every generated instruction range in a fixture maps to a source line or a rule;
    an unmapped range fails.
+
+   How: the rule is read off the object, not carried from the MLIR. Bounds checks, overflow
+   traps, contract checks, panics and drops each end in a call to a runtime routine
+   (`__milo_bounds_fail`, `__milo_overflow_fail`, `__milo_contract_fail`, `__milo_mlir_panic`,
+   free/drop glue) that survives -O2 while the check exists, so the line-table row holding
+   the call gets the rule (`MILO-O-boundsCheck`, `-overflowTrap`, `-contractCheck`, `-panic`,
+   `-drop`; table in src/object-trace.ts). A location tag through the MLIR passes was
+   rejected: DWARF's line table keeps file, line, column and discriminator only, so a tag
+   needs a side table that can drift from the binary. Limit: the compare and branch before
+   the call sit in other rows under the source line's own ID. Lines come from
+   `llvm-dwarfdump --debug-line` (a Mach-O image's from its `.dSYM`); on ELF only sequences
+   that start at a function's address are live, because a linked image keeps sequences of
+   discarded sections at addresses that overlap live code. Line 0 inside a function is shown
+   under the line before it (`~`); code in a non-runtime function with no line and no rule is
+   "untraced object code", an error under `--strict`/`--safety`. Gate: tests/traceObject.test.ts.
+   Open: the host -O2 image has line-0 inlined code and the hosted std has synthesized
+   `Eq`/`Clone` glue with no line (see examples/assured/pid/README.md); the compiler's DWARF
+   should give those a line.
 3. **Profile checks on the output. DONE 2026-11-04** (src/object-checks.ts). `noDynamicAllocation` -> no malloc/free symbol;
    `noRecursion` -> acyclic call graph of the object; an allowlist of runtime symbols.
    Run on the final object, not the source. Gate: planted violation per check.

@@ -32,6 +32,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
 import { parseSafetyLevel, traceabilityOf } from "./safety";
+import { entryOfBinary, formatObjectTrace, traceObject, type FnSite } from "./object-trace";
 
 export const TRACE_ATTRS = new Set(["req", "assume", "derived", "deactivated"]);
 const ID_RE = /^[A-Za-z0-9_.\-]+$/;
@@ -276,6 +277,8 @@ export interface RequirementRow {
   /** DO-333: see the header. How this requirement is verified, "none" when it is not. */
   verification: Verification;
   verified: boolean;
+  /** `--object`: the address ranges of the binary that implement it (own fns and @derived). */
+  object?: { fn: string; start: number; end: number; lines: string }[];
 }
 
 /** A branch the solver proved can never run (see dead.ts). `reason` is set when its fn is @deactivated. */
@@ -561,6 +564,8 @@ export function formatTrace(r: TraceReport): string {
       own.length === 0 && flag ? `(through ${row.children.filter(c => subtree(byId.get(c)!, pick)).join(", ")})` : "";
     const subtree = (x: RequirementRow, pick: (x: RequirementRow) => boolean): boolean => pick(x) || x.children.some(c => subtree(byId.get(c)!, pick));
     for (const i of row.implementedBy) out.push(`${sub}${pad("implemented")}${i.file}:${i.line} ${i.fn}${i.derived ? "  (derived)" : ""}`);
+    for (const o of row.object ?? []) out.push(`${sub}${pad("object")}0x${o.start.toString(16)}-0x${o.end.toString(16)} (${o.end - o.start} B) ${o.fn}  lines ${o.lines}`);
+    if (row.object && row.object.length === 0 && row.implementedBy.length) out.push(`${sub}${pad("object")}NONE (no code in the binary)`);
     const v1 = via(row.implementedBy, x => x.implementedBy.length > 0, row.implemented);
     if (v1) out.push(`${sub}${pad("implemented")}${v1}`);
     if (!row.implemented) out.push(`${sub}${pad("implemented")}NONE`);
@@ -637,6 +642,8 @@ export interface TraceArgs {
   /** Gap keys that stay warnings under strict (--baseline). */
   baseline?: string;
   writeBaseline?: string;
+  /** A binary built with -g: adds the object column (--object). */
+  object?: string;
 }
 
 export function parseTraceArgs(args: string[]): TraceArgs | string {
@@ -653,6 +660,11 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
       if (a === "--baseline") out.baseline = v; else out.writeBaseline = v;
     } else if (a.startsWith("--baseline=")) out.baseline = a.slice(11);
     else if (a.startsWith("--write-baseline=")) out.writeBaseline = a.slice(17);
+    else if (a === "--object") {
+      const v = args[++i];
+      if (!v) return `${a} expects a binary`;
+      out.object = v;
+    } else if (a.startsWith("--object=")) out.object = a.slice(9);
     else if (a === "--requirements" || a === "--tests") {
       const v = args[++i];
       if (!v) return `${a} expects a path`;
@@ -666,7 +678,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     else if (a.startsWith("-")) continue;
     else if (!out.entry) out.entry = a;
   }
-  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--baseline <file>] [--write-baseline <file>]";
+  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--object <binary>] [--baseline <file>] [--write-baseline <file>]";
 }
 
 export interface BaselineFile { schema: 1; gaps: string[] }
@@ -711,6 +723,26 @@ export function runTraceCommand(args: string[], deps: TraceDeps): number {
   const a = parseTraceArgs(args);
   if (typeof a === "string") { console.error(a); return 1; }
   const rep = traceEntry(a, deps);
+  let objectText = "";
+  if (a.object) {
+    const sites = fnSites(deps.frontend(a.entry).program, a.entry);
+    const t = traceObject(a.object, sites);
+    const dir = dirname(resolve(a.entry));
+    for (const row of rep.requirements) {
+      const mine = new Set(row.implementedBy.map(i => `${resolve(dir, i.file)}:${i.fn}`));
+      row.object = t.functions.filter(f => !f.runtime).flatMap(f => {
+        const rs = f.ranges.filter(r => r.owner && mine.has(`${resolve(r.file)}:${r.owner}`));
+        if (!rs.length) return [];
+        const lines = [...new Set(rs.map(r => r.line).filter(l => l > 0))].sort((x, y) => x - y);
+        return [{ fn: f.name, start: Math.min(...rs.map(r => r.start)), end: Math.max(...rs.map(r => r.end)), lines: lines.length ? `${lines[0]}-${lines[lines.length - 1]}` : "-" }];
+      });
+    }
+    objectText = formatObjectTrace(t, a.strict);
+    if (a.strict && t.untraced.length) {
+      rep.strictFailures.push(`${t.untraced.length} range(s) of untraced object code (no source line, no rule)`);
+      rep.ok = false;
+    }
+  }
   if (a.writeBaseline) {
     // A baseline only ever shrinks: writing over an existing one may drop fixed gaps but not add new ones.
     const keys = rep.gaps.map(g => g.key).sort();
@@ -728,6 +760,36 @@ export function runTraceCommand(args: string[], deps: TraceDeps): number {
     return 0;
   }
   if (a.json) process.stdout.write(JSON.stringify(rep, null, 2) + "\n");
-  else console.log(formatTrace(rep));
+  else console.log(formatTrace(rep) + (objectText ? `\n\n${objectText}` : ""));
   return rep.ok ? 0 : 1;
+}
+
+/** Every non-test fn of the entry's project with its @req / @derived ids (the line owners for the object trace). */
+export function fnSites(program: Program, entry: string): FnSite[] {
+  return projectDecls(program, inEntryProject(entry)).filter(d => d.decl === "fn" && !d.isTest)
+    .map(d => ({ name: d.name, file: d.loc.file, line: d.loc.line, ids: [...d.implements, ...d.derived] }));
+}
+
+/** `milo trace-object <binary> [--entry <file.milo>] [--strict] [--safety=<profile>] [--json]`. */
+export function runTraceObjectCommand(args: string[], deps: TraceDeps): number {
+  let binary = "", entry: string | undefined, strict = false, json = false;
+  const only: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--strict") strict = true;
+    else if (a === "--json") json = true;
+    else if (a === "--entry") entry = args[++i];
+    else if (a === "--fn") only.push(args[++i] ?? "");
+    else if (a.startsWith("--entry=")) entry = a.slice(8);
+    else if (a.startsWith("--safety=")) {
+      const level = parseSafetyLevel(a.slice(9));
+      if (level && traceabilityOf(level) === "strict") strict = true;
+    } else if (!a.startsWith("-") && !binary) binary = a;
+  }
+  if (!binary) { console.error("usage: milo trace-object <binary built with -g> [--entry <file.milo>] [--strict] [--safety=<profile>] [--json]"); return 1; }
+  entry ??= entryOfBinary(binary) ?? undefined;
+  if (!entry || !existsSync(entry)) { console.error(`error: cannot find the source of ${binary}; was it built with -g? pass --entry <file.milo>`); return 1; }
+  const t = traceObject(binary, fnSites(deps.frontend(entry).program, entry));
+  console.log(json ? JSON.stringify(t, null, 2) : formatObjectTrace(t, strict, only.length ? only : undefined));
+  return strict && t.untraced.length ? 1 : 0;
 }

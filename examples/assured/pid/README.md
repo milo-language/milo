@@ -354,6 +354,108 @@ The keys name a gap (`untraced:<fn>`, `no-verifying-test:<id>`, `clause-unknown:
 `call-site:...`, `test-failed:<test>`), not a line number, so editing nearby code does not
 invalidate the baseline.
 
+## The object column: source to object
+
+DO-178C 6.4.4.2b asks for traceability from source to object code. Build with `-g` and
+`milo trace-object` maps every instruction range of the linked binary to the source line it
+came from, the `@req` of the function that owns that line, and, for compiler-generated
+constructs, a `MILO-O-` rule ID. The binary is built at `--debug` (-O0) here: at -O2 the
+cortex-m3 build folds this whole program to `return 0` (4 bytes), which is correct and not
+interesting to trace.
+
+```text
+$ milo build examples/assured/pid/pid.milo -o pid_m3 -g --debug --target=cortex-m3
+$ milo trace-object pid_m3 --strict --fn fpMul --fn clampI32
+object trace: pid_m3
+
+fpMul  0x234-0x360 (300 B)  @req LLR-3
+  0x234-0x246  pid.milo:22             LLR-3
+  0x246-0x264  pid.milo:15             LLR-3
+  0x264-0x280  pid.milo:15             LLR-3 MILO-O-contractCheck
+  0x280-0x284  ~pid.milo:15            LLR-3
+  0x284-0x2ae  pid.milo:17             LLR-3
+  0x2ae-0x2ca  pid.milo:17             LLR-3 MILO-O-contractCheck
+  0x2ca-0x2ea  pid.milo:22             LLR-3 MILO-O-overflowTrap
+  0x2ea-0x2f2  pid.milo:22             LLR-3
+  0x2f2-0x314  pid.milo:23             LLR-3 MILO-O-panic
+  0x314-0x33e  pid.milo:19             LLR-3
+  0x33e-0x35a  pid.milo:19             LLR-3 MILO-O-contractCheck
+  0x35a-0x360  pid.milo:23             LLR-3
+
+clampI32  0x360-0x438 (216 B)  @req LLR-1
+  0x360-0x370  pid.milo:32             LLR-1
+  0x370-0x37a  pid.milo:28             LLR-1
+  0x37a-0x396  pid.milo:28             LLR-1 MILO-O-contractCheck
+  0x396-0x3a0  pid.milo:32             LLR-1
+  ... (13 rows in all)
+
+covered: 1844/1844 B of program code (100.0%), 30 B of it "~" (line-table row 0, shown under the line before it); runtime (startup shim, not program code): 866 B
+  MILO-O-contractCheck: 542 B  (requires/ensures/invariant clause checked at run time, failing into __milo_contract_fail)
+  MILO-O-overflowTrap: 160 B  (checked integer arithmetic or cast, failing into __milo_overflow_fail)
+  MILO-O-panic: 62 B  (explicit or generated panic path (__milo_mlir_panic))
+untraced object code: none
+```
+
+(`--fn` only narrows the listing; the totals cover the whole binary. Without it every
+function is listed.) `milo trace <entry> --object pid_m3` puts the same ranges under each
+requirement:
+
+```text
+$ milo trace examples/assured/pid/pid.milo --no-run --object pid_m3
+HLR-1  The actuator command shall always lie within the configured output range.
+  implemented   pid.milo:92 controlTick
+  object        0x7cc-0x8ee (290 B) controlTick  lines 94-100
+  ...
+  LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
+    implemented   pid.milo:27 clampI32
+    implemented   pid.milo:44 pidStep
+    object        0x360-0x438 (216 B) clampI32  lines 28-38
+    object        0x438-0x76c (820 B) pidStep  lines 46-68
+  ...
+  LLR-2  The integral accumulator is clamped to +/-1000000 after every tick.
+    implemented   pid.milo:73 nextIntegral
+    object        NONE (no code in the binary)
+```
+
+How to read it:
+
+- A range is a run of instructions with one source line and one rule set. `~` marks a
+  line-table row with line 0 (glue the lowering put between two source lines: an index load, a
+  constant argument); it is shown under the line before it and counted separately.
+- A rule ID comes from the object: the line-table row that holds a call into
+  `__milo_bounds_fail`, `__milo_overflow_fail`, `__milo_contract_fail`, `__milo_mlir_panic` or a
+  free/drop routine is tagged with `MILO-O-boundsCheck`, `-overflowTrap`, `-contractCheck`,
+  `-panic` or `-drop`. The compare and branch that feed the call sit in the neighbouring rows
+  under the source line's own ID, so a rule range is the failure path and its setup, not the
+  whole check.
+- `--strict` (or `--safety=<do178 profile>`) makes "untraced object code" an error: code in a
+  non-runtime function with no source line and no rule. The startup shim
+  (`tools/cortex-m/startup.c`) has no line table by design and is listed apart, not gated.
+  The cortex-m3 image above passes. The host build of the same program does not:
+
+```text
+$ milo build examples/assured/pid/pid.milo -o pid_host -g --debug
+$ milo trace-object pid_host --strict --fn fpMul    # 27 rows for fpMul, as above, then:
+covered: 40560/40676 B of program code (99.7%), 6028 B of it "~" (line-table row 0, shown under the line before it); runtime (startup shim, not program code): 924 B
+  MILO-O-boundsCheck: 844 B  (...)
+  MILO-O-contractCheck: 1968 B  (...)
+  MILO-O-drop: 104 B  (release of an owned value: a free or a drop-glue call)
+  MILO-O-overflowTrap: 3868 B  (...)
+  MILO-O-panic: 1136 B  (...)
+untraced object code: 4 ranges, 116 B
+  error: 0x10000a4f8-0x10000a504 in Unit$Eq$eq: no source line and no rule
+  error: 0x10000a504-0x10000a558 in ErrorMessage$Eq$eq: no source line and no rule
+  error: 0x10000a558-0x10000a55c in Unit$Clone$clone: no source line and no rule
+  error: 0x10000a55c-0x10000a56c in ErrorMessage$Clone$clone: no source line and no rule
+```
+
+  The hosted image links the whole std, and four generated trait glue functions carry no line
+  (a Mach-O image keeps its line table in `pid_host.dSYM`, which `trace-object` finds beside
+  it). That is the gate working: the finding is a gap in the compiler's DWARF for synthesized
+  `Eq`/`Clone` bodies, not in this program. Limits: a rule tags only the row holding the
+  runtime call; at -O2 the optimizer merges failure paths, so a rule range there is the
+  merged cold block under one of the lines that share it.
+
 ## Not covered yet
 
 Line and branch coverage of the implementing fns by the verifying tests is a later task; the

@@ -48,8 +48,8 @@ const LIBM_ALLOW = new Set(["floor", "ceil", "fmod", "pow", "sqrt", "sin", "cos"
 // A profile that allows allocation may also import the usual hosted libc.
 const HOSTED_ALLOW = /^(malloc|calloc|realloc|free|mmap|munmap|mprotect|read|write|open|close|lseek|stat|fstat|fcntl|ioctl|getenv|setenv|unsetenv|gettimeofday|clock_gettime|usleep|nanosleep|sched_yield|getpid|kill|raise|atexit|fflush|fwrite|snprintf|dprintf|setvbuf|strerror|waitpid|pthread_\w+|_?_?error|__errno_location|environ|_NSGetEnviron|\w*context|stdout|stderr|__stdoutp|__stderrp|_tlv_bootstrap)$/;
 
-function tool(name: string): string { return join(LLVM_BIN, name); }
-function run(cmd: string, args: string[]): string {
+export function tool(name: string): string { return join(LLVM_BIN, name); }
+export function run(cmd: string, args: string[]): string {
   const r = spawnSync(cmd, args, { encoding: "utf-8", maxBuffer: 1 << 30 });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed: ${r.stderr || r.error?.message}`);
   return r.stdout;
@@ -57,7 +57,7 @@ function run(cmd: string, args: string[]): string {
 
 // Mach-O C symbols carry a leading underscore; strip it so one allowlist serves both formats.
 // ELF versioned imports (malloc@GLIBC_2.2.5, malloc@plt) drop the suffix.
-function norm(sym: string, macho: boolean): string {
+export function norm(sym: string, macho: boolean): string {
   // __milo_cgu. is the prefix a split build gives a promoted internal symbol.
   let s = sym.replace(/@.*$/, "").replace(/^(_*)__milo_cgu\./, "$1");
   if (macho && s.startsWith("_")) s = s.slice(1);
@@ -69,13 +69,23 @@ const TARGET = /(?:^|,\s*)(0x[0-9a-f]+)\s*<([^>]+)>/;
 const INDIRECT_CALL = /^(blr\w*|blx\w*\s+(r\d+|lr|ip|sp)|call[a-z]*\s+\*|callq?\s+\*)/;
 
 // Mach-O magics (32/64-bit, either byte order) and the fat header; anything else is ELF here.
-function isMachO(path: string): boolean {
+export function isMachO(path: string): boolean {
   const fd = openSync(path, "r");
   try {
     const b = Buffer.alloc(4);
     readSync(fd, b, 0, 4, 0);
     return ["feedface", "feedfacf", "cefaedfe", "cffaedfe", "cafebabe"].includes(b.toString("hex"));
   } finally { closeSync(fd); }
+}
+
+/** Mach-O stubs are anonymous in -d output; the indirect symbol table names each one. */
+export function machoStubs(path: string): Map<number, string> {
+  const stubs = new Map<number, string>();
+  for (const line of run(tool("llvm-objdump"), ["--macho", "--indirect-symbols", path]).split("\n")) {
+    const m = /^0x([0-9a-f]+)\s+\d+\s+(\S+)$/.exec(line);
+    if (m) stubs.set(parseInt(m[1], 16), norm(m[2], true));
+  }
+  return stubs;
 }
 
 export function readObject(path: string): ObjectGraph {
@@ -89,14 +99,7 @@ export function readObject(path: string): ObjectGraph {
     if (kind === "U" || kind === "u") undefinedSyms.add(norm(name, macho));
     else if (/[TtWwVvDdRrSsBb]/.test(kind)) defined.add(norm(name, macho));
   }
-  // Mach-O stubs are anonymous in -d output; the indirect symbol table names each one.
-  const stubs = new Map<number, string>();
-  if (macho) {
-    for (const line of run(tool("llvm-objdump"), ["--macho", "--indirect-symbols", path]).split("\n")) {
-      const m = /^0x([0-9a-f]+)\s+\d+\s+(\S+)$/.exec(line);
-      if (m) stubs.set(parseInt(m[1], 16), norm(m[2], true));
-    }
-  }
+  const stubs = macho ? machoStubs(path) : new Map<number, string>();
   const edges = new Map<string, Set<string>>();
   const indirect = new Map<string, number>();
   let cur: string | null = null;

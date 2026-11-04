@@ -86,6 +86,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/noalias.ts` | `noalias` on `&mut` parameters, decided on the function bodies (their forms, src/emit-forms.ts). |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/object-checks.ts` | Profile checks on the linked binary (docs/plans/object-level-assurance.md step 3). |
+| `src/object-trace.ts` | Source-to-object traceability (docs/plans/object-level-assurance.md step 2, DO-178C 6.4.4.2b). |
 | `src/owned-temp.ts` | Ownership facts emit-mlir asks of an expression's form (src/emit-forms.ts): which expressions are owned temporaries (discarding one must drop it), whether an if/match used as a value owns its result,… |
 | `src/parser.ts` | Recursive-descent parser: token stream -> AST. |
 | `src/pinned-build.ts` | Pinned build pipeline per safety profile (docs/plans/object-level-assurance.md step 1). |
