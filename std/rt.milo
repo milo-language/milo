@@ -104,6 +104,7 @@ fn rtRcAdd(h: *u8, d: i64): i64 {
 // @internal
 // n bytes of text after a fresh count of 1; null when malloc fails (or n is so large that
 // n + 8 wraps), so the caller's own null check reports it.
+@unsafe
 pub fn rtStrAlloc(n: i64): *u8 {
     unsafe {
         if (n as u64) > 18446744073709551607 {
@@ -120,6 +121,7 @@ pub fn rtStrAlloc(n: i64): *u8 {
 
 // @internal
 // Frees a buffer this handle is known to hold alone (after rtStrUnique).
+@unsafe
 pub fn rtStrFree(d: *u8) {
     unsafe {
         free(d[-8].addrOf())
@@ -128,6 +130,7 @@ pub fn rtStrFree(d: *u8) {
 
 // @internal
 // Drops one handle to a heap buffer (the caller has checked cap > 0).
+@unsafe
 pub fn rtStrRelease(d: *u8) {
     unsafe {
         let h = d[-8].addrOf()
@@ -154,6 +157,7 @@ fn rtMake(b: *u8, len: i64, cap: i64): string {
 
 // @internal
 // A fresh unique copy of `len` bytes, NUL-terminated. Aborts when out of memory.
+@unsafe
 pub fn rtStrFrom(src: *u8, len: i64): string {
     unsafe {
         let cap = len.wrappingAdd(1)
@@ -278,6 +282,7 @@ fn rtStrReserveSlow(s: &mut string, extra: i64): *u8 {
 // of 1, which a heap buffer with room implies is safe to write) is small enough to inline;
 // anything else copies or grows.
 @inline
+@unsafe
 pub fn rtStringReserve(s: &mut string, extra: i64): *u8 {
     unsafe {
         let head = rtHead(s)
@@ -295,6 +300,7 @@ pub fn rtStringReserve(s: &mut string, extra: i64): *u8 {
 // @internal
 // Drops the string at `s`: one handle fewer on a heap buffer (cap > 0); a literal or an
 // empty string holds none.
+@unsafe
 pub fn rtStringDrop(s: *u8) {
     unsafe {
         let head = s as *RtStr
@@ -399,6 +405,7 @@ pub fn rtStringCmp(a: &string, b: &string): i32 {
 // keeps its NUL at [len] and is passed as is. A cap-0 one (a literal held in a variable, or
 // a view, which has no NUL of its own) is copied into a NUL-terminated string stored at
 // `tmp` (which holds an empty string otherwise), for the caller to drop after the call.
+@unsafe
 pub fn rtStringCstr(s: &string, tmp: &mut string): *u8 {
     unsafe {
         let hs = rtHead(s)
@@ -603,6 +610,7 @@ fn rtFmtF32(v: f32, buf: *u8): i64 {
 // @internal
 // Appends v's decimal digits to s in place (unique first). Returns s's buffer, or null when
 // growing fails, so the caller's check reports it at its site.
+@unsafe
 pub fn rtStringPushI64(s: &mut string, v: i64): *u8 {
     unsafe {
         let buf = rtStringReserve(&mut s, 20)
@@ -620,6 +628,7 @@ pub fn rtStringPushI64(s: &mut string, v: i64): *u8 {
 
 // @internal
 // rtStringPushI64 for an unsigned value.
+@unsafe
 pub fn rtStringPushU64(s: &mut string, v: u64): *u8 {
     unsafe {
         let buf = rtStringReserve(&mut s, 20)
@@ -654,6 +663,7 @@ fn rtPushBytes(s: &mut string, src: *u8, n: i64): *u8 {
 
 // @internal
 // Appends v as rtFmtF64 writes it (the shortest round-tripping digits).
+@unsafe
 pub fn rtStringPushF64(s: &mut string, v: f64): *u8 {
     unsafe {
         let tmp: [u8; 32] = [0; 32]
@@ -664,6 +674,7 @@ pub fn rtStringPushF64(s: &mut string, v: f64): *u8 {
 
 // @internal
 // rtStringPushF64 for an f32, through rtFmtF32 (the shortest f32 digits).
+@unsafe
 pub fn rtStringPushF32(s: &mut string, v: f32): *u8 {
     unsafe {
         let tmp: [u8; 32] = [0; 32]
@@ -674,6 +685,7 @@ pub fn rtStringPushF32(s: &mut string, v: f32): *u8 {
 
 // @internal
 // Appends "true" or "false" to s in place; null when growing fails.
+@unsafe
 pub fn rtStringPushBool(s: &mut string, v: bool): *u8 {
     unsafe {
         let tmp: [u8; 8] = [0; 8]
@@ -699,6 +711,7 @@ pub fn rtStringPushBool(s: &mut string, v: bool): *u8 {
 // @internal
 // Appends a pointer as `0x` and lowercase hex digits (`0x0` for null), the same text on
 // every target.
+@unsafe
 pub fn rtStringPushPtr(s: &mut string, p: *u8): *u8 {
     unsafe {
         let v = p as u64
@@ -731,6 +744,7 @@ pub fn rtStringPushPtr(s: &mut string, p: *u8): *u8 {
 // \ newline tab return as two-byte escapes, any other byte below 0x20 as \u00xx. Null when
 // growing fails.
 @wrapping
+@unsafe
 pub fn rtStringPushJson(s: &mut string, d: *u8, n: i64): *u8 {
     unsafe {
         let buf = rtStringReserve(&mut s, n * 6)
@@ -787,6 +801,7 @@ pub fn rtStringPushJson(s: &mut string, d: *u8, n: i64): *u8 {
 // Drops the owning closure { fn, env } at c: an env's first word is its drop function, null
 // for a by-reference closure (its env is a frame's slot); a closure that captured nothing
 // has no env at all.
+@unsafe
 pub fn rtClosureDrop(c: *u8) {
     unsafe {
         let env = (c as *i64) [1] as *u8
@@ -803,6 +818,7 @@ pub fn rtClosureDrop(c: *u8) {
 // @internal
 // Drops the Heap<Interface> { data, itable } at h: the concrete type's destructor from the
 // itable's slot `slot` (after the methods; null when the type has none), then the box.
+@unsafe
 pub fn rtIfaceDrop(h: *u8, slot: i64) {
     unsafe {
         let data = (h as *i64) [0] as *u8
@@ -823,6 +839,7 @@ pub fn rtIfaceDrop(h: *u8, slot: i64) {
 // @internal
 // `n * size` zeroed bytes from malloc; null when the product overflows or malloc fails, so
 // the caller's own check reports it at its site.
+@unsafe
 pub fn rtMapAlloc(n: i64, size: i64): *u8 {
     unsafe {
         if rtMulOverflows(n, size) {
@@ -842,6 +859,7 @@ pub fn rtMapAlloc(n: i64, size: i64): *u8 {
 // A clone's buffer: `n * size` bytes from malloc with the `n * size` bytes at src copied in
 // (the clone's glue then re-clones whatever in them owns something). Null for n = 0. Out of
 // memory, or a size that overflows, ends the program as a failed allocation does.
+@unsafe
 pub fn rtBufClone(src: *u8, n: i64, size: i64): *u8 {
     unsafe {
         if n == 0 {
@@ -863,6 +881,7 @@ pub fn rtBufClone(src: *u8, n: i64, size: i64): *u8 {
 // @internal
 // `n * size` uninitialized bytes from malloc (a Vec literal's buffer, exactly its
 // elements); null when the product overflows or malloc fails, so the caller reports it.
+@unsafe
 pub fn rtBufAlloc(n: i64, size: i64): *u8 {
     unsafe {
         if rtMulOverflows(n, size) {
@@ -877,6 +896,7 @@ pub fn rtBufAlloc(n: i64, size: i64): *u8 {
 // `count * size` bytes. At least rtReallocMin() kept bytes go through realloc, a smaller
 // buffer to a fresh block (copy, then free). Null when the size overflows or allocation
 // fails, the old buffer then untouched; the caller reports it at its site.
+@unsafe
 pub fn rtVecGrowRealloc(old: *u8, keep: i64, count: i64, size: i64): *u8 {
     unsafe {
         if rtMulOverflows(count, size) {
@@ -893,6 +913,7 @@ pub fn rtVecGrowRealloc(old: *u8, keep: i64, count: i64, size: i64): *u8 {
 // @internal
 // rtVecGrowRealloc where realloc is not an option (Cortex-M's bump heap, or a zero-size
 // element, since realloc(p, 0) may free p): always a fresh block.
+@unsafe
 pub fn rtVecGrowCopy(old: *u8, keep: i64, count: i64, size: i64): *u8 {
     unsafe {
         if rtMulOverflows(count, size) {
@@ -934,6 +955,7 @@ pub fn rtHashU64(h: i64, v: i64): i64 {
 // @internal
 // Over a string key's bytes.
 @wrapping
+@unsafe
 pub fn rtHashBytes(h: i64, d: *u8, n: i64): i64 {
     unsafe {
         var acc = h
