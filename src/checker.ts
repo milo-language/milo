@@ -4,7 +4,7 @@
 // Error recovery: an erroneous declaration still binds, an erroneous expression is typed
 // `unknown`, and nothing reports about `unknown` (enforced in `error()`).
 import { attributesFor } from "./attributes";
-import { TRACE_ATTRS, traceAttrError } from "./requirements";
+import { TRACE_ATTRS, traceAttrError } from "./trace-attrs";
 import { HARD_ERRORS } from "./warnings";
 import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from "./replay-externs";
 import { walkExprs } from "./safety";

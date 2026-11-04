@@ -119,6 +119,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/target.ts` | host platform detection for platform-specific stdlib resolution, plus cross-compilation target definitions (incl. |
 | `src/timing.ts` | MILO_TIMING=1 per-phase wall-time breakdown of one compiler invocation, printed to stderr. |
 | `src/tokens.ts` | Token types and the keyword lists the lexer, parser and generated editor grammar all read from. |
+| `src/trace-attrs.ts` | The shape rules for traceability attributes (@req, @assume, @derived, @deactivated). |
 | `src/trace.ts` | `milo trace <file>`: list the records of a record/replay trace (std/replay, docs/record-replay.md) so a person or a UI can see a recorded run as a timeline of calls. |
 | `src/track-caller.ts` | @trackCaller: a panic inside the attributed fn reports its caller's file:line, like Rust's #[track_caller]. |
 | `src/types.ts` | Internal type representations: the TypeKind tagged union every later stage speaks. |
