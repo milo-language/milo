@@ -43,6 +43,7 @@ describe("prove (std/smt engine)", () => {
 
   for (const file of files) {
     const flags = (readFileSync(join(PROVE_DIR, file), "utf-8").match(/\/\/\s*@flags:\s*(.*)$/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
+    // skip: a z3 fixture says nothing on a box without z3.
     const run = flags.includes("--solver=z3") && !HAVE_Z3 ? test.skip : test;
     run(file.replace(".milo", ""), async () => {
       const src = readFileSync(join(PROVE_DIR, file), "utf-8");
