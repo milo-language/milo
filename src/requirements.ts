@@ -528,7 +528,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
     }
     if (r.verified) continue;
     const failing = r.verifiedBy.filter(t => t.result === "FAIL");
-    const why = failing.length ? `its verifying test${failing.length > 1 ? "s" : ""} fail (${failing.map(t => t.fn).join(", ")})`
+    const why = failing.length ? `${failing.length > 1 ? "its verifying tests fail" : "its verifying test fails"} (${failing.map(t => t.fn).join(", ")})`
       : r.parent && r.formalizedBy.length > 0 ? "its clauses are not all PROVEN and no test passes"
       : r.parent ? "it has no formalizing clause and no test"
       : "a high-level requirement needs a passing test of its own";

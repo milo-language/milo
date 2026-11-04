@@ -335,7 +335,7 @@ test("trace runs each @req test: PASS/FAIL rows, a failing test is a strict erro
     expect(bad.out).toMatch(/verified\s+FAIL\s+a_test\.milo:\d+ testInc/);
     expect(bad.out).toContain("test 'testInc' (HLR-1) FAILED");
     // HLR-1's only test fails, so it is unverified (LLR-1 still stands on its proof)
-    expect(bad.out).toContain("requirement HLR-1 is not verified: its verifying test fail (testInc)");
+    expect(bad.out).toContain("requirement HLR-1 is not verified: its verifying test fails (testInc)");
     // a report run lists it but does not fail
     expect(run().code).toBe(0);
     // --no-run does not execute it
