@@ -31,13 +31,13 @@ not the handle, so the caller vouches that its owner keeps it open while registe
 
 ```milo
 let fd: i32 = 0                 // stdin, or any descriptor you own
-var el = EventLoop.new()!
+let el = EventLoop.new()!
 unsafe {
     setNonblocking(fd)
     eventRegisterRead(el, fd)
 }
 
-var ready: [i32; 8] = [0; 8]
+let ready: [i32; 8] = [0; 8]
 // @unsafe: eventPoll writes up to maxEvents fds into `ready`, so it must hold that many.
 var n: i32 = 0
 unsafe { n = eventPoll(el, ready, 8, 1000) }

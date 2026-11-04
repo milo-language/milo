@@ -22,7 +22,7 @@ a task with deep recursion or large frames. A task's stack does not grow, so a t
 one overflows rather than reallocating.
 
 ```milo
-var t = Task.spawn(() => {
+let t = Task.spawn(() => {
     print("in a task")
 })
 t.join()

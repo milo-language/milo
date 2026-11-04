@@ -1218,7 +1218,7 @@ fn fresh(): Stack<string> {
     return Stack.new()           // T = string, from the return type
 }
 
-var s: Stack<i64> = Stack.new()  // T = i64, from the annotation
+let s: Stack<i64> = Stack.new()  // T = i64, from the annotation
 let t = Stack<bool>.new()        // spelled out; always accepted
 ```
 
@@ -1950,9 +1950,9 @@ Vec owns its elements and frees them when it goes out of scope.
 ### Constructors
 
 ```milo
-var a: Vec<i64> = Vec.new()              // empty, no allocation
-var b: Vec<i64> = Vec.withCapacity(1024) // empty, pre-sized (no realloc up to 1024 pushes)
-var c: Vec<u8>  = Vec.filled(4096, 0)    // 4096 copies of 0 — zeroed buffer
+let a: Vec<i64> = Vec.new()              // empty, no allocation
+let b: Vec<i64> = Vec.withCapacity(1024) // empty, pre-sized (no realloc up to 1024 pushes)
+let c: Vec<u8>  = Vec.filled(4096, 0)    // 4096 copies of 0 — zeroed buffer
 let d = Vec<string>.new()                // the element spelled on the call instead
 let m = HashMap<string, i64>.withCapacity(64)
 ```
@@ -2106,7 +2106,7 @@ limits too (`self.helper()` could reach `self.items`), while a disjoint field
 
 ```milo
 var a: Vec<string> = ["a"]
-var b: Vec<string> = ["b", "c"]
+let b: Vec<string> = ["b", "c"]
 a.extend(b)               // ["a", "b", "c"] — b is moved in, not copied
 a.retain((s: &string) => s != "b")   // ["a", "c"] — in place, no second buffer
 
@@ -2169,11 +2169,11 @@ swap the comparator's arguments rather than negating.
 `clone()` returns a deep copy: every element is cloned too, so the copy owns independent heap data and later mutations to either side are invisible to the other.
 
 ```milo
-var v: Vec<string> = ["a", "b"]
+let v: Vec<string> = ["a", "b"]
 var w = v.clone()
 w.push("c")                     // v is still ["a", "b"]
 
-var nested: Vec<Vec<string>> = [["x"]]
+let nested: Vec<Vec<string>> = [["x"]]
 var n = nested.clone()
 n[0].push("y")                  // nested[0] is still ["x"] — elements are cloned, not shared
 ```
@@ -2306,7 +2306,7 @@ m.clear()                          // drop every entry, keep the table's capacit
 `HashMap.withCapacity(n)` presizes the table so `n` inserts never rehash:
 
 ```milo
-var counts: HashMap<string, i64> = HashMap.withCapacity(1000)
+let counts: HashMap<string, i64> = HashMap.withCapacity(1000)
 ```
 
 ### keys() and values()
@@ -2315,7 +2315,7 @@ var counts: HashMap<string, i64> = HashMap.withCapacity(1000)
 var m: HashMap<string, i64> = HashMap.new()
 m.insert("a", 1)
 var ks = m.keys()      // Vec<K>, a deep copy of every live key
-var vs = m.values()    // Vec<V>
+let vs = m.values()    // Vec<V>
 ks.sort()
 ```
 
@@ -2368,7 +2368,7 @@ sorted maps and a `Counter` are in [std/collections](site/stdlib/collections.md)
 `for` over a map yields keys; the two-binding form yields key and value together:
 
 ```milo
-var m: HashMap<string, i32> = HashMap.new()
+let m: HashMap<string, i32> = HashMap.new()
 
 for k in m {
     print(k)
@@ -3564,13 +3564,13 @@ for s in v {
 `move` is the escape hatch in every case, including a `var` capture. It is deliberately not applied for you outside a `move` parameter: the allocation is real, and a `move` you wrote is a move the checker can see at the point it happens, so a read of the capture afterwards is a proper `use of moved variable` rather than a silently empty value.
 
 ```milo
-fn makeAdder(n: i32): (i32) => i32 {
+fn makeAdder(n: i32): move (i32) => i32 {
     return move (x: i32): i32 => {
         return x + n
     }
 }
 
-fn makeMultiplier(n: i32): (i32) => i32 {
+fn makeMultiplier(n: i32): move (i32) => i32 {
     return move (x: i32): i32 => {
         return x * n
     }
@@ -3581,7 +3581,7 @@ print(add5(3))    // 8
 print(add5(10))   // 15
 
 // Compose closures: the result keeps f and g, so they are `move` parameters
-fn compose(f: move (i32) => i32, g: move (i32) => i32): (i32) => i32 {
+fn compose(f: move (i32) => i32, g: move (i32) => i32): move (i32) => i32 {
     return move (x: i32): i32 => { return f(g(x)) }
 }
 let add5ThenDouble = compose(makeMultiplier(2), makeAdder(5))
@@ -3643,10 +3643,10 @@ at all; a named fn or a literal that only reads its captures is accepted.
 ```milo
 struct Handler {
     name: string,
-    callback: (i32) => i32,
+    callback: move (i32) => i32,
 }
 
-fn makeMultiplier(n: i32): (i32) => i32 {
+fn makeMultiplier(n: i32): move (i32) => i32 {
     return move (x: i32): i32 => {
         return x * n
     }
@@ -4956,16 +4956,16 @@ fn skipWs(s: &string, pos: &mut i64): void {
     while pos < s.len && s[pos] == ' ' { pos = pos + 1 }
 }
 
-fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
-fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
-fn parseArray(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+fn parseString(s: &string, pos: &i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+fn parseObject(s: &string, pos: &i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+fn parseArray(s: &string, pos: &i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
 
 fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     skipWs(s, &mut pos)
     let ch = s[pos]
-    if ch == '"' { return parseString(s, &mut pos) }
-    if ch == '{' { return parseObject(s, &mut pos) }
-    if ch == '[' { return parseArray(s, &mut pos) }
+    if ch == '"' { return parseString(s, pos) }
+    if ch == '{' { return parseObject(s, pos) }
+    if ch == '[' { return parseArray(s, pos) }
     return Heap(JsonValue.Null)  // ... numbers, bools, null
 }
 ```
@@ -5608,7 +5608,7 @@ fn main(): i32 {
                 setNonblocking(clientFd)
                 let fd = clientFd
                 Task.spawn(move (): void => {
-                    var buf: [u8 ; 4096] = [0 ; 4096]
+                    let buf: [u8 ; 4096] = [0 ; 4096]
                     // read + echo back, yielding on EAGAIN
                     let n = read(fd, buf, 4096)
                     if n > 0 { write(fd, buf, n) }

@@ -165,7 +165,7 @@ impl Config {
 }
 
 pub fn main(): i32 {
-    var cfg = Config { line: "timeout=30" }
+    let cfg = Config { line: "timeout=30" }
     print(cfg.key())
     return 0
 }
@@ -451,7 +451,7 @@ from "std/runtime" import { Promise }
 pub fn main(): i32 {
     let src = seal("host=localhost port=8080".clone())
     let sh = src.share()
-    var mine = sh.clone()          // the worker's own handle, same bytes
+    let mine = sh.clone()          // the worker's own handle, same bytes
 
     let job = Promise<i64>.blocking(move (): i64 => {
         return mine.len()          // reads the shared buffer on a real thread

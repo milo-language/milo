@@ -365,7 +365,7 @@ from "std/sync" import { Channel }
 
 fn main(): i32 {
     var ch = Channel<i64>.new(8)!
-    var tx = ch.clone()          // the producer needs its own owner
+    let tx = ch.clone()          // the producer needs its own owner
 
     let producer = Promise<i64>.blocking(move (): i64 => {
         tx.send(10)!

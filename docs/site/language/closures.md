@@ -98,7 +98,7 @@ let evenSquares = nums.filter((n) => n % 2 == 0).map((n) => n * n)
 Regular closures borrow from their environment, so they cannot outlive their creating scope. Prefix with `move` to take ownership instead:
 
 ```milo
-fn makeAdder(n: i32): (i32) => i32 {
+fn makeAdder(n: i32): move (i32) => i32 {
     return move (x: i32): i32 => {
         return x + n
     }

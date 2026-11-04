@@ -16,7 +16,7 @@ var n = 0
 while let Some(_) = readLine() {
     n += 1
 }
-var f = File.openWrite("count.txt")!
+let f = File.openWrite("count.txt")!
 let _ = f.writeAll($"{n}\n")
 ```
 

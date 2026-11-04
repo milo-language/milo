@@ -16,7 +16,7 @@ from "std/seal" import { Sealed, Span, seal }
 from "std/seal" import { Sealed, Span, seal }
 
 pub fn main(): i32 {
-    var buf: string = "{\"name\":\"milo\"}"
+    let buf: string = "{\"name\":\"milo\"}"
     let src = seal(buf)              // buf is moved; it cannot be changed again
 
     let name: Span = src.spanOf(9, 4)      // measured against src, and branded with it
@@ -87,7 +87,7 @@ The operation a scanner performs most on a retained piece is comparing it, not o
 from "std/seal" import { Sealed, Span, seal }
 
 pub fn main(): i32 {
-    var buf: string = "let x = 1"
+    let buf: string = "let x = 1"
     let src = seal(buf)
     let word: Span = src.spanOf(0, 3)
 
@@ -107,7 +107,7 @@ Use `eq` in the hot path. Reach for `text` only when you genuinely need to own t
 from "std/seal" import { seal }
 
 pub fn main(): i32 {
-    var buf: string = "hello"
+    let buf: string = "hello"
     let src = seal(buf)
     var back = src.unseal()
     back.push('!')

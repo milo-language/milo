@@ -64,7 +64,8 @@ function renderWarnings(warnings: Warning[]): string {
     lines.push("");
     lines.push(w.doc!.trim());
     lines.push("");
-    lines.push("```milo");
+    // A hard error's example is the program that provokes it, so the doc-test harness must expect a compile error.
+    lines.push(w.hardError ? "```milo error" : "```milo");
     lines.push(w.example!.trimEnd());
     lines.push("```");
     lines.push("");

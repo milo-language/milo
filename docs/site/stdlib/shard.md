@@ -96,8 +96,8 @@ fn shade(w: Shard<f64>, t: &mut Tally): Shard<f64> {
 }
 
 pub fn main(): i32 {
-    var pixels: Vec<f64> = Vec.filled(64, 0.5)
-    var noStates: Vec<Tally> = Vec.new()
+    let pixels: Vec<f64> = Vec.filled(64, 0.5)
+    let noStates: Vec<Tally> = Vec.new()
     match parallelMapWith(pixels, 16, noStates, shade) {
         Ok(m) => {
             print(m.data.len.toString())
@@ -188,7 +188,7 @@ fn scale(window: Shard<f64>, e: &mut Env): Shard<f64> {
 }
 
 pub fn main(): i32 {
-    var data: Vec<f64> = Vec.filled(1000, 1.0)
+    let data: Vec<f64> = Vec.filled(1000, 1.0)
     var envs: Vec<Env> = Vec.new()
     for k in 0..4 {
         envs.push(Env { scale: 2.0, sum: 0.0 })

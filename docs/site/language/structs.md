@@ -60,7 +60,7 @@ fn fresh(): Stack<string> {
     return Stack.new()           // T = string, from the return type
 }
 
-var s: Stack<i64> = Stack.new()  // T = i64, from the annotation
+let s: Stack<i64> = Stack.new()  // T = i64, from the annotation
 let t = Stack<bool>.new()        // spelled out; always accepted
 ```
 

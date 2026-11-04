@@ -454,7 +454,7 @@ _A hard error: no flag silences it._
 
 An error: a `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.
 
-```milo
+```milo error
 fn main() {
   var total = 40 + 2
   print(total)
@@ -469,7 +469,7 @@ _A hard error: no flag silences it._
 
 An error: a `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.
 
-```milo
+```milo error
 fn show(n: &mut i64): void {
   print(n)
 }
