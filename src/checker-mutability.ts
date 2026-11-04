@@ -37,7 +37,7 @@ function walk(n: unknown, visit: (n: Node, parent: Node | null, key: string) => 
 
 // The names `body` writes, and (for `watch`) every bare use of the watched name that is not
 // a plain read.
-function writtenNames(host: ProgramPassHost, view: ProgramView, body: unknown, watch: string | null): { written: Set<string>; escapes: boolean } {
+export function writtenNames(host: ProgramPassHost, view: ProgramView, body: unknown, watch: string | null): { written: Set<string>; escapes: boolean } {
   const m = host.mutation;
   const written = new Set<string>();
   let escapes = false;

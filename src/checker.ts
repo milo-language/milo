@@ -5311,6 +5311,12 @@ export class TypeChecker {
     };
   }
 
+  // The finished program for read-only tools that analyse it after `check` (src/harden.ts):
+  // the same host and view the whole-program passes get, and nothing the caller can write back.
+  analysisFacts(program: Program): { host: ProgramPassHost; view: ProgramView } {
+    return { host: this.programPassHost(), view: this.programView(program) };
+  }
+
   // The checker as the whole-program passes see it (`checker-program-passes.ts`). An
   // explicit literal rather than `this` so the members stay private and the seam is
   // readable here: what a pass can reach is this list and nothing else.

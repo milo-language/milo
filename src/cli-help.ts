@@ -78,6 +78,12 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     summary: "apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches",
   },
   {
+    name: "harden", usage: "harden <file|dir>",
+    summary: "rewrite into stricter Milo (index loop to for-in, match to ?, isSome to if let, last-use clone to move); prints a diff",
+    details: ["an edit is kept only if the result type-checks, `milo interp` output is unchanged, and a second run finds nothing"],
+    flags: [{ flag: "--write", help: "apply the rewrites in place" }],
+  },
+  {
     name: "emit-ast", usage: "emit-ast <file>", summary: "emit the parsed AST as JSON",
     flags: [{ flag: "--all", help: "include imported modules" }, { flag: "--spans", help: "keep source spans" }],
   },

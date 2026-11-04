@@ -52,6 +52,8 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |
 | `src/fixes.ts` | Machine-applicable fixes for diagnostics whose hint is mechanical: the edit that makes the diagnostic go away, computed from the diagnostic and the file's text, and nothing else. |
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |
+| `src/harden-rewrites.ts` | The four analyses behind `milo harden` (src/harden.ts): each reads the checked program and returns candidate rewrites as text edits. |
+| `src/harden.ts` | `milo harden <file\|dir> [--write]`: rewrite code into stricter, more canonical Milo. |
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
 | `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
 | `src/interp-co-natives.ts` | Reference interpreter, tasks and synchronization: the library's Task, TaskScope, Channel, WaitGroup, Once and atomics, replaced by natives because std/runtime.milo and std/sync.milo keep them in raw… |

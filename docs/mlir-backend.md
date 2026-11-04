@@ -138,11 +138,15 @@ export through upstream's SMT-LIB exporter to z3, the only solver.
 
 ## Raising
 
-Not built. Two raising-shaped rewrites need no dialect and are checker warnings with `milo fix`
+Raising through the dialect is not built. Two raising-shaped rewrites need no dialect and are checker warnings with `milo fix`
 fixes instead: `var-never-reassigned` (`var` to `let`) and `unwritten-mut-param` (`&mut T` to
-`&T`, call sites included), both in `src/checker-mutability.ts`. `milo harden` is reserved for
-rewrites that need facts only the dialect has (last-use clone to move, range-based `@wrapping`
-removal, contract inference). Raising comes after the self-hosted frontend: the source-faithful top layer it
+`&T`, call sites included), both in `src/checker-mutability.ts`. `milo harden <file|dir> [--write]`
+(`src/harden.ts`, analyses in `src/harden-rewrites.ts`) does four more from the checked AST and
+the token stream, no dialect: index loop to for-in, a match that only re-wraps the failure to
+`?`, `isSome` plus `!` to `if let`, last-use clone to move. An edit survives only if the result
+type-checks, `milo interp` stdout and exit code are unchanged (files with a supported `main`),
+and a second run proposes nothing; a dropped edit is an analysis bug. Range-based `@wrapping`
+removal and contract inference still need facts only the dialect has. Raising comes after the self-hosted frontend: the source-faithful top layer it
 needs (comments, spelling, layout) is frontend work, so it is built once, in the Milo
 frontend. JSIR's defining trait is that it round-trips: source goes up into the dialect,
 passes transform it, and it prints back as source. Milo gets the same:

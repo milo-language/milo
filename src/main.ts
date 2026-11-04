@@ -2242,6 +2242,11 @@ async function main() {
     return;
   }
 
+  if (cmd === "harden") {
+    const { runHarden } = await import("./harden");
+    process.exit(await runHarden(args.slice(1)));
+  }
+
   if (cmd === "fmt") {
     const fmtArgs = args.slice(1);
     const write = fmtArgs.includes("-w");

@@ -15,7 +15,7 @@ import type { Diagnostic } from "./diagnostics";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 
-interface TextEdit { offset: number; len: number; newText: string }
+export interface TextEdit { offset: number; len: number; newText: string }
 export interface Fix { title: string; edits: TextEdit[] }
 
 // The 0-based offset of a 1-based (line, col), as spans are written.
