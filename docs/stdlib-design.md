@@ -35,6 +35,25 @@ multi-branch recovery protocol for rare distinctions.
 These rules deliberately favor one unsurprising path over multiple equivalent
 spellings.
 
+## What belongs in std at all
+
+A module belongs in std when it is one of:
+
+1. **The platform boundary every program needs:** runtime, scheduler, sync, memory,
+   strings, collections, io, fs, net, process, os. This is where std's `unsafe` lives,
+   because something has to talk to the OS.
+2. **An implementation of a frozen external standard, in safe Milo with no external
+   dependency:** JPEG (ITU T.81), inflate (RFC 1951), zstd (RFC 8878), JSON (RFC 8259),
+   base64/base32 (RFC 4648). A frozen spec means the API never has to churn, so the
+   module costs almost nothing to keep, and std is where users look for it.
+3. **What serving and fetching over the web needs:** http, fetch, TLS, regex, sqlite
+   (Bun ships the same set).
+
+A **package** (an org repo such as `milo-language/aws`) is the home for bindings to a
+service or a format still evolving, and for anything one application needs. Moving a
+module out of std is a breaking change for every importer, so it needs a reason that
+outweighs that, not just line count: a safe, frozen-spec codec costs std nothing.
+
 ## What earns a public entry
 
 The bar is **ergonomic, capable, and sensible**, in that order of scrutiny; a lean
