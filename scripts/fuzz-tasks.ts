@@ -506,10 +506,10 @@ const SHAPES: Shape[] = [
         ? `var envs: Vec<${Env}> = []\n    envs.push(${Env} { seen: 0 })\n    return parallelMapWith(data, ${pick([2, 4, 8])}, envs, ${slow})!.data`
         : `return parallelMap(data, ${pick([1, 2, 4])}, ${slow})`;
       p.fn(`fn ${leak}(): Vec<i64> {
-    var data: Vec<i64> = Vec.filled(${n}, 1)
+    let data: Vec<i64> = Vec.filled(${n}, 1)
     ${call}
 }`);
-      p.body.push(`let ${junk}Out = ${leak}()`, `var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
+      p.body.push(`let ${junk}Out = ${leak}()`, `let ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
         `print(${junk}Out[0])`, `print(${junk}[0])`);
     },
   },
@@ -550,9 +550,9 @@ const SHAPES: Shape[] = [
       const states = p.fresh("states");
       p.body.push(`var ${states}: Vec<${Stash}> = []`);
       for (let k = 0; k < pick([1, 2]); k++) p.body.push(`${states}.push(${Stash} { held: [] })`);
-      p.body.push(`var ${r}Data: Vec<i64> = Vec.filled(${n}, 3)`,
+      p.body.push(`let ${r}Data: Vec<i64> = Vec.filled(${n}, 3)`,
         `let ${r} = parallelMapWith(${r}Data, ${pick([1, 4, 16])}, ${states}, ${keep})!`,
-        `${sink}(${r}.data)`, `var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
+        `${sink}(${r}.data)`, `let ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
         `for st in ${r}.states {`, `    if st.held.len > 0 {`, `        print("ESCAPED " + st.held[0].get(0).toString())`, `    }`, `}`,
         `print(${junk}[0])`);
     },
@@ -574,8 +574,9 @@ const SHAPES: Shape[] = [
     e.seen = e.seen + 1
     return s
 }`);
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([5, 64])}, 1)`, `var ${sts}: Vec<${Env}> = []`);
-      if (chance(0.3)) p.body.push(`${sts}.push(${Env} { seen: 0 })`);
+      const seeded = chance(0.3);
+      p.body.push(`let ${d}: Vec<i64> = Vec.filled(${pick([5, 64])}, 1)`, `${seeded ? "var" : "let"} ${sts}: Vec<${Env}> = []`);
+      if (seeded) p.body.push(`${sts}.push(${Env} { seen: 0 })`);
       p.body.push(`match parallelMapWith(${d}, ${pick([1, 4])}, ${sts}, ${dbl}) {`,
         `    Result.Ok(m) => { print("mapped " + m.data.len.toString()) }`,
         `    Result.Err(rej) => {`,
@@ -608,7 +609,7 @@ const SHAPES: Shape[] = [
     e.windows = e.windows + 1
     return s
 }`);
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([3, 16, 1000])}, 1)`, `var ${sts}: Vec<${Env}> = []`);
+      p.body.push(`let ${d}: Vec<i64> = Vec.filled(${pick([3, 16, 1000])}, 1)`, `var ${sts}: Vec<${Env}> = []`);
       for (let k = 0; k < pick([1, 2, 4]); k++) p.body.push(`${sts}.push(${Env} { sum: 0, windows: 0 })`);
       p.body.push(`let ${r} = parallelMapWith(${d}, ${pick([1, 4, 16, 100])}, ${sts}, ${f})!`,
         `var ${r}Sum: i64 = 0`, `for e in ${r}.states {`, `    ${r}Sum = ${r}Sum + e.sum`, `}`,
@@ -629,7 +630,7 @@ const SHAPES: Shape[] = [
     }
     return s
 }`);
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([10, 16])}, 1)`,
+      p.body.push(`let ${d}: Vec<i64> = Vec.filled(${pick([10, 16])}, 1)`,
         `let ${out} = parallelMap(${d}, ${pick([1, 3, 4])}, ${dbl})`, `print("mapped " + ${out}[0].toString())`);
     },
   },
@@ -734,7 +735,7 @@ const SHAPES: Shape[] = [
     apply(p) {
       p.use("std/runtime", "Promise");
       const v = p.fresh("v"), pr = p.fresh("pr");
-      p.body.push(`var ${v}: Vec<i64> = Vec.filled(${pick([100, 5000])}, 2)`,
+      p.body.push(`let ${v}: Vec<i64> = Vec.filled(${pick([100, 5000])}, 2)`,
         `let ${pr} = Promise<i64>.blocking(move(): i64 => {`,
         `    var t: i64 = 0`, `    for x in ${v} {`, `        t = t + x`, `    }`, `    return t`, `})`,
         `print("sum " + ${pr}.await()!.toString())`);
@@ -1013,6 +1014,9 @@ const SOUNDNESS_DIAGNOSTICS = [
   "' borrows it",
   "a scoped task writes",
   "is borrowed by a scoped task",
+  // a callee that writes a global the caller iterates or lends an element of
+  "which is being iterated here",
+  "and is passed a reference into",
   // globals on OS threads
   "is a mutable global, and this code runs on a real OS thread",
   // finding #3: Copy-only generics
