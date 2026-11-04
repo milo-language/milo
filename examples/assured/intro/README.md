@@ -25,7 +25,7 @@ pub fn heaterPercent(reading: i32, target: i32): i32
     requires reading >= -1000 && reading <= 2000
     requires target >= 0 && target <= 1000
     @req(R-1) ensures result >= 0 && result <= 100
-    @req(R-2) ensures reading < target || result == 0
+    @req(R-2) ensures reading >= target ==> result == 0
 ```
 
 `main` is only the demo harness, so it is `@derived(R-1)`: code that is needed but isn't the
@@ -55,7 +55,7 @@ R-1  The heater command is always between 0 and 100 percent.
 
 R-2  A reading at or above the target turns the heater off.
   implemented   heater.milo:6 heaterPercent
-  formalized    PROVEN   heater.milo:10 @req(R-2) ensures reading < target || result == 0  [heaterPercent]
+  formalized    PROVEN   heater.milo:10 @req(R-2) ensures reading >= target ==> result == 0  [heaterPercent]
   verified      PASS      heater_test.milo:10 testAtTargetTurnsOff
 
 untraced fns: none

@@ -7,7 +7,7 @@ pub fn heaterPercent(reading: i32, target: i32): i32
 requires reading >= -1000 && reading <= 2000
 requires target >= 0 && target <= 1000
 @req(R-1) ensures result >= 0 && result <= 100
-@req(R-2) ensures reading < target || result == 0
+@req(R-2) ensures reading >= target ==> result == 0
 {
     if reading >= target {
         return 0
