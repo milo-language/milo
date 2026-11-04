@@ -49,7 +49,6 @@ export const ALLOW: Record<string, string> = {
   "interp-run.ts:interpOptions": "parses the command-line flags",
   "interp-values.ts:fmtFloat": "float to text, the format print uses",
   "interp-sys.ts:unmodelled": "builds the InterpUnsupported message for an extern the C layer does not model",
-  "interp-sys.ts:callExtern": "dispatch by C symbol; each handler in the table cites its rule",
 };
 
 export interface Fn { file: string; name: string; line: number; ids: string[] }

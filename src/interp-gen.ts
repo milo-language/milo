@@ -3,15 +3,16 @@
 import { type Contract, type Expr, type Function as AstFn, type Pattern, type Stmt, floatNamespaceConst } from "./ast";
 import { relative } from "path";
 import { type TypeKind, ARRAY_COMBINATORS, SLICE_COMBINATORS } from "./types";
+import { isPtr, memSlot } from "./interp-mem";
 import { callExtern } from "./interp-sys";
 
 import { Interp } from "./interp";
 import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
 import type { Completion, Scope, CallE, MethodE } from "./interp";
-import { display, jsonStringify, appendTo, strRange, NONE, opt, idx, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
+import { display, jsonStringify, strRange, NONE, opt, idx, asVec, sliceView, PTR_U8, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
 import type { Native } from "./interp-natives";
 import { ExitProgram, MOVED, enc, strText, staticStr } from "./interp-values";
-import type { Str, Struct, EnumV, VecV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
+import type { Str, Struct, EnumV, VecV, BoxV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
 
 export type Gen<T = any> = Generator<unknown, T, unknown>;
 // a thunk handed to a consumer returns a generator in the twin, or a plain value when it had nothing to suspend on
@@ -19,6 +20,63 @@ function* runThunk(v: any): Gen { return v && typeof v === "object" && typeof v.
 
 export class InterpGen extends Interp {
   *runNative$g(nat: Native, args: Value[], e?: Expr): Gen { return this.runNative(nat, args, e); }
+  *dropScope$g(scope: Scope): Gen {
+    if (this.aborted) return;
+    for (let i = scope.length - 1; i >= 0; i--) {
+      const s = scope[i]!.slot;
+      if (!isRef(s.v)) (yield* this.dropValue$g(s.v));
+      s.dead = true;
+    }
+  }
+  *dropTemps$g(mark: number, atCall = false): Gen {
+    if (this.aborted) { this.temps.length = mark; return; }
+    const keep: Slot[] = [];
+    while (this.temps.length > mark) {
+      const s = this.temps.pop()!;
+      if (atCall && s.stmt) { keep.unshift(s); continue; }
+      (yield* this.dropValue$g(s.v)); s.dead = true;
+    }
+    this.temps.push(...keep);
+  }
+  *dropValue$g(v: Value): Gen {
+    if (v === undefined || typeof v !== "object" || v === MOVED) return;
+    if ((v.k === "struct" || v.k === "enum" || v.k === "box" || v.k === "handle") && v.ghost) return;
+    switch (v.k) {
+      case "str": if (v.b.id >= 0 && --v.b.rc === 0) this.free(v.b.id); return;
+      case "struct": {
+        if (this.dropImpls.has(v.name)) (yield* this.userDrop$g(v.name, v));
+        const names = Object.keys(v.f);
+        for (let i = names.length - 1; i >= 0; i--) (yield* this.dropValue$g(v.f[names[i]!]!));
+        return;
+      }
+      case "enum": {
+        if (this.dropImpls.has(v.en)) (yield* this.userDrop$g(v.en, v));
+        for (let i = v.a.length - 1; i >= 0; i--) (yield* this.dropValue$g(v.a[i]!));
+        return;
+      }
+      case "arr": for (const x of v.e) (yield* this.dropValue$g(x)); return;
+      case "vec":
+        if (v.view || !v.buf) return;
+        for (let i = 0; i < v.len; i++) (yield* this.dropValue$g(v.buf.elems[v.start + i]!));
+        this.free(v.buf.id);
+        return;
+      case "box": (yield* this.dropValue$g(v.cell.v)); this.free(v.id); if (v.raw) v.raw.live = false; return;
+      case "iface": (yield* this.dropValue$g(v.inner)); return;
+      case "map":
+        if (v.view) return;
+        for (const e of v.m.values()) { (yield* this.dropValue$g(e.key.v)); (yield* this.dropValue$g(e.val.v)); }
+        if (v.buf !== null) this.free(v.buf);
+        return;
+      case "closure": if (v.owning) for (const c of v.env) if (!isRef(c.slot.v)) (yield* this.dropValue$g(c.slot.v)); return;
+      case "handle": v.o.release(this); return;
+      default: return;
+    }
+  }
+  *userDrop$g(typeName: string, v: Struct | EnumV): Gen {
+    const fn = this.fns.get(this.concreteMethodFn(typeName, "drop"));
+    if (!fn) this.stuck("T-STUCK", `no drop for ${typeName}`);
+    (yield* this.callFn$g(fn, [{ k: "mut", slot: { v }, path: [] }]));
+  }
   *resolve$g(e: Expr): Gen {
     if (this.isPlaceExpr(e)) {
       switch (e.kind) {
@@ -68,9 +126,32 @@ export class InterpGen extends Interp {
     // a temporary with its own Drop keeps every field for the destructor: the read is a clone, then the whole temporary drops
     const ownDrop = !!rv && typeof rv === "object" && ((rv.k === "struct" && this.dropImpls.has(rv.name)) || (rv.k === "enum" && this.dropImpls.has(rv.en)));
     const pl = { slot, path: steps, ro: false, viaRef: false };
-    const v = ownDrop ? this.deepClone(this.getPlace(pl)) : this.readPlace(pl, true, describeExpr(e));
-    this.dropValue(slot.v);
+    const v = ownDrop ? (yield* this.deepClone$g(this.getPlace(pl))) : this.readPlace(pl, true, describeExpr(e));
+    (yield* this.dropValue$g(slot.v));
     return v;
+  }
+  *mapPut$g(m: MapV, key: Value, val: Value): Gen {
+    const k = this.keyOf(key), old = m.m.get(k);
+    if (old) { (yield* this.dropValue$g(key)); (yield* this.dropValue$g(old.val.v)); old.val.v = val; return; }
+    if (m.buf === null) m.buf = this.alloc();
+    m.m.set(k, { key: { v: key }, val: { v: val } });
+  }
+  *deepClone$g(v: Value): Gen {
+    if (v === undefined || typeof v !== "object" || v === MOVED) return v;
+    switch (v.k) {
+      case "str": return v.b.id < 0 ? { k: "str", b: v.b } : this.newStr([...v.b.bytes]);
+      case "vec": return v.view ? { ...v } : this.newVec(v.buf ? v.buf.elems.slice(v.start, v.start + v.len).map(x => this.deepClone$g(x)) : []);
+      case "struct": { const f: Record<string, Value> = {}; for (const n of Object.keys(v.f)) f[n] = (yield* this.deepClone$g(v.f[n]!)); return { k: "struct", name: v.name, f }; }
+      case "enum": return { ...v, a: v.a.map(x => this.deepClone$g(x)) };
+      case "arr": return { k: "arr", e: v.e.map(x => this.deepClone$g(x)) };
+      case "box": return { k: "box", id: this.alloc(), cell: { v: (yield* this.deepClone$g(v.cell.v)) } };
+      case "map": {
+        const c: MapV = { k: "map", buf: null, m: new Map() };
+        for (const e of v.m.values()) (yield* this.mapPut$g(c, (yield* this.deepClone$g(e.key.v)), (yield* this.deepClone$g(e.val.v))));
+        return c;
+      }
+      default: return v;
+    }
   }
   *callFn$g(fn: AstFn, args: Value[]): Gen {
     if (fn.isExtern) return callExtern(this, fn, args);
@@ -90,7 +171,7 @@ export class InterpGen extends Interp {
     } finally {
       this.depth--;
       const f = this.frames.pop()!;
-      for (let i = f.scopes.length - 1; i >= 0; i--) this.dropScope(f.scopes[i]!);
+      for (let i = f.scopes.length - 1; i >= 0; i--) (yield* this.dropScope$g(f.scopes[i]!));
     }
   }
   *enterContracts$g(fn: AstFn): Gen {
@@ -123,7 +204,7 @@ export class InterpGen extends Interp {
   *checkClause$g(c: Contract): Gen {
     const mark = this.temps.length;
     const holds = (yield* this.peek$g(c.expr)) === true;
-    this.dropTemps(mark);
+    (yield* this.dropTemps$g(mark));
     if (holds) return;
     const file = c.span?.file ?? this.entryFile;
     const shown = file && !file.startsWith("/") ? file : relative(process.cwd(), file);
@@ -144,7 +225,7 @@ export class InterpGen extends Interp {
     } finally {
       this.depth--;
       const f = this.frames.pop()!;
-      for (let i = f.scopes.length - 1; i >= 0; i--) this.dropScope(f.scopes[i]!);
+      for (let i = f.scopes.length - 1; i >= 0; i--) (yield* this.dropScope$g(f.scopes[i]!));
     }
   }
   *callValue$g(callee: Value, args: Value[]): Gen {
@@ -272,13 +353,13 @@ export class InterpGen extends Interp {
     if (ot.tag === "hashmap") { // m[k]: a copy of the value, or a panic when the key is absent
       const m = (yield* this.peek$g(e.object)) as MapV, ent = m.m.get(this.keyOf((yield* this.peek$g(e.index))));
       if (!ent) this.panic("key not found");
-      return this.copyable(ent.val.v) || isStr(ent.val.v) ? this.share(ent.val.v, "m[k]") : this.deepClone(ent.val.v);
+      return this.copyable(ent.val.v) || isStr(ent.val.v) ? this.share(ent.val.v, "m[k]") : (yield* this.deepClone$g(ent.val.v));
     }
     const pl = (yield* this.resolve$g(e));
     const v = this.getPlace(pl);
     if (v === MOVED) this.stuck("E-STUCK", `${describeExpr(e)} was moved`);
     if (this.copyable(v) || isStr(v)) return this.share(v, describeExpr(e));
-    return this.deepClone(v);
+    return (yield* this.deepClone$g(v));
   }
   *structLit$g(e: Expr & { kind: "StructLit" }): Gen {
     const name = this.cr.rewrittenStructLits.get(e) ?? e.name;
@@ -289,7 +370,7 @@ export class InterpGen extends Interp {
     const base = e.base ? ((yield* this.ev$g(e.base)) as Struct) : null; // struct update: listed fields drop, the rest move
     const f: Record<string, Value> = {};
     for (const d of this.structFields(name)) {
-      if (given.has(d.name)) { f[d.name] = given.get(d.name)!; if (base) this.dropValue(base.f[d.name]!); }
+      if (given.has(d.name)) { f[d.name] = given.get(d.name)!; if (base) (yield* this.dropValue$g(base.f[d.name]!)); }
       else if (base) f[d.name] = base.f[d.name]!;
       else this.stuck("T-STUCK", `${name}.${d.name} not given`);
     }
@@ -310,8 +391,8 @@ export class InterpGen extends Interp {
     const clone = this.cr.arrayRepeatClones.get(e);
     // the n-1 copies are made first and the original moves into the last slot
     xs.length = 0;
-    for (let i = 1; i < e.count; i++) xs.push(clone ? (yield* this.callNamed$g(clone, [this.refTo({ slot: { v: first }, path: [], ro: true, viaRef: false }, false)])) : this.deepClone(first));
-    if (e.count === 0) this.dropValue(first); else xs.push(first);
+    for (let i = 1; i < e.count; i++) xs.push(clone ? (yield* this.callNamed$g(clone, [this.refTo({ slot: { v: first }, path: [], ro: true, viaRef: false }, false)])) : (yield* this.deepClone$g(first)));
+    if (e.count === 0) (yield* this.dropValue$g(first)); else xs.push(first);
     return this.T(e).tag === "array" ? { k: "arr", e: e.count ? xs : [] } : this.newVec(e.count ? xs : []);
   }
   *enumLit$g(e: Expr & { kind: "EnumLit" }): Gen {
@@ -370,13 +451,13 @@ export class InterpGen extends Interp {
   }
   *unwrap$g(e: Expr & { kind: "Unwrap" }): Gen {
     const v = (yield* this.ev$g(e.operand)) as EnumV;
-    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
-    this.dropValue(v);
+    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; (yield* this.dropValue$g(v)); return p; }
+    (yield* this.dropValue$g(v));
     return this.panic(v.variant === "None" ? "unwrap called on None" : "unwrap called on Err");
   }
   *propagate$g(e: Expr & { kind: "Propagate" }): Gen {
     const v = (yield* this.ev$g(e.operand)) as EnumV;
-    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
+    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; (yield* this.dropValue$g(v)); return p; }
     const rt = this.frame.ret as TypeKind & { name: string };
     let ret: EnumV;
     if (v.variant === "None") ret = this.mkEnum(rt.name, "None", []);
@@ -387,7 +468,7 @@ export class InterpGen extends Interp {
       else if (msg) { // into a Result<T, string> fn: the error's message()
         const slot: Slot = { v: v.a[0]! };
         const text = (yield* this.callNamed$g(this.concreteMethodFn(msg.name, "message"), [{ k: "ref", slot, path: [] } as Ref]));
-        this.dropValue(slot.v);
+        (yield* this.dropValue$g(slot.v));
         ret = this.mkEnum(rt.name, "Err", [text]);
       } else ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
     }
@@ -395,8 +476,8 @@ export class InterpGen extends Interp {
   }
   *defaultValue$g(e: Expr & { kind: "DefaultValue" }): Gen {
     const v = (yield* this.ev$g(e.operand)) as EnumV;
-    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
-    this.dropValue(v);
+    if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; (yield* this.dropValue$g(v)); return p; }
+    (yield* this.dropValue$g(v));
     return (yield* this.ev$g(e.default));
   }
   *memReplace$g(placeE: Expr, nv: Value): Gen {
@@ -416,7 +497,7 @@ export class InterpGen extends Interp {
   *ifExpr$g(e: Expr & { kind: "IfExpr" }): Gen {
     const mark = this.temps.length;
     const c = (yield* this.peek$g(e.cond)) === true;
-    this.dropTemps(mark);
+    (yield* this.dropTemps$g(mark));
     return (yield* this.blockValue$g(c ? e.thenBody : e.elseBody, this.forkOwns([e.thenBody, e.elseBody])));
   }
   *blockValue$g(stmts: Stmt[], owns = false): Gen {
@@ -437,7 +518,7 @@ export class InterpGen extends Interp {
             // E-FORK-OWN: a Drop type's place arm is consumed by the fork, any other type's is cloned
             const drops = (v.k === "struct" && this.dropImpls.has(v.name)) || (v.k === "enum" && this.dropImpls.has(v.en));
             if (drops && !pl.viaRef && !pl.ro) { this.setPlace(pl, MOVED); return v; }
-            return this.deepClone(v);
+            return (yield* this.deepClone$g(v));
           }
         }
         return (yield* this.ev$g(x));
@@ -445,7 +526,7 @@ export class InterpGen extends Interp {
       const c = (yield* this.runStmt$g(last));
       if (c) throw new Unwind(c);
       return undefined;
-    } finally { this.frame.scopes.pop(); this.dropScope(scope); }
+    } finally { this.frame.scopes.pop(); (yield* this.dropScope$g(scope)); }
   }
   *matchCore$g(subject: Expr, arms: { pattern: Pattern; run: () => any; escape?: boolean }[]): Gen {
     const holder: Scope = [];
@@ -474,10 +555,10 @@ export class InterpGen extends Interp {
         try {
           this.bindPattern(arm.pattern, pl, borrowed, mut && !pl.ro, target);
           return (yield* runThunk(arm.run()));
-        } finally { this.frame.scopes.pop(); this.dropScope(scope); }
+        } finally { this.frame.scopes.pop(); (yield* this.dropScope$g(scope)); }
       }
       return this.stuck("E-MATCH", "no arm matched");
-    } finally { this.frame.scopes.pop(); this.dropScope(holder); }
+    } finally { this.frame.scopes.pop(); (yield* this.dropScope$g(holder)); }
   }
   *callExpr$g(e: CallE): Gen {
     const shadow = (n: string) => { const f = this.fns.get(n); return (!!f && !f.isExtern) || this.cr.genericFnNames.has(n); };
@@ -485,10 +566,10 @@ export class InterpGen extends Interp {
       case "Heap": if (!shadow("Heap")) return { k: "box", id: this.alloc(), cell: { v: (yield* this.ev$g(e.args[0]!)) } }; break;
       case "forget": if (!shadow("forget")) { (yield* this.ev$g(e.args[0]!)); return undefined; } break; // the move is recorded on the operand
       // sortByKey forgets a key that is a view of its element; here the closure returned a counted share of it, which is let go
-      case "_vecForget": if (!shadow("_vecForget")) { this.dropValue((yield* this.ev$g(e.args[0]!))); return undefined; } break;
+      case "_vecForget": if (!shadow("_vecForget")) { (yield* this.dropValue$g((yield* this.ev$g(e.args[0]!)))); return undefined; } break;
       case "replace": if (!shadow("replace")) return (yield* this.memReplace$g(e.args[0]!, (yield* this.ev$g(e.args[1]!)))); break;
       case "swap": if (!shadow("swap")) return (yield* this.memSwap$g(e.args[0]!, e.args[1]!)); break;
-      case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone((yield* this.peek$g(e.args[0]!))); break; // the structural copy std/vec's clone and filter use; capacity = length
+      case "_vecCopyOut": if (!shadow("_vecCopyOut")) return (yield* this.deepClone$g((yield* this.peek$g(e.args[0]!)))); break; // the structural copy std/vec's clone and filter use; capacity = length
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
@@ -505,7 +586,7 @@ export class InterpGen extends Interp {
     if (this.cr.closureCalls.has(e)) {
       const mark = this.temps.length;
       const r = (yield* this.callValue$g((yield* this.peek$g({ kind: "Ident", name: e.func } as Expr)), (yield* this.evalArgs$g(e.args))));
-      this.dropTemps(mark);
+      (yield* this.dropTemps$g(mark));
       return r;
     }
     // R-REPLAY-OFF: a replay wrapper site (cr.replaySites) is the direct extern call while record/replay is off
@@ -523,7 +604,7 @@ export class InterpGen extends Interp {
     const mark = this.temps.length;
     const argv = (yield* this.evalArgs$g(all, flags));
     const r = nat ? (yield* this.runNative$g(nat, argv, e)) : (yield* this.callFn$g(fn!, argv));
-    this.dropTemps(mark, true);
+    (yield* this.dropTemps$g(mark, true));
     return r;
   }
   *methodCall$g(e: MethodE): Gen {
@@ -563,7 +644,7 @@ export class InterpGen extends Interp {
     const scope: Scope = [];
     this.frame.scopes.push(scope);
     try { return (yield* this.runStmts$g(stmts)); }
-    finally { this.frame.scopes.pop(); this.dropScope(scope); }
+    finally { this.frame.scopes.pop(); (yield* this.dropScope$g(scope)); }
   }
   *runBlockIf$g(stmts: Stmt[] | null | undefined): Gen {
     return stmts ? (yield* this.runBlock$g(stmts)) : undefined;
@@ -572,12 +653,12 @@ export class InterpGen extends Interp {
     const mark = this.temps.length;
     try { return (yield* this.exec$g(s)); }
     catch (u) { if (u instanceof Unwind) return u.c; throw u; }
-    finally { this.dropTemps(mark); }
+    finally { (yield* this.dropTemps$g(mark)); }
   }
   *cond$g(e: Expr): Gen {
     const mark = this.temps.length;
     const c = (yield* this.peek$g(e)) === true;
-    this.dropTemps(mark);
+    (yield* this.dropTemps$g(mark));
     return c;
   }
   *exec$g(s: Stmt): Gen {
@@ -589,7 +670,7 @@ export class InterpGen extends Interp {
       case "WhileStmt": return (yield* this.whileStmt$g(s));
       case "BreakStmt": return { k: "break" };
       case "ContinueStmt": return { k: "continue" };
-      case "ExprStmt": { const v = (yield* this.ev$g(s.expr)); this.dropValue(v); return undefined; }
+      case "ExprStmt": { const v = (yield* this.ev$g(s.expr)); (yield* this.dropValue$g(v)); return undefined; }
       case "MatchStmt": return (yield* this.matchCore$g(s.subject, s.arms.map(a => ({ pattern: a.pattern, run: () => this.runBlock$g(a.body) }))));
       case "IfLetStmt": return (yield* this.matchCore$g(s.subject, [
         { pattern: s.pattern, run: () => this.runBlock$g(s.thenBody) },
@@ -597,7 +678,8 @@ export class InterpGen extends Interp {
       ]));
       case "IfChainStmt": return (yield* this.ifChain$g(s));
       case "LetElseStmt": {
-        if (this.cr.nullRefUnwraps.has(s)) return this.unsupported("nullable extern reference unwrap");
+        const nr = this.cr.nullRefUnwraps.get(s);
+        if (nr) return (yield* this.nullRefUnwrap$g(s, nr));
         return (yield* this.matchCore$g(s.value, [
           { pattern: s.pattern, run: () => undefined, escape: true },
           { pattern: { kind: "WildcardPattern" }, run: () => this.runBlock$g(s.elseBody) },
@@ -606,6 +688,13 @@ export class InterpGen extends Interp {
       case "UnsafeBlock": return (yield* this.runBlock$g(s.body));
       case "ForInStmt": return (yield* this.forIn$g(s));
     }
+  }
+  *nullRefUnwrap$g(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Gen {
+    let v = (yield* this.peek$g(s.value));
+    if (v && typeof v === "object" && (v.k === "ref" || v.k === "mut")) v = this.deref(v); // a Milo caller's reference arrives as itself
+    if (v === 0n) return (yield* this.runBlock$g(s.elseBody));
+    this.declare(s.bindName!, isPtr(v) ? { k: nr.mutable ? "mut" : "ref", slot: memSlot(this.mem, v, nr.inner), path: [] } as Ref : v);
+    return undefined;
   }
   *letStmt$g(s: Stmt & { kind: "LetDecl" | "VarDecl" }): Gen {
     const t = this.rawT(s.value);
@@ -621,7 +710,7 @@ export class InterpGen extends Interp {
     const v = (yield* this.ev$g(s.value));
     const t = s.target;
     if (t.kind === "IndexAccess" && this.T(t.object).tag === "hashmap") { // m[k] = v: insert or replace
-      this.mapPut((yield* this.peek$g(t.object)) as MapV, (yield* this.ev$g(t.index)), v);
+      (yield* this.mapPut$g((yield* this.peek$g(t.object)) as MapV, (yield* this.ev$g(t.index)), v));
       return undefined;
     }
     const pl = (yield* this.resolve$g(t));
@@ -629,7 +718,7 @@ export class InterpGen extends Interp {
     // R-MEM-STORE: a store through a raw pointer drops nothing, since the old bytes are not an owned value
     const old = pl.slot.mem ? MOVED : this.getPlace(pl);
     this.setPlace(pl, v);
-    if (old !== MOVED) this.dropValue(old);
+    if (old !== MOVED) (yield* this.dropValue$g(old));
     return undefined;
   }
   *whileStmt$g(s: Stmt & { kind: "WhileStmt" }): Gen {
@@ -666,7 +755,7 @@ export class InterpGen extends Interp {
       if (r?.k === "break") return { k: "break" };
       if (r?.k === "return") return r;
       return "next";
-    } finally { this.frame.scopes.pop(); this.dropScope(scope); }
+    } finally { this.frame.scopes.pop(); (yield* this.dropScope$g(scope)); }
   }
   *forIn$g(s: Stmt & { kind: "ForInStmt" }): Gen {
     const fin = (r: Completion | "next"): Completion | "next" => (r === "next" ? "next" : r?.k === "break" ? undefined : r);
@@ -730,7 +819,7 @@ export class InterpGen extends Interp {
         if (r !== "next") return r;
       }
       return undefined;
-    } finally { this.frame.scopes.pop(); this.dropScope(holder); }
+    } finally { this.frame.scopes.pop(); (yield* this.dropScope$g(holder)); }
   }
   *forStrView$g(s: Stmt & { kind: "ForInStmt" }, mode: "lines" | "split", call: Expr & { kind: "MethodCall" }, fin: (r: Completion | "next") => Completion | "next"): Gen {
     const bytes = ((yield* this.peek$g(call.object)) as Str).b.bytes.slice();
@@ -759,6 +848,24 @@ export class InterpGen extends Interp {
   }
 }
 
+export function* unique$g(it: InterpGen, r: Ref): Gen {
+  const s = it.deref(r) as Str;
+  if (s.b.id >= 0 && s.b.rc === 1) return s;
+  const copy = it.newStr([...s.b.bytes]);
+  it.setPlace(it.derefPlace(r), copy);
+  (yield* it.dropValue$g(s));
+  return copy;
+}
+export function* appendTo$g(it: InterpGen, r: Ref, bytes: number[]): Gen {
+  if (bytes.length === 0) return;
+  const s = (yield* unique$g(it, r));
+  if (s.b.id < 0) { it.setPlace(it.derefPlace(r), it.newStr([...s.b.bytes, ...bytes])); return; }
+  s.b.bytes.push(...bytes);
+}
+function* withPtr$g(it: InterpGen, p: Value, f: (q: Value) => T): Gen {
+  const held: Value[] = [];
+  try { return f(it.mem.decay(p, PTR_U8, held)); } finally { for (const h of held) (yield* it.dropValue$g(h)); }
+}
 function* renderParts$g(it: InterpGen, e: CallE, sink?: number[]): Gen {
   let args = e.args;
   const only = args.length === 1 ? args[0]! : null;
@@ -813,7 +920,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr((yield* it.resolve$g(e.object)), ot);
   if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, (yield* it.peek$g(e.object))), ot.element);
-  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
+  if (m === "ptr" && ot.tag === "heap" && !it.cr.resolvedMethods.has(e)) return it.mem.heapPtr((yield* it.peek$g(e.object)) as BoxV, ot.inner);
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, (yield* it.peek$g(e.object)), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
@@ -876,8 +983,8 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
   if (ot.tag === "hashmap" && m === "len") return BigInt(((yield* it.peek$g(e.object)) as MapV).m.size); // E-HASHMAP
   if (ot.tag === "string") {
     switch (m) {
-      case "pushStr": appendTo(it, it.refTo((yield* it.resolve$g(e.object)), true), ((yield* it.peek$g(e.args[0]!)) as Str).b.bytes); return undefined;
-      case "pushInt": appendTo(it, it.refTo((yield* it.resolve$g(e.object)), true), [...enc.encode(String((yield* it.ev$g(e.args[0]!))))]); return undefined;
+      case "pushStr": (yield* appendTo$g(it, it.refTo((yield* it.resolve$g(e.object)), true), ((yield* it.peek$g(e.args[0]!)) as Str).b.bytes)); return undefined;
+      case "pushInt": (yield* appendTo$g(it, it.refTo((yield* it.resolve$g(e.object)), true), [...enc.encode(String((yield* it.ev$g(e.args[0]!))))])); return undefined;
       case "slice": { // a view: borrows the bytes, owns nothing
         const s = (yield* it.peek$g(e.object)) as Str;
         const [lo, hi] = strRange(it, s, (yield* it.ev$g(e.args[0]!)) as bigint, (yield* it.ev$g(e.args[1]!)) as bigint);
@@ -910,29 +1017,29 @@ function* optionMethod$g(it: InterpGen, e: MethodE, ot: TypeKind & { name: strin
   switch (m) {
     case "unwrapOr": {
       const v = (yield* runThunk(recv())), d = (yield* runThunk(arg0()));
-      if (v.variant === okV) { it.dropValue(d); const p = take(v); it.dropValue(v); return p; }
-      it.dropValue(v);
+      if (v.variant === okV) { (yield* it.dropValue$g(d)); const p = take(v); (yield* it.dropValue$g(v)); return p; }
+      (yield* it.dropValue$g(v));
       return d;
     }
     case "unwrapOrElse": {
       const v = (yield* runThunk(recv())), f = (yield* runThunk(arg0()));
       let r: Value;
-      if (v.variant === okV) { r = take(v); it.dropValue(v); } else r = (yield* callWith$g(it, f, isOpt ? [] : [take(v)]));
-      it.dropValue(f);
+      if (v.variant === okV) { r = take(v); (yield* it.dropValue$g(v)); } else r = (yield* callWith$g(it, f, isOpt ? [] : [take(v)]));
+      (yield* it.dropValue$g(f));
       return r;
     }
     case "map": {
       const v = (yield* runThunk(recv())), f = (yield* runThunk(arg0()));
       let r: Value;
-      if (v.variant === okV) { r = it.mkEnum(resName, okV, [(yield* callWith$g(it, f, [take(v)]))]); it.dropValue(v); }
-      else r = isOpt ? (it.dropValue(v), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
-      it.dropValue(f);
+      if (v.variant === okV) { r = it.mkEnum(resName, okV, [(yield* callWith$g(it, f, [take(v)]))]); (yield* it.dropValue$g(v)); }
+      else r = isOpt ? ((yield* it.dropValue$g(v)), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
+      (yield* it.dropValue$g(f));
       return r;
     }
     case "context": { // Result.context(note): the error boxed as Heap<Error> (as ? does) inside the prelude's ErrorContext
       if (isOpt) return NOT_NATIVE;
       const v = (yield* runThunk(recv())), note = (yield* runThunk(arg0()));
-      if (v.variant === okV) { it.dropValue(note); return it.mkEnum(resName, "Ok", v.a); }
+      if (v.variant === okV) { (yield* it.dropValue$g(note)); return it.mkEnum(resName, "Ok", v.a); }
       const boxing = it.cr.contextBoxings.get(e);
       const cause = boxing ? it.boxError(boxing, take(v)) : take(v);
       const ctx: Value = { k: "struct", name: "ErrorContext", f: { note, cause } };
@@ -942,23 +1049,23 @@ function* optionMethod$g(it: InterpGen, e: MethodE, ot: TypeKind & { name: strin
       if (isOpt) return NOT_NATIVE;
       const v = (yield* runThunk(recv())), f = (yield* runThunk(arg0()));
       const r = v.variant === okV ? it.mkEnum(resName, "Ok", v.a) : it.mkEnum(resName, "Err", [(yield* callWith$g(it, f, [take(v)]))]);
-      it.dropValue(f);
+      (yield* it.dropValue$g(f));
       return r;
     }
     case "andThen": {
       const v = (yield* runThunk(recv())), f = (yield* runThunk(arg0()));
       let r: Value;
-      if (v.variant === okV) { r = (yield* callWith$g(it, f, [take(v)])); it.dropValue(v); }
-      else r = isOpt ? (it.dropValue(v), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
-      it.dropValue(f);
+      if (v.variant === okV) { r = (yield* callWith$g(it, f, [take(v)])); (yield* it.dropValue$g(v)); }
+      else r = isOpt ? ((yield* it.dropValue$g(v)), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
+      (yield* it.dropValue$g(f));
       return r;
     }
     case "orElse": {
       const v = (yield* runThunk(recv())), f = (yield* runThunk(arg0()));
       let r: Value;
       if (v.variant === okV) r = v;
-      else r = isOpt ? (it.dropValue(v), (yield* callWith$g(it, f, []))) : (yield* callWith$g(it, f, [take(v)]));
-      it.dropValue(f);
+      else r = isOpt ? ((yield* it.dropValue$g(v)), (yield* callWith$g(it, f, []))) : (yield* callWith$g(it, f, [take(v)]));
+      (yield* it.dropValue$g(f));
       return r;
     }
   }

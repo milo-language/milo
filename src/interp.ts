@@ -217,7 +217,7 @@ export class Interp {
         for (let i = 0; i < v.len; i++) this.dropValue(v.buf.elems[v.start + i]!);
         this.free(v.buf.id);
         return;
-      case "box": this.dropValue(v.cell.v); this.free(v.id); return;
+      case "box": this.dropValue(v.cell.v); this.free(v.id); if (v.raw) v.raw.live = false; return;
       case "iface": this.dropValue(v.inner); return;
       case "map":
         if (v.view) return;
@@ -1265,7 +1265,8 @@ export class Interp {
       ]);
       case "IfChainStmt": return this.ifChain(s);
       case "LetElseStmt": {
-        if (this.cr.nullRefUnwraps.has(s)) return this.unsupported("nullable extern reference unwrap");
+        const nr = this.cr.nullRefUnwraps.get(s);
+        if (nr) return this.nullRefUnwrap(s, nr);
         return this.matchCore<Completion>(s.value, [
           { pattern: s.pattern, run: () => undefined, escape: true },
           { pattern: { kind: "WildcardPattern" }, run: () => this.runBlock(s.elseBody) },
@@ -1276,6 +1277,15 @@ export class Interp {
     }
   }
 
+  // `let g = p else { ... }` over a `?&T` / `?&mut T` parameter: the null test, then g is a reference to the memory p names
+  // R-MEM-NULLREF
+  nullRefUnwrap(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Completion {
+    let v = this.peek(s.value);
+    if (v && typeof v === "object" && (v.k === "ref" || v.k === "mut")) v = this.deref(v); // a Milo caller's reference arrives as itself
+    if (v === 0n) return this.runBlock(s.elseBody);
+    this.declare(s.bindName!, isPtr(v) ? { k: nr.mutable ? "mut" : "ref", slot: memSlot(this.mem, v, nr.inner), path: [] } as Ref : v);
+    return undefined;
+  }
   // [S-LET] / [S-VAR]
   letStmt(s: Stmt & { kind: "LetDecl" | "VarDecl" }): Completion {
     const t = this.rawT(s.value);

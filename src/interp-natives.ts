@@ -6,7 +6,7 @@ import type { Expr } from "./ast";
 import { ARRAY_COMBINATORS, SLICE_COMBINATORS, type TypeKind } from "./types";
 import { NOT_NATIVE, isStr, strip, wrapInt, type CallE, type Interp, type MethodE } from "./interp";
 import { taskNativeFor } from "./interp-co-natives";
-import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
+import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type BoxV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
 
 export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true };
 
@@ -201,7 +201,7 @@ nat("string$substr", (it, [self, a, b]) => {
 });
 // The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
 // Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
-const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+export const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
 // R-MEM-LOAD
 function withPtr<T>(it: Interp, p: Value, f: (q: Value) => T): T {
   const held: Value[] = [];
@@ -231,6 +231,11 @@ for (const name of ["rawSlice", "rawSliceMut"]) {
     return { k: "vec", buf: { id: -1, elems }, start: 0, len: n, cap: n, view: true } as VecV;
   });
 }
+// adopt: the owned Heap or Vec for a pointer a Heap or Vec gave out with ptr() or malloc made (std/foreign)
+// R-MEM-ADOPT
+nat("adoptHeap", (it, [p], e) => it.mem.adoptHeap(p!, (it.T(e!) as { inner: TypeKind }).inner));
+// R-MEM-ADOPT
+nat("adoptVec", (it, [p, len], e) => it.mem.adoptVec(p!, Number(len as bigint), (it.T(e!) as { element: TypeKind }).element));
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
 
 // R-ATOMIC: one task runs at a time, so an atomic is a plain read-modify-write of the place its pointer names.
@@ -443,7 +448,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr(it.resolve(e.object), ot);
   if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, it.peek(e.object)), ot.element);
-  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
+  if (m === "ptr" && ot.tag === "heap" && !it.cr.resolvedMethods.has(e)) return it.mem.heapPtr(it.peek(e.object) as BoxV, ot.inner);
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, it.peek(e.object), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
