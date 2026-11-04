@@ -11,7 +11,8 @@
 //   bun scripts/interp-vs-golden.ts --filter arith  # names matching a regex
 //   bun scripts/interp-vs-golden.ts --programs      # only mlir/test/programs
 //   bun scripts/interp-vs-golden.ts --why           # tally of why programs are unsupported
-//   bun scripts/interp-vs-golden.ts --jobs 4
+//   bun scripts/interp-vs-golden.ts --list          # each unsupported program with its cause
+//   bun scripts/interp-vs-golden.ts --jobs 4         # --timeout MS or MILO_INTERP_TIMEOUT_MS: per-program limit (default 240000)
 //
 // It cannot pass vacuously: zero programs compared exits 1.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
@@ -26,7 +27,8 @@ const argv = process.argv.slice(2);
 const opt = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const filter = opt("--filter");
 const jobs = Number(opt("--jobs") ?? 4);
-const TIMEOUT_MS = Number(opt("--timeout") ?? 60_000);
+// sha256, pbkdf2 and inflate programs take minutes in a tree-walking interpreter: a long default, MILO_INTERP_TIMEOUT_MS or --timeout to change it
+const TIMEOUT_MS = Number(opt("--timeout") ?? process.env.MILO_INTERP_TIMEOUT_MS ?? 240_000);
 
 type Verdict = "same" | "differ" | "unsupported" | "no-oracle";
 export interface Result { name: string; verdict: Verdict; detail: string }
@@ -38,7 +40,6 @@ const list = (dir: string, kind: "fixtures" | "programs") => readdirSync(dir).fi
 export async function compareOne(p: { path: string; name: string; kind: "fixtures" | "programs" }, cwd: string): Promise<Result> {
   const src = readFileSync(p.path, "utf-8");
   const flags = /^\/\/ @mlir-same-flags:(.*)$/m.exec(src)?.[1]?.trim().split(/\s+/) ?? [];
-  if (flags.includes("--contract-checks")) return { name: p.name, verdict: "unsupported", detail: "contract checks" };
   if (existsSync(p.path.replace(/\.milo$/, ".c"))) return { name: p.name, verdict: "unsupported", detail: "companion C file" };
   const gpath = join(GOLDEN, p.kind, `${p.name}.json`);
   let want: { code: number | null; signal: string | null; stdout: string; live: string | null };
@@ -79,6 +80,7 @@ if (import.meta.main) {
   rmSync(tmp, { recursive: true, force: true });
   const n = (v: Verdict) => results.filter(r => r.verdict === v).length;
   for (const r of results.filter(r => r.verdict === "differ").sort((a, b) => (a.name < b.name ? -1 : 1))) console.log(`DIFFER ${r.name}: ${r.detail}`);
+  if (argv.includes("--list")) for (const r of results.filter(r => r.verdict === "unsupported").sort((a, b) => (a.name < b.name ? -1 : 1))) console.log(`UNSUPPORTED ${r.name}: ${r.detail}`);
   if (argv.includes("--why")) {
     const why = new Map<string, number>();
     for (const r of results) if (r.verdict === "unsupported") why.set(r.detail, (why.get(r.detail) ?? 0) + 1);
