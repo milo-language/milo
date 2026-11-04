@@ -1147,7 +1147,9 @@ export class Interp {
       const delegate = this.cr.iterDelegates.get(s);
       let iterE = s.iterable;
       if (delegate) iterE = { kind: "FieldAccess", object: s.iterable, field: delegate } as Expr;
-      const it = this.T(iterE);
+      // a synthesized delegate access has no recorded type: read it off the struct
+      const st = this.T(s.iterable);
+      const it = delegate && st.tag === "struct" ? strip(this.cr.structs.get(st.name)?.fields.find(f => f.name === delegate)?.type) : this.T(iterE);
       if (it.tag === "hashmap") {
         const mv = (this.isPlaceExpr(iterE) ? this.peek(iterE) : this.declare("<iterable>", this.ev(iterE), holder).v) as MapV;
         for (const ent of [...mv.m.values()]) {

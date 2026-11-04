@@ -36,7 +36,7 @@
   "src/interp-natives.ts": 459,
   "src/interp-run.ts": 27,
   "src/interp-values.ts": 91,
-  "src/interp.ts": 1221,
+  "src/interp.ts": 1223,
   "src/ir.ts": 396,
   "src/keyword-docs.ts": 158,
   "src/lang-info.ts": 216,
