@@ -890,7 +890,9 @@ pub fn inRequirementId(tokens: &Vec<Token>, i: i64): bool {
     }
     let name = tokens[k - 1]
     let isIdAttr = name.kind == TokKind.Ident && (name.text == "req" || name.text == "assume" || name.text == "derived")
-    return isIdAttr && isAtToken(tokens[k - 2])
+    // A file-level attribute is spelled `@!req(...)`: a bang between the `@` and the name.
+    let atBefore = isAtToken(tokens[k - 2]) || (k >= 3 && tokens[k - 2].kind == TokKind.Bang && isAtToken(tokens[k - 3]))
+    return isIdAttr && atBefore
 }
 
 // True when the `@` at tokens[i] starts attributes that sit before a contract clause
