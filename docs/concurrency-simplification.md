@@ -146,3 +146,9 @@ and record/replay determinism (one thread-ordered log).
   single-worker path is unchanged.
 - **Open.** The factory closure is called concurrently by all workers (one shared closure
   value), so it must only read what it captured.
+- **Measured** (`bun benchmarks/webserver/workers.ts`, 10-core M-series, 2026-11-04, taken while
+  other jobs held the machine at load average 17 to 45, so read the throughput rows as noise):
+  `/hello` at c=4 while `/fib/32` runs at c=16, p99: workers 1 = 2399 ms, workers 4 = 0.29 ms,
+  workers 0 (10) = 1.77 ms. Throughput on the cheap route did not scale on a saturated box
+  (keep-alive c=64: 16351 / 15589 / 17198 rps for 1 / 4 / 0). Per-thread CPU under keep-alive
+  fib load was even across the 4 workers on the shared listener.
