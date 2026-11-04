@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 593 distinct messages across 760 programs the compiler must reject.
+Every error message the test suite pins: 594 distinct messages across 761 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -169,6 +169,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`(via 'work' → 'record')`](#via-work-record)
 - [`@cName on 'Point.kind': only an 'extern struct' field has a C name`](#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name)
 - [`@derive(Table) on 'User': its generated SQL does not match the schema: table users has no column named github_id`](#derive-table-on-user-its-generated-sql-does-not-match-the-schema-table-users-has-no-column-named-github-id)
+- [`` `==>` is a contract operator; use `if` or `!a || b` in code ``](#is-a-contract-operator-use-if-or-a-b-in-code)
 - [`a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here`](#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here)
 - [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
@@ -4516,6 +4517,21 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/tableMissingColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/tableMissingColumn.milo)</sub>
+
+## `` `==>` is a contract operator; use `if` or `!a || b` in code `` {#is-a-contract-operator-use-if-or-a-b-in-code}
+
+```milo skip
+pub fn main(): i32 {
+    let a = true
+    let b = false
+    if a ==> b {
+        return 1
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/impliesOutsideContract.milo](https://github.com/milo-language/milo/blob/main/tests/errors/impliesOutsideContract.milo)</sub>
 
 ## `a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here` {#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here}
 

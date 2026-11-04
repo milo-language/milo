@@ -137,7 +137,7 @@ sub_pattern = IDENT | literal_pattern | IDENT [ "." IDENT ] "(" [ sub_pattern { 
             | IDENT "." IDENT ;
 
 (* ── Expressions, loosest binding first ── *)
-expr        = coalesce ;
+expr        = coalesce [ "==>" expr ] ;  (* "==>" only inside requires/ensures/invariant/decreases and assert; checker-enforced *)
 coalesce    = or_expr [ "??" or_expr ] ;
 or_expr     = and_expr { "||" and_expr } ;
 and_expr    = bitor_expr { "&&" bitor_expr } ;

@@ -1,0 +1,9 @@
+// @proven: 0
+// @failed: 1
+// A false implication: the antecedent can hold while the consequent does not.
+pub fn bad(x: i64): i64
+requires x >= 0 && x <= 10
+ensures x > 2 ==> result == 0
+{
+    return x
+}

@@ -1585,6 +1585,12 @@ export class Parser {
       const defaultExpr = this.parseOr();
       left = { kind: "DefaultValue", operand: left, default: defaultExpr, span: left.span };
     }
+    // Contract implication: lowest of the boolean operators, right-associative.
+    if (this.at(TokenKind.Implies)) {
+      this.advance();
+      const right = this.parseExprInner();
+      left = { kind: "BinOp", op: "==>", left, right, span: left.span };
+    }
     return left;
   }
 

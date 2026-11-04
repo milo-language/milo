@@ -294,6 +294,7 @@ as unsupported, never run wrongly.
 | R-CONTRACT-EXIT | At every return, with `result` naming the value returned and before the frame's variables drop, each `ensures` clause is checked. |
 | R-CONTRACT-LOOP | A `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only. |
 | R-CONTRACT-FAIL | A failed clause is a panic that prints `runtime error: <kind> clause violated at file:line` (the clause's own line, the path relative to the working directory) and aborts like any panic. |
+| R-CONTRACT-IMPLIES | `a ==> b` (contracts and `assert` only) evaluates `a`; when it is false the result is true and `b` is not evaluated, otherwise the result is `b`. It is `!a \|\| b`. |
 
 Struct `invariant` clauses are proved statically and have no runtime check in a compiled binary, so the
 interpreter does not check them either.

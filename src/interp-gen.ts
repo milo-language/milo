@@ -7,7 +7,7 @@ import { isPtr, memSlot } from "./interp-mem";
 import { externNative } from "./interp-sys";
 
 import { Interp } from "./interp";
-import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
+import { Unwind, OP_IMPLIES, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
 import type { Completion, Scope, CallE, MethodE } from "./interp";
 import { display, jsonStringify, appendTo, strRange, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
 import type { Native } from "./interp-natives";
@@ -352,6 +352,8 @@ export class InterpGen extends Interp {
     }
     if (e.op === "&&") return (yield* this.peek$g(e.left)) === true && (yield* this.peek$g(e.right)) === true;
     if (e.op === "||") return (yield* this.peek$g(e.left)) === true || (yield* this.peek$g(e.right)) === true;
+    // R-CONTRACT-IMPLIES: implication is (not a) or b; b is not evaluated when a is false
+    if (e.op === OP_IMPLIES) return (yield* this.peek$g(e.left)) !== true || (yield* this.peek$g(e.right)) === true;
     const a = (yield* this.peek$g(e.left)), b = (yield* this.peek$g(e.right));
     return this.binValues(e.op, a, b, this.T(e.left), this.T(e));
   }

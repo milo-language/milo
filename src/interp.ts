@@ -33,6 +33,8 @@ export type Scope = { name: string; slot: Slot }[];
 export type CallE = Expr & { kind: "Call" };
 export type MethodE = Expr & { kind: "MethodCall" };
 
+// Kept out of the methods: scripts/gen-interp-co.ts reads the text "=>" as an arrow function.
+export const OP_IMPLIES = "==>";
 export const strip = (t: TypeKind | undefined): TypeKind => (!t ? { tag: "unknown" } : t.tag === "ref" ? strip(t.inner) : t);
 
 export interface RunResult { stdout: Uint8Array; stderr: string; code: number; live: number | null }
@@ -802,6 +804,8 @@ export class Interp {
     }
     if (e.op === "&&") return this.peek(e.left) === true && this.peek(e.right) === true;
     if (e.op === "||") return this.peek(e.left) === true || this.peek(e.right) === true;
+    // R-CONTRACT-IMPLIES: implication is (not a) or b; b is not evaluated when a is false
+    if (e.op === OP_IMPLIES) return this.peek(e.left) !== true || this.peek(e.right) === true;
     const a = this.peek(e.left), b = this.peek(e.right);
     return this.binValues(e.op, a, b, this.T(e.left), this.T(e));
   }

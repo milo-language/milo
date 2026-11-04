@@ -37,6 +37,7 @@ pub enum TokKind {
     Eq,
     OpAssign,
     EqEq,
+    Implies,
     Neq,
     Lt,
     Gt,
@@ -456,6 +457,14 @@ impl Lexer {
                 kind: TokKind.FatArrow, text: "=>", line: line
             }
         }
+        if ch == '=' && ch2 == '=' && self.peekAt(2) == '>' {
+            self.advance()
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.Implies, text: "==>", line: line
+            }
+        }
         if ch == '=' && ch2 == '=' {
             self.advance()
             self.advance()
@@ -679,7 +688,7 @@ pub fn isSpacedOp(kind: TokKind): bool {
     return kind == TokKind.Plus || kind == TokKind.Minus ||
     kind == TokKind.Slash || kind == TokKind.Percent ||
     kind == TokKind.Eq || kind == TokKind.OpAssign ||
-    kind == TokKind.EqEq || kind == TokKind.Neq ||
+    kind == TokKind.EqEq || kind == TokKind.Neq || kind == TokKind.Implies ||
     kind == TokKind.Lt || kind == TokKind.Gt ||
     kind == TokKind.LtEq || kind == TokKind.GtEq ||
     kind == TokKind.AmpAmp || kind == TokKind.PipePipe ||

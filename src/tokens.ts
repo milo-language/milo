@@ -64,6 +64,7 @@ export enum TokenKind {
   PipePipe = "||",
   Eq = "=",
   EqEq = "==",
+  Implies = "==>",
   FatArrow = "=>",
   ColonColon = "::",
   Neq = "!=",
