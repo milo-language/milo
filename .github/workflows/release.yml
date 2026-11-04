@@ -52,6 +52,8 @@ jobs:
       # bare-metal ARM link tests (-fuse-ld=lld in tests/embedded.test.ts).
       - run: brew install z3
       - run: brew install lld
+      # tests/playground.test.ts tests the built browser bundle, never builds it.
+      - run: bun scripts/build-playground.ts
       - run: bun test
 
   build:
