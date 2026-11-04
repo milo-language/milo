@@ -152,7 +152,16 @@ $ milo check /tmp/packet/heater.milo
 
 Private functions, `main` and comments are gone. The author writes `@req` tests against the
 requirement text and the contracts, type-checks them there, and drops them into the real project. A
-non-empty output directory is refused.
+non-empty output directory is refused. Keeping the author out of the real source is up to you: the
+packet gives them what they need, but nothing stops them reading further.
+
+On `std/json`, whose requirements already had 48 passing tests and full proofs, an author given only
+the packet wrote 430 tests, and 26 failed against the real code: 16 from five real bugs (the smallest
+`i64` read as a miss, escaped names not found by lookup, `keys()` on an array, `1 /*` accepted as
+JSONC, `-0` losing its sign), 5 from a requirement that misdescribed `rawStr`, and 5 from bad tests.
+The bugs got fixed, the requirement corrected, and the tests kept in
+[`json_cleanroom_test.milo`](../../../std/json/json_cleanroom_test.milo). That's one module, and the
+author was an AI agent.
 
 ## Where to go next
 

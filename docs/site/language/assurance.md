@@ -101,6 +101,15 @@ requirement's text fails `milo trace --strict --spec-base <ref>` until a person 
 `spec-signoff.json`, and the diff prints the counterexample the weakening now allows. See the
 [worked example](https://github.com/milo-language/milo/blob/main/examples/assured/intro/README.md#6-lock-the-spec).
 
+### Clean-room tests
+
+`milo spec --packet <dir>` writes the requirements and a stub of each source file: signatures and
+contracts, no bodies, no private code, no comments. A test author given only that can't mirror the
+implementation. On `std/json`, which already had full proofs and 48 passing tests, an AI agent working
+from the packet wrote tests that found five real bugs and a requirement that misdescribed the code.
+Keeping the author out of the source is up to you; the tool doesn't enforce it. See the
+[worked example](https://github.com/milo-language/milo/blob/main/examples/assured/intro/README.md#7-test-it-independently).
+
 ## Planned
 
 These are designed, and written up in the repository, but not built:
