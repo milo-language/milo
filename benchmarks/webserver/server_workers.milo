@@ -1,0 +1,55 @@
+// Fixture server for benchmarks/webserver/workers.ts: the cheap and CPU routes of server.milo behind
+// ServeOptions.workers (env WORKERS, 0 = one per core). No sqlite routes: those keep their handles in
+// module globals, which a handler on several schedulers may not touch (the checker says so).
+from "std/http" import { Context, Response, Router, ServeOptions, serveRouterFactory }
+from "std/env" import { Env }
+from "std/strconv" import { parseInt }
+from "std/runtime" import { Promise }
+
+fn fib(n: i64): i64 {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn helloHandler(ctx: &mut Context): Response {
+    return ctx.text("hello")
+}
+
+fn fibHandler(ctx: &mut Context): Response {
+    let n = parseInt(ctx.param("n") ?? "") ?? 20
+    return ctx.text(fib(n).toString())
+}
+
+fn fibBlockingHandler(ctx: &mut Context): Response {
+    let n = parseInt(ctx.param("n") ?? "") ?? 20
+    let p = Promise<i64>.blocking(move(): i64 => fib(n))
+    let Ok(v) = p.await() else {
+        ctx.setStatus(500)
+        return ctx.text("blocking job failed")
+    }
+    return ctx.text(v.toString())
+}
+
+fn makeRouter(): Router {
+    var r: Router = Router.new()
+    r.get("/hello", helloHandler)
+    r.get("/fib/:n", fibHandler)
+    r.get("/fibb/:n", fibBlockingHandler)
+    return r
+}
+
+pub fn main(): i32 {
+    let port = parseInt(Env.getOr("PORT", "8090")) ?? 8090
+    let workers = parseInt(Env.getOr("WORKERS", "1")) ?? 1
+    let opts = ServeOptions {
+        workers: workers
+    }
+    let result = serveRouterFactory("127.0.0.1", port as u16, makeRouter, opts)
+    if let Err(msg) = result {
+        print("server error: ", msg)
+        return 1
+    }
+    return 0
+}
