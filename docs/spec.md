@@ -17295,7 +17295,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `true`
 - `false`
 
-**Rationale.** OwnedFd: the descriptor handle with one owner. A dropped handle closes its fd (the next dup reuses the number), Child.takeStdout moves the pipe out of the Child, and processAlive probes a pid without signalling it.
+**Rationale.** Windows readiness is sockets-only and IOCP is not built, so a pipe fd there cannot be read through a stream or a channel (std/event.windows.milo). OwnedFd: the descriptor handle with one owner. A dropped handle closes its fd (the next dup reuses the number), Child.takeStdout moves the pipe out of the Child, and processAlive probes a pid without signalling it.
 
 *Program:* [`tests/fixtures/ownedFd.milo`](../tests/fixtures/ownedFd.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

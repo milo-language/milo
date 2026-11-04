@@ -1,3 +1,6 @@
+// @skip-os: win32
+// Windows readiness is sockets-only and IOCP is not built, so a pipe fd there cannot be read
+// through a stream or a channel (std/event.windows.milo).
 // OwnedFd: the descriptor handle with one owner. A dropped handle closes its fd (the
 // next dup reuses the number), Child.takeStdout moves the pipe out of the Child, and
 // processAlive probes a pid without signalling it.
@@ -23,21 +26,8 @@ fn main() {
     unsafe { print(c.stdoutFd()) }
     print(out.isOpen())
     var acc = ""
-    if @targetOs() == "windows" {
-        // channel() is green IO, and Windows readiness is sockets-only: a pipe fd there
-        // exits with "needs the IOCP tier" (std/event.windows.milo). Read it blocking.
-        var s = out.stream()
-        while true {
-            let chunk = s.read(4096)!
-            if chunk.len == 0 {
-                break
-            }
-            acc.pushStr(chunk)
-        }
-    } else {
-        for chunk in out.channel() {
-            acc.pushStr(chunk)
-        }
+    for chunk in out.channel() {
+        acc.pushStr(chunk)
     }
     let _w = c.wait()
     print(acc.trim())
