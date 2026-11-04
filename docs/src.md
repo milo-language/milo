@@ -50,6 +50,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/diagnostics.ts` | Elm-style error formatting: source context, carets and severity, shared by the CLI and the LSP so a message reads the same in a terminal and an editor. |
 | `src/emit-forms.ts` | How the backend reads the checked AST (docs/plans/top-dialect.md): each expression as the op family src/emit-mlir.ts prints for it, decided on each visit from the merged AST and the checker's facts (… |
 | `src/emit-mlir.ts` | The checked AST -> the source-level `milo` MLIR dialect (mlir/Milo.td), as text, for the functions the MLIR path compiles through milo-opt (docs/mlir-backend.md). |
+| `src/evidence.ts` | Evidence records: the committed proof that a requirement's inspection, review, demonstration or non-unit test claim was met. |
 | `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |
 | `src/fixes.ts` | Machine-applicable fixes for diagnostics whose hint is mechanical: the edit that makes the diagnostic go away, computed from the diagnostic and the file's text, and nothing else. |
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |

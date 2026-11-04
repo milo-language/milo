@@ -2191,6 +2191,10 @@ async function main() {
     process.exit(require("./specLock").runSpecCommand(args.slice(1)));
   }
 
+  if (cmd === "evidence") {
+    process.exit(require("./evidence").runEvidenceCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
+  }
+
   if (cmd === "trace-object") {
     process.exit(runTraceObjectCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
   }

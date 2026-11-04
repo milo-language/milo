@@ -270,7 +270,7 @@ test("the pid demo's trace --json has the documented shape and is strict-clean",
   const rep = JSON.parse(r.out);
   expect(Object.keys(rep).sort()).toEqual([
     "assumptions", "baselined", "coarseTrace", "deactivated", "deadBranches", "derived", "entry", "errors", "gaps", "noImplementation", "noVerifyingTest", "ok",
-    "requirements", "requirementsFile", "schema", "staleBaseline", "strict", "strictFailures", "tooCoarse", "unknown", "untracedFns",
+    "requirements", "requirementsFile", "schema", "staleBaseline", "strayEvidence", "strict", "strictFailures", "tooCoarse", "unknown", "untracedFns",
   ]);
   expect(rep.requirements.map((q: any) => q.id)).toEqual(["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].sort((a, b) => ["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].indexOf(a) - ["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].indexOf(b)));
   // The harness is derived, not an implementation of HLR-1 (DO-178C: a test harness is not flight code)

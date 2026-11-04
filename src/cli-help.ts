@@ -172,6 +172,19 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     ],
   },
   {
+    name: "evidence", usage: "evidence add|run|list <entry.milo> [<REQ>]",
+    summary: "evidence records that satisfy a requirement's verification claims the tool cannot check (inspection, review, demonstration, a test outside the unit env); records are JSON files committed beside requirements.json, pinned to the requirement text and the implementing code",
+    flags: [
+      { flag: "add <entry.milo> <REQ> --method <m> --result pass|fail", help: "attest a result by hand: the tool cannot check it (recorded as attested)" },
+      { flag: "run <entry.milo> <REQ> --method <m> -- <cmd> [args...]", help: "run the command, keep its output as an artifact, and set the result from its exit code (recorded as run); exits with the command's code. It captures what ran, not whether the command measures the right thing" },
+      { flag: "list <entry.milo>", help: "one line per record with its state (PASS, FAILED, STALE)" },
+      { flag: "--env <e>", help: "the environment of the claim (load, hil, target, ...); matched exactly against the requirement's verification entry" },
+      { flag: "--measured \"<text>\"", help: "what was measured, shown in the trace (e.g. \"p95 212 ms\")" },
+      { flag: "--artifact <path>", help: "(add) a file that backs the claim; its sha256 is recorded and a change makes the record stale" },
+      { flag: "--note \"<text>\"", help: "free text" },
+    ],
+  },
+  {
     name: "trace-object", usage: "trace-object <binary>",
     summary: "per function of a binary built with -g: address range -> source line -> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces",
     flags: [

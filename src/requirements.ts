@@ -43,6 +43,7 @@ import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
 import { parseSafetyLevel, traceabilityOf, minTraceDepthOf } from "./safety";
 import { projectProfile } from "./pkg";
+import { claimKey, codeHash, gapMessage, judge, latestRecord, loadEvidence, type EvidenceRow } from "./evidence";
 import { entryOfBinary, formatObjectTrace, traceObject, type FnSite } from "./object-trace";
 
 export const TRACE_ATTRS = new Set(["req", "assume", "derived", "deactivated"]);
@@ -223,6 +224,8 @@ interface DeclUse {
   assumes: string[];
   deactivated?: string;
   clauses: ClauseUse[];
+  /** The fn itself, for hashing the implementing code into evidence records (src/evidence.ts). */
+  fn?: Function;
 }
 
 const idsOf = (attrs: Attribute[] | undefined, name: string, inner?: boolean): string[] =>
@@ -287,7 +290,7 @@ function declUses(fns: { fn: Function; name: string }[], structs: Program["struc
       isTest: fn.name.slice(fn.name.lastIndexOf("$") + 1).startsWith("test") && fn.params.length === 0 && fn.typeParams.length === 0,
       implements: idsOf(a, "req"), ownReq: idsOf(a, "req", false), canFail: canFail(fn), derived: idsOf(a, "derived"), assumes: idsOf(a, "assume"),
       ...(idsOf(a, "deactivated").length ? { deactivated: idsOf(a, "deactivated")[0] } : {}),
-      clauses: clausesOf(fn.contracts, file),
+      clauses: clausesOf(fn.contracts, file), fn,
     });
   }
   for (const s of structs) {
@@ -310,6 +313,14 @@ function projectDecls(program: Program, inProject: (f: string) => boolean): Decl
     ...(program.impls ?? []).flatMap(im => im.methods.map(fn => ({ fn, name: `${im.typeName}.${fn.name}` }))),
   ];
   return declUses(fns, program.structs, inProject);
+}
+
+const fnsFor = (decls: DeclUse[], id: string) =>
+  decls.filter(d => d.decl === "fn" && !d.isTest && d.fn && (d.implements.includes(id) || d.derived.includes(id))).map(d => ({ name: d.name, fn: d.fn! }));
+
+/** The entry project's fns with @req(id) or @derived(id): what an evidence record's codeHash covers. */
+export function implementingFns(program: Program, entry: string, id: string): { name: string; fn: Function }[] {
+  return fnsFor(projectDecls(program, inEntryProject(entry)), id);
 }
 
 /** `*_test.milo` beside the entry (and in its `tests/`), or whatever `--tests` names. Parsed, not checked. */
@@ -359,7 +370,7 @@ interface SiteRow { fn: string; file: string; line: number }
 /** A verifying test and, when the tests were run, whether it passed. */
 interface TestRow extends SiteRow { result?: "PASS" | "FAIL"; output?: string; /** No assert/expect call is reachable: the test cannot fail. */ cannotFail?: true }
 
-export type Verification = "proof" | "test" | "proof+test" | "none";
+export type Verification = "proof" | "test" | "proof+test" | "evidence" | "none";
 
 export interface RequirementRow {
   id: string;
@@ -380,6 +391,8 @@ export interface RequirementRow {
   /** DO-333: see the header. How this requirement is verified, "none" when it is not. */
   verification: Verification;
   verified: boolean;
+  /** The latest record per declared claim the tool cannot check (inspection, review, demonstration, test outside unit). */
+  evidence?: EvidenceRow[];
   /** `--object`: the address ranges of the binary that implement it (own fns and @derived). */
   object?: { fn: string; start: number; end: number; lines: string }[];
 }
@@ -409,6 +422,8 @@ export interface TraceReport {
   assumptions: SiteRow[];
   noImplementation: string[];
   noVerifyingTest: string[];
+  /** Evidence records no declared claim matches (a typo in --env?). A warning, never a failure. */
+  strayEvidence: string[];
   /** Every gap strict mode would fail on, with the stable key a baseline lists it by. */
   gaps: { key: string; message: string }[];
   /** Gaps the baseline lists: still warnings under strict. */
@@ -575,6 +590,36 @@ export function buildTrace(o: TraceOptions): TraceReport {
     return n;
   };
   const allProven = (r: RequirementRow) => r.formalizedBy.length > 0 && r.formalizedBy.every(c => c.status === "PROVEN");
+  // Evidence records (src/evidence.ts): each claim the tool cannot check is judged by its latest record.
+  const evidenceOk = new Map<string, boolean>();
+  const evidenceGaps: { key: string; message: string }[] = [];
+  const strayEvidence: string[] = [];
+  if (reqPath) {
+    const reqDir = dirname(reqPath);
+    const all = loadEvidence(reqDir);
+    for (const r of rows.values()) {
+      const open = (r.declaredVerification ?? []).filter(c => !claimChecked(c));
+      if (!open.length) continue;
+      const code = codeHash(fnsFor(decls, r.id));
+      r.evidence = [];
+      let ok = true;
+      for (const c of open) {
+        const latest = latestRecord(all, r.id, c.method, c.env);
+        const j = latest && judge(latest, r.text, code, reqDir);
+        if (j) r.evidence.push(j);
+        if (j?.state === "PASS") continue;
+        ok = false;
+        evidenceGaps.push({ key: `needs-evidence:${r.id}:${claimName(c)}`, message: gapMessage(r.id, claimName(c), j, latest?.rec.artifact?.path) });
+      }
+      evidenceOk.set(r.id, ok);
+    }
+    // A record whose requirement does not declare its method@env is likely a typo in --env.
+    for (const e of all) {
+      const r = rows.get(e.rec.req);
+      const claimed = r?.declaredVerification?.some(c => !claimChecked(c) && c.method === e.rec.method && c.env === e.rec.env);
+      if (!claimed) strayEvidence.push(`${e.file}: ${e.rec.req} ${claimKey(e.rec.method, e.rec.env)} matches no declared verification claim`);
+    }
+  }
   for (const r of rows.values()) {
     r.implemented = subtreeHas(r.id, x => x.implementedBy.length > 0);
     // DO-333: proof alone verifies a requirement deep enough in the tree (the profile's minTraceDepth),
@@ -582,6 +627,8 @@ export function buildTrace(o: TraceOptions): TraceReport {
     const byProof = (depthOf(r.id) >= minDepth || !!r.declaredVerification?.some(c => c.method === "analysis")) && allProven(r);
     const byTest = passingTests(r) > 0;
     r.verification = byProof && byTest ? "proof+test" : byProof ? "proof" : byTest ? "test" : "none";
+    // Declared claims the tool cannot check verify the requirement once every one has a counting record.
+    if (r.verification === "none" && evidenceOk.get(r.id)) r.verification = "evidence";
     r.verified = r.verification !== "none";
   }
   for (const r of rows.values()) {
@@ -618,15 +665,13 @@ export function buildTrace(o: TraceOptions): TraceReport {
     gap(`no-verifying-test:${r.id}`, `requirement ${r.id} is not verified: ${why}`);
   }
   // What a requirement says it is verified by must hold, whatever else would verify it.
-  // TODO(evidence): inspection, review, demonstration and test outside the unit env have no evidence
-  // records yet, so each is a gap until a later task lets a record satisfy it.
   for (const r of rows.values()) {
     for (const c of r.declaredVerification ?? []) {
       if (c.method === "analysis" && !allProven(r)) gap(`verification-analysis:${r.id}`, `requirement ${r.id} lists verification "analysis" but its formalizing clauses are not all PROVEN`);
       else if (c.method === "test" && claimChecked(c) && passingTests(r) === 0) gap(`verification-test:${r.id}`, `requirement ${r.id} lists verification "test" but no @req test passes`);
-      else if (!claimChecked(c)) gap(`needs-evidence:${r.id}:${claimName(c)}`, `requirement ${r.id} lists verification "${claimName(c)}" which needs evidence: no evidence record can satisfy it yet`);
     }
   }
+  for (const g of evidenceGaps) gap(g.key, g.message);
   // A dead branch is code no test or proof can ever cover. Exempt only through its function's
   // @deactivated("reason"): the reviewer then sees it in the deactivated list instead.
   const deadBranches: DeadRow[] = (o.dead ?? []).map(d => {
@@ -687,6 +732,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
     assumptions,
     noImplementation,
     noVerifyingTest,
+    strayEvidence,
     gaps,
     baselined,
     staleBaseline,
@@ -742,7 +788,13 @@ export function formatTrace(r: TraceReport): string {
       }
     }
     for (const a of row.assumedBy) out.push(`${sub}${pad("assumed")}${a.file}:${a.line} ${a.fn}`);
-    for (const c of row.declaredVerification ?? []) if (!claimChecked(c)) out.push(`${sub}${pad("verified")}NEEDS EVIDENCE  ${claimName(c)}`);
+    for (const c of row.declaredVerification ?? []) {
+      if (claimChecked(c)) continue;
+      if (!row.evidence?.some(e => e.claim === claimName(c))) out.push(`${sub}${pad("verified")}NEEDS EVIDENCE  ${claimName(c)}`);
+    }
+    for (const e of row.evidence ?? []) {
+      out.push(`${sub}${pad("evidence")}${e.state.padEnd(9)}${e.claim} ${e.date.slice(0, 10)}${e.measured ? ` ${e.measured}` : ""}  ${e.file}  (${e.source})`);
+    }
     if (row.verification === "proof" || row.verification === "proof+test") {
       out.push(`${sub}${pad("verified")}PROOF     ${row.formalizedBy.length} formalizing clause${row.formalizedBy.length === 1 ? "" : "s"} PROVEN`);
     }
@@ -762,6 +814,7 @@ export function formatTrace(r: TraceReport): string {
   if (r.tooCoarse.length) list("traced too coarsely (only a parent requirement)", r.tooCoarse.map(u => `${u.file}:${u.line} ${u.fn} -> ${u.ids.join(", ")}`));
   list("requirements with no implementation", r.noImplementation);
   list("requirements with no verifying test", r.noVerifyingTest);
+  if (r.strayEvidence.length) list("warning: stray evidence records", r.strayEvidence);
   if (r.derived.length) list("derived (feed back to the system level)", r.derived.map(u => `${u.file}:${u.line} ${u.fn}`));
   if (r.assumptions.length) list("assumptions (trusted, for review)", r.assumptions.map(u => `${u.file}:${u.line} ${u.fn}`));
   if (r.deactivated.length) list("deactivated code", r.deactivated.map(u => `${u.file}:${u.line} ${u.fn}: ${u.reason}`));

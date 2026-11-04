@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://milo-language.dev/schema/evidence.schema.json",
+  "title": "Milo evidence record",
+  "description": "One file in evidence/ beside requirements.json, written by `milo evidence add` or `milo evidence run` and committed. `milo trace` takes the latest record by date for each (req, method, env) a requirement declares in its verification list and the tool cannot check itself. It counts only while result is pass, textHash and codeHash still match, and the artifact still has its sha256. codeHash covers the bodies of the fns tagged @req or @derived with that requirement, not their transitive callees. The file name is <req>-<method>[-<env>]-<12 hex of the content hash>.json.",
+  "type": "object",
+  "properties": {
+    "req": { "type": "string", "pattern": "^[A-Za-z0-9_.\\-]+$" },
+    "method": { "enum": ["test", "analysis", "inspection", "demonstration", "review"] },
+    "env": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "description": "Matched exactly against the claim's env; a claim with no env matches only a record with no env." },
+    "result": { "enum": ["pass", "fail"] },
+    "source": { "enum": ["attested", "run"], "description": "attested: a person or agent typed it in (milo evidence add), nothing checks it. run: the tool ran argv and took the result from its exit code (milo evidence run); it does not know whether the command measures the right thing." },
+    "argv": { "type": "array", "items": { "type": "string" }, "description": "The command a run record executed." },
+    "measured": { "type": "string", "description": "What was measured, e.g. \"p95 212 ms\"." },
+    "note": { "type": "string" },
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Relative to the directory of requirements.json." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    },
+    "date": { "type": "string", "format": "date-time" },
+    "commit": { "type": ["string", "null"], "description": "git HEAD short hash when the record was written, null outside a repository." },
+    "textHash": { "type": "string", "pattern": "^[0-9a-f]{12}$", "description": "Hash of the requirement text." },
+    "codeHash": { "type": "string", "pattern": "^[0-9a-f]{12}$", "description": "Hash of the span-free AST of every fn with @req(REQ) or @derived(REQ) in the entry's project, sorted by name." }
+  },
+  "required": ["req", "method", "result", "source", "date", "commit", "textHash", "codeHash"],
+  "additionalProperties": false
+}

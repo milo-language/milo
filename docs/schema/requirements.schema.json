@@ -32,7 +32,7 @@
             "required": ["method"],
             "additionalProperties": false
           },
-          "description": "Under --strict, analysis (any env) needs a PROVEN formalizing clause and test with env absent or unit a passing @req test; every other method/env pair needs evidence, which is a gap until evidence records exist. Absent: the profile's depth rules."
+          "description": "Under --strict, analysis (any env) needs a PROVEN formalizing clause and test with env absent or unit a passing @req test; every other method/env pair needs a current passing evidence record (milo evidence, docs/schema/evidence.schema.json) and is a gap without one. Absent: the profile's depth rules."
         }
       },
       "required": ["id", "text"],

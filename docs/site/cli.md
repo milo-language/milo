@@ -46,6 +46,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`explain <name>`](#explain) | What one warning, @attribute or keyword means, with an example and how to silence it. |
 | [`trace <file>`](#trace) | A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records. |
 | [`spec [--diff <git-ref> \| --packet <outdir>] <entry.milo>`](#spec) | The spec lock: print the intent surface (requirements, contract clauses, invariants); --diff \<ref\> classifies changes since a git ref and asks z3 whether a changed clause only strengthens; --packet \<outdir\> writes a clean-room packet for an independent test author. |
+| [`evidence add\|run\|list <entry.milo> [<REQ>]`](#evidence) | Evidence records that satisfy a requirement's verification claims the tool cannot check (inspection, review, demonstration, a test outside the unit env); records are JSON files committed beside requirements.json, pinned to the requirement text and the implementing code. |
 | [`trace-object <binary>`](#trace-object) | Per function of a binary built with -g: address range -\> source line -\> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
@@ -343,6 +344,24 @@ The spec lock: print the intent surface (requirements, contract clauses, invaria
 | `--packet <outdir>` | Write requirements.json plus one stub .milo per source file (declarations and contracts verbatim, pub fn bodies replaced by a panic, private code and comments dropped); refuses a non-empty \<outdir\>. |
 | `--diff <git-ref>` | Compare with the spec at \<ref\>: additions and strengthenings are ok; removals, text changes, weakenings (with a z3 counterexample) and undecided changes need an entry in spec-signoff.json (id, hash, who, why); exit 1 if any is unsigned. |
 | `--json` | The surface or the changes as data. |
+
+### evidence
+
+```sh
+milo evidence add|run|list <entry.milo> [<REQ>]
+```
+
+Evidence records that satisfy a requirement's verification claims the tool cannot check (inspection, review, demonstration, a test outside the unit env); records are JSON files committed beside requirements.json, pinned to the requirement text and the implementing code.
+
+| Flag | Effect |
+|---|---|
+| `add <entry.milo> <REQ> --method <m> --result pass\|fail` | Attest a result by hand: the tool cannot check it (recorded as attested). |
+| `run <entry.milo> <REQ> --method <m> -- <cmd> [args...]` | Run the command, keep its output as an artifact, and set the result from its exit code (recorded as run); exits with the command's code. It captures what ran, not whether the command measures the right thing. |
+| `list <entry.milo>` | One line per record with its state (PASS, FAILED, STALE). |
+| `--env <e>` | The environment of the claim (load, hil, target, ...); matched exactly against the requirement's verification entry. |
+| `--measured "<text>"` | What was measured, shown in the trace (e.g. "p95 212 ms"). |
+| `--artifact <path>` | (add) a file that backs the claim; its sha256 is recorded and a change makes the record stale. |
+| `--note "<text>"` | Free text. |
 
 ### trace-object
 
