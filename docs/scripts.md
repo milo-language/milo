@@ -73,6 +73,8 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-interp-co.ts` | Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can reach a task switch, so the task interpreter (src/interp-co.ts) can suspend a task anywhere in the midd… |
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |
 | `scripts/gen-lang-docs.ts` | Renders the published language reference from `milo lang --json`. |
+| `scripts/gen-programs-grammar.ts` | Random Milo program generator for scripts/gen-programs.ts: deterministic from a seed, biased to ownership edge cases (moves in branches, field moves, reassigned moved places, closures, `?` with live… |
+| `scripts/gen-programs.ts` | Differential fuzzer: random well-typed Milo programs (scripts/gen-programs-grammar.ts) run in the reference interpreter, as a -O0 binary (live heap blocks counted with scripts/livecount.c, darwin) an… |
 | `scripts/gen-scripts-doc.ts` | Regenerates the Index table in docs/scripts.md from each script's own first comment line, so the index cannot fall behind the directory. |
 | `scripts/gen-spec.ts` | Generates docs/spec.md — the normative language specification, from the suites that already decide what the compiler does. |
 | `scripts/gen-src-doc.ts` | Regenerates the compiler-source index in docs/src.md from each src/*.ts file's own first comment line, so the map of the compiler cannot fall behind the directory. |
