@@ -16,6 +16,31 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## A capturing closure can't become a plain fn value (2026-11-03)
+
+A closure whose environment owns heap memory (it captures a `Vec`, a string, a struct that
+owns one) can no longer be returned, stored in a field or a local, or pushed into a container
+as a plain `(T) => R`. That type is Copy, so the environment had no single owner and was never
+freed. The new error `plain-closure-env` says where; `milo fix` rewrites the declared type to
+`move (T) => R`, which owns the environment and drops it once. Closures that capture nothing,
+or only Copy values, are unaffected.
+
+In std/http the handler fields of `Route`, `StreamRoute` and `WsRoute` are `move` closures now,
+and middleware is stored as a `Middleware` struct. `Router.use`, `get`, `post` and friends keep
+their signatures, so routers built through them need no change.
+
+## Arms after a `_` in a match are an error (2026-11-03)
+
+`match` takes the first arm that matches. An arm after a `_` (or any other arm that matches
+everything) can never run, and is now rejected. Previously the compiler treated `_` as the
+default arm wherever it was written. Move the `_` arm last.
+
+## `var-never-reassigned` and `unwritten-mut-param` (2026-11-03)
+
+Two new warnings, each with a `milo fix` edit: a `var` that is never reassigned (make it
+`let`), and a `&mut T` parameter of a non-`pub` function that nothing writes through (make it
+`&T`, and drop `&mut` at its call sites). They will become errors; run `milo fix` now.
+
 ## MLIR is the default build path (2026-11-01)
 
 `milo build` and `milo run` now compile the functions the MLIR backend supports through
