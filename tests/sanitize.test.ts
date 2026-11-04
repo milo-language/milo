@@ -49,12 +49,15 @@ test("--sanitize marks emitted functions sanitize_address", () => {
   expect(plain).not.toContain("sanitize_address");
 
   const san = execSync(`bun ${MILO} emit-ir --sanitize ${src}`, { encoding: "utf-8" });
-  expect(san).toContain("attributes #0 = { sanitize_address }");
+  // MLIR splits functions across attribute groups (alwaysinline, cold, ...), so collect
+  // every group carrying sanitize_address instead of naming #0.
+  const groups = new Set([...san.matchAll(/^attributes #(\d+) = \{[^}]*\bsanitize_address\b/gm)].map(m => m[1]));
+  expect(groups.size).toBeGreaterThan(0);
   // Every function, not just some: ASan skips any function lacking the attribute, so a
   // partial marking is a partial sanitizer that still reports itself as clean.
   const defines = san.split("\n").filter(l => l.startsWith("define "));
   expect(defines.length).toBeGreaterThan(0);
-  expect(defines.filter(l => !l.includes(" #0"))).toEqual([]);
+  expect(defines.filter(l => !groups.has(/ #(\d+)\b/.exec(l)?.[1] ?? ""))).toEqual([]);
 });
 
 test("--sanitize composes with -g (attribute group precedes !dbg)", () => {

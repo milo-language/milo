@@ -48,7 +48,7 @@ const FAITHFUL: { name: string; ty: string; value: string; use: string }[] = [
 describe("a representable annotation compiles and means itself", () => {
   for (const c of FAITHFUL) {
     test(c.name, () => {
-      expect(errorsFor(`fn main() {\n    var x: ${c.ty} = ${c.value}\n    ${c.use}\n}\n`)).toEqual([]);
+      expect(errorsFor(`fn main() {\n    let x: ${c.ty} = ${c.value}\n    ${c.use}\n}\n`)).toEqual([]);
     });
   }
 });
@@ -70,7 +70,7 @@ const MISMATCHED: { name: string; ty: string; value: string }[] = [
 describe("a value of the wrong shape does not satisfy an annotation", () => {
   for (const c of MISMATCHED) {
     test(c.name, () => {
-      const errs = errorsFor(`fn main() {\n    var x: ${c.ty} = ${c.value}\n    print("used")\n}\n`);
+      const errs = errorsFor(`fn main() {\n    let x: ${c.ty} = ${c.value}\n    print("used")\n}\n`);
       expect({ case: c.name, rejected: errs.length > 0 }).toEqual({ case: c.name, rejected: true });
     });
   }

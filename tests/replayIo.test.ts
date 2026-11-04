@@ -88,7 +88,7 @@ fn main() {
     let ext = fetch(argv[2])!
     print("ext: " + ext.status.toString() + " " + ext.text())
 
-    var child = Command.new("sh").arg("-c").arg("echo sub $RR_SUB").spawn()!
+    let child = Command.new("sh").arg("-c").arg("echo sub $RR_SUB").spawn()!
     var out = ""
     for chunk in child.stdout() {
         out.pushStr(chunk)

@@ -600,7 +600,7 @@ const FORMS: Form[] = [
       switch (between(0, 3)) {
         case 0: { const x = g.fresh("x"); g.emit(`let ${x} = *${h}`); g.bind(x); if (reassign) g.emit(`${h} = Heap(${g.res()})`); break; }
         case 1: g.sink(`useRes(*${h})`); if (reassign) g.emit(`${h} = Heap(${g.res()})`); break;
-        default: break;
+        default: if (reassign) g.emit(`${h} = Heap(${g.res()})`); break; // a var must be written
       }
       return true;
     },
@@ -741,7 +741,7 @@ const FORMS: Form[] = [
       switch (between(0, 3)) {
         case 0: g.emit(`var ${v}: Vec<Res> = Vec.new()\n${v}.push(${g.res()})\n${v}.push(${g.res()})\n${v}[0] = ${g.res()}`); g.sink(`${v}.len()`); break;
         case 1: g.emit(`var ${v}: HashMap<i64, Res> = HashMap.new()\n${v}.insert(1, ${g.res()})\n${v}.insert(1, ${g.res()})`); g.sink(`${v}.len()`); break;
-        case 2: g.emit(`var ${v}: Option<Res> = Option.Some(${g.res()})\nmatch ${v} {\n    Option.Some(q) => {\n        sink = sink + chk(q)\n    }\n    Option.None => {}\n}`); break;
+        case 2: g.emit(`let ${v}: Option<Res> = Option.Some(${g.res()})\nmatch ${v} {\n    Option.Some(q) => {\n        sink = sink + chk(q)\n    }\n    Option.None => {}\n}`); break;
         default: g.emit(`var ${v}: Vec<Wrap> = Vec.new()\n${v}.push(Wrap { inner: ${g.res()} })`); g.sink(`${v}.len()`);
       }
       return true;
@@ -800,6 +800,8 @@ function program(): { src: string; forms: string[] } {
   g.emit(`var sink: i64 = 0`);
   g.emit(`var kept: Vec<Res> = Vec.new()`);
   fill(g, between(3, 6));
+  // `var` with no write is the hard error var-never-reassigned; only a push needs it.
+  if (!g.lines.some(l => l.includes("kept.push("))) g.lines[1] = g.lines[1]!.replace("var kept", "let kept");
   g.emit(`sink = sink + kept.len()`);
   g.emit(`return Option.Some(sink)`);
   const src = `${PRELUDE}

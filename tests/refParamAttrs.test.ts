@@ -51,7 +51,7 @@ fn fempty(_e: &Empty): i32 { return 3 }
 fn fgen<T>(_t: &T): i32 { return 0 }
 
 fn main(): i32 {
-    var p = P { x: 1, y: 2.0 }
+    let p = P { x: 1, y: 2.0 }
     var arr: [i32; 4] = [0; 4]
     var bb = false
     let em = Empty {}
@@ -67,14 +67,14 @@ fn main(): i32 {
 test("by-ref params get nonnull, dereferenceable(store size) and align", () => {
   // noalias off so the &mut params here spell exactly the pointer attributes
   const ir = emitIr(SRC, "--no-noalias");
-  expect(paramsOf(ir, "fp")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
-  expect(paramsOf(ir, "farr")).toEqual(["ptr nonnull dereferenceable(16) align 4"]);
-  expect(paramsOf(ir, "fbool")).toEqual(["ptr nonnull dereferenceable(1) align 1"]);
+  expect(paramsOf(ir, "fp")).toEqual(["ptr nonnull align 8 dereferenceable(16)"]);
+  expect(paramsOf(ir, "farr")).toEqual(["ptr nonnull align 4 dereferenceable(16)"]);
+  expect(paramsOf(ir, "fbool")).toEqual(["ptr nonnull align 1 dereferenceable(1)"]);
   // &string and &[T] point at the 24-byte { ptr, len, cap } header, not the bytes
-  expect(paramsOf(ir, "fstr")).toEqual(["ptr nonnull dereferenceable(24) align 8"]);
-  expect(paramsOf(ir, "fslice")).toEqual(["ptr nonnull dereferenceable(24) align 8"]);
-  expect(paramsOf(ir, "fe")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
-  expect(paramsOf(ir, "fgen_P")).toEqual(["ptr nonnull dereferenceable(16) align 8"]);
+  expect(paramsOf(ir, "fstr")).toEqual(["ptr nonnull align 8 dereferenceable(24)"]);
+  expect(paramsOf(ir, "fslice")).toEqual(["ptr nonnull align 8 dereferenceable(24)"]);
+  expect(paramsOf(ir, "fe")).toEqual(["ptr nonnull align 8 dereferenceable(16)"]);
+  expect(paramsOf(ir, "fgen_P")).toEqual(["ptr nonnull align 8 dereferenceable(16)"]);
   // Call sites are not checked: every call here is direct, and LLVM reads a direct call's
   // parameter attributes from the callee (CallBase::paramHasAttr), so the define is the
   // whole promise.
@@ -138,7 +138,7 @@ fn main(): i32 {
 test("--noalias marks &mut params whose callee cannot reach an alias", () => {
   const ir = emitIr(NOALIAS_SRC, "--noalias");
   // `&T` (the second) gets no noalias: a `&mut` elsewhere is ruled out, interior mutability is not
-  expect(paramsOf(ir, "axpy")).toEqual(["ptr noalias nonnull dereferenceable(512) align 8", "ptr nonnull dereferenceable(512) align 8", "double"]);
+  expect(paramsOf(ir, "axpy")).toEqual(["ptr noalias nonnull align 8 dereferenceable(512)", "ptr nonnull align 8 dereferenceable(512)", "double"]);
 });
 
 test("noalias is withheld where a global or a closure can alias the param", () => {
