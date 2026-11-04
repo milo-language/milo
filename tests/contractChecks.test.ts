@@ -146,8 +146,9 @@ test("--no-overflow-checks alone does not turn contract asserts off", () => {
 test("emit-ir honors explicit contract-check settings", () => {
   const checked = emitIr(["--release", "--contract-checks"]);
   const unchecked = emitIr(["--release", "--no-contract-checks"]);
-  expect(checked).toContain("@.contract_err");
-  expect(unchecked).not.toContain("@.contract_err");
+  // the MLIR scaffold's failure routine; the legacy backend's @.contract_err global is gone
+  expect(checked).toContain("@__milo_contract_fail");
+  expect(unchecked).not.toContain("@__milo_contract_fail");
   expect(checked).not.toBe(unchecked);
 }, 120000);
 

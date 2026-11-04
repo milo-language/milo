@@ -23,7 +23,7 @@ fn main(): void {
     var count: i64 = 0
     var i: i64 = 0
     while i < 10 {
-        var nl = s.indexOfFrom("f", 0)
+        let nl = s.indexOfFrom("f", 0)
         let sub = s[0..10]
         if sub.contains("cde") && nl.isSome() { count = count + 1 }
         match pick(i) {

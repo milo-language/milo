@@ -2249,6 +2249,8 @@ export class TypeChecker {
   // warning never fires on a clause that says something.
   private isTrivialClause(e: import("./ast").Expr): boolean {
     const simple = (x: import("./ast").Expr): boolean => {
+      // ident-ok: a contract clause names a whole variable to ask its type (is it a float?);
+      // there is no place resolution or alias question here
       if (x.kind === "Ident") {
         const t = this.lookup(x.name)?.type;
         return !!t && t.tag !== "float" && t.tag !== "unknown";

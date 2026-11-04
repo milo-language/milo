@@ -201,7 +201,10 @@ function program(c: Container, r: Root, route: Route): string {
   const place = r.owner + r.path;
   const seed = c.seed(place);
   const decls = r.decls(c.ty).replace("INIT_PLACEHOLDER", c.init);
-  return `${decls}\n${route.decls(c, r)}\nfn main() {\n${r.setup(c.ty, c.init)}\n${seed ? `    ${seed}\n` : ""}    for ${c.bind} in ${place} {\n        ${route.body(c, r)}\n        print(it)\n    }\n}\n`;
+  // The benign control writes nothing, and a `var` nothing writes is a hard error (var-never-reassigned).
+  let setup = r.setup(c.ty, c.init);
+  if (route.name === "none" && !seed && !setup.includes(".push(")) setup = setup.replace(/^    var /, "    let ");
+  return `${decls}\n${route.decls(c, r)}\nfn main() {\n${setup}\n${seed ? `    ${seed}\n` : ""}    for ${c.bind} in ${place} {\n        ${route.body(c, r)}\n        print(it)\n    }\n}\n`;
 }
 
 describe("mutation during iteration is rejected for every spelling", () => {
