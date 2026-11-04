@@ -9,7 +9,7 @@
 // with `len = -1`, a length no Vec can have.
 //
 // @expect: 1
-fn noop(v: &mut Vec<i64>): void
+pub fn noop(v: &mut Vec<i64>): void
 ensures v.len == old(v.len)
 {
 }

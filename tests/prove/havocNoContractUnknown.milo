@@ -15,7 +15,7 @@
 // decided (proven), so the downgrade is specific to the contract-less call.
 //
 // @expect: 1
-fn frob(_v: &mut Vec<i64>): void
+pub fn frob(_v: &mut Vec<i64>): void
 {
 }
 
@@ -31,7 +31,7 @@ ensures v.len == old(v.len)
     let _p = v.ptr()
 }
 
-fn needsEmpty(v: &mut Vec<i64>): void
+pub fn needsEmpty(v: &mut Vec<i64>): void
 requires v.len == 0
 {
 }

@@ -113,8 +113,7 @@ ensures v.len == old(v.len)
         1
     } else {
         -1
-    }
-    )
+    })
 }
 
 fn retainSome(v: &mut Vec<i64>): void
@@ -123,7 +122,7 @@ ensures v.len <= old(v.len)
     v.retain((x: i64): bool => x % 2 == 0)
 }
 
-fn readOnly(v: &mut Vec<i64>): i64
+pub fn readOnly(v: &mut Vec<i64>): i64
 ensures v.len == old(v.len)
 {
     let n = v.len()
@@ -154,7 +153,7 @@ ensures s.len == old(s.len)
     let _t = s.trim()
 }
 
-fn needsEmpty(v: &mut Vec<i64>): void
+pub fn needsEmpty(v: &mut Vec<i64>): void
 requires v.len == 0
 {
 }
