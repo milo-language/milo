@@ -1,0 +1,77 @@
+// A WaitGroup shared by tasks on four different schedulers (three workers and main). main
+// waits (parked on its own scheduler); each worker's done() lands on main's transfer list.
+// A second round has main's tasks wait on a group the workers finish, and an atomic counter
+// tallies the work from every scheduler.
+// @expect: round 1 done 4 tasks
+// @expect: round 2 waiters 3 released
+// @expect: total 1300
+from "std/runtime" import {
+    spawnWorker, Task
+}
+from "std/sync" import {
+    WaitGroup, AtomicI64
+}
+from "std/time" import {
+    sleepMs
+}
+
+pub fn main(): i32 {
+    let total = AtomicI64.new(0)
+
+    // round 1: three workers and one task on main's own scheduler
+    let wg = WaitGroup.new()
+    wg.add(4)
+    for w in 0..3 {
+        let wgW = wg.clone()
+        let totalW = total.clone()
+        spawnWorker(move(): void => {
+            // several tasks per worker, all on that worker's scheduler
+            let inner = WaitGroup.new()
+            inner.add(2)
+            for k in 0..2 {
+                let innerK = inner.clone()
+                let totalK = totalW.clone()
+                Task.spawn(move(): void => {
+                    sleepMs(5)
+                    totalK.add(100)
+                    innerK.done()
+                })
+            }
+            inner.wait()
+            totalW.add(100)
+            wgW.done()
+        })
+    }
+    let wgMain = wg.clone()
+    let totalMain = total.clone()
+    Task.spawn(move(): void => {
+        totalMain.add(100)
+        wgMain.done()
+    })
+    wg.wait()
+    print("round 1 done 4 tasks")
+
+    // round 2: three tasks on main wait for a group that workers release
+    let gate = WaitGroup.new()
+    gate.add(1)
+    let all = WaitGroup.new()
+    all.add(3)
+    for i in 0..3 {
+        let gateT = gate.clone()
+        let allT = all.clone()
+        let totalT = total.clone()
+        Task.spawn(move(): void => {
+            gateT.wait()
+            totalT.add(100)
+            allT.done()
+        })
+    }
+    spawnWorker(move(): void => {
+        sleepMs(20)
+        gate.done()
+    })
+    all.wait()
+    print("round 2 waiters 3 released")
+    print($"total {total.load()}")
+    return 0
+}

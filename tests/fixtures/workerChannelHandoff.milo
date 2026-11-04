@@ -1,0 +1,53 @@
+// Tasks on two workers hand values through one Channel and a WaitGroup: a send from a
+// task on worker A wakes a receiver parked on worker B (and the reverse), through the
+// receiver's own scheduler transfer list. main is a third scheduler.
+// @expect: sum 20100
+// @expect: ack 100
+// @expect: all workers done
+from "std/runtime" import {
+    spawnWorker, Task
+}
+from "std/sync" import {
+    Channel, WaitGroup
+}
+
+pub fn main(): i32 {
+    let data = Channel<i64>.new(4)!
+    let acks = Channel<i64>.new(4)!
+    let wg = WaitGroup.new()
+    wg.add(2)
+
+    // worker A: produces 1..=200
+    let dataTx = data.clone()
+    let wgA = wg.clone()
+    spawnWorker(move(): void => {
+        for i in 1..201 {
+            dataTx.send(i)!
+        }
+        wgA.done()
+    })
+
+    // worker B: receives, sums, acknowledges the count back across workers
+    let dataRx = data.clone()
+    let acksTx = acks.clone()
+    let wgB = wg.clone()
+    spawnWorker(move(): void => {
+        var sum: i64 = 0
+        var n: i64 = 0
+        while n < 200 {
+            sum += dataRx.recv()!
+            n += 1
+        }
+        acksTx.send(sum)!
+        acksTx.send(n / 2)!
+        wgB.done()
+    })
+
+    let sum = acks.recv()!
+    let half = acks.recv()!
+    print($"sum {sum}")
+    print($"ack {half}")
+    wg.wait()
+    print("all workers done")
+    return 0
+}

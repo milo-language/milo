@@ -314,11 +314,19 @@ var rrPageFreeLen: [i64; 512] = [0; 512]
 // libc's malloc. Codegen raises and lowers it around every such fn (src/lower.ts).
 thread_local var rrDepth: i64 = 0
 
+// rrHeapOn is written only at boot (heapStart) and when the fixed address turns out to be
+// taken (heapFail), but both are reachable from every scheduler (replayHeapMap). The write
+// goes through an atomic store so a worker thread running its own scheduler does not look
+// like a racing writer to the thread-global check.
+fn heapSetOn(v: i64): void {
+    unsafe { _atomicStoreI64(rrHeapOn.addrOf() as *u8, v) }
+}
+
 fn heapStart(): void {
     if rrHeapOn != 0 || @targetOs() == "windows" {
         return
     }
-    rrHeapOn = 1
+    heapSetOn(1)
     // This fn runs inside the engine, whose entry did not count while the heap was off.
     rrDepth = 1
 }
@@ -390,7 +398,7 @@ fn heapInArena(p: *u8): bool {
 }
 
 fn heapFail(): void {
-    rrHeapOn = 0
+    heapSetOn(0)
     replayFail("record/replay: cannot place the fixed-address heap at 35184372088832 (0x200000000000): the address is taken")
 }
 
