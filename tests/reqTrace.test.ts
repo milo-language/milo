@@ -664,8 +664,7 @@ test("a test may @req a derived requirement when reached by absolute path", () =
 
 const HAVE_LLVM_COV = existsSync(join(LLVM_BIN, "llvm-cov"));
 if (!HAVE_LLVM_COV) console.log(`skipping the coverage tests: no llvm-cov in ${LLVM_BIN} (set MILO_LLVM_BIN)`);
-// Skipped without llvm-cov: coverage needs its report tool, and a machine without it cannot produce one.
-const covTest = HAVE_LLVM_COV ? test : test.skip;
+const covTest = HAVE_LLVM_COV ? test : test.skip; // no llvm-cov: --coverage cannot build its report
 
 const CLAMP = `@req(LLR-1)
 pub fn clamp(x: i64): i64
