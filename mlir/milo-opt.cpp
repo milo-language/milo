@@ -20,8 +20,41 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SourceMgr.h"
 #include <cstring>
+
+// MLIR's debug-info attributes have no enumerator, so the DI type builder writes each one as
+// a DW_TAG_member flagged EnumClass (no real member has that flag) with its value in
+// `offsetInBits` (the LLVM verifier rejects DW_TAG_enumerator there). Here each such element
+// of an enumeration type becomes the DIEnumerator lldb reads an enum's variant names from.
+// The composites are distinct nodes, so their elements tuple can be replaced in place.
+static void rewriteEnumerators(llvm::Module &m) {
+  llvm::DebugInfoFinder finder;
+  finder.processModule(m);
+  llvm::LLVMContext &c = m.getContext();
+  for (llvm::DIType *t : finder.types()) {
+    auto *ct = llvm::dyn_cast<llvm::DICompositeType>(t);
+    if (!ct || ct->getTag() != llvm::dwarf::DW_TAG_enumeration_type)
+      continue;
+    llvm::SmallVector<llvm::Metadata *> elems;
+    bool changed = false;
+    for (llvm::Metadata *e : ct->getElements()) {
+      auto *d = llvm::dyn_cast_or_null<llvm::DIDerivedType>(e);
+      if (d && d->getTag() == llvm::dwarf::DW_TAG_member && (d->getFlags() & llvm::DINode::FlagEnumClass)) {
+        elems.push_back(llvm::DIEnumerator::get(c, llvm::APInt(64, d->getOffsetInBits()), /*IsUnsigned=*/false, d->getName()));
+        changed = true;
+      } else {
+        elems.push_back(e);
+      }
+    }
+    if (changed)
+      ct->replaceElements(llvm::MDTuple::get(c, elems));
+  }
+}
 
 static int emitLLVMIR(int argc, char **argv, mlir::DialectRegistry &registry) {
   llvm::InitLLVM init(argc, argv);
@@ -62,6 +95,7 @@ static int emitLLVMIR(int argc, char **argv, mlir::DialectRegistry &registry) {
   auto ll = mlir::translateModuleToLLVMIR(*module, llctx);
   if (!ll)
     return 1;
+  rewriteEnumerators(*ll);
   ll->print(llvm::outs(), nullptr);
   return 0;
 }

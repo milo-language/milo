@@ -806,8 +806,8 @@ def Milo_DbgVarOp : Milo_Op<"dbg.var"> {
     pointer operand and the DI type of the pointee in `di_type`; `milo-lower-debug-vars`
     (after the function has its DISubprogram) turns it into `llvm.intr.dbg.declare`.
 
-    `arg`: the 1-based parameter number. `fields`: struct name to its field names, for the
-    structs the pointee holds (the dialect's struct type has no field names).
+    `arg`: the 1-based parameter number. `fields`: struct name to its field names, and enum name to
+    its variant names, for the structs and enums the pointee holds (the dialect's types carry neither).
   }];
   let arguments = (ins Arg<AnyType, "", [MemWrite<Milo_Slot>]>:$ref, StrAttr:$name,
                    OptionalAttr<I32Attr>:$arg, OptionalAttr<DictionaryAttr>:$fields,

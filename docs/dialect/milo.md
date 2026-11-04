@@ -819,8 +819,8 @@ variable in memory for the debugger. `convert-milo-to-llvm` keeps the op, with a
 pointer operand and the DI type of the pointee in `di_type`; `milo-lower-debug-vars`
 (after the function has its DISubprogram) turns it into `llvm.intr.dbg.declare`.
 
-`arg`: the 1-based parameter number. `fields`: struct name to its field names, for the
-structs the pointee holds (the dialect's struct type has no field names).
+`arg`: the 1-based parameter number. `fields`: struct name to its field names, and enum name to
+its variant names, for the structs and enums the pointee holds (the dialect's types carry neither).
 
 #### Attributes:
 

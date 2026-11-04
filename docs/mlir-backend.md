@@ -207,7 +207,7 @@ per-function compile cache.
 
 ## Open items
 
-- DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, `ensure-debug-info-scope-on-llvm-func`, DILocations spliced into codegen-dwarf.ts's subprograms); locals and params of scalar and struct type are done (`milo.dbg.var`, under `-g` only: a stack slot per named binding, lowered to `dbg.declare` by `milo-lower-debug-vars` after the function has its subprogram). Type DIEs for enums, HashMap, niche Options, strings and Vecs remain (`tests/debugInfo.test.ts`).
+- DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, `ensure-debug-info-scope-on-llvm-func`, DILocations spliced into codegen-dwarf.ts's subprograms); named locals and params of every type but closures, arrays and Heap are done (`milo.dbg.var`, under `-g` only: a stack slot per named binding, lowered to `dbg.declare` by `milo-lower-debug-vars` after the function has its subprogram; enums are a tag enumeration plus a per-variant payload union, niche Options the payload alone, strings, Vecs and HashMaps their header fields, all laid out from the converted LLVM types). Still open: pattern- and loop-bound variables (`match` arms, `for` indices) have no `milo.dbg.var`, and closure, array and Heap values have no DI type.
 - `!range`/`!noundef` on loads of ranged ints (`tests/refParamAttrs.test.ts`).
 
 Both are tracked under "MLIR parity gaps" in `docs/roadmap.md`.

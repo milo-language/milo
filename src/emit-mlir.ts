@@ -127,6 +127,8 @@ function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
 /** The place type of a `ty`: a Vec's is its header (!milo.vec), anything else's a !milo.ref. */
 const refOf = (ty: string) => { const m = /^!milo\.vecval<(.*)>$/.exec(ty); return m ? `!milo.vec<${m[1]}>` : `!milo.ref<${ty}>`; };
 const isScalarTy = (ty: string) => /^([su]i\d+|i1|f32|f64)$/.test(ty);
+/** The dialect types milo-opt can give a DWARF type (diTypes in mlir/Passes.cpp); it drops the op for a nested type it cannot. */
+const hasDebugType = (ty: string) => isScalarTy(ty) || /^!milo\.(struct|enum|string|map|vecval)\b/.test(ty);
 
 /** How a glue or runtime symbol spells a type: Milo.h typeKey of its dialect type. */
 function typeKey(t: TypeKind): string {
@@ -661,7 +663,7 @@ class FnEmitter {
     }
     this.emit(`milo.store ${ref}, ${slot} : !milo.ref<${ty}>`);
     this.bind(name, { kind: "var", ref: slot, ty, owned });
-    if (!owned) this.debugVar(name, slot, ty, t, arg);
+    this.debugVar(name, slot, ty, t, arg);
   }
 
   /**
@@ -670,16 +672,27 @@ class FnEmitter {
    * the 1-based parameter number of a param.
    */
   private debugVar(name: string, slot: string, ty: string, t: TypeKind, arg?: number): void {
-    if (!this.cx.emitDebug || !(isScalarTy(ty) || ty.startsWith("!milo.struct<"))) return;
+    if (!this.cx.emitDebug || !hasDebugType(ty)) return;
     const fields: string[] = [];
     const seen = new Set<string>();
+    // Field names of every struct, variant names of every enum, that the type reaches: the
+    // dialect's types carry neither. A depth past 4 is where milo-opt stops describing.
     const names = (k: TypeKind, depth: number) => {
-      if (k.tag !== "struct" || seen.has(k.name) || depth > 4) return;
+      k = stripRefs(k);
+      if (k.tag === "vec") return names(k.element, depth + 1);
+      if ((k.tag !== "struct" && k.tag !== "enum") || seen.has(k.name) || depth > 4) return;
       seen.add(k.name);
-      const l = this.cx.structLayouts.get(k.name);
+      if (k.tag === "struct") {
+        const l = this.cx.structLayouts.get(k.name);
+        if (!l) return;
+        fields.push(`${quote(k.name)} = [${l.fields.map(f => quote(f.name)).join(", ")}]`);
+        for (const f of l.fields) names(f.typeKind, depth + 1);
+        return;
+      }
+      const l = this.cx.mlirEnumLayout(k.name);
       if (!l) return;
-      fields.push(`${quote(k.name)} = [${l.fields.map(f => quote(f.name)).join(", ")}]`);
-      for (const f of l.fields) names(f.typeKind, depth + 1);
+      fields.push(`${quote(k.name)} = [${l.variants.map(v => quote(v.name)).join(", ")}]`);
+      for (const v of l.variants) for (const f of v.fields) names(f, depth + 1);
     };
     names(t, 0);
     const attrs = [`name = ${quote(name)}`, ...(arg ? [`arg = ${arg} : i32`] : []), ...(fields.length ? [`fields = {${fields.join(", ")}}`] : [])];
@@ -688,7 +701,7 @@ class FnEmitter {
 
   /** -g: `v`, an SSA value bound to `name`, copied to a slot of its own so the debugger has a place to read. */
   private debugValue(name: string, v: string, ty: string, t: TypeKind, arg?: number): void {
-    if (!this.cx.emitDebug || !(isScalarTy(ty) || ty.startsWith("!milo.struct<"))) return;
+    if (!this.cx.emitDebug || !hasDebugType(ty)) return;
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
     this.emit(`milo.store ${v}, ${slot} : !milo.ref<${ty}>`);
@@ -1774,6 +1787,7 @@ class FnEmitter {
           const slot = this.ownedSlot(s.name, ty, s.type);
           this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${ty}>`);
           this.bind(s.name, { kind: "var", ref: slot, ty, owned: true });
+          this.debugVar(s.name, slot, ty, s.type);
           return false;
         }
         if (!s.mutable) { this.bind(s.name, { kind: "ssa", v }); this.debugValue(s.name, v.ref, v.ty, s.type); return false; }

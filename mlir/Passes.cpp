@@ -316,56 +316,189 @@ struct VecStoreLowering : ConvertOpToLLVMPattern<VecStoreOp> {
 // promote past it) with the DI type of its slot; milo-lower-debug-vars then makes it a
 // dbg.declare in the function's DISubprogram.
 
-// The DI type of a slot's pointee: a scalar, or a struct of them. Null for what the
-// debugger cannot read as such (enums, strings, Vecs): they get no variable.
-LLVM::DITypeAttr diTypeOf(Type t, const LLVMTypeConverter &tc, const DataLayout &dl, DictionaryAttr names,
-                          unsigned depth = 0) {
-  MLIRContext *ctx = &tc.getContext();
-  auto basic = [&](StringRef name, uint64_t bits, unsigned enc) {
-    return LLVM::DIBasicTypeAttr::get(ctx, llvm::dwarf::DW_TAG_base_type, StringAttr::get(ctx, name), bits, enc);
-  };
-  if (auto i = dyn_cast<IntegerType>(t)) {
-    unsigned w = i.getWidth();
-    if (w == 1)
-      return basic("bool", 8, llvm::dwarf::DW_ATE_boolean);
-    bool sg = i.isSigned();
-    // C names, so a debugger renders an i32 as `int`.
-    const char *n = w == 8    ? (sg ? "signed char" : "unsigned char")
-                    : w == 16 ? (sg ? "short" : "unsigned short")
-                    : w == 32 ? (sg ? "int" : "unsigned int")
-                    : w == 64 ? (sg ? "long" : "unsigned long")
-                              : (sg ? "__int128" : "unsigned __int128");
-    return basic(n, w, sg ? llvm::dwarf::DW_ATE_signed : llvm::dwarf::DW_ATE_unsigned);
+// Where the data layout puts each field of `st`: a packed struct has no padding, any other
+// aligns every field. Every DI member offset and size below comes from the converted LLVM
+// types, never from the dialect's, so the DWARF cannot drift from the layout the IR uses.
+SmallVector<uint64_t> fieldOffsets(LLVM::LLVMStructType st, const DataLayout &dl) {
+  SmallVector<uint64_t> offs;
+  uint64_t off = 0;
+  for (Type f : st.getBody()) {
+    if (!st.isPacked())
+      off = llvm::alignTo(off, dl.getTypeABIAlignment(f));
+    offs.push_back(off);
+    off += dl.getTypeSize(f);
   }
-  if (auto f = dyn_cast<FloatType>(t))
-    return basic(f.getWidth() == 32 ? "float" : "double", f.getWidth(), llvm::dwarf::DW_ATE_float);
-  auto s = dyn_cast<StructType>(t);
-  if (!s || !s.isInitialized() || depth > 4)
-    return nullptr;
-  auto fieldNames = names ? names.getAs<ArrayAttr>(s.getName()) : ArrayAttr();
-  if (!fieldNames || fieldNames.size() != s.getFields().size())
-    return nullptr;
-  SmallVector<LLVM::DINodeAttr> members;
-  uint64_t off = 0, maxAlign = 1;
-  for (auto [fty, fname] : llvm::zip(s.getFields(), fieldNames)) {
-    Type lt = tc.convertType(fty);
+  return offs;
+}
+
+// The DI type of a slot's pointee. `names` maps a struct's name to its field names and an
+// enum's to its variant names (the dialect's types carry neither). Null for what the
+// debugger cannot read as such: those slots get no variable.
+struct DiTypes {
+  const LLVMTypeConverter &tc;
+  const DataLayout &dl;
+  DictionaryAttr names;
+  MLIRContext *ctx = &tc.getContext();
+
+  LLVM::DITypeAttr basic(StringRef name, uint64_t bits, unsigned enc) {
+    return LLVM::DIBasicTypeAttr::get(ctx, llvm::dwarf::DW_TAG_base_type, StringAttr::get(ctx, name), bits, enc);
+  }
+  LLVM::DITypeAttr uintOf(uint64_t bits) {
+    return basic(bits == 32 ? "unsigned int" : "unsigned long", bits, llvm::dwarf::DW_ATE_unsigned);
+  }
+  // No member alignment: a debugger reads offset and size, and the type's own alignment is on its DIE.
+  LLVM::DINodeAttr member(StringRef name, LLVM::DITypeAttr ty, uint64_t size, uint64_t off) {
+    return LLVM::DIDerivedTypeAttr::get(ctx, llvm::dwarf::DW_TAG_member, StringAttr::get(ctx, name), nullptr, 0,
+                                        nullptr, ty, size * 8, 0, off * 8, std::nullopt, LLVM::DIFlags::Zero,
+                                        nullptr);
+  }
+  LLVM::DITypeAttr pointerTo(LLVM::DITypeAttr pointee) {
+    return LLVM::DIDerivedTypeAttr::get(ctx, llvm::dwarf::DW_TAG_pointer_type, nullptr, nullptr, 0, nullptr, pointee,
+                                        64, 64, 0, std::nullopt, LLVM::DIFlags::Zero, nullptr);
+  }
+  LLVM::DITypeAttr composite(unsigned tag, StringRef name, uint64_t size, uint64_t align,
+                             ArrayRef<LLVM::DINodeAttr> elems, LLVM::DITypeAttr base = nullptr) {
+    return LLVM::DICompositeTypeAttr::get(ctx, tag, StringAttr::get(ctx, name), nullptr, 0, nullptr, base,
+                                          LLVM::DIFlags::Zero, size * 8, align * 8, nullptr, nullptr, nullptr, nullptr,
+                                          nullptr, nullptr, elems);
+  }
+  // The struct `lt` with a DI type per field (null: not described, the others keep their offsets).
+  LLVM::DITypeAttr structOf(StringRef name, Type lt, ArrayRef<StringRef> fieldNames, ArrayRef<LLVM::DITypeAttr> tys) {
+    auto st = dyn_cast<LLVM::LLVMStructType>(lt);
+    if (!st || !st.isInitialized() || st.getBody().size() != tys.size())
+      return nullptr;
+    SmallVector<uint64_t> offs = fieldOffsets(st, dl);
+    SmallVector<LLVM::DINodeAttr> members;
+    for (auto [i, f] : llvm::enumerate(st.getBody()))
+      if (tys[i])
+        members.push_back(member(fieldNames[i], tys[i], dl.getTypeSize(f), offs[i]));
+    return composite(llvm::dwarf::DW_TAG_structure_type, name, dl.getTypeSize(lt), dl.getTypeABIAlignment(lt), members);
+  }
+
+  // A module's private type is `mod$Name` in the IR; the debugger shows the name as written.
+  static StringRef shown(StringRef name) { return name.substr(name.rfind('$') + 1); }
+
+  ArrayAttr namesOf(StringRef type, size_t count) {
+    auto a = names ? names.getAs<ArrayAttr>(type) : ArrayAttr();
+    return a && a.size() == count ? a : ArrayAttr();
+  }
+
+  LLVM::DITypeAttr of(Type t, unsigned depth = 0) {
+    if (auto i = dyn_cast<IntegerType>(t)) {
+      unsigned w = i.getWidth();
+      if (w == 1)
+        return basic("bool", 8, llvm::dwarf::DW_ATE_boolean);
+      bool sg = i.isSigned();
+      // C names, so a debugger renders an i32 as `int`.
+      const char *n = w == 8    ? (sg ? "signed char" : "unsigned char")
+                      : w == 16 ? (sg ? "short" : "unsigned short")
+                      : w == 32 ? (sg ? "int" : "unsigned int")
+                      : w == 64 ? (sg ? "long" : "unsigned long")
+                                : (sg ? "__int128" : "unsigned __int128");
+      return basic(n, w, sg ? llvm::dwarf::DW_ATE_signed : llvm::dwarf::DW_ATE_unsigned);
+    }
+    if (auto f = dyn_cast<FloatType>(t))
+      return basic(f.getWidth() == 32 ? "float" : "double", f.getWidth(), llvm::dwarf::DW_ATE_float);
+    if (depth > 4)
+      return nullptr;
+    Type lt = tc.convertType(t);
     if (!lt)
       return nullptr;
-    uint64_t al = dl.getTypeABIAlignment(lt), sz = dl.getTypeSize(lt);
-    off = llvm::alignTo(off, al);
-    maxAlign = std::max(maxAlign, al);
-    // A field the debugger cannot read is left out; the others keep their real offsets.
-    if (auto ft = diTypeOf(fty, tc, dl, names, depth + 1))
-      members.push_back(LLVM::DIDerivedTypeAttr::get(ctx, llvm::dwarf::DW_TAG_member, cast<StringAttr>(fname),
-                                                     nullptr, 0, nullptr, ft, sz * 8, al * 8, off * 8,
-                                                     std::nullopt, LLVM::DIFlags::Zero, nullptr));
-    off += sz;
+    // A header's data pointer stays untyped: a string's bytes are a slice, not a C string.
+    if (isa<StringType>(t))
+      return structOf("string", lt, {"ptr", "len", "cap"}, {pointerTo(nullptr), uintOf(64), uintOf(64)});
+    if (isa<MapType>(t))
+      return structOf("HashMap", lt, {"data", "len", "cap", "seed", "tombstones"},
+                      {pointerTo(nullptr), uintOf(64), uintOf(64), uintOf(64), uintOf(64)});
+    if (auto v = dyn_cast<VecValType>(t))
+      return structOf("Vec", lt, {"ptr", "len", "cap"},
+                      {pointerTo(of(v.getElementType(), depth + 1)), uintOf(64), uintOf(64)});
+    if (auto s = dyn_cast<StructType>(t)) {
+      if (!s.isInitialized())
+        return nullptr;
+      auto fieldNames = namesOf(s.getName(), s.getFields().size());
+      if (!fieldNames)
+        return nullptr;
+      SmallVector<LLVM::DITypeAttr> tys;
+      SmallVector<StringRef> ns;
+      for (auto [fty, fname] : llvm::zip(s.getFields(), fieldNames)) {
+        tys.push_back(of(fty, depth + 1));
+        ns.push_back(cast<StringAttr>(fname).getValue());
+      }
+      return structOf(shown(s.getName()), lt, ns, tys);
+    }
+    if (auto e = dyn_cast<EnumType>(t))
+      return enumOf(e, lt, depth);
+    return nullptr;
   }
-  return LLVM::DICompositeTypeAttr::get(ctx, llvm::dwarf::DW_TAG_structure_type, StringAttr::get(ctx, s.getName()),
-                                        nullptr, 0, nullptr, nullptr, LLVM::DIFlags::Zero,
-                                        llvm::alignTo(off, maxAlign) * 8, maxAlign * 8, nullptr, nullptr, nullptr,
-                                        nullptr, nullptr, nullptr, members);
-}
+
+  LLVM::DITypeAttr enumOf(EnumType e, Type lt, unsigned depth) {
+    if (!e.isInitialized())
+      return nullptr;
+    auto variants = e.getVariants();
+    auto vnames = namesOf(e.getName(), variants.size());
+    if (!vnames)
+      return nullptr;
+    auto vname = [&](unsigned v) { return cast<StringAttr>(vnames[v]).getValue(); };
+    uint64_t size = dl.getTypeSize(lt), align = dl.getTypeABIAlignment(lt);
+    // No tag word: the payload alone, and the member's name says which value is the other
+    // variant (a debugger cannot learn the encoding otherwise).
+    if (e.getNicheBits()) {
+      unsigned some = e.variantOf(e.getSomeTag()), none = e.variantOf(e.getNoneTag());
+      Type pt = variants[some].getType(0);
+      auto payload = of(pt, depth + 1);
+      if (!payload)
+        return nullptr;
+      std::string label = (vname(some) + " (" + vname(none) + " = " + llvm::Twine(e.getNicheValue())).str() + ")";
+      return composite(llvm::dwarf::DW_TAG_structure_type, shown(e.getName()), size, align,
+                       {member(label, payload, dl.getTypeSize(tc.convertType(pt)), 0)});
+    }
+    // The tag is a real enumeration. MLIR has no enumerator attribute, so each is a
+    // member flagged EnumClass (the verifier rejects DW_TAG_enumerator here) with its value
+    // in the offset, which milo-opt prints as !DIEnumerator (rewriteEnumerators).
+    SmallVector<LLVM::DINodeAttr> enumerators;
+    bool fieldless = true;
+    for (unsigned v = 0; v < variants.size(); v++) {
+      fieldless &= variants[v].size() == 0;
+      enumerators.push_back(LLVM::DIDerivedTypeAttr::get(
+          ctx, llvm::dwarf::DW_TAG_member, StringAttr::get(ctx, vname(v)), nullptr, 0, nullptr, nullptr, 0, 0,
+          (uint64_t)e.getTags()[v], std::nullopt, LLVM::DIFlags::EnumClass, nullptr));
+    }
+    auto tagTy = composite(llvm::dwarf::DW_TAG_enumeration_type, fieldless ? shown(e.getName()) : (shown(e.getName()) + "$tag").str(),
+                           4, 4, enumerators, uintOf(32));
+    if (fieldless)
+      return tagTy;
+    // Each variant's fields sit at their own offsets; the union starts at the shallowest.
+    uint64_t start = size;
+    for (unsigned v = 0; v < variants.size(); v++)
+      for (unsigned k = 0; k < variants[v].size(); k++)
+        start = std::min<uint64_t>(start, e.offsetOf(v, k));
+    SmallVector<LLVM::DINodeAttr> arms;
+    for (unsigned v = 0; v < variants.size(); v++) {
+      if (variants[v].size() == 0)
+        continue;
+      SmallVector<LLVM::DINodeAttr> fields;
+      uint64_t end = start;
+      for (unsigned k = 0; k < variants[v].size(); k++) {
+        Type ft = variants[v].getType(k);
+        Type lft = tc.convertType(ft);
+        auto di = lft ? of(ft, depth + 1) : nullptr;
+        if (!di)
+          continue;
+        uint64_t off = e.offsetOf(v, k);
+        fields.push_back(member(("_" + llvm::Twine(k)).str(), di, dl.getTypeSize(lft),
+                                off - start));
+        end = std::max<uint64_t>(end, off + dl.getTypeSize(lft));
+      }
+      auto armTy = composite(llvm::dwarf::DW_TAG_structure_type, (shown(e.getName()) + "::" + vname(v)).str(), end - start,
+                             align, fields);
+      arms.push_back(member(vname(v), armTy, end - start, 0));
+    }
+    auto payload = composite(llvm::dwarf::DW_TAG_union_type, (shown(e.getName()) + "$payload").str(), size - start, align, arms);
+    return composite(llvm::dwarf::DW_TAG_structure_type, shown(e.getName()), size, align,
+                     {member("tag", tagTy, 4, 0), member("payload", payload, size - start, start)});
+  }
+};
 
 struct DbgVarLowering : ConvertOpToLLVMPattern<DbgVarOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
@@ -374,7 +507,7 @@ struct DbgVarLowering : ConvertOpToLLVMPattern<DbgVarOp> {
     if (!ref)
       return failure();
     DataLayout dl = DataLayout::closest(op);
-    auto di = diTypeOf(ref.getPointee(), *getTypeConverter(), dl, op.getFieldsAttr());
+    auto di = DiTypes{*getTypeConverter(), dl, op.getFieldsAttr()}.of(ref.getPointee());
     // A pointee with no DI type has no variable: the slot stays, the op goes.
     if (!di) {
       rw.eraseOp(op);

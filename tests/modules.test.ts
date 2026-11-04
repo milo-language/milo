@@ -583,8 +583,7 @@ pub fn fromWide(): i64 {
 const dwarfDumper = ["llvm-dwarfdump", "dwarfdump", "/opt/homebrew/opt/llvm/bin/llvm-dwarfdump"].find(d => {
   try { execSync(`command -v ${d}`, { stdio: "ignore" }); return true; } catch { return false; }
 });
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no type DIEs: `User`); see docs/roadmap.md
-(dwarfDumper ? test.failing : test.skip)("a collided private fn keeps its written name in DWARF", () => { // skip: no dwarfdump
+(dwarfDumper ? test : test.skip)("a collided private fn keeps its written name in DWARF", () => { // skip: no dwarfdump
   write("disp_a.milo", DISPLAY_A);
   write("disp_b.milo", DISPLAY_B);
   const main = write("disp_main.milo", DISPLAY_MAIN);
