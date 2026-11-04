@@ -49,6 +49,9 @@ const isRouterMd = (f: string) =>
   ["AGENTS.md", "CONVENTIONS.md"].includes(f);
 
 for (const f of fileList()) {
+  // Vendored corpora are byte-exact: reading one as UTF-8 and writing it back replaced the
+  // invalid bytes in JSONTestSuite's cases with U+FFFD and added trailing newlines.
+  if (f.startsWith("tests/vendor/")) continue;
   let text: string;
   try {
     text = await Bun.file(f).text();
