@@ -6,6 +6,7 @@ import { spawnSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
+import { formatObjectTrace, objectTraceExit, type ObjectTrace } from "../src/object-trace";
 
 const test = (name: string, fn: () => void) => bunTest(name, fn, 90_000);
 
@@ -19,6 +20,33 @@ function milo(args: string[]): { code: number; out: string } {
   const r = spawnSync("bun", ["run", join(ROOT, "src", "main.ts"), ...args], { encoding: "utf-8", cwd: ROOT });
   return { code: r.status ?? -1, out: (r.stdout ?? "") + (r.stderr ?? "") };
 }
+
+describe("trace-object gate", () => {
+  // Hand-built trace: every byte mapped except one 4-byte range, so a gate that only
+  // fires on a large gap would miss it.
+  const range = (start: number, end: number, line: number) => ({ start, end, file: "/p/a.milo", line, reqs: [], rules: [] });
+  const trace = (): ObjectTrace => {
+    const hole = range(0x1010, 0x1014, 0);
+    return {
+      binary: "fake.elf", runtimeBytes: 0, inferredBytes: 0, totalBytes: 0x20, coveredBytes: 0x1c,
+      functions: [{ name: "pick", start: 0x1000, end: 0x1020, runtime: false, ranges: [range(0x1000, 0x1010, 3), hole, range(0x1014, 0x1020, 4)] }],
+      untraced: [{ ...hole, fn: "pick" }],
+    };
+  };
+
+  test("exactly one unmapped range fails --strict and is named by address and function", () => {
+    expect(objectTraceExit(trace(), true)).toBe(1);
+    const text = formatObjectTrace(trace(), true);
+    expect(text).toContain("untraced object code: 1 range, 4 B");
+    expect(text).toContain("error: 0x1010-0x1014 in pick: no source line and no rule");
+    expect(text.split("\n").filter(l => l.includes("error: "))).toHaveLength(1);
+  });
+
+  test("the same trace without --strict does not fail, and a fully mapped one passes strict", () => {
+    expect(objectTraceExit(trace(), false)).toBe(0);
+    expect(objectTraceExit({ ...trace(), untraced: [] }, true)).toBe(0);
+  });
+});
 
 describe("trace-object", () => {
   test("a bounds check maps to its rule, a fn to its @req, and the trace is fully covered", () => {

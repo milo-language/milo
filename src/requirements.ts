@@ -44,7 +44,7 @@ import type { ProveResult } from "./verify";
 import { parseSafetyLevel, traceabilityOf, minTraceDepthOf } from "./safety";
 import { projectProfile } from "./pkg";
 import { claimKey, codeHash, gapMessage, judge, latestRecord, loadEvidence, type EvidenceRow } from "./evidence";
-import { entryOfBinary, formatObjectTrace, traceObject, type FnSite } from "./object-trace";
+import { entryOfBinary, formatObjectTrace, objectTraceExit, traceObject, type FnSite } from "./object-trace";
 import { ID_RE, TRACE_ATTRS } from "./trace-attrs";
 
 // ── requirements.json ──
@@ -1064,5 +1064,5 @@ export function runTraceObjectCommand(args: string[], deps: TraceDeps): number {
   if (!entry || !existsSync(entry)) { console.error(`error: cannot find the source of ${binary}; was it built with -g? pass --entry <file.milo>`); return 1; }
   const t = traceObject(binary, fnSites(deps.frontend(entry).program, entry));
   console.log(json ? JSON.stringify(t, null, 2) : formatObjectTrace(t, strict, only.length ? only : undefined));
-  return strict && t.untraced.length ? 1 : 0;
+  return objectTraceExit(t, strict);
 }

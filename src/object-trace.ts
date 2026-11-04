@@ -263,6 +263,9 @@ export function traceObject(binary: string, sites: FnSite[]): ObjectTrace {
   return { binary, functions, totalBytes: total, coveredBytes: covered, inferredBytes, runtimeBytes, untraced };
 }
 
+/** `--strict` fails on any program range with no source line and no rule. */
+export const objectTraceExit = (t: ObjectTrace, strict: boolean): number => (strict && t.untraced.length ? 1 : 0);
+
 const hex = (n: number) => `0x${n.toString(16)}`;
 
 /** `only`: list just these functions (the totals still cover the whole binary). */
