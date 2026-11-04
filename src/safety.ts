@@ -307,6 +307,54 @@ export function coverageOf(level: SafetyLevel): Coverage {
   return PROFILES[level].coverage;
 }
 
+// Presets for people who are not chasing a standard: `"profile": "app"` or `"hardened"` in
+// milo.json (or `--safety=app`). The certification profiles above keep everything; a preset is
+// the part of that ladder an ordinary app can live with.
+//   app       requirements and invariants are reported; CI fails on NEW gaps with --strict plus a
+//             baseline; no pinned toolchain and no object checks
+//   hardened  app, plus: `prove --rte` failures are errors, and `unsafe` is banned outside std
+export type Preset = "app" | "hardened";
+
+export const PRESETS: Record<Preset, { rteErrors: boolean; noUnsafeOutsideStd: boolean; summary: string }> = {
+  app: { rteErrors: false, noUnsafeOutsideStd: false, summary: "requirements reported, --strict + --baseline fails CI on new gaps, no object checks" },
+  hardened: { rteErrors: true, noUnsafeOutsideStd: true, summary: "app, plus prove --rte failures are errors and no unsafe outside std" },
+};
+
+export function parsePreset(s: string): Preset | null {
+  return s === "app" || s === "hardened" ? s : null;
+}
+
+/** `hardened`'s source rule: an `unsafe` block in a fn that is not std's. User fns only, as for a profile. */
+export function checkPreset(program: Program, preset: Preset): SafetyViolation[] {
+  const violations: SafetyViolation[] = [];
+  if (!PRESETS[preset].noUnsafeOutsideStd) return violations;
+  const scan = (label: string, fn: Function) => {
+    walkExprs(fn.body, () => {}, s => {
+      if (s.kind === "UnsafeBlock") {
+        violations.push({ rule: "no-unsafe", message: `[${preset}] unsafe block in '${label}': ${preset} allows unsafe only inside std`, span: s.span, severity: "error" });
+      }
+    });
+  };
+  for (const fn of program.functions) {
+    if (fn.isExtern || (program.userFnNames && !program.userFnNames.has(fn.name))) continue;
+    scan(fn.name, fn);
+  }
+  for (const impl of program.impls) {
+    for (const m of impl.methods) {
+      const key = `${impl.typeName}.${m.name}`;
+      if (m.isExtern || (program.userImplKeys && !program.userImplKeys.has(key))) continue;
+      scan(key, m);
+    }
+  }
+  return violations;
+}
+
+export function formatPresetReport(violations: SafetyViolation[], preset: Preset): string {
+  const lines = [`${preset} check failed, ${violations.length} violation(s)\n`];
+  for (const v of violations) lines.push(`  ${v.severity}: ${v.message}${v.span ? ` (line ${v.span.line}:${v.span.col})` : ""}`);
+  return lines.join("\n");
+}
+
 export function parseSafetyLevel(s: string): SafetyLevel | null {
   if (s in PROFILES) return s as SafetyLevel;
   if (s in ALIASES) return ALIASES[s];
@@ -934,6 +982,8 @@ export function listSafetyLevels(): string {
     const level = l.startsWith("    ") && word !== "do178" ? parseSafetyLevel(word) : null;
     return level ? `${l.replace(/\n$/, "").padEnd(78)} [traceability ${traceabilityOf(level)}, coverage ${coverageOf(level)}]${l.endsWith("\n") ? "\n" : ""}` : l;
   });
+  tagged.push("", "presets (milo.json \"profile\", or --safety=<name>), for apps that are not chasing a standard:");
+  for (const [name, p] of Object.entries(PRESETS)) tagged.push(`    ${name.padEnd(11)} ${p.summary}`);
   tagged.push("", "traceability: 'strict' profiles require bidirectional requirement traces (milo trace); gaps are warnings", "in a dev build and errors under --strict, in `milo verify`, or when new against a --baseline.");
   return tagged.join("\n");
 }

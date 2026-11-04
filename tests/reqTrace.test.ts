@@ -517,3 +517,82 @@ test("strict: a requirement with no formalizing clause needs a verifying test th
     expect(failures(p).filter(m => m.includes("cannot fail")).map(m => m.split(" ")[1])).toEqual(["HLR-1"]);
   } finally { p.done(); }
 }, 120000);
+
+// ── presets: milo.json "profile": "app" | "hardened" ──
+
+const MAIN_FN = `\n@req(LLR-1)\nfn main() {\n    print(inc(1).toString())\n}\n`;
+const manifest = (profile: string) => JSON.stringify({ name: "t", version: "0.1.0", profile });
+const build = (p: Project, ...extra: string[]) => milo(["build", p.entry, "-o", join(p.dir, "out"), ...extra]);
+
+test("preset hardened: unsafe outside std and a failing prove --rte are errors; app is not", () => {
+  const unsafeSrc = `fn main() {\n    unsafe {\n        print("x")\n    }\n}\n`;
+  const overflowSrc = `fn f(a: i64, b: i64): i64 {\n    return a + b\n}\n\nfn main() {\n    print(f(1, 2).toString())\n}\n`;
+  const p = project({ "a.milo": unsafeSrc, "milo.json": manifest("hardened") });
+  try {
+    const bad = build(p);
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("hardened allows unsafe only inside std");
+    p.write("a.milo", overflowSrc);
+    const rte = build(p);
+    expect(rte.code).toBe(1);
+    expect(rte.out).toContain("runtime-error proof(s) failed under profile hardened");
+    // the same sources build under app, and under no profile at all
+    p.write("milo.json", manifest("app"));
+    expect(build(p).code).toBe(0);
+    p.write("a.milo", unsafeSrc);
+    expect(build(p).code).toBe(0);
+    // the flag spells the same preset, and wins over the manifest
+    expect(build(p, "--safety=hardened").code).toBe(1);
+    p.write("milo.json", manifest("hardened"));
+    expect(build(p, "--safety=app").code).toBe(0);
+  } finally { p.done(); }
+}, 240000);
+
+test("preset app: requirement gaps are warnings, --strict fails on new ones, a baseline accepts today's", () => {
+  const p = project({ "a.milo": CODE + MAIN_FN + `\nfn helper(): i64 {\n    return 1\n}\n`, "a_test.milo": TEST, "requirements.json": REQS, "milo.json": manifest("app") });
+  try {
+    const dev = build(p);
+    expect(dev.code).toBe(0);
+    expect(dev.out).toContain("traceability gap");
+    expect(dev.out).toContain("under profile app");
+    const strict = build(p, "--strict");
+    expect(strict.code).toBe(1);
+    expect(strict.out).toContain("fn 'helper' has no @req");
+    expect(strict.out).toContain("under profile app");
+    const base = join(p.dir, "gaps.json");
+    expect(milo(["trace", p.entry, "--no-run", "--write-baseline", base]).code).toBe(0);
+    expect(build(p, "--strict", "--baseline", base).code).toBe(0);
+    // a NEW gap is not in the baseline
+    p.write("a.milo", CODE + MAIN_FN + `\nfn helper(): i64 {\n    return 1\n}\n\nfn another(): i64 {\n    return 2\n}\n`);
+    const fresh = build(p, "--strict", "--baseline", base);
+    expect(fresh.code).toBe(1);
+    expect(fresh.out).toContain("fn 'another' has no @req");
+    // no object checks: the binary is not pinned or re-verified
+    expect(fresh.out).not.toContain("does not satisfy");
+  } finally { p.done(); }
+}, 240000);
+
+test("milo trace reads milo.json's profile when there is no --safety flag", () => {
+  const gappy = CODE + `\nfn helper(): i64 {\n    return 1\n}\n`;
+  const p = project({ "a.milo": gappy, "a_test.milo": TEST, "requirements.json": REQS, "milo.json": manifest("app") });
+  try {
+    // a preset labels the report; the gap fails only under --strict
+    const app = JSON.parse(trace(p).out);
+    expect(app.profile).toBe("app");
+    expect(app.strict).toBe(false);
+    expect(trace(p).code).toBe(0);
+    expect(milo(["trace", p.entry, "--no-run"]).out).toContain("[profile app]");
+    // a certification profile with strict traceability makes the trace strict by itself
+    p.write("milo.json", manifest("do178c-b"));
+    expect(trace(p).code).toBe(1);
+    // ...unless --safety names another profile
+    expect(trace(p, "--safety=iec62304-a").code).toBe(0);
+  } finally { p.done(); }
+}, 240000);
+
+test("milo safety --list names the presets", () => {
+  const out = milo(["safety", "--list"]).out;
+  expect(out).toContain("presets");
+  expect(out).toMatch(/\n\s+app\s+requirements reported/);
+  expect(out).toMatch(/\n\s+hardened\s+app, plus prove --rte/);
+});

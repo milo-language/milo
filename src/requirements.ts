@@ -39,6 +39,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
 import { parseSafetyLevel, traceabilityOf } from "./safety";
+import { projectProfile } from "./pkg";
 import { entryOfBinary, formatObjectTrace, traceObject, type FnSite } from "./object-trace";
 
 export const TRACE_ATTRS = new Set(["req", "assume", "derived", "deactivated"]);
@@ -330,6 +331,8 @@ export interface TraceReport {
   entry: string;
   requirementsFile: string | null;
   strict: boolean;
+  /** The milo.json profile the trace ran under, when there was one and no --safety flag. */
+  profile?: string;
   requirements: RequirementRow[];
   untracedFns: SiteRow[];
   /** Fns whose only link is a file-level `@!req`: traced coarsely (a gap under strict). */
@@ -612,7 +615,7 @@ const rank: Record<Status, number> = { PROVEN: 0, UNKNOWN: 1, FAILED: 2 };
 export function formatTrace(r: TraceReport): string {
   const out: string[] = [];
   const byId = new Map(r.requirements.map(x => [x.id, x]));
-  out.push(`requirements trace: ${r.entry}${r.requirementsFile ? `  (${r.requirementsFile}, ${r.requirements.length} requirements)` : ""}`);
+  out.push(`requirements trace: ${r.entry}${r.requirementsFile ? `  (${r.requirementsFile}, ${r.requirements.length} requirements)` : ""}${r.profile ? `  [profile ${r.profile}]` : ""}`);
   for (const e of r.errors) out.push(`error: ${e}`);
   const pad = (s: string) => (s + "          ").slice(0, 14);
   const show = (row: RequirementRow, depth: number) => {
@@ -706,6 +709,8 @@ export interface TraceArgs {
   writeBaseline?: string;
   /** A binary built with -g: adds the object column (--object). */
   object?: string;
+  /** --safety=<name> was given: milo.json's profile is then not consulted. */
+  safetyFlag?: boolean;
 }
 
 export function parseTraceArgs(args: string[]): TraceArgs | string {
@@ -734,6 +739,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     } else if (a.startsWith("--requirements=")) out.requirements = a.slice(15);
     else if (a.startsWith("--tests=")) out.tests = a.slice(8);
     else if (a.startsWith("--safety=")) {
+      out.safetyFlag = true;
       const level = parseSafetyLevel(a.slice(9));
       if (level && traceabilityOf(level) === "strict") out.strict = true;
     }
@@ -784,7 +790,14 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
   const a = parseTraceArgs(args);
   if (typeof a === "string") { console.error(a); return 1; }
+  // Without --safety, the project's milo.json "profile" applies: a certification profile with strict
+  // traceability makes the trace strict; a preset (app, hardened) only labels the report, since its
+  // CI gate is --strict with a --baseline.
+  const profile = a.safetyFlag ? null : projectProfile(dirname(resolve(a.entry)));
+  const profLevel = profile ? parseSafetyLevel(profile) : null;
+  if (profLevel && traceabilityOf(profLevel) === "strict") a.strict = true;
   const rep = traceEntry(a, deps);
+  if (profile) rep.profile = profile;
   let objectText = "";
   if (a.object) {
     const sites = fnSites(deps.frontend(a.entry).program, a.entry);

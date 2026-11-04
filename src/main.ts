@@ -5,7 +5,7 @@ import { phase, phaseNote, markModulesLoaded, timingReport } from "./timing";
 import { discoverContractTests, contractTestSupport, UNREACHABLE_STATE_EXIT } from "./contract-tests";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync, statSync } from "fs";
 import { WARNING_NAMES } from "./warnings";
-import { projectLints } from "./pkg";
+import { projectLints, projectProfile } from "./pkg";
 import { execSync, spawnSync, spawn } from "child_process";
 import { guardedRun, monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 import { fileURLToPath } from "url";
@@ -30,8 +30,8 @@ import { generateVerificationConditions, formatVerifyReport, proveWithZ3, format
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
-import { inEntryProject, requirementsDiagnostics, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
-import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf } from "./safety";
+import { findRequirementsFile, inEntryProject, requirementsDiagnostics, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
+import { PRESETS, parsePreset, checkPreset, formatPresetReport, type Preset, parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
@@ -384,10 +384,11 @@ function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; base
 // a --baseline lists, which stay warnings so an existing codebase can adopt a profile.
 // Tests are run only under --strict: a dev build must stay fast.
 function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, strict: boolean, baseline?: string): void {
+  const under = parsePreset(level) ? `profile ${level}` : `--safety=${level}`;
   const rep = traceEntry({ entry, json: false, strict, noRun: !strict, ...(baseline ? { baseline } : {}) }, traceDeps(target, warningConfig));
   if (!rep.ok) {
     console.error(formatTrace(rep));
-    console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under --safety=${level}`);
+    console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under ${under}`);
     process.exit(1);
   }
   if (strict) {
@@ -396,7 +397,38 @@ function enforceTraceability(entry: string, level: string, target: TargetInfo, w
     return;
   }
   for (const m of rep.strictFailures) console.error(`warning: traceability gap: ${m}`);
-  if (rep.strictFailures.length) console.error(`warning: ${rep.strictFailures.length} traceability gap(s) under --safety=${level}; --strict makes these errors`);
+  if (rep.strictFailures.length) console.error(`warning: ${rep.strictFailures.length} traceability gap(s) under ${under}; --strict makes these errors`);
+}
+
+// `prove --rte` over the entry's own project: the runtime-error obligations (overflow, bounds,
+// division) that `milo verify` also reads.
+function proveRte(entry: string, target: TargetInfo, wc: WarningConfig) {
+  requireZ3();
+  const { program, check } = traceDeps(target, wc).frontend(entry);
+  const dir = dirname(resolve(entry)) + "/";
+  const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any, rte: true });
+  return proveWithZ3(vcs);
+}
+
+// A preset (src/safety.ts PRESETS) is the part of the ladder an ordinary app lives with. Its
+// requirements matrix is only checked when the project has a requirements.json: an app with
+// none has nothing to trace, which is not a gap. No pinned toolchain, no object checks.
+function enforcePreset(source: string, preset: Preset, target: TargetInfo, warningConfig: WarningConfig, strict: boolean, baseline?: string): void {
+  const program = parseCheckProgram(readFileSync(source, "utf-8"), target, source, warningConfig, []);
+  const violations = checkPreset(program, preset);
+  if (violations.length) {
+    console.error(display(program.displayNames, formatPresetReport(violations, preset)));
+    process.exit(1);
+  }
+  if (findRequirementsFile(source)) enforceTraceability(source, preset, target, warningConfig, strict, baseline);
+  if (PRESETS[preset].rteErrors) {
+    const pr = proveRte(source, target, warningConfig);
+    if (pr.failed > 0) {
+      for (const r of pr.results.filter(x => x.status === "failed")) console.error(`error: [${preset}] ${r.vc.kind} in ${r.vc.fn}${r.detail ? `: ${r.detail}` : ""}`);
+      console.error(`error: ${pr.failed} runtime-error proof(s) failed under profile ${preset}`);
+      process.exit(1);
+    }
+  }
 }
 
 // The safety profile's own rules (src/safety.ts), shared by `safety`, `build --safety` and `verify`.
@@ -463,10 +495,7 @@ function runVerify(args: string[]): number {
     if (fails) { for (const f of [...rep.errors, ...(rep.strict ? rep.strictFailures : [])]) console.log(`  error: ${f}`); ok = false; }
   }
 
-  const { program: p2, check } = traceDeps(target, wc).frontend(entry);
-  const dir = dirname(resolve(entry)) + "/";
-  const vcs = generateVerificationConditions(p2, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any, rte: true });
-  const pr = proveWithZ3(vcs);
+  const pr = proveRte(entry, target, wc);
   console.log(`proofs (prove --rte): ${pr.proven} proven, ${pr.failed} failed, ${pr.unknown + pr.errors} unknown`);
   if (pr.failed > 0) ok = false;
   console.log(`verify: ${ok ? "PASS" : "FAIL"}`);
@@ -2242,7 +2271,12 @@ async function main() {
   }
 
   const traceFlags = takeTraceFlags(args.slice(1));
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(cmd === "build" ? traceFlags.args : args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel: safetyFlag, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(cmd === "build" ? traceFlags.args : args.slice(1));
+  // `--safety` wins; without it `milo build` reads the project's milo.json "profile". A preset
+  // ("app", "hardened") is not a SafetyLevel: it never pins the toolchain or checks the object.
+  const named = safetyFlag ?? (cmd === "build" && source ? projectProfile(dirname(resolve(source))) : null);
+  const preset = cmd === "build" && named ? parsePreset(named) : null;
+  const safetyLevel = preset ? null : named;
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -2441,6 +2475,7 @@ async function main() {
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
     if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, traceFlags.strict, traceFlags.baseline);
+    else if (preset) enforcePreset(source!, preset, target, warningConfig, traceFlags.strict, traceFlags.baseline);
     const t0 = Date.now();
     if (safetyLevel) {
       const level = parseSafetyLevel(safetyLevel);

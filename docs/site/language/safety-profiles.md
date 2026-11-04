@@ -16,6 +16,27 @@ A profile is a coding-standard check, not certification. Certifying software und
 milo safety flight_controller.milo --safety=do178c-a
 ```
 
+## The ladder: from an app to a certified one
+
+Most programs are not chasing a standard. Two presets cover the first rungs, set once in
+`milo.json` and read by `milo build` and `milo trace` when no `--safety` flag is given (the flag
+wins, and `--safety=app` spells the same preset):
+
+```json
+{ "name": "myapp", "version": "0.1.0", "profile": "app" }
+```
+
+| Rung | `"profile"` | Adds |
+|------|-------------|------|
+| 1 | none | contracts, invariants and `@req` are checked where you write them; nothing is demanded |
+| 2 | `app` | the requirements matrix (if the project has a `requirements.json`) is reported on every build; CI fails on new gaps with `--strict --baseline gaps.json`; no pinned toolchain, no object checks |
+| 3 | `hardened` | `app`, plus every `prove --rte` failure (overflow, bounds, division) is a build error, and `unsafe` is banned outside std |
+| 4 | `do178c-*`, `iso26262-*`, `nasa-*`, `iec61508-*`, `iec62304-*` | everything below: the full source rules, a pinned toolchain, the object checks, strict traceability |
+
+The certification profiles keep all of it; a preset never weakens one. `milo safety --list`
+prints the presets next to the profiles. Adopt `app` on an existing project by recording today's
+gaps (`milo trace app.milo --write-baseline gaps.json`) and failing CI on anything new.
+
 ## Available profiles
 
 ```bash

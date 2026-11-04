@@ -38,6 +38,9 @@ export interface Manifest {
   // only way an off-by-default lint reaches the EDITOR: the LSP has no command line, so
   // without it `--deny=single-variant-match` is a thing you can only see in a terminal.
   lints?: { deny?: string[]; allow?: string[] };
+  // Safety preset or certification profile that `milo build` and `milo trace` use when no
+  // `--safety` flag is given: "app", "hardened", or a name from `milo safety --list`.
+  profile?: string;
 }
 
 export function parseManifest(text: string): Manifest {
@@ -64,6 +67,7 @@ export function parseManifest(text: string): Manifest {
   setOpt(m, "exclude", optStringArray(o, "exclude", ctx));
   setOpt(m, "nativeHints", optNestedRecord(o, "nativeHints", ctx));
   setOpt(m, "lints", optLints(o, ctx));
+  setOpt(m, "profile", optString(o, "profile", ctx));
 
   // A publishable package must expose a lib and/or bins; a root application
   // manifest legitimately has neither, so this is not enforced at parse time.
@@ -93,6 +97,7 @@ export function stringifyManifest(m: Manifest): string {
   if (m.exclude !== undefined) o.exclude = m.exclude;
   if (m.nativeHints !== undefined) o.nativeHints = sortedNestedRecord(m.nativeHints);
   if (m.lints !== undefined) o.lints = m.lints;
+  if (m.profile !== undefined) o.profile = m.profile;
   return JSON.stringify(o, null, 2) + "\n";
 }
 
@@ -723,6 +728,21 @@ export function projectLints(startDir: string): { denied: Set<string>; allowed: 
     }
     const up = dirname(dir);
     if (up === dir) return { denied, allowed };
+    dir = up;
+  }
+}
+
+// The `profile` of the nearest milo.json at or above `startDir`, or null. A broken manifest reads
+// as none here; the build that needs the manifest reports it.
+export function projectProfile(startDir: string): string | null {
+  let dir = resolve(startDir);
+  for (;;) {
+    const candidate = join(dir, "milo.json");
+    if (existsSync(candidate)) {
+      try { return parseManifest(readFileSync(candidate, "utf8")).profile ?? null; } catch { return null; }
+    }
+    const up = dirname(dir);
+    if (up === dir) return null;
     dir = up;
   }
 }
