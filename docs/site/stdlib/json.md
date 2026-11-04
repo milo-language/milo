@@ -702,8 +702,8 @@ fn Json.pretty(self: &Json, indent: i64): string
 ```
 
 The document re-rendered with `indent` spaces per level (0 or less
-minifies). Reformats rawStr(), so what comes out is the same bytes the
-parse went in with, only re-spaced (see jsonPretty).
+minifies). Reformats rawStr(), so numbers keep their literal text and strings
+their value (see jsonPretty).
 
 #### `Json.rawStr`
 
