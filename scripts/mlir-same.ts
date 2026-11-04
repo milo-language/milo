@@ -27,7 +27,7 @@
 // machine's sake (memory pressure) is retried and, every time, aborts with exit 2 and no verdict.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
-import { tmpdir } from "os";
+import { constants, tmpdir } from "os";
 import { guardedRun, type RunResult } from "./guard";
 
 const ROOT = join(import.meta.dir, "..");
@@ -120,6 +120,9 @@ async function build(name: string): Promise<{ bin: string; res: RunResult; lower
 
 // Fixtures create scratch files in their working directory; keep them out of the checkout.
 const run = (bin: string) => guarded(`run ${bin}`, bin, [], { timeoutMs: 30_000, cwd: tmp });
+// A process that died of a signal has no exit code (guard.ts reports 1 then); a shell shows 128 + the
+// signal number, which is also what the interpreter exits with for an abort (S-PANIC-ABORT).
+const status = (r: RunResult): number | null => (r.signal ? 128 + (constants.signals as Record<string, number>)[r.signal]! : r.code);
 const key = (r: RunResult) => JSON.stringify([r.code, r.signal, r.stdout, r.stderr]);
 let fixturesLowered = 0;
 
@@ -234,7 +237,7 @@ async function one(name: string): Promise<void> {
   }
   let rm = await run(m.bin);
   const refKey = JSON.stringify([gold.code, gold.signal ?? null, gold.stdout, gold.stderr]);
-  const matches = (r: RunResult) => fromInterp ? r.code === gold.code && r.stdout === gold.stdout : key(r) === refKey;
+  const matches = (r: RunResult) => fromInterp ? status(r) === gold.code && r.stdout === gold.stdout : key(r) === refKey;
   const same = async () => {
     let bad: string | null = null;
     if (OWNED && m.lowered > 0) bad = await ownership(name, m.bin, { code: gold.code, live: gold.live ?? null, liveOptional: !!fromInterp });
@@ -244,7 +247,7 @@ async function one(name: string): Promise<void> {
   const rm2 = await run(m.bin);
   if (key(rm2) !== key(rm)) { results.push({ name, verdict: "nondeterministic" }); return; }
   rm = rm2;
-  const what = rm.code !== gold.code ? `exit ${gold.code} -> ${rm.code}` : rm.stdout !== gold.stdout ? "stdout" : "stderr";
+  const what = status(rm) !== gold.code && fromInterp ? `exit ${gold.code} -> ${status(rm)}` : rm.code !== gold.code ? `exit ${gold.code} -> ${rm.code}` : rm.stdout !== gold.stdout ? "stdout" : "stderr";
   results.push({ name, verdict: "differ", detail: what });
 }
 
