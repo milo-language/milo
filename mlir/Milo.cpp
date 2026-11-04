@@ -862,7 +862,7 @@ static Operation *enclosingLoop(Operation *op) {
   Region *from = op->getParentRegion();
   for (Operation *p = op->getParentOp(); p && !isa<FunctionOpInterface>(p);
        from = p->getParentRegion(), p = p->getParentOp()) {
-    if (isa<LoopOp, ForOp>(p))
+    if (isa<LoopOp, ForOp, ForInOp>(p))
       return p;
     if (auto w = dyn_cast<WhileOp>(p))
       return from == &w.getBodyRegion() ? p : nullptr;
@@ -892,6 +892,112 @@ LogicalResult ReturnOp::verify() {
             (!v || v.getType() == results[0]);
   if (!ok)
     return emitOpError("does not match the function's result type");
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Top-layer ops (milo.for_in, milo.try, milo.interp); mlir/Desugar.cpp lowers them.
+//===----------------------------------------------------------------------===//
+
+LogicalResult ForInOp::verify() {
+  Type it = getIterable().getType();
+  Type si64 = IntegerType::get(getContext(), 64, IntegerType::Signed);
+  TypeRange args = getBodyRegion().front().getArgumentTypes();
+  if (args.size() != 2 || args[0] != si64)
+    return emitOpError("body takes two arguments, the si64 index and the element");
+  Type x = args[1];
+  auto asRef = [](Type t) -> Type {
+    auto r = dyn_cast<RefType>(t);
+    return r ? r.getPointee() : Type();
+  };
+  if (auto v = dyn_cast<VecType>(it)) {
+    if (x != v.getElementType() && asRef(x) != v.getElementType())
+      return emitOpError("element of a Vec is its type or its place, not ") << x;
+  } else if (isa<StringType>(it)) {
+    if (x != IntegerType::get(getContext(), 8, IntegerType::Unsigned))
+      return emitOpError("element of a string is a ui8 byte, not ") << x;
+  } else {
+    auto a = dyn_cast<ArrayType>(asRef(it));
+    if (!a)
+      return emitOpError("iterates a Vec, a string or the place of an array, not ") << it;
+    if (asRef(x) != a.getElementType())
+      return emitOpError("element of an array is its place, not ") << x;
+  }
+  return success();
+}
+
+LogicalResult TryOp::verify() {
+  EnumType e = getSubject().getType();
+  int ok = e.variantOf(getOk()), err = e.variantOf(getErr());
+  if (ok < 0 || err < 0 || ok == err)
+    return emitOpError("needs two distinct variants of the subject for ok and err");
+  TupleType okFields = e.getVariants()[ok], errFields = e.getVariants()[err];
+  if (okFields.size() > 1 || errFields.size() > 1)
+    return emitOpError("variants carry at most one field");
+  if ((*this)->getResultTypes() != TypeRange(okFields.getTypes()))
+    return emitOpError("result is not the ok variant's payload");
+  if (getErrRegion().front().getArgumentTypes() != TypeRange(errFields.getTypes()))
+    return emitOpError("region arguments are not the err variant's payload");
+  return success();
+}
+
+// `"file:line" [%a : si32, %p : !milo.ref<T> via @glue, ...]`; `glue` holds a symbol per
+// place part and a unit per other part.
+ParseResult InterpOp::parse(OpAsmParser &p, OperationState &st) {
+  StringAttr site;
+  SmallVector<OpAsmParser::UnresolvedOperand> parts;
+  SmallVector<Type> types;
+  SmallVector<Attribute> glue;
+  auto part = [&]() -> ParseResult {
+    OpAsmParser::UnresolvedOperand v;
+    Type t;
+    if (p.parseOperand(v) || p.parseColonType(t))
+      return failure();
+    parts.push_back(v);
+    types.push_back(t);
+    FlatSymbolRefAttr g;
+    if (succeeded(p.parseOptionalKeyword("via"))) {
+      if (p.parseAttribute(g))
+        return failure();
+      glue.push_back(g);
+    } else {
+      glue.push_back(p.getBuilder().getUnitAttr());
+    }
+    return success();
+  };
+  if (p.parseAttribute(site, "site", st.attributes) ||
+      p.parseCommaSeparatedList(AsmParser::Delimiter::Square, part) ||
+      p.parseOptionalAttrDict(st.attributes) ||
+      p.resolveOperands(parts, types, p.getCurrentLocation(), st.operands))
+    return failure();
+  st.addAttribute("glue", p.getBuilder().getArrayAttr(glue));
+  st.addTypes(StringType::get(p.getContext()));
+  return success();
+}
+
+void InterpOp::print(OpAsmPrinter &p) {
+  p << " ";
+  p.printAttribute(getSiteAttr());
+  p << " [";
+  for (auto [i, v] : llvm::enumerate(getParts())) {
+    if (i)
+      p << ", ";
+    p << v << " : " << v.getType();
+    if (auto g = dyn_cast<FlatSymbolRefAttr>(getGlue()[i]))
+      p << " via " << g;
+  }
+  p << "]";
+  p.printOptionalAttrDict((*this)->getAttrs(), {"site", "glue"});
+}
+
+LogicalResult InterpOp::verify() {
+  if (getGlue().size() != getParts().size())
+    return emitOpError("needs one glue entry per part");
+  for (auto [v, g] : llvm::zip(getParts(), getGlue())) {
+    bool place = isa<RefType, VecType>(v.getType());
+    if (place != isa<FlatSymbolRefAttr>(g))
+      return emitOpError("takes a display glue symbol for each place part, and only for those");
+  }
   return success();
 }
 

@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: mlir-backend
 purpose: design reference for the backend: HIR -> milo MLIR dialect -> LLVM, the only backend (the legacy LLVM-text codegen is deleted)
-key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, mlir/Link.cpp, src/emit-mlir.ts, src/mlir-backend.ts, src/scaffold.ts, scripts/mlir-same.ts, docs/collections-in-std.md
+key-files: mlir/Milo.td, mlir/Desugar.cpp, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, mlir/Link.cpp, src/emit-mlir.ts, src/mlir-backend.ts, src/scaffold.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: the pass pipeline, the gates or the dialect's design rules change
-last-verified: 2026-11-03 (scaffold moved into MLIR, codegen.ts deleted; pipeline checked against src/mlir-backend.ts)
+last-verified: 2026-11-04 (milo-desugar added first; pipeline checked against src/mlir-backend.ts)
 -->
 
 # MLIR backend
@@ -56,32 +56,35 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
 In `milo-opt` pipeline order (`MLIR_PIPELINE` in `src/mlir-backend.ts`). The passes under
 `func.func(...)` see one function at a time, so MLIR's pass manager runs them in parallel.
 
-1. `milo-verify` (`mlir/Scalar.cpp`): checks the rules of the source-level dialect that span ops.
-2. `milo-append-in-place` (`mlir/Drops.cpp`): rewrites `s = s + x` on strings to an in-place
+1. `milo-desugar` (`mlir/Desugar.cpp`): lowers the top layer (`milo.for_in`, `milo.try`, `milo.interp`,
+   one op per source construct) to the core ops, citing the docs/semantics/milo.md rule per
+   decision. It runs first, so no other pass sees a top-layer op.
+2. `milo-verify` (`mlir/Scalar.cpp`): checks the rules of the source-level dialect that span ops.
+3. `milo-append-in-place` (`mlir/Drops.cpp`): rewrites `s = s + x` on strings to an in-place
    append. It runs before scope-drops, whose drop of the old value would name the place and
    stop the rewrite.
-3. `milo-scope-drops` (`mlir/Drops.cpp`): drops owned slots where control leaves their scope,
+4. `milo-scope-drops` (`mlir/Drops.cpp`): drops owned slots where control leaves their scope,
    and old values before stores, while scopes are still regions. Which drops run is decided later.
-4. `milo-expand-index` (`mlir/Scalar.cpp`): lowers source-level Vec indexing to `len`,
+5. `milo-expand-index` (`mlir/Scalar.cpp`): lowers source-level Vec indexing to `len`,
    `bounds_check` and `vec.load`/`vec.store`.
-5. `milo-raise-to-scf` (`mlir/Scalar.cpp`): raises `milo.for` loops without early exits (and
+6. `milo-raise-to-scf` (`mlir/Scalar.cpp`): raises `milo.for` loops without early exits (and
    their ifs) to `scf`, where the Vec passes work.
-6. `milo-lower-structured-cf` (`mlir/Scalar.cpp`): lowers the remaining `milo.if`/`while`/`loop`/`for`
+7. `milo-lower-structured-cf` (`mlir/Scalar.cpp`): lowers the remaining `milo.if`/`while`/`loop`/`for`
    and their jumps to `cf` branches, before any generic pass. Break, continue and return are
    not region-branch terminators, so CSE would otherwise reuse a load from before a
    `milo.while` inside its body.
-7. `milo-elaborate-drops` (`mlir/Drops.cpp`): keeps, erases or flags each drop of an owned
+8. `milo-elaborate-drops` (`mlir/Drops.cpp`): keeps, erases or flags each drop of an owned
    slot by whether it is initialized (dense dataflow over the CFG), before any generic pass
    can move a store or a drop.
-8. `canonicalize`, with `SelectToExtUI` disabled: it would turn a select with Milo's si32 type
+9. `canonicalize`, with `SelectToExtUI` disabled: it would turn a select with Milo's si32 type
    into a signless-only op that fails to verify.
-9. `milo-hoist-vec-reads` (`mlir/Passes.cpp`): hoists `vec.len` out of loops that never write a Vec header.
-10. `loop-invariant-code-motion`.
-11. `milo-version-bounds-checks` (`mlir/Passes.cpp`): runs a copy of a loop without bounds
+10. `milo-hoist-vec-reads` (`mlir/Passes.cpp`): hoists `vec.len` out of loops that never write a Vec header.
+11. `loop-invariant-code-motion`.
+12. `milo-version-bounds-checks` (`mlir/Passes.cpp`): runs a copy of a loop without bounds
     checks when one up-front range test proves every check passes, the original otherwise.
-12. `cse`, `canonicalize`, `convert-scf-to-cf`.
-13. `convert-milo-to-llvm` (`mlir/Passes.cpp`): lowers milo, func, arith and cf to the LLVM dialect.
-14. `reconcile-unrealized-casts`, then `llvm.func(mem2reg, canonicalize)`.
+13. `cse`, `canonicalize`, `convert-scf-to-cf`.
+14. `convert-milo-to-llvm` (`mlir/Passes.cpp`): lowers milo, func, arith and cf to the LLVM dialect.
+15. `reconcile-unrealized-casts`, then `llvm.func(mem2reg, canonicalize)`.
 
 `milo-expand-checks` (`mlir/Passes.cpp`: `bounds_check` to a compare and a call to the panic
 routine) is defined and exercised by `mlir/run.sh`, but is not in the driver pipeline.

@@ -598,4 +598,5 @@ void milo::registerPasses() {
   registerScalarPasses();
   registerDropPasses();
   registerLinkPasses();
+  registerDesugarPasses();
 }

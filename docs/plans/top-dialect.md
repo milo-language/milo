@@ -3,7 +3,7 @@ system: mlir-backend
 purpose: replace HIR (src/hir.ts, src/lower.ts) with a source-faithful top layer of the milo dialect emitted straight from the checked AST; desugaring becomes MLIR passes
 key-files: src/emit-mlir.ts, src/lower.ts, src/hir.ts, src/checker.ts, mlir/Milo.td, mlir/Passes.cpp
 update-when: a step below lands, or the op set changes
-last-verified: 2026-11-04 (plan; nothing built)
+last-verified: 2026-11-04 (milo.for_in, milo.try, milo.interp and milo-desugar built; emit-mlir.ts does not print them yet)
 -->
 
 # Top dialect: HIR goes away

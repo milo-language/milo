@@ -58,11 +58,14 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 // type is Milo's si32 (a bool if-expression folded to a select), which then fails to verify.
 const CANONICALIZE = "canonicalize{disable-patterns=SelectToExtUI}";
 
-// verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
+// desugar the top layer -> verify -> structured control flow to cf -> milo ops to LLVM -> SSA.
 // Passes that see one function at a time sit under func.func(...) / llvm.func(...): MLIR's
 // pass manager runs those on every function in parallel. At module level the generic
 // passes (canonicalize, cse, licm, mem2reg) ran on one thread over the whole module.
 export const MLIR_PIPELINE ="--pass-pipeline=builtin.module(" + [
+  // The top layer (milo.for_in, milo.try, milo.interp) to core ops, before any pass that
+  // reads them (mlir/Desugar.cpp).
+  "milo-desugar",
   "milo-verify",
   "func.func(" + [
     // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value

@@ -1589,7 +1589,7 @@ def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects,
 
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
     DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface, ["getMutableSuccessorOperands"]>,
-    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "MatchOp", "ScopeOp"]>]> {
+    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "ForInOp", "MatchOp", "ScopeOp"]>]> {
   let summary = "end a region normally";
   let description = [{
     Ends a region of milo.if, milo.match or milo.scope with that op's results, or a loop
@@ -1622,7 +1622,7 @@ class Milo_JumpOp<string mnemonic> : Milo_Op<mnemonic, [Terminator]> {
 def Milo_BreakOp : Milo_JumpOp<"break"> {
   let summary = "leave the innermost loop";
   let description = [{
-    Leaves the innermost enclosing milo.while, milo.loop or milo.for, from any depth of
+    Leaves the innermost enclosing milo.while, milo.loop, milo.for or milo.for_in, from any depth of
     nested regions inside its body (not from a while's cond region). A terminator that is
     not a region branch: it jumps over the regions between it and its loop.
   }];
@@ -1630,7 +1630,7 @@ def Milo_BreakOp : Milo_JumpOp<"break"> {
 def Milo_ContinueOp : Milo_JumpOp<"continue"> {
   let summary = "restart the innermost loop";
   let description = [{
-    Starts the next iteration of the innermost enclosing milo.while, milo.loop or milo.for
+    Starts the next iteration of the innermost enclosing milo.while, milo.loop, milo.for or milo.for_in
     (the step of a milo.for, the cond of a milo.while), from any depth of nested regions
     inside its body.
   }];
@@ -1653,4 +1653,92 @@ def Milo_UnreachableOp : Milo_Op<"unreachable", [Terminator]> {
     Control cannot get here (past a `while true` with no break); traps if it does.
   }];
   let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Top layer: one op per source construct that used to be desugared before the dialect
+// (for-in, `?`, `$"..."`). Each keeps the source shape and its location; `milo-desugar`
+// (mlir/Desugar.cpp) lowers it to the core ops above before any other pass runs.
+//===----------------------------------------------------------------------===//
+
+def Milo_ForInOp : Milo_Op<"for_in", [RecursiveMemoryEffects]> {
+  let summary = "`for x in c` over a Vec, a slice, a string or a fixed array (top layer)";
+  let description = [{
+    `for x in c`: the body's entry block takes the index and the element,
+    `(%i: si64, %x: X)`. The iterable and X:
+
+    - `!milo.vec<E>` (a Vec or slice place): X is `E` (the element by value) or
+      `!milo.ref<E>` (the element's place);
+    - `!milo.string` (a string value): X is `ui8`, a byte;
+    - `!milo.ref<!milo.array<E, N>>` (an array place): X is `!milo.ref<E>`.
+
+    The body ends as a milo.while body does: in milo.yield (next element), or a jump
+    (break and continue target this loop, return), or milo.unreachable after a milo.scope
+    that jumps.
+
+    ```mlir
+    milo.for_in %v : !milo.vec<si32> {
+    ^bb0(%i: si64, %x: si32):
+      milo.yield
+    }
+    ```
+
+    `milo-desugar` lowers it (rule E-FOR-IN): the length is read once, then a milo.while
+    over an entry-block index slot (Vec, slice, string), or a milo.for from 0 to N (array).
+  }];
+  let arguments = (ins AnyTypeOf<[Milo_VecType, Milo_StringType, Milo_RefType]>:$iterable);
+  let regions = (region MinSizedRegion<1>:$bodyRegion);
+  let assemblyFormat = "$iterable `:` type($iterable) $bodyRegion attr-dict";
+  let hasVerifier = 1;
+}
+
+def Milo_TryOp : Milo_Op<"try", [RecursiveMemoryEffects]> {
+  let summary = "`e?` on an owned Option or Result (top layer)";
+  let description = [{
+    `e?`: the subject is an owned enum value; `ok` and `err` are the tags of its two
+    variants, each with at most one field. On `ok` the op yields the ok payload (no result
+    when the ok variant has none); on `err` the region runs, its entry block taking the err
+    payload (no argument when the err variant has none). The region always leaves: it ends
+    in milo.return, or in milo.unreachable after a milo.scope whose body returns.
+
+    ```mlir
+    %x = milo.try %r : !milo.enum<"Res", size = 8, align = 4, [0: (si32 at 4), 1: (si32 at 4)]> -> si32 ok 0 err 1 {
+    ^bb0(%e: si32):
+      milo.return %e : si32
+    }
+    ```
+
+    `milo-desugar` lowers it to a two-arm milo.match (rules E-PROPAGATE, E-MATCH).
+  }];
+  let arguments = (ins Milo_EnumType:$subject, I32Attr:$ok, I32Attr:$err);
+  let results = (outs Optional<Milo_Value>:$result);
+  let regions = (region MinSizedRegion<1>:$errRegion);
+  let assemblyFormat = "$subject `:` type($subject) (`->` type($result)^)? `ok` $ok `err` $err $errRegion attr-dict";
+  let hasVerifier = 1;
+}
+
+def Milo_InterpOp : Milo_Op<"interp"> {
+  let summary = "an interpolated string: a fresh string from its parts' text (top layer)";
+  let description = [{
+    `$"..."`: each part's text appended in order to a fresh, owned string.
+    A part is a scalar (siN, uiN, f32, f64, i1, `!milo.ptr`: decimal, shortest round-trip
+    digits, true/false, an address), a `!milo.string` value (its bytes), or a place
+    (`!milo.ref<T>` or `!milo.vec<E>`) followed by `via @glue`, the display glue that
+    appends its text: `func.func @glue(<place type>, !milo.ref<!milo.string>)`. `site` is
+    the "file:line" a failed allocation's overflow panic names. No parts, `[]`, is the
+    empty string.
+
+    ```mlir
+    %s = milo.interp "main.milo:3" [%n : si32, %t : !milo.string, %p : !milo.ref<!milo.struct<"P", si32>> via @"P$display"]
+    ```
+
+    `milo-desugar` lowers it (rule E-INTERP) to appends into an entry-block slot: the
+    runtime's rtStringPush* per scalar, milo.string.append per string, a call of the glue
+    per place.
+  }];
+  let arguments = (ins Variadic<AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_StringType, Milo_RefType, Milo_VecType]>>:$parts,
+                   ArrayAttr:$glue, StrAttr:$site);
+  let results = (outs Milo_StringType:$result);
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
