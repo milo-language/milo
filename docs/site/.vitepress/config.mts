@@ -100,6 +100,7 @@ const docsSidebar = [
     items: [
       { text: 'Why there are no lifetimes', link: '/language/why-no-lifetimes' },
       { text: 'Memory safety vs Rust', link: '/language/vs-rust' },
+      { text: 'How Milo is checked', link: '/language/assurance' },
       { text: 'Benchmarks', link: '/benchmarks' },
       { text: 'Built with Milo', link: '/demos' },
       { text: 'Roadmap', link: '/roadmap' },
