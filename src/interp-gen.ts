@@ -8,7 +8,7 @@ import { callExtern } from "./interp-sys";
 import { Interp } from "./interp";
 import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
 import type { Completion, Scope, CallE, MethodE } from "./interp";
-import { display, appendTo, strRange, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
+import { display, jsonStringify, appendTo, strRange, NONE, opt, idx, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
 import type { Native } from "./interp-natives";
 import { ExitProgram, MOVED, enc, strText, staticStr } from "./interp-values";
 import type { Str, Struct, EnumV, VecV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
@@ -56,6 +56,10 @@ export class InterpGen extends Interp {
     const v = (yield* this.ev$g(e));
     this.tempOwn(v);
     return v;
+  }
+  *peekThroughRef$g(e: Expr): Gen {
+    const v = (yield* this.peek$g(e));
+    return v && typeof v === "object" && (v.k === "ref" || v.k === "mut") ? this.deref(v) : v;
   }
   *readTempRooted$g(e: Expr): Gen {
     const { root, steps } = this.chain(e);
@@ -199,6 +203,11 @@ export class InterpGen extends Interp {
     if (optName) return this.mkEnum(optName, "Some", [this.checked(e, (yield* this.evRaw$g(e)))]);
     const co = this.cr.interfaceCoercions.get(e);
     if (co) return { k: "iface", concrete: co.fromType, inner: (yield* this.evRaw$g(e)) };
+    const jt = this.cr.autoJsonStringify.get(e); // a struct given to a `json(body: string)` parameter is its JSON
+    if (jt) {
+      const codec = this.cr.autoJsonToJson.get(e);
+      return codec ? (yield* this.callNamed$g(codec, [this.refTo((yield* this.resolve$g(e)), false)])) : jsonStringify(this, (yield* this.peek$g(e)), jt);
+    }
     if (this.cr.arraySliceArgs.has(e)) { // a fixed array given to a slice parameter: a view of it
       const a = this.isPlaceExpr(e) ? (yield* this.peek$g(e)) : (v => (this.tempOwn(v, true), v))((yield* this.evRaw$g(e)));
       if (a && typeof a === "object" && a.k === "arr") return sliceView(this, a, 0n, BigInt(a.e.length));
@@ -366,7 +375,6 @@ export class InterpGen extends Interp {
     return this.panic(v.variant === "None" ? "unwrap called on None" : "unwrap called on Err");
   }
   *propagate$g(e: Expr & { kind: "Propagate" }): Gen {
-    if (this.cr.propagateBoxings.has(e) || this.cr.propagateMessages.has(e)) this.unsupported("? with boxing or message conversion");
     const v = (yield* this.ev$g(e.operand)) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
     const rt = this.frame.ret as TypeKind & { name: string };
@@ -374,7 +382,14 @@ export class InterpGen extends Interp {
     if (v.variant === "None") ret = this.mkEnum(rt.name, "None", []);
     else {
       const c = this.cr.propagateConversions.get(e);
-      ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
+      const boxing = this.cr.propagateBoxings.get(e), msg = this.cr.propagateMessages.get(e);
+      if (boxing) ret = this.mkEnum(rt.name, "Err", [this.boxError(boxing, v.a[0]!)]);
+      else if (msg) { // into a Result<T, string> fn: the error's message()
+        const slot: Slot = { v: v.a[0]! };
+        const text = (yield* this.callNamed$g(this.concreteMethodFn(msg.name, "message"), [{ k: "ref", slot, path: [] } as Ref]));
+        this.dropValue(slot.v);
+        ret = this.mkEnum(rt.name, "Err", [text]);
+      } else ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
     }
     throw new Unwind({ k: "return", v: ret });
   }
@@ -469,6 +484,8 @@ export class InterpGen extends Interp {
     switch (e.func) {
       case "Heap": if (!shadow("Heap")) return { k: "box", id: this.alloc(), cell: { v: (yield* this.ev$g(e.args[0]!)) } }; break;
       case "forget": if (!shadow("forget")) { (yield* this.ev$g(e.args[0]!)); return undefined; } break; // the move is recorded on the operand
+      // sortByKey forgets a key that is a view of its element; here the closure returned a counted share of it, which is let go
+      case "_vecForget": if (!shadow("_vecForget")) { this.dropValue((yield* this.ev$g(e.args[0]!))); return undefined; } break;
       case "replace": if (!shadow("replace")) return (yield* this.memReplace$g(e.args[0]!, (yield* this.ev$g(e.args[1]!)))); break;
       case "swap": if (!shadow("swap")) return (yield* this.memSwap$g(e.args[0]!, e.args[1]!)); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone((yield* this.peek$g(e.args[0]!))); break; // the structural copy std/vec's clone and filter use; capacity = length
@@ -476,7 +493,13 @@ export class InterpGen extends Interp {
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
-      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)
+      case "_natLess": {
+        const a = (yield* this.peekThroughRef$g(e.args[0]!)), b = (yield* this.peekThroughRef$g(e.args[1]!));
+        return this.binValues("<", a, b, this.T(e.args[0]!), { tag: "bool" });
+      }
+      case "jsonStringify": if (!shadow("jsonStringify")) return jsonStringify(this, (yield* this.peek$g(e.args[0]!)), this.T(e.args[0]!)); break;
+      case "embedFile": return this.embedFile(e);
     }
     if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
     if (this.cr.closureCalls.has(e)) {
@@ -659,7 +682,7 @@ export class InterpGen extends Interp {
     this.frame.scopes.push(holder);
     try {
       const view = this.cr.stringViewForIns.get(s);
-      if (view && s.iterable.kind === "MethodCall") return this.unsupported("lines()/splitView() for-in");
+      if (view && s.iterable.kind === "MethodCall") return (yield* this.forStrView$g(s, view.mode, s.iterable, fin));
       const iter = this.cr.iteratorForIns.get(s);
       if (iter) {
         // an rvalue iterator dies once, when the scope around the loop ends
@@ -708,6 +731,31 @@ export class InterpGen extends Interp {
       }
       return undefined;
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
+  }
+  *forStrView$g(s: Stmt & { kind: "ForInStmt" }, mode: "lines" | "split", call: Expr & { kind: "MethodCall" }, fin: (r: Completion | "next") => Completion | "next"): Gen {
+    const bytes = ((yield* this.peek$g(call.object)) as Str).b.bytes.slice();
+    const split = mode === "split";
+    const sep = split ? ((yield* this.peek$g(call.args[0]!)) as Str).b.bytes.slice() : [10];
+    const find = (from: number): number => {
+      for (let i = from; i + sep.length <= bytes.length; i++) if (sep.every((c, k) => bytes[i + k] === c)) return i;
+      return -1;
+    };
+    let pos = 0, idx = 0;
+    // lines stop at the end of the bytes; a split yields the piece after a trailing separator too, except for an empty separator
+    while (split ? pos <= bytes.length && (sep.length > 0 || pos < bytes.length) : pos < bytes.length) {
+      const at = split && sep.length === 0 ? pos + 1 : find(pos);
+      const end = at >= 0 ? at : bytes.length;
+      const viewEnd = !split && end > pos && bytes[end - 1] === 13 ? end - 1 : end; // CRLF: the \r ends the line
+      const piece = bytes.slice(pos, viewEnd);
+      pos = at >= 0 ? end + sep.length : bytes.length + 1;
+      const i = idx++;
+      const r = fin((yield* this.loopBody$g(s, sc => {
+        if (s.varName2) this.declare(s.varName, BigInt(i), sc);
+        this.declare(s.varName2 ?? s.varName, { k: "ref", slot: { v: { k: "str", b: { bytes: piece, rc: 1, id: -1 } } }, path: [] }, sc);
+      })));
+      if (r !== "next") return r;
+    }
+    return undefined;
   }
 }
 
@@ -796,7 +844,20 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
       if (m.startsWith("saturating")) return r < lo ? lo : r > hi ? hi : r;
       return r < lo || r > hi ? opt(it, e, NONE) : opt(it, e, r);
     }
-    if (["reverseBits", "rotateLeft", "rotateRight", "checkedNeg"].includes(m)) return it.unsupported(`int .${m}()`);
+    if (m === "rotateLeft" || m === "rotateRight") { // R-INT-BITS
+      const bits = BigInt(t.bits), x = BigInt.asUintN(t.bits, (yield* it.peek$g(e.object)) as bigint);
+      const n = (((yield* it.ev$g(e.args[0]!)) as bigint) % bits + bits) % bits;
+      const k = m === "rotateLeft" ? n : (bits - n) % bits;
+      return wrapInt((x << k) | (x >> (bits - k)), t);
+    }
+    if (m === "reverseBits") { // R-INT-BITS
+      const x = BigInt.asUintN(t.bits, (yield* it.peek$g(e.object)) as bigint);
+      return wrapInt(BigInt("0b" + x.toString(2).padStart(t.bits, "0").split("").reverse().join("")), t);
+    }
+    if (m === "checkedNeg") { // R-INT-BITS: None when -x does not fit
+      const r = -((yield* it.peek$g(e.object)) as bigint);
+      return r < -(1n << BigInt(t.bits - 1)) && t.signed || (!t.signed && r !== 0n) || (t.signed && r > (1n << BigInt(t.bits - 1)) - 1n) ? opt(it, e, NONE) : opt(it, e, r);
+    }
   }
   if ((ot.tag === "vec" || ot.tag === "array") && m === "slice") {
     const v = (yield* it.peek$g(e.object)) as VecV | { k: "arr"; e: Value[] };
@@ -812,7 +873,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
       return opt(it, e, it.viewOf(v.buf!.elems[v.start + Number(i)]!)); // Option<&T>: a view of the element
     }
   }
-  if (ot.tag === "hashmap" && m === "len") return it.unsupported("hashmap");
+  if (ot.tag === "hashmap" && m === "len") return BigInt(((yield* it.peek$g(e.object)) as MapV).m.size); // E-HASHMAP
   if (ot.tag === "string") {
     switch (m) {
       case "pushStr": appendTo(it, it.refTo((yield* it.resolve$g(e.object)), true), ((yield* it.peek$g(e.args[0]!)) as Str).b.bytes); return undefined;
@@ -867,6 +928,15 @@ function* optionMethod$g(it: InterpGen, e: MethodE, ot: TypeKind & { name: strin
       else r = isOpt ? (it.dropValue(v), it.mkEnum(resName, "None", [])) : it.mkEnum(resName, "Err", v.a);
       it.dropValue(f);
       return r;
+    }
+    case "context": { // Result.context(note): the error boxed as Heap<Error> (as ? does) inside the prelude's ErrorContext
+      if (isOpt) return NOT_NATIVE;
+      const v = (yield* runThunk(recv())), note = (yield* runThunk(arg0()));
+      if (v.variant === okV) { it.dropValue(note); return it.mkEnum(resName, "Ok", v.a); }
+      const boxing = it.cr.contextBoxings.get(e);
+      const cause = boxing ? it.boxError(boxing, take(v)) : take(v);
+      const ctx: Value = { k: "struct", name: "ErrorContext", f: { note, cause } };
+      return it.mkEnum(resName, "Err", [it.boxError({ fromType: "ErrorContext", viaMessage: false }, ctx)]);
     }
     case "mapErr": {
       if (isOpt) return NOT_NATIVE;

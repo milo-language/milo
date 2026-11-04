@@ -366,3 +366,15 @@ stay replaced by the natives in `src/interp-natives.ts`.
 Not modelled (reported as `InterpUnsupported`): the extern functions above not in the list, `atexit`,
 `embedFile`, `jsonStringify`, record/replay wrappers, and a raw view of a value with no byte layout
 (strings, Vecs, HashMaps, enums, closures).
+
+### Interpreter gaps: library behaviour and the C layer, continued
+
+Rules added while closing the programs the interpreter reported as unsupported. The
+interpreter behaviour of `_natLess`, string pieces (`lines`, `splitView`), `?` boxing and `context`
+is the compiled one and is covered by E-VEC, E-NEW-ITER and E-IFACE above.
+
+| Rule | Statement |
+|---|---|
+| R-INT-BITS | `x.rotateLeft(n)` and `x.rotateRight(n)` rotate the bits of the integer's width by n mod width. `x.reverseBits()` reverses them. `x.checkedNeg()` is `Some(-x)`, or `None` when -x does not fit (any non-zero unsigned value, or the minimum of a signed width). |
+| R-JSON-STRINGIFY | `jsonStringify(s)` of a struct whose fields are strings, integers, floats and bools is `{"field":value,...}` in field order: a string is escaped as RFC 8259 (`"`, `\`, newline, tab, return, other bytes below 0x20 as `\u00xx`), numbers print as `print` shows them. A struct given to a `json(body: string)` method parameter is its `toJson()` when it has one, else the same text. |
+| R-EMBED-FILE | `@embedFile("p")` is the bytes of the file `p`, relative to the source file that names it, read when the call runs. Only a driver that hands in a host file reader (`milo interp`) can run it; elsewhere it is unsupported. A file that cannot be opened is stuck. |
