@@ -20,7 +20,7 @@ import {
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
 import { Mem, isPtr, memSlot } from "./interp-mem";
-import { callExtern, type Sys, type SysOptions } from "./interp-sys";
+import { externNative, type Sys, type SysOptions } from "./interp-sys";
 import { BUILTIN_FNS, builtinCall, concat, jsonStringify, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
@@ -489,13 +489,13 @@ export class Interp {
   }
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
-    if (fn.isExtern) return callExtern(this, fn, args);
+    if (fn.isExtern) return this.runNative(externNative(fn), args);
     if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held, false) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) this.enterContracts(fn);
@@ -912,6 +912,7 @@ export class Interp {
     if (to.tag === "bool" && typeof v === "boolean") return v;
     // R-MEM-ADDR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
     if (to.tag === "ptr") return this.mem.castToPtr(v, from, to);
+    if (to.tag === "cfn" && (isPtr(v) || v === 0n)) return this.mem.castToCfn(v, from); // R-FNPTR
     if (to.tag === "string" && isStr(v)) return this.share(v, "cast");
     return this.unsupported(`cast ${from.tag} -> ${to.tag} of ${describe(v)}`);
   }
@@ -1132,8 +1133,7 @@ export class Interp {
       case "jsonStringify": if (!shadow("jsonStringify")) return jsonStringify(this, this.peek(e.args[0]!), this.T(e.args[0]!)); break;
       case "embedFile": return this.embedFile(e);
     }
-    if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
-    if (this.cr.closureCalls.has(e)) {
+    if (this.cr.closureCalls.has(e) || this.cr.cfnCalls.has(e)) { // R-FNPTR: a C function pointer held in a variable is called like a closure
       const mark = this.temps.length;
       const r = this.callValue(this.peek({ kind: "Ident", name: e.func } as Expr), this.evalArgs(e.args));
       this.dropTemps(mark);
@@ -1164,9 +1164,9 @@ export class Interp {
   // generator that yields to the scheduler; only the task interpreter can run one.
   // E-CALL
   runNative(nat: Native, args: Value[], e?: Expr): Value {
-    if (!nat.co) return nat(this, args, e);
+    if (!nat.co && !nat.maybeCo) return nat(this, args, e);
     // a task operation needs the scheduler: from the plain interpreter, ask for a rerun with tasks
-    if (!this.coMode) throw new NeedTasks();
+    if (nat.co && !this.coMode) throw new NeedTasks();
     // Reached from plain code (a global's initializer, a closure a library call runs): it can run only
     // as far as it goes without parking.
     const r = nat(this, args, e) as Value | Generator<unknown, Value, unknown>;
@@ -1202,7 +1202,7 @@ export class Interp {
       if (this.cr.heapMethodReceivers.has(e)) recv = { kind: "UnaryOp", op: "*", operand: e.object } as Expr; // h.m() means (*h).m()
       return this.callResolved(resolved, e.args, e, undefined, recv);
     }
-    if (this.cr.fnFieldCalls.has(e)) {
+    if (this.cr.fnFieldCalls.has(e) || this.cr.cfnFieldCalls.has(e)) { // R-FNPTR: a C function pointer in a field is called like a closure
       const callee = this.peek({ kind: "FieldAccess", object: e.object, field: m } as Expr);
       return this.callValue(callee, this.evalArgs(e.args));
     }

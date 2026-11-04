@@ -6,9 +6,10 @@ import type { Expr } from "./ast";
 import { ARRAY_COMBINATORS, SLICE_COMBINATORS, type TypeKind } from "./types";
 import { NOT_NATIVE, isStr, strip, wrapInt, type CallE, type Interp, type MethodE } from "./interp";
 import { taskNativeFor } from "./interp-co-natives";
+import { netNativeFor } from "./interp-net";
 import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type BoxV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
 
-export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true };
+export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true; maybeCo?: true };
 
 // ── display ──
 export function display(it: Interp, v: Value, ty: TypeKind, nested = false): string {
@@ -361,6 +362,8 @@ const MAPS: Record<string, Native> = {
 export function nativeFor(name: string): Native | undefined {
   const tk = taskNativeFor(name);
   if (tk) return tk;
+  const nn = netNativeFor(name);
+  if (nn) return nn;
   if (/(^|\$)(mapNew|mapWithCapacity|mapWithSlots)/.test(name)) return () => ({ k: "map", buf: null, m: new Map() });
   const hm = /^HashMap_.+?\$([A-Za-z0-9_]+)$/.exec(name);
   if (hm && MAPS[hm[1]!]) return MAPS[hm[1]!];
@@ -372,7 +375,7 @@ export function nativeFor(name: string): Native | undefined {
 }
 
 // ── builtin functions (print, format, exit, assert, ...) ──
-export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min"]);
+export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "isNull"]);
 // Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
 // that part is evaluated, so output from evaluating a later part comes after it (print-order).
 function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
@@ -400,6 +403,7 @@ export function builtinCall(it: Interp, e: CallE): Value {
     }
     case "format": return it.newStr(renderParts(it, e));
     case "flush": return undefined;
+    case "isNull": { const v = it.peek(e.args[0]!); return v === 0n || v === undefined; } // R-FNPTR: a null C function pointer or raw pointer
     case "exit": { const code = Number(it.ev(e.args[0]!) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if (it.peek(e.args[0]!) === true) return undefined;

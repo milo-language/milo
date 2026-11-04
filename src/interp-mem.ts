@@ -309,6 +309,14 @@ export class Mem {
   placePtr(pl: Place, ty: TypeKind): Value {
     if (pl.slot.mem && pl.path.length === 0) return pl.slot.mem;
     const it = this.it;
+    // R-MEM-ADDROF: the address of an array element is a pointer into the array (so C can walk on from it), not to a lone cell
+    const last = pl.path[pl.path.length - 1];
+    if (typeof last === "number" && ty.tag !== "array") {
+      const par = it.getPlace({ ...pl, path: pl.path.slice(0, -1) });
+      if (par && typeof par === "object" && par.k === "arr") {
+        return this.ptr(this.viewOf(par, "e", ty, { count: () => par.e.length, get: i => par.e[i], set: (i, v) => { par.e[i] = v; } }), last * this.sizeOf(ty));
+      }
+    }
     const key = pl.path.join("/") + "|" + ty.tag;
     if (ty.tag === "array" && ty.size !== null) {
       const arr = it.getPlace(pl) as { e: Value[] };
@@ -334,10 +342,10 @@ export class Mem {
   // The pointer is to the string's own buffer, which a place argument first makes unique (as `cstr()` does) so a
   // write through it reaches no other handle. A string passed by value is a share the call now owns: it goes in
   // `hold`, and the caller drops it when the call is over, so the buffer outlives every use of the pointer.
-  decay(v: Value, param: TypeKind | undefined, hold: Value[]): Value {
+  decay(v: Value, param: TypeKind | undefined, hold: Value[], extern = true): Value {
     if (!v || typeof v !== "object") return v;
-    // an extern's `&T` / `&mut T` parameter is the address of the place the reference names
-    if (param?.tag === "ref" && (v.k === "ref" || v.k === "mut")) return this.placePtr(this.it.derefPlace(v), param.inner);
+    // an extern's `&T` / `&mut T` parameter is the address of the place the reference names (a Milo function keeps its reference)
+    if (extern && param?.tag === "ref" && (v.k === "ref" || v.k === "mut")) return this.placePtr(this.it.derefPlace(v), param.inner);
     if (param?.tag !== "ptr") return v;
     if (v.k === "ref" || v.k === "mut") {
       const inner = this.it.deref(v);
@@ -349,6 +357,33 @@ export class Mem {
     if (v.k === "arr") return this.castToPtr(v, { tag: "array", element: param.inner, size: v.e.length }, param);
     return v;
   }
+  // R-FNPTR: a function used as a pointer value is a read-only 8-byte allocation of its own, one per function, so the
+  // address is stable, compares equal to itself and can be handed to C (signal, pthread_create, qsort); calling it goes back by name.
+  private fnPtrs = new Map<string, PtrV>();
+  private fnNames = new Map<Alloc, string>();
+  // R-FNPTR
+  fnPtr(name: string): PtrV {
+    let p = this.fnPtrs.get(name);
+    if (!p) {
+      p = this.staticBytes(new Uint8Array(8), true);
+      this.fnPtrs.set(name, p);
+      this.fnNames.set(p.a, name);
+    }
+    return p;
+  }
+  private closureIds = new WeakMap<object, number>();
+  private closureCount = 0;
+  // R-FNPTR
+  closureId(body: object): number { let id = this.closureIds.get(body); if (id === undefined) this.closureIds.set(body, (id = ++this.closureCount)); return id; }
+  // R-FNPTR: `p as extern (..) => R` is the function the pointer was made from, now callable
+  castToCfn(v: Value, from: TypeKind): Value {
+    const name = this.fnName(v);
+    if (name && this.it.fns.has(name)) return { k: "fn", name };
+    if (v === 0n) return v;
+    return this.it.unsupported(`cast ${from.tag} -> cfn of a pointer that is no function's`);
+  }
+  // R-FNPTR
+  fnName(p: Value): string | undefined { return p && typeof p === "object" && p.k === "ptr" && p.off === 0 ? this.fnNames.get(p.a) : undefined; }
   // R-MEM-ADDR
   castToPtr(v: Value, from: TypeKind, to: TypeKind): Value {
     if (isPtr(v)) return v;
@@ -361,6 +396,8 @@ export class Mem {
       }
       if (v.k === "vec") return this.vecPtr(v, from.tag === "vec" || from.tag === "array" ? from.element : U8);
       if (v.k === "str") return this.strPtr(v);
+      if (v.k === "fn") return this.fnPtr(v.name);
+      if (v.k === "closure") return this.fnPtr(`closure#${this.closureId(v.body)}`); // its code pointer: one per lambda, not callable from C
     }
     return this.it.unsupported(`cast ${from.tag} -> ${to.tag}`);
   }

@@ -83,6 +83,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/guard.ts` | Guarded child execution: hard memory + wall-clock + CPU caps for every process the test harnesses spawn. |
 | `scripts/hir-cover.ts` | Which fixtures exercise which HIR expression kinds? |
 | `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
+| `scripts/interp-coverage.ts` | What the reference interpreter (src/interp.ts, `milo interp`) can run, and whether what it prints is what the fixture's author wrote down. |
 | `scripts/interp-vs-golden.ts` | Second-oracle gate: run every fixture through the reference interpreter (src/interp.ts, `milo interp`) and compare stdout, exit code and live heap blocks at exit with the recorded golden (tests/golde… |
 | `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
 | `scripts/ir-same.ts` | Byte-identical IR gate: proves a codegen refactor changed no emitted LLVM IR, by emitting IR for every fixture and example in both a base commit and the working tree and comparing the bytes. |

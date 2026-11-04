@@ -61,6 +61,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/interp-libc.ts` | Reference interpreter, the C layer's pure-computation half: number parsing, locale, time zones and calendar time, printf-style formatting, uname and the other libc calls that need no files or sockets. |
 | `src/interp-mem.ts` | Reference interpreter, raw memory: the byte-level model behind `malloc`, `.ptr()`, `.addrOf()`, `string.cstr()` and every `*T` load and store (docs/semantics/milo.md §5, R-MEM-*). |
 | `src/interp-natives.ts` | Reference interpreter, library behaviour: what the compiled runtime does for print, strings (a counted buffer, copy on write), Vec, Option/Result combinators and the integer intrinsics. |
+| `src/interp-net.ts` | Reference interpreter, the in-memory network, pipes, signals and threads: the C functions std calls for descriptors that are not files (pipe, socket and friends, poll, signal/raise/kill, pthread_*),… |
 | `src/interp-run.ts` | `milo interp` driver: run a checked program in the reference interpreter and mirror what a compiled binary would do with its stdout, stderr and exit code. |
 | `src/interp-sys.ts` | Reference interpreter, the C layer: the functions std declares `extern` and calls, implemented over the byte memory of src/interp-mem.ts the way WASI or Emscripten implement libc's bottom layer. |
 | `src/interp-values.ts` | Reference interpreter, values and state: the shapes docs/semantics/milo.md §2 calls slots, places and values, plus the errors the interpreter raises. |

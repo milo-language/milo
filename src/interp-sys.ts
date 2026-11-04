@@ -5,13 +5,16 @@
 // through an injected read-only HostFs (the CLI passes one, the browser playground passes none),
 // so this file imports no node module and bundles for the browser.
 //
-// Not modelled, reported as unsupported with the function's name: sockets, threads and locks,
-// process spawning, dynamic loading, pty/terminal control, TLS and the other C libraries std wraps.
+// Pipes, sockets, signals and threads are in src/interp-net.ts (NET, looked up before SYS).
+// Not modelled, reported as unsupported with the function's name: process spawning, dynamic loading,
+// pty/terminal control, TLS and the other C libraries std wraps.
 import type { Function as AstFn } from "./ast";
 import type { Interp } from "./interp";
 import { wrapInt } from "./interp";
 import { ExitProgram, enc, type Value } from "./interp-values";
 import { LIBC } from "./interp-libc";
+import { NET, type FdObj } from "./interp-net";
+import type { Native } from "./interp-natives";
 
 // What the interpreter may read of the real filesystem. Read-only by construction: there is no write method.
 export interface HostFs {
@@ -40,7 +43,7 @@ export interface SysOptions {
 }
 
 interface Node { link?: string; dir: boolean; data: Uint8Array; size: number; mode: number; mtimeMs: number; dev?: "null" | "zero" | "random" }
-interface Fd { node: Node | null; path: string; pos: number; read: boolean; write: boolean; append: boolean; std?: 0 | 1 | 2 }
+export interface Fd { node: Node | null; path: string; pos: number; read: boolean; write: boolean; append: boolean; std?: 0 | 1 | 2; obj?: FdObj }
 interface DirStream { names: { name: string; dir: boolean; link?: boolean }[]; i: number; ent: Value }
 
 const ERRNO = { EPERM: 1, ENOENT: 2, EBADF: 9, EACCES: 13, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOSPC: 28, ESPIPE: 29, ERANGE: 34 };
@@ -77,7 +80,7 @@ export class Sys {
     this.cwd = o.cwd ?? "/";
     this.env = new Map(Object.entries(o.env ?? {}));
     for (const d of ["/", "/tmp", "/var", "/var/tmp"]) this.files.set(d, { dir: true, data: new Uint8Array(0), size: 0, mode: d === "/tmp" ? 0o777 : 0o755, mtimeMs: 0 });
-    this.files.set("/dev", { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
+    for (const d of ["/dev", "/dev/fd", "/proc", "/proc/self", "/proc/self/fd"]) this.files.set(d, { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
     for (const [name, dev] of [["null", "null"], ["zero", "zero"], ["urandom", "random"], ["random", "random"]] as const) {
       this.files.set("/dev/" + name, { dir: false, data: new Uint8Array(0), size: 0, mode: 0o666, mtimeMs: 0, dev });
     }
@@ -124,6 +127,8 @@ export class Sys {
   }
   // R-SYS-FS
   list(p: string): { name: string; dir: boolean; link?: boolean }[] {
+    // R-NET-FD: the directory of open descriptors lists this run's table (a leak shows as growth)
+    if (p === "/dev/fd" || p === "/proc/self/fd") return [...this.fds.keys()].map(k => ({ name: String(k), dir: false }));
     const out = new Map<string, { dir: boolean; link?: boolean }>();
     if (this.hostAllowed(p)) for (const e of this.o.hostFs!.readdir(p) ?? []) if (!this.gone.has(norm(p, e.name))) out.set(e.name, { dir: e.dir });
     for (const [k, n] of this.files) if (k !== p && parentOf(k) === p) out.set(k.slice(p === "/" ? 1 : p.length + 1), { dir: n.dir, link: n.link !== undefined });
@@ -488,31 +493,55 @@ export const SYS: Record<string, SysFn> = {
 
 // Why an extern has no implementation, when it belongs to a group that is left out on purpose
 function unmodelled(sym: string): string {
-  if (/^(socket|bind|listen|accept|connect|send|recv|setsockopt|getsockopt|getsockname|getaddrinfo|freeaddrinfo|inet_pton|htons|ntohs|epoll_.*|kqueue|kevent|eventfd|pipe|select|poll)$/.test(sym)) return " (sockets and pipes are not modelled)";
-  if (/^(pthread_.*|swapcontext|makecontext|getcontext|sched_.*)$/.test(sym)) return " (threads are not modelled)";
-  if (/^(fork|exec.*|waitpid|posix_spawn.*|system|kill|signal|raise|setsid|dlopen|dlsym|dlclose|dlerror)$/.test(sym)) return " (processes, signals and dynamic loading are not modelled)";
+  if (/^(epoll_.*|eventfd|select)$/.test(sym)) return " (event queues are not modelled)";
+  if (/^(swapcontext|makecontext|getcontext)$/.test(sym)) return " (user-space context switches are not modelled)";
+  if (/^(fork|exec.*|waitpid|posix_spawn.*|system|setsid|dlopen|dlsym|dlclose|dlerror)$/.test(sym)) return " (processes and dynamic loading are not modelled)";
   if (/^(sqlite3_.*|SSL_.*|TLS_.*|EVP_.*|EC_.*|BN_.*|CC_.*|CCCrypt.*|SHA.*|MD5)$/.test(sym)) return " (wrapped C libraries are not modelled)";
   return "";
 }
 
+// The extern `fn` as a native, so a call that blocks (a pipe read, accept, pthread_join) parks its task
+// through runNative. The value is the result, or a generator the task interpreter drives.
+// R-NET-BLOCK
+const externNatives = new WeakMap<AstFn, Native>();
+// R-NET-BLOCK
+export function externNative(fn: AstFn): Native {
+  let nat = externNatives.get(fn);
+  if (!nat) {
+    nat = ((it: Interp, args: Value[]) => callExtern(it, fn, args)) as Native;
+    nat.maybeCo = true;
+    externNatives.set(fn, nat);
+  }
+  return nat;
+}
+const isGen = (v: unknown): v is Generator<unknown, Value, unknown> => !!v && typeof v === "object" && typeof (v as { next?: unknown }).next === "function";
+
 export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
   const sym = fn.linkName ?? fn.name;
-  const impl = (SYS[sym] ?? LIBC[sym]) as SysFn | undefined;
-  const foreign = impl ? undefined : it.sysOptions.foreign;
-  if (!impl && !foreign?.handles(sym)) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
+  const net = NET[sym], base = (SYS[sym] ?? LIBC[sym]) as SysFn | undefined;
+  const foreign = net || base ? undefined : it.sysOptions.foreign;
+  if (!net && !base && !foreign?.handles(sym)) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
   const s = (it.sys ??= new Sys(it, it.sysOptions));
   const sig = it.cr.functions.get(fn.name);
   const held: Value[] = [];
-  if (!impl) { // R-FFI-CALL
+  if (!net && !base) { // R-FFI-CALL
     const r = foreign!.call(it, sym, fn, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type, held)));
     for (const h of held) it.dropValue(h);
     return r;
   }
   // a variadic argument has no declared type: a string or array there is passed as the pointer C would be given
-  const r = impl(s, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type ?? { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, held)));
-  for (const h of held) it.dropValue(h);
+  const argv = args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type ?? { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, held));
+  const r = net ? net(s, argv, base) : base!(s, argv);
   const rt = sig?.ret;
-  return typeof r === "bigint" && rt?.tag === "int" ? wrapInt(r, rt) : r;
+  const done = (v: Value): Value => {
+    for (const h of held) it.dropValue(h);
+    return typeof v === "bigint" && rt?.tag === "int" ? wrapInt(v, rt) : v;
+  };
+  if (!isGen(r)) return done(r);
+  // a call that blocks: the task interpreter parks the task in it; without tasks nothing could ever wake it (src/interp-net.ts waitOn)
+  if (it.coMode) return (function* () { return done(yield* r); })() as unknown as Value;
+  const st = r.next();
+  return st.done ? done(st.value) : it.stuck("S-DEADLOCK", `${sym} blocks and no other task exists to wake it`);
 }
 
 // fds 0, 1 and 2 exist from the start: the program's stdin, stdout and stderr
