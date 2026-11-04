@@ -304,6 +304,7 @@ export function nativeFor(name: string): Native | undefined {
   if (/(^|\$)(mapNew|mapWithCapacity|mapWithSlots)/.test(name)) return () => ({ k: "map", buf: null, m: new Map() });
   const hm = /^HashMap_.+?\$([A-Za-z0-9_]+)$/.exec(name);
   if (hm && MAPS[hm[1]!]) return MAPS[hm[1]!];
+  if (/(^|\$)strWithCapacity$/.test(name)) return NATIVES.get("strWithCapacity");
   if (/(^|\$)vecWithCapacity/.test(name)) return (it, [n]) => { const h = it.newVec([]); if ((n as bigint) > 0n) { h.buf = it.newBuf(Number(n)); h.cap = Number(n); } return h; };
   if (/(^|\$)vecFilled/.test(name)) return (it, [n, x]) => { const h = it.newVec([]); const k = Number(n as bigint); if (k > 0) { h.buf = it.newBuf(k); h.cap = k; for (let i = 0; i < k; i++) h.buf.elems[i] = it.share(x, "filled"); h.len = k; } return h; };
   const m = /^Vec_.+?\$([A-Za-z0-9_]+)$/.exec(name);
@@ -384,7 +385,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   const base = ot.tag === "enum" ? it.cr.enums.get(ot.name)?.baseName : undefined;
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr(it.resolve(e.object), ot);
-  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(it.peek(e.object) as VecV, ot.element);
+  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, it.peek(e.object)), ot.element);
   if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, it.peek(e.object), ot))]);
   if (base === "Option" && m === "take") {

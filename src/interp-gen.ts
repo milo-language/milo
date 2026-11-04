@@ -60,7 +60,11 @@ export class InterpGen extends Interp {
   *readTempRooted$g(e: Expr): Gen {
     const { root, steps } = this.chain(e);
     const slot: Slot = { v: (yield* this.ev$g(root)) };
-    const v = this.readPlace({ slot, path: steps, ro: false, viaRef: false }, true, describeExpr(e));
+    const rv = slot.v;
+    // a temporary with its own Drop keeps every field for the destructor: the read is a clone, then the whole temporary drops
+    const ownDrop = !!rv && typeof rv === "object" && ((rv.k === "struct" && this.dropImpls.has(rv.name)) || (rv.k === "enum" && this.dropImpls.has(rv.en)));
+    const pl = { slot, path: steps, ro: false, viaRef: false };
+    const v = ownDrop ? this.deepClone(this.getPlace(pl)) : this.readPlace(pl, true, describeExpr(e));
     this.dropValue(slot.v);
     return v;
   }
@@ -250,6 +254,7 @@ export class InterpGen extends Interp {
   }
   *index$g(e: Expr & { kind: "IndexAccess" }): Gen {
     const ot = this.T(e.object);
+    if (ot.tag === "ptr") return this.getPlace((yield* this.resolve$g(e))); // R-MEM-LOAD: a raw load is a bitwise copy
     if (ot.tag === "string") { // a byte of a string
       const s = (yield* this.peek$g(e.object)) as Str, i = (yield* this.ev$g(e.index)) as bigint;
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
@@ -341,6 +346,7 @@ export class InterpGen extends Interp {
   *unop$g(e: Expr & { kind: "UnaryOp" }): Gen {
     if (e.op === "&mut") return (yield* this.ev$g(e.operand));
     if (e.op === "*") {
+      if (this.T(e.operand).tag === "ptr") return this.getPlace((yield* this.resolve$g(e))); // R-MEM-LOAD: a raw load is a bitwise copy
       if (this.tempRooted(e)) return (yield* this.readTempRooted$g(e));
       return this.readPlace((yield* this.resolve$g(e)), this.cr.movedExprs.has(e), "*box");
     }
@@ -465,6 +471,7 @@ export class InterpGen extends Interp {
       case "forget": if (!shadow("forget")) { (yield* this.ev$g(e.args[0]!)); return undefined; } break; // the move is recorded on the operand
       case "replace": if (!shadow("replace")) return (yield* this.memReplace$g(e.args[0]!, (yield* this.ev$g(e.args[1]!)))); break;
       case "swap": if (!shadow("swap")) return (yield* this.memSwap$g(e.args[0]!, e.args[1]!)); break;
+      case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone((yield* this.peek$g(e.args[0]!))); break; // the structural copy std/vec's clone and filter use; capacity = length
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
@@ -596,7 +603,8 @@ export class InterpGen extends Interp {
     }
     const pl = (yield* this.resolve$g(t));
     if (pl.ro) this.stuck("S-ASSIGN-REF", `write to ${describeExpr(t)} through a shared reference`);
-    const old = this.getPlace(pl);
+    // R-MEM-STORE: a store through a raw pointer drops nothing, since the old bytes are not an owned value
+    const old = pl.slot.mem ? MOVED : this.getPlace(pl);
     this.setPlace(pl, v);
     if (old !== MOVED) this.dropValue(old);
     return undefined;
@@ -756,7 +764,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
   const base = ot.tag === "enum" ? it.cr.enums.get(ot.name)?.baseName : undefined;
   // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
   if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr((yield* it.resolve$g(e.object)), ot);
-  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr((yield* it.peek$g(e.object)) as VecV, ot.element);
+  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(asVec(it, (yield* it.peek$g(e.object))), ot.element);
   if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, (yield* it.peek$g(e.object)), ot))]);
   if (base === "Option" && m === "take") {

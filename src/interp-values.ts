@@ -12,12 +12,14 @@ import type { Interp } from "./interp";
 import type { PtrV } from "./interp-mem";
 
 export class InterpUnsupported extends Error {
+  where = ""; // the innermost calls when it was raised, for the message `milo interp` prints under the first line
   constructor(public what: string) { super(`interp: unsupported: ${what}`); }
 }
 
 // The program reached a state no rule applies to. For a program the checker accepted this is
 // a checker bug or a spec bug, which is exactly what the interpreter exists to show.
 export class InterpStuck extends Error {
+  where = ""; // the innermost calls when it was raised
   constructor(public rule: string, detail: string) { super(`interp: stuck at ${rule}: ${detail}`); }
 }
 

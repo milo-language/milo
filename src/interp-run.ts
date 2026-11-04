@@ -38,8 +38,8 @@ export function runInterp(program: Program, checked: CheckResult, reportLive: bo
   } catch (e) {
     it = (e as { interp?: Interp }).interp ?? it;
     if (it) writeAll(1, Uint8Array.from(it.out));
-    if (e instanceof InterpUnsupported) { console.error(e.message); return 3; }
-    if (e instanceof InterpStuck) { console.error(e.message); return 4; }
+    if (e instanceof InterpUnsupported) { console.error(e.message + (e.where ? `\n  in ${e.where}` : "")); return 3; }
+    if (e instanceof InterpStuck) { console.error(e.message + (e.where ? `\n  in ${e.where}` : "")); return 4; }
     throw e;
   }
 }

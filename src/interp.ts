@@ -92,8 +92,16 @@ export class Interp {
   // The program's entry. The task interpreter (src/interp-co.ts) overrides it to run main as the first task.
   runMain(main: AstFn): Value { return this.callFn(main, []); }
   panic(msg: string): never { this.aborted = true; throw new Panic(msg); }
-  stuck(rule: string, detail: string): never { throw new InterpStuck(rule, detail); }
-  unsupported(what: string): never { throw new InterpUnsupported(what); }
+  stuck(rule: string, detail: string): never {
+    const e = new InterpStuck(rule, detail);
+    e.where = this.frames.slice(-5).reverse().map(f => f.fn?.name ?? "?").join(" < ");
+    throw e;
+  }
+  unsupported(what: string): never {
+    const e = new InterpUnsupported(what);
+    e.where = this.frames.slice(-5).reverse().map(f => f.fn?.name ?? "?").join(" < ");
+    throw e;
+  }
   T(e: Expr): TypeKind { const t = this.cr.exprTypes.get(e); return t?.tag === "never" ? { tag: "void" } : strip(t); }
   rawT(e: Expr): TypeKind | undefined { return this.cr.exprTypes.get(e); }
   displayName(n: string): string { return this.prog.displayNames?.get(n) ?? n; }
@@ -340,7 +348,11 @@ export class Interp {
   readTempRooted(e: Expr): Value {
     const { root, steps } = this.chain(e);
     const slot: Slot = { v: this.ev(root) };
-    const v = this.readPlace({ slot, path: steps, ro: false, viaRef: false }, true, describeExpr(e));
+    const rv = slot.v;
+    // a temporary with its own Drop keeps every field for the destructor: the read is a clone, then the whole temporary drops
+    const ownDrop = !!rv && typeof rv === "object" && ((rv.k === "struct" && this.dropImpls.has(rv.name)) || (rv.k === "enum" && this.dropImpls.has(rv.en)));
+    const pl = { slot, path: steps, ro: false, viaRef: false };
+    const v = ownDrop ? this.deepClone(this.getPlace(pl)) : this.readPlace(pl, true, describeExpr(e));
     this.dropValue(slot.v);
     return v;
   }
@@ -655,6 +667,7 @@ export class Interp {
   }
   index(e: Expr & { kind: "IndexAccess" }): Value {
     const ot = this.T(e.object);
+    if (ot.tag === "ptr") return this.getPlace(this.resolve(e)); // R-MEM-LOAD: a raw load is a bitwise copy
     if (ot.tag === "string") { // a byte of a string
       const s = this.peek(e.object) as Str, i = this.ev(e.index) as bigint;
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
@@ -818,6 +831,7 @@ export class Interp {
   unop(e: Expr & { kind: "UnaryOp" }): Value {
     if (e.op === "&mut") return this.ev(e.operand);
     if (e.op === "*") {
+      if (this.T(e.operand).tag === "ptr") return this.getPlace(this.resolve(e)); // R-MEM-LOAD: a raw load is a bitwise copy
       if (this.tempRooted(e)) return this.readTempRooted(e);
       return this.readPlace(this.resolve(e), this.cr.movedExprs.has(e), "*box");
     }
@@ -1024,6 +1038,7 @@ export class Interp {
       case "forget": if (!shadow("forget")) { this.ev(e.args[0]!); return undefined; } break; // the move is recorded on the operand
       case "replace": if (!shadow("replace")) return this.memReplace(e.args[0]!, this.ev(e.args[1]!)); break;
       case "swap": if (!shadow("swap")) return this.memSwap(e.args[0]!, e.args[1]!); break;
+      case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone(this.peek(e.args[0]!)); break; // the structural copy std/vec's clone and filter use; capacity = length
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
@@ -1187,7 +1202,8 @@ export class Interp {
     }
     const pl = this.resolve(t);
     if (pl.ro) this.stuck("S-ASSIGN-REF", `write to ${describeExpr(t)} through a shared reference`);
-    const old = this.getPlace(pl);
+    // R-MEM-STORE: a store through a raw pointer drops nothing, since the old bytes are not an owned value
+    const old = pl.slot.mem ? MOVED : this.getPlace(pl);
     this.setPlace(pl, v);
     if (old !== MOVED) this.dropValue(old);
     return undefined;

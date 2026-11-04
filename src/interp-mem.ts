@@ -49,7 +49,12 @@ class Raw implements Backing {
 // A run of equal-typed elements the interpreter holds as Values.
 export interface ElemSrc { count(): number; get(i: number): Value; set(i: number, v: Value): void; live?(): boolean }
 class ElemView implements Backing {
-  constructor(private m: Mem, private ty: TypeKind, private es: number, private src: ElemSrc) {}
+  constructor(private m: Mem, readonly ty: TypeKind, readonly es: number, readonly src: ElemSrc) {}
+  // an access of exactly one element of this view's type, on an element boundary: the Value itself, no bytes
+  elemIndex(off: number, ty: TypeKind): number {
+    const same = ty.tag === this.ty.tag && (ty.tag !== "struct" && ty.tag !== "enum" ? true : (ty as { name: string }).name === (this.ty as { name: string }).name);
+    return same && off % this.es === 0 ? off / this.es : -1;
+  }
   size() { return this.src.count() * this.es; }
   live() { return this.src.live ? this.src.live() : true; }
   private span(off: number, n: number): [number, number] {
@@ -74,8 +79,6 @@ class ElemView implements Backing {
 
 const GAP = 16;
 const VIEW_RESERVE = 1 << 24;
-const WILD_ALLOC = new Alloc(-1, 0, 0, "static", new Raw(0), true, -1);
-WILD_ALLOC.live = false;
 
 export class Mem {
   allocs: Alloc[] = [];
@@ -187,6 +190,28 @@ export class Mem {
     b.set(s.b.bytes);
     return this.staticBytes(b);
   }
+  // The Vec header as std/vec.milo's `VecHead { _data, _len, _cap }` sees it through `v.addrOf() as *VecHead`. Reading it
+  // builds the three words from the Vec; writing it sets the length and capacity back. Pointing `_data` at a different
+  // buffer is not modelled: a Vec's buffer here is its structured element array.
+  vecHeadPtr(pl: Place, key: string, elem: TypeKind): Value {
+    const it = this.it;
+    const name = [...it.cr.structs.keys()].find(k => k === "VecHead" || k.endsWith("$VecHead"));
+    if (!name) return it.unsupported(".addrOf() of a vec (std/vec's VecHead is not in the program)");
+    const cur = () => it.getPlace(pl) as VecV;
+    const head: TypeKind = { tag: "struct", name };
+    const a = this.viewOf(pl.slot, key, head, {
+      count: () => 1,
+      get: () => ({ k: "struct", name, f: { _data: this.vecPtr(cur(), elem), _len: BigInt(cur().len), _cap: BigInt(cur().cap) } }),
+      set: (_i, s) => {
+        const h = cur(), f = (s as Struct).f;
+        if (this.addr(f._data!) !== this.addr(this.vecPtr(h, elem))) it.unsupported("a Vec header pointed at a different buffer");
+        h.len = Number(f._len as bigint);
+        if (Number(f._cap as bigint) !== h.cap) { h.cap = Number(f._cap as bigint); if (h.buf) h.buf.elems.length = h.start + h.cap; }
+      },
+      live: () => !pl.slot.dead,
+    });
+    return this.ptr(a, 0);
+  }
   // What C is given for a string: a literal (no heap buffer) is copied into a NUL-terminated block of its own, so
   // the literal and every handle made from it stay intact; any other string is made the only handle to its buffer
   // (when it sits in a place) and C gets the buffer itself.
@@ -216,6 +241,7 @@ export class Mem {
       const a = this.viewOf(arr, "e", ty.element, { count: () => arr.e.length, get: i => arr.e[i], set: (i, v) => { arr.e[i] = v; } });
       return this.ptr(a, 0);
     }
+    if (ty.tag === "vec") return this.vecHeadPtr(pl, key, ty.element);
     if (!["int", "float", "bool", "ptr", "struct", "array"].includes(ty.tag)) return it.unsupported(`.addrOf() of a ${ty.tag}`);
     const a = this.viewOf(pl.slot, key, ty, { count: () => 1, get: () => it.getPlace(pl), set: (_i, v) => it.setPlace(pl, v), live: () => !pl.slot.dead });
     return this.ptr(a, 0);
@@ -284,7 +310,7 @@ export class Mem {
 
   // ── pointers and integers ──
   addr(p: Value): bigint {
-    if (p === 0n) return 0n;
+    if (typeof p === "bigint") return p; // null, or an address no allocation owns (a task id the scheduler natives pass as a pointer)
     if (!isPtr(p)) return this.it.stuck("R-MEM-PROVENANCE", "an address was asked of something that is not a pointer");
     return BigInt(p.a.base + p.off);
   }
@@ -297,13 +323,12 @@ export class Mem {
       if (this.allocs[mid]!.base <= x) { best = this.allocs[mid]; lo = mid + 1; } else hi = mid - 1;
     }
     if (best && x < best.base + best.reserve) return this.ptr(best, x - best.base);
-    // not inside any range this run handed out: it can be held and compared but never followed
-    return { k: "ptr", a: WILD_ALLOC, off: x };
+    return n; // inside no range this run handed out: it can be held and compared but never followed
   }
   asPtr(p: Value, what: string): PtrV {
     if (p === 0n) return this.it.stuck("R-MEM-NULL", `${what} through a null pointer`);
+    if (typeof p === "bigint") return this.it.stuck("R-MEM-PROVENANCE", `${what} through address 0x${BigInt.asUintN(64, p).toString(16)}, which no allocation of this run owns`);
     if (!isPtr(p)) return this.it.stuck("R-MEM-PROVENANCE", `${what} through a value that is not a pointer`);
-    if (p.a === WILD_ALLOC) this.it.stuck("R-MEM-PROVENANCE", `${what} through address 0x${p.off.toString(16)}, which no allocation of this run owns`);
     return p;
   }
   describe(p: PtrV): string {
@@ -321,13 +346,33 @@ export class Mem {
   }
 
   // ── typed scalar and struct access ──
+  // A type with no byte form here (a string, Vec, enum, closure...): only a view of values of exactly that type can
+  // be read or written through a pointer, and the access moves the Value itself, as a bitwise copy of the header
+  // words would (the library's own drop and forget calls then balance the counts, as in a compiled run).
+  encodable(ty: TypeKind): boolean {
+    switch (ty.tag) {
+      case "int": case "float": case "bool": case "ptr": case "cfn": return true;
+      case "array": return ty.size !== null && this.encodable(ty.element);
+      case "struct": return (this.it.cr.structs.get(ty.name)?.fields ?? []).every(f => this.encodable(f.type));
+    }
+    return false;
+  }
+  private valueView(p: Value, ty: TypeKind, write: boolean): { v: ElemView; i: number } {
+    const n = this.sizeOf(ty);
+    const { be, off } = this.access(p, n, 1, write, write ? "store" : "load");
+    const i = be instanceof ElemView ? be.elemIndex(off, ty) : -1;
+    if (!(be instanceof ElemView) || i < 0) return this.it.unsupported(`raw view of a ${ty.tag}`);
+    return { v: be, i };
+  }
   load(p: Value, ty: TypeKind): Value {
+    if (!this.encodable(ty)) { const { v, i } = this.valueView(p, ty, false); return v.src.get(i); }
     const n = this.sizeOf(ty);
     const { be, off } = this.access(p, n, Math.min(8, this.alignOf(ty)), false, "load");
     const b = be.read(off, n);
     return this.decode(ty, new DataView(b.buffer, b.byteOffset, b.byteLength), 0);
   }
   store(p: Value, ty: TypeKind, v: Value): void {
+    if (!this.encodable(ty)) { const { v: vw, i } = this.valueView(p, ty, true); vw.src.set(i, v); return; }
     const n = this.sizeOf(ty);
     const { be, off } = this.access(p, n, Math.min(8, this.alignOf(ty)), true, "store");
     const b = new Uint8Array(n);
@@ -347,6 +392,16 @@ export class Mem {
   // C's memcpy forbids overlap; memmove allows it. Overlapping memcpy is UB (R-MEM-OVERLAP).
   memcpy(dst: Value, src: Value, n: number, move: boolean): void {
     if (n === 0) return;
+    // two views of the same non-byte element type (Vec<string> to Vec<string>): move the Values
+    const sa = isPtr(src) ? src.a.be : undefined, da = isPtr(dst) ? dst.a.be : undefined;
+    if (sa instanceof ElemView && da instanceof ElemView && !this.encodable(sa.ty) && sa.ty.tag === da.ty.tag && n % sa.es === 0) {
+      const s = this.valueView(src, sa.ty, false), d = this.valueView(dst, sa.ty, true), k = n / sa.es;
+      this.access(src, n, 1, false, "memcpy source");
+      this.access(dst, n, 1, true, "memcpy destination");
+      const vals = Array.from({ length: k }, (_, j) => s.v.src.get(s.i + j));
+      vals.forEach((x, j) => d.v.src.set(d.i + j, x));
+      return;
+    }
     const bytes = this.readBytes(src, n, move ? "memmove source" : "memcpy source");
     if (!move && isPtr(dst) && isPtr(src) && dst.a === src.a && dst.off < src.off + n && src.off < dst.off + n) {
       this.it.stuck("R-MEM-OVERLAP", `memcpy of ${n} bytes between overlapping ranges of ${this.describe(dst)}`);
