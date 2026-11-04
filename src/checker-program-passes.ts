@@ -81,6 +81,8 @@ export interface ProgramPassHost {
   // Thread closures that share unsafe memory, with the `file:line` a run reports.
   replayRawShares: Map<Expr, string>;
   replaySiteOf(span: Span | undefined): string;
+  // What the checker recorded as written (src/checker-mutability.ts reads it); `diagnostics` is the live list.
+  mutation: { written: WeakSet<Expr>; autoBorrowed: Map<Expr, { mutable: boolean }>; explicitMutArgs: Set<Expr>; matchSubjectMut: Set<Expr>; diagnostics: import("./diagnostics").Diagnostic[] };
 }
 
 

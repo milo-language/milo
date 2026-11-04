@@ -183,6 +183,7 @@ Prove contracts hold, via std/smt, the milo-native prover.
 | Flag | Effect |
 |---|---|
 | `--solver=z3` | Use z3 instead (adds non-linear arithmetic). |
+| `--rte` | Also prove no overflow, no out-of-bounds index, no division by zero. |
 | `--emit-smt` | Print the SMT-LIB2 obligations instead of solving them. |
 | `--all` | Include imported stdlib. |
 | `--json` | Machine-readable report. |

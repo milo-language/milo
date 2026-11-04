@@ -19,7 +19,8 @@ import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkMutability } from "./checker-mutability";
+import { checkPurity,checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
 import { SqlChecker, sqlAttrOf, validateSqlAttribute, type ConstResolver } from "./checker-sql";
@@ -4605,7 +4606,7 @@ export class TypeChecker {
     checkPointerParamEscape(host, program, view);
     // Needs every call site resolved: the evidence suffix compares the argument roots
     // across all of a fn's callers.
-    checkMutParamBundle(host, program, view);
+    checkMutParamBundle(host, program, view); checkMutability(host, program, view);
     this.lintArenaNeverFrees(program);
 
     // An expectation that never fired means the code it excused was fixed and the
@@ -5241,10 +5242,8 @@ export class TypeChecker {
       rewrittenCalls: this.rewrittenCalls,
       staticCalls: this.staticCalls,
       resolvedMethods: this.resolvedMethods,
-      closureCalls: this.closureCalls,
-      cfnCalls: this.cfnCalls,
-      fnFieldCalls: this.fnFieldCalls,
-      cfnFieldCalls: this.cfnFieldCalls,
+      closureCalls: this.closureCalls, cfnCalls: this.cfnCalls,
+      fnFieldCalls: this.fnFieldCalls, cfnFieldCalls: this.cfnFieldCalls,
       interfaceMethodCalls: this.interfaceMethodCalls,
       error: (msg, span, hint) => this.error(msg, span, hint),
       warn: (code, msg, span, hint, len) => this.warn(code, msg, span, hint, len),
@@ -5269,6 +5268,7 @@ export class TypeChecker {
       userRawPointerType: (t) => this.carriesRawPointer(t) && !this.typeDeclaredInStd(t),
       replayRawShares: this.replayRawShares,
       replaySiteOf: (sp) => replaySite(sp, STDLIB_DIR, process.cwd()),
+      mutation: { written: this.writtenExprs, autoBorrowed: this.autoBorrowed, explicitMutArgs: this.explicitMutArgs, matchSubjectMut: this.matchSubjectMut, diagnostics: this.diagnostics },
     };
   }
 

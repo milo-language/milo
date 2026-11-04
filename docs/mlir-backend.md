@@ -130,7 +130,11 @@ export through upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver
 
 ## Raising
 
-Not built. Raising comes after the self-hosted frontend: the source-faithful top layer it
+Not built. Two raising-shaped rewrites need no dialect and are checker warnings with `milo fix`
+fixes instead: `var-never-reassigned` (`var` to `let`) and `unwritten-mut-param` (`&mut T` to
+`&T`, call sites included), both in `src/checker-mutability.ts`. `milo harden` is reserved for
+rewrites that need facts only the dialect has (last-use clone to move, range-based `@wrapping`
+removal, contract inference). Raising comes after the self-hosted frontend: the source-faithful top layer it
 needs (comments, spelling, layout) is frontend work, so it is built once, in the Milo
 frontend. JSIR's defining trait is that it round-trips: source goes up into the dialect,
 passes transform it, and it prints back as source. Milo gets the same:

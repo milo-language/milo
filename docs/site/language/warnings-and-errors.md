@@ -53,6 +53,8 @@ build rather than quietly teaching the wrong thing.
 | [`replay-hole`](#replay-hole) | allow |
 | [`single-variant-match`](#single-variant-match) | allow |
 | [`string-concat-in-loop`](#string-concat-in-loop) | warn |
+| [`var-never-reassigned`](#var-never-reassigned) | warn |
+| [`unwritten-mut-param`](#unwritten-mut-param) | warn |
 | [`unused-import`](#unused-import) | allow |
 | [`unowned-pointer-copy`](#unowned-pointer-copy) | allow |
 | [`unchecked-ffi-contract`](#unchecked-ffi-contract) | allow |
@@ -445,6 +447,42 @@ fn main() {
 ```
 
 **Fix:** Append in place: `out.pushStr(piece)` for a string, `out.push(byte)` for a single byte.
+
+### var-never-reassigned
+
+_On by default._
+
+A `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.
+
+```milo
+fn main() {
+  var total = 40 + 2
+  print(total)
+}
+```
+
+**Fix:** Declare it with `let`. `milo fix` does this.
+
+### unwritten-mut-param
+
+_On by default._
+
+A `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.
+
+```milo
+fn show(n: &mut i64): void {
+  print(n)
+}
+
+fn main() {
+  var a: i64 = 1
+  show(&mut a)
+  a = 2
+  print(a)
+}
+```
+
+**Fix:** Take `&T`, and drop `&mut` at every call site (shared borrows are implicit). `milo fix` does both.
 
 ### unused-import
 

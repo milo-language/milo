@@ -286,6 +286,7 @@ Properties the legacy LLVM-text codegen had that the MLIR backend does not yet; 
 - [ ] **Cross-compilation for hosted targets** — `--target` reaches clang and fails loudly with a hint, but a real cross needs a target linker + sysroot; the compiler has no `-isysroot`/`--sysroot` notion. Bare-metal and Windows crosses already work
 - [ ] **Compile-time reduction** — profiled: the frontend is 0.38s and clang `-O2` is **7.3s, 95% of a self-host build**. Not generics (only 8 monomorphized instances). Levers, in order: interned method IDs instead of `src-milo/codegen`'s string-compare dispatch chains, `String`-by-value struct shredding, then MIR. `--fast` (~2x) exists as the edit-loop workaround
 - [ ] **`@bench` annotations + `milo bench`** — the harness exists as a shell script; the in-language form does not
+- [ ] **Mutability lints become errors?** — `var-never-reassigned` and `unwritten-mut-param` (`src/checker-mutability.ts`) ship as warnings with `milo fix` fixes; `bun scripts/mutability-census.ts --fix` counts the corpus and proves every fix still checks. Flipping them to errors is a breaking change (record it in [breaking-changes.md](breaking-changes.md)); decide after the corpus is migrated
 - [ ] **"The book"** — documentation and tutorials beyond the reference
 
 ### Safety Hardening

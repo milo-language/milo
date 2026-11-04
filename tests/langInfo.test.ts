@@ -21,7 +21,8 @@ import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "../src/cli-help";
 
 const ROOT = join(import.meta.dir, "..");
-const CHECKER = readFileSync(join(ROOT, "src", "checker.ts"), "utf-8");
+// The program passes are checker code too: they raise warnings through host.warn.
+const CHECKER = ["checker.ts", "checker-program-passes.ts", "checker-mutability.ts"].map(f => readFileSync(join(ROOT, "src", f), "utf-8")).join("\n");
 
 test("the CLI emits the same payload as the module, and it parses", () => {
   const out = execFileSync("bun", ["run", join(ROOT, "src", "main.ts"), "lang", "--json"], { encoding: "utf-8" });

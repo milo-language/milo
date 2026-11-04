@@ -32,7 +32,7 @@ interface WarningInfo {
 }
 
 /** Warnings whose reference entry is finished. Ratchet: may only grow. */
-export const DOCUMENTED_FLOOR = 28;
+export const DOCUMENTED_FLOOR = 30;
 
 export const WARNINGS: WarningInfo[] = [
   // Reported when `--expect=<name>` was given and that warning never fired. On by
@@ -337,6 +337,32 @@ fn main() {
     out += "x"
   }
   print(out)
+}
+`,
+  },
+  {
+    name: "var-never-reassigned",
+    doc: "A `var` that nothing writes after its initializer: no assignment, no `&mut` argument, no mutating method call, no field or index write. `let` says the same thing to the reader and lets the checker reject a later write by mistake.",
+    fix: "Declare it with `let`. `milo fix` does this.",
+    example: `fn main() {
+  var total = 40 + 2
+  print(total)
+}
+`,
+  },
+  {
+    name: "unwritten-mut-param",
+    doc: "A `&mut T` parameter of a private function that nothing writes through: no store, no mutating method call, and it is never passed on to a `&mut` parameter. A caller reading the signature has to assume the argument may change. Public functions are not checked: their signature is API.",
+    fix: "Take `&T`, and drop `&mut` at every call site (shared borrows are implicit). `milo fix` does both.",
+    example: `fn show(n: &mut i64): void {
+  print(n)
+}
+
+fn main() {
+  var a: i64 = 1
+  show(&mut a)
+  a = 2
+  print(a)
 }
 `,
   },

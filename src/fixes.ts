@@ -63,6 +63,26 @@ export function fixFor(d: Diagnostic, source: string): Fix | null {
       if (!m) return null;
       return { title: `Import '${m[2]}' from '${m[1]}'`, edits: [addImportName(source, m[1]!, m[2]!)] };
     }
+    case "var-never-reassigned":
+      // The span is the `var` keyword; only that word changes, so the rest of the line,
+      // comments included, stays as written.
+      return /^var(?=\s)/.test(source.slice(at, at + 4)) ? { title: "Declare with 'let'", edits: [{ offset: at, len: 3, newText: "let" }] } : null;
+    case "unwritten-mut-param": {
+      // The span is the param name: `n: &mut T` -> `n: &T`, then each call site (a note)
+      // loses its `&mut ` marker. Any site that does not read as `&mut <arg>` voids the fix:
+      // a half-applied one would not check.
+      const sig = /^[A-Za-z_]\w*\s*:\s*&\s*(mut\s+)/.exec(source.slice(at));
+      if (!sig) return null;
+      const edits: TextEdit[] = [{ offset: at + sig.index + sig[0].length - sig[1]!.length, len: sig[1]!.length, newText: "" }];
+      for (const note of d.notes ?? []) {
+        if (!note.span) return null;
+        const arg = spanOffset(source, note.span.line, note.span.col);
+        const marker = /&\s*mut\s+$/.exec(source.slice(Math.max(0, arg - 24), arg));
+        if (!marker) return null;
+        edits.push({ offset: arg - marker[0].length, len: marker[0].length, newText: "" });
+      }
+      return { title: "Take '&' instead of '&mut'", edits };
+    }
     case "redundant-cast": {
       const edits = dropLiteralCast(source, at);
       return edits ? { title: "Remove the redundant cast", edits } : null;

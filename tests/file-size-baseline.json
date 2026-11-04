@@ -8,7 +8,7 @@
   "src/cdeclcache.ts": 104,
   "src/cgu.ts": 605,
   "src/checker-derive.ts": 651,
-  "src/checker-program-passes.ts": 2285,
+  "src/checker-program-passes.ts": 2287,
   "src/checker-sql.ts": 360,
   "src/checker.ts": 15561,
   "src/cli-help.ts": 287,
@@ -26,7 +26,7 @@
   "src/diagnostics.ts": 119,
   "src/emit-mlir.ts": 5329,
   "src/extern-effects.ts": 536,
-  "src/fixes.ts": 211,
+  "src/fixes.ts": 231,
   "src/fmtbin.ts": 157,
   "src/headergen.ts": 169,
   "src/hir.ts": 303,
@@ -68,7 +68,7 @@
   "src/verify.ts": 3109,
   "src/version.ts": 35,
   "src/visibility.ts": 344,
-  "src/warnings.ts": 488,
+  "src/warnings.ts": 514,
   "src/wcet-cycles.ts": 143,
   "src/wcet.ts": 157
 }

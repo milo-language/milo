@@ -31,6 +31,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checker-derive.ts` | Derive synthesis: the Clone, Eq and Json impls `@derive` (and Eq's auto-derive) generates, and the expansion of user `derive <Trait> { ... |
+| `src/checker-mutability.ts` | Two "say what you mean" warnings that need the finished program, so they run with the whole-program passes: `var-never-reassigned` (a `var` nothing writes after its initializer) and `unwritten-mut-pa… |
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker-sql.ts` | Compile-time checked SQL: every `@sql(param[, args])` call site is prepared against the schema the program's own migrations build, at compile time, with bun:sqlite. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
