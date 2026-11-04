@@ -214,7 +214,17 @@ per-function compile cache.
 - DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, `ensure-debug-info-scope-on-llvm-func`, DILocations spliced into codegen-dwarf.ts's subprograms); named locals and params of every type but closures, arrays and Heap are done (`milo.dbg.var`, under `-g` only: a stack slot per named binding, lowered to `dbg.declare` by `milo-lower-debug-vars` after the function has its subprogram; enums are a tag enumeration plus a per-variant payload union, niche Options the payload alone, strings, Vecs and HashMaps their header fields, all laid out from the converted LLVM types). Still open: pattern- and loop-bound variables (`match` arms, `for` indices) have no `milo.dbg.var`, and closure, array and Heap values have no DI type.
 - `!range`/`!noundef` on loads of ranged ints (`tests/refParamAttrs.test.ts`).
 
-Both are tracked under "MLIR parity gaps" in `docs/roadmap.md`.
+Both open items above are tracked under "MLIR parity gaps" in `docs/roadmap.md`.
+
+## Scaffold into MLIR
+
+src/codegen.ts still emits the module scaffold as LLVM text and src/mlir-backend.ts splices the MLIR function bodies into it. The goal is to emit the scaffold from MLIR, piece by piece, until the splice and codegen.ts are deleted. Each piece is a pure function of HIR plus src/layout.ts.
+
+Done:
+- Itables: `milo.itable` (module-level, symbol `itable.T.I`: method pointers in interface order, then the destructor slot or null), from `itableOps` in src/emit-mlir.ts. A drop helper or method MLIR does not define is declared at lowering and resolves against the scaffold after the splice. codegen.ts keeps only `ensureStructDropHelper` for the types whose slot is non-null.
+- Module globals: `milo.global.def` (internal, `thread_local` kept), from `globalOps`. src/const-fold.ts is the one folder (`isFullyConstInit` splits static from run-time-initialized globals for codegen; `globalInit` is the static part MLIR emits, a partial struct literal included). Run-time-initialized and lazy globals are defined here too, as zero plus their constant fields; their init functions are still codegen's.
+
+Remaining, in order: string constants, process entry/main wrapper, type definitions, panic routines, lazy globals (the init machinery), runtime declares last.
 
 ## Gates
 

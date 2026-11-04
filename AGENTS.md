@@ -75,7 +75,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering |
 | `src/emit-mlir.ts` | HIR → milo MLIR dialect text (milo-opt then lowers it to LLVM IR; `src/mlir-backend.ts` drives it) |
-| `src/codegen.ts` | Module scaffold around the MLIR bodies: stubs, drop glue, ABI, globals, LLVM text |
+| `src/codegen.ts` | Module scaffold around the MLIR bodies: stubs, drop glue, ABI, strings, process entry, LLVM text (itables and module globals are emitted by MLIR; `src/const-fold.ts` folds their initializers) |
 | `src/diagnostics.ts` | Elm-style error formatting with source context and carets |
 | `src/target.ts` | Host platform detection, target triple resolution |
 | `src/lsp.ts` | LSP server (diagnostics, hover, go-to-definition) |
