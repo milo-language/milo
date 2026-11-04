@@ -3,7 +3,7 @@
 fn run(f: () => void): void { f() }
 fn consume(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var s = Vec<i64>.filled(3, 7)
+    let s = Vec<i64>.filled(3, 7)
     let f = (): void => { print(s) }
     consume(s)
     run(f)

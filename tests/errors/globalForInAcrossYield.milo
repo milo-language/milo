@@ -22,7 +22,7 @@ fn writer(): void {
         g.push(777)
         i = i + 1
     }
-    var _junk: Vec<i64> = Vec.filled(4, 424242)
+    let _junk: Vec<i64> = Vec.filled(4, 424242)
     print("writer done")
 }
 

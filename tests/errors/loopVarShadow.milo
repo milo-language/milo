@@ -5,7 +5,7 @@
 // patching each loop form's scope handling.
 fn main(): i32 {
     let row = 5
-    var nums: Vec<i64> = [7, 8, 9]
+    let nums: Vec<i64> = [7, 8, 9]
     var total = 0
     for row in nums {  // @error: shadows an outer binding
         total = total + row

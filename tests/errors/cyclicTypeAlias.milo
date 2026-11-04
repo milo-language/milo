@@ -8,7 +8,7 @@ type A = B
 type B = A
 
 pub fn main(): i32 {
-    var x: A = 1
+    let x: A = 1
     print(x)
     return 0
 }

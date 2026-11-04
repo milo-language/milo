@@ -2,6 +2,6 @@
 // A borrow inside a Vec outlives the value it borrows: the Vec survives the
 // scope that owns it, so reading the element later is a use-after-free.
 fn main() {
-    var toks: Vec<&[u8]> = Vec.new()
+    let toks: Vec<&[u8]> = Vec.new()
     print($"{toks.len}")
 }

@@ -18,6 +18,6 @@ fn bump(n: &Node): void {
 }
 
 fn main() {
-    var n = Node.Leaf(1)
+    let n = Node.Leaf(1)
     bump(n)
 }

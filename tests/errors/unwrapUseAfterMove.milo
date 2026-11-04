@@ -8,7 +8,7 @@ fn getIt(): Result<string> {
 }
 
 fn main() {
-    var r = getIt()
+    let r = getIt()
     let s = r!
     match r {
         Result.Ok(v) => { print("ok: ", v) }

@@ -1,11 +1,11 @@
 // @error: old() takes a scalar
-fn f(v: &mut Vec<i64>): i64
+fn f(v: &Vec<i64>): i64
 ensures v.len == old(v).len
 {
     return v.len
 }
 
 fn main() {
-    var xs = vecNew<i64>()
-    print(f(&mut xs))
+    let xs = vecNew<i64>()
+    print(f(xs))
 }

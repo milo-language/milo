@@ -29,7 +29,7 @@ impl GraphB {
 
 fn main(): i32 {
     var a = GraphA.new()
-    var b = GraphB.new()
+    let b = GraphB.new()
     let h = a.alloc(Node { name: "x" })
     let _m = b.get(h)
     return 0

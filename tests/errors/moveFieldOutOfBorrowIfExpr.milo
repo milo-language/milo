@@ -9,7 +9,7 @@ fn pick(d: &Doc, c: bool): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, true))
 }
 

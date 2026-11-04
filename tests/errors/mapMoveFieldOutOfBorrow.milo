@@ -15,7 +15,7 @@ struct User {
 }
 
 fn main() {
-    var users: Vec<User> = [User {
+    let users: Vec<User> = [User {
         name: Text { s: "Alice" }, age: 30,
     }
     ,]

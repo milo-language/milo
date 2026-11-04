@@ -21,7 +21,7 @@ fn startsHello(v: &Val): bool {
 }
 
 fn main() {
-    var x = Val.Str("hello world")
+    let x = Val.Str("hello world")
     match x {
         Val.Str(s) => {
             let bad = startsHello(x)

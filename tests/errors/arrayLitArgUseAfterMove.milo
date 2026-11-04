@@ -7,7 +7,7 @@ fn total(a: [Vec<i64>; 2]): i64 {
 fn main() {
     var p: Vec<i64> = Vec.new()
     p.push(3)
-    var q: Vec<i64> = Vec.new()
+    let q: Vec<i64> = Vec.new()
     print(total([p, q]))
     print(p.len())
 }

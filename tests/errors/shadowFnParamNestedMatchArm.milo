@@ -17,7 +17,7 @@ enum Op {
 fn evalExprFallback(id: i32, op: Op): i32 {
     match op {
         Op.Wrap(v) => {
-            var val = JSValue.Native(v)
+            let val = JSValue.Native(v)
             match val {
                 JSValue.Native(id) => { return id }
                 JSValue.Number(id) => { return id }

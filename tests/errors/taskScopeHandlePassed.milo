@@ -5,12 +5,12 @@ from "std/runtime" import {
     Task, TaskScope
 }
 
-fn helper(_s: &mut TaskScope): void {
+fn helper(_s: &TaskScope): void {
 }
 
 pub fn main(): i32 {
     Task.scope((s) => {
-        helper(&mut s)
+        helper(s)
     })
     return 0
 }

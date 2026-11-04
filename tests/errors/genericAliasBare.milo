@@ -4,7 +4,7 @@
 type Pair<T> = Vec<T>
 
 pub fn main(): i32 {
-    var x: Pair = Vec.new()
+    let x: Pair = Vec.new()
     x.push(1)
     return 0
 }

@@ -8,7 +8,7 @@ struct Task {
 }
 
 fn main(): i32 {
-    var h = BinaryHeap<Task>.new()
+    let h = BinaryHeap<Task>.new()
     h.push(Task { pri: 1 })
     return 0
 }

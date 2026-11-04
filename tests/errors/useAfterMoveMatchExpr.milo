@@ -1,7 +1,7 @@
 // @error: use of moved variable 'a'
 fn main() {
-    var a = Vec<i64>.filled(3, 7)
-    var b = Vec<i64>.filled(3, 7)
+    let a = Vec<i64>.filled(3, 7)
+    let b = Vec<i64>.filled(3, 7)
     let n = 0
     let s = match n { 0 => a, _ => b }
     print(s)

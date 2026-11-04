@@ -1,8 +1,8 @@
 // @runtime-error: shift amount out of range
 
 pub fn main(): i32 {
-    var x: i32 = 1
-    var n: i32 = 40
+    let x: i32 = 1
+    let n: i32 = 40
     print(x << n)
     return 0
 }

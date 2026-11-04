@@ -5,7 +5,7 @@
 fn main() {
     var d = "dflt"
     d.pushStr("-x")
-    var o: Option<string> = Option.Some("payload-long-enough")
+    let o: Option<string> = Option.Some("payload-long-enough")
     let n = (o ?? d).len
     print(n.toString())
     if let Option.Some(p) = o {

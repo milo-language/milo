@@ -9,6 +9,6 @@
 // Found by tests/typeAnnotationFidelity.test.ts, which asks whether a value of the WRONG
 // shape can satisfy an annotation.
 fn main() {
-    var x: [i64; 2] = ["a", "b"]
+    let x: [i64; 2] = ["a", "b"]
     print(x[0])
 }

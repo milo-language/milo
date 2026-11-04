@@ -4,7 +4,7 @@
 struct P { name: Vec<i64>, age: i64 }
 fn eat(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var p = P { name: Vec<i64>.filled(3, 7), age: 3 }
+    let p = P { name: Vec<i64>.filled(3, 7), age: 3 }
     let f = () => { print(p.name) }
     eat(p.name)
     f()

@@ -11,7 +11,7 @@ impl Counter for Tally {
 }
 
 fn main(): i32 {
-    var t = Tally { n: 0 }
+    let t = Tally { n: 0 }
     t.bump()
     return 0
 }

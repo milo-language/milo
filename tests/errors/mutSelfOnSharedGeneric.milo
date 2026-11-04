@@ -14,7 +14,7 @@ fn advance<T: Tick>(x: &T) {
 }
 
 fn main() {
-    var c = Counter { n: 0 }
+    let c = Counter { n: 0 }
     advance(c)
     print(c.n)
 }

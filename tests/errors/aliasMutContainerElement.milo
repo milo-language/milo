@@ -5,6 +5,7 @@
 // a use-after-free. The checker must reject the overlapping mutable borrows.
 fn bad(elem: &mut i32, v: &mut Vec<i32>): i32 {
     v.push(1)
+    elem = elem + 1     // a write through elem, after the push may have freed it
     return elem
 }
 

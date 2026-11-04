@@ -5,7 +5,7 @@ fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
 pub fn main(): i32 {
     var v: Vec<string> = Vec.new()
     v.push("a heap string long enough to be on the heap for sure".clone())
-    var h = H { items: v, k: 1 }
+    let h = H { items: v, k: 1 }
     show(h.items[0], consume(h.items))
     return 0
 }

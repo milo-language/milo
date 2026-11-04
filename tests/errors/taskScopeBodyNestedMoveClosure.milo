@@ -4,7 +4,7 @@
 from "std/runtime" import { Task, schedulerYield }
 
 pub fn main(): i32 {
-    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
     Task.scope((s) => {
         s.spawn(() => {
             for x in v {

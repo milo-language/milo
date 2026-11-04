@@ -14,7 +14,7 @@ from "std/runtime" import {
 }
 
 fn leak(): Promise<Shard<f64>> {
-    var data: Vec<f64> = Vec.filled(1000, 1.0)
+    let data: Vec<f64> = Vec.filled(1000, 1.0)
     var owner = shatter(data, 1)
     var ws = owner.windows()
     let w = ws.pop()!

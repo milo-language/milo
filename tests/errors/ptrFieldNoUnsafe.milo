@@ -4,7 +4,7 @@ extern struct Point {
 }
 
 fn main(): i32 {
-    var p = Point {
+    let p = Point {
         x: 1, y: 2
     }
     let ptr = 0 as *Point

@@ -8,7 +8,7 @@ fn pick(d: &Doc, n: i64): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, 0))
 }
 

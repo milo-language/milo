@@ -8,7 +8,7 @@ fn pick(d: &Doc, o: Option<Text>): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" } }
     print(pick(d, Option.None))
 }
 

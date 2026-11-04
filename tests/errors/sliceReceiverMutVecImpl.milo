@@ -8,12 +8,12 @@ impl Vec<T> {
     }
 }
 
-fn grow(s: &mut [i64]) {
+fn grow(s: &[i64]) {
     s.pushTwice(1)
 }
 
 fn main() {
-    var v: Vec<i64> = [3, 4, 5]
-    grow(&mut v[0..1])
+    let v: Vec<i64> = [3, 4, 5]
+    grow(v[0..1])
     print(v.len())
 }

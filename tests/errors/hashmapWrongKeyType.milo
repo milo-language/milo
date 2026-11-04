@@ -8,6 +8,6 @@ struct Bag {
 }
 
 fn main(): i32 {
-    var m: HashMap<Bag, i32> = HashMap.new()
+    let m: HashMap<Bag, i32> = HashMap.new()
     return 0
 }

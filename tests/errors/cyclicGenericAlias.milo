@@ -4,7 +4,7 @@
 type Loop<T> = Loop<T>
 
 pub fn main(): i32 {
-    var x: Loop<i64> = 1
+    let x: Loop<i64> = 1
     print(x)
     return 0
 }

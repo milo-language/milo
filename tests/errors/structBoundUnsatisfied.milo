@@ -17,7 +17,7 @@ struct Wrap<T: HasValue> {
 
 impl Wrap<T> {
     fn make(inner: T): Wrap<T> {
-        var w: Wrap<T> = Wrap {
+        let w: Wrap<T> = Wrap {
             inner: inner
         }
         return w
