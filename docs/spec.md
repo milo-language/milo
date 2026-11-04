@@ -10005,7 +10005,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `inherited`
 - `second`
 
-**Rationale.** @rule: E-TARGET Command's environment, observed from inside the child on every platform: an override the parent never had, a value the parent set with Env.set, and the last-wins rule when one name is set twice. Every line is echoed by the child.
+**Rationale.** Command's environment, observed from inside the child on every platform: an override the parent never had, a value the parent set with Env.set, and the last-wins rule when one name is set twice. Every line is echoed by the child.
 
 *Program:* [`tests/fixtures/commandEnv.milo`](../tests/fixtures/commandEnv.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -20692,7 +20692,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `folded`
 - `exprfolded`
 
-**Rationale.** @targetOs() is a compile-time constant string. The three-way check below is OS-independent (exactly one arm is true on any target), and the always-false arm calls an extern that exists in no library — it must be folded out at lower time, or the link fails with an undefined symbol. That is the real assertion: the dead branch is never lowered or codegen'd, only type-checked.
+**Rationale.** @rule: E-TARGET @targetOs() is a compile-time constant string. The three-way check below is OS-independent (exactly one arm is true on any target), and the always-false arm calls an extern that exists in no library — it must be folded out at lower time, or the link fails with an undefined symbol. That is the real assertion: the dead branch is never lowered or codegen'd, only type-checked.
 
 *Program:* [`tests/fixtures/targetOs.milo`](../tests/fixtures/targetOs.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
