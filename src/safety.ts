@@ -28,7 +28,17 @@ export type SafetyLevel =
   | "iec62304-c"  // IEC 62304 Class C — death or serious injury (pacemakers, infusion pumps)
   ;
 
+// What the profile's standard asks of requirements traceability and structural coverage. These say
+// WHAT is checked; how hard a gap is enforced (warning vs error) is the build's choice
+// (--strict, a baseline), not the profile's. "report" means the standard sets no bidirectional
+// traceability objective at this level, so the matrix is informational. `coverage` is the
+// structural-coverage criterion the standard names; no gate reads it yet.
+export type Traceability = "strict" | "report";
+export type Coverage = "statement" | "branch" | "mcdc";
+
 interface SafetyConstraints {
+  traceability: Traceability;
+  coverage: Coverage;
   noRecursion: boolean;
   requireBoundedLoops: boolean;       // all loops must have invariant or compile-time-bounded iteration
   noDynamicAllocation: boolean;       // no heap allocation anywhere, including init (certifiable systems preallocate statically)
@@ -49,6 +59,8 @@ interface SafetyConstraints {
 const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // DO-178C — avionics
   "do178c-a": {
+    traceability: "strict",
+    coverage: "mcdc",
     noRecursion: true,
     requireUsedResults: true,
     requireBoundedLoops: true,
@@ -63,6 +75,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noForeignCalls: true,
   },
   "do178c-b": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: true,
     requireUsedResults: true,
     requireBoundedLoops: true,
@@ -77,6 +91,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noForeignCalls: true,
   },
   "do178c-c": {
+    traceability: "strict",
+    coverage: "statement",
     noRecursion: true,
     requireUsedResults: true,
     requireBoundedLoops: false,
@@ -92,6 +108,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
 
   // ISO 26262 — automotive
   "iso26262-a": {
+    traceability: "strict",
+    coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
     noDynamicAllocation: false,
@@ -104,6 +122,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     requireFullMatchCoverage: true,
   },
   "iso26262-b": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: false,
     requireBoundedLoops: false,
     noDynamicAllocation: false,
@@ -116,6 +136,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     requireFullMatchCoverage: true,
   },
   "iso26262-c": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
     noDynamicAllocation: false,
@@ -128,6 +150,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     requireFullMatchCoverage: true,
   },
   "iso26262-d": {
+    traceability: "strict",
+    coverage: "mcdc",
     noRecursion: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
@@ -143,6 +167,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
 
   // NASA software classification
   "nasa-a": {
+    traceability: "strict",
+    coverage: "mcdc",
     noRecursion: true,
     requireUsedResults: true,
     requireBoundedLoops: true,
@@ -157,6 +183,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noForeignCalls: true,
   },
   "nasa-b": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: true,
     requireUsedResults: true,
     requireBoundedLoops: true,
@@ -172,6 +200,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
 
   // IEC 61508 — industrial/nuclear/rail
   "iec61508-4": {
+    traceability: "strict",
+    coverage: "mcdc",
     noRecursion: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
@@ -185,6 +215,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noForeignCalls: true,
   },
   "iec61508-3": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
@@ -200,6 +232,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
 
   // IEC 62304 — medical device software
   "iec62304-a": {
+    traceability: "report",
+    coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
     noDynamicAllocation: false,
@@ -212,6 +246,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     requireFullMatchCoverage: false,
   },
   "iec62304-b": {
+    traceability: "strict",
+    coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
     noDynamicAllocation: false,
@@ -224,6 +260,8 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     requireFullMatchCoverage: true,
   },
   "iec62304-c": {
+    traceability: "strict",
+    coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
     noDynamicAllocation: true,
@@ -259,6 +297,14 @@ export function objectPolicy(level: SafetyLevel): { noDynamicAllocation: boolean
     noRecursion: c.noRecursion,
     noUnknownCallTargets: ["do178c-a", "iso26262-d", "iec61508-4", "nasa-a"].includes(level),
   };
+}
+
+export function traceabilityOf(level: SafetyLevel): Traceability {
+  return PROFILES[level].traceability;
+}
+
+export function coverageOf(level: SafetyLevel): Coverage {
+  return PROFILES[level].coverage;
 }
 
 export function parseSafetyLevel(s: string): SafetyLevel | null {
@@ -883,5 +929,11 @@ export function listSafetyLevels(): string {
     "    iec62304-b  Class B — non-serious injury",
     "    iec62304-c  Class C — death or serious injury (pacemakers, infusion pumps)",
   ];
-  return lines.join("\n");
+  const tagged = lines.map(l => {
+    const word = l.trim().split(/\s+/)[0] ?? "";
+    const level = l.startsWith("    ") && word !== "do178" ? parseSafetyLevel(word) : null;
+    return level ? `${l.replace(/\n$/, "").padEnd(78)} [traceability ${traceabilityOf(level)}, coverage ${coverageOf(level)}]${l.endsWith("\n") ? "\n" : ""}` : l;
+  });
+  tagged.push("", "traceability: 'strict' profiles require bidirectional requirement traces (milo trace); gaps are warnings", "in a dev build and errors under --strict, in `milo verify`, or when new against a --baseline.");
+  return tagged.join("\n");
 }

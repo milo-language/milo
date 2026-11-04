@@ -333,6 +333,39 @@ pub fn eliminateVar(cs: &Vec<Constraint>, k: i64, varIsInt: &Vec<bool>): Option<
     return Option.Some(out)
 }
 
+// Of rows with identical coefficients only the strongest matters (c.x + k <= 0 is stronger
+// for a larger k; at equal k a strict row is stronger).
+pub fn dropDominated(cs: &Vec<Constraint>): Vec<Constraint> {
+    var out: Vec<Constraint> = []
+    var i: i64 = 0
+    while i < cs.len {
+        var merged: bool = false
+        var j: i64 = 0
+        while j < out.len && !merged {
+            var same: bool = true
+            var c: i64 = 0
+            while c < cs[i].coeffs.len && same {
+                if cs[i].coeffs[c] != out[j].coeffs[c] {
+                    same = false
+                }
+                c += 1
+            }
+            if same {
+                merged = true
+                if cs[i].konst > out[j].konst || (cs[i].konst == out[j].konst && cs[i].strict && !out[j].strict) {
+                    out[j] = Constraint { coeffs: cloneRow(cs[i].coeffs), konst: cs[i].konst, strict: cs[i].strict }
+                }
+            }
+            j += 1
+        }
+        if !merged {
+            out.push(Constraint { coeffs: cloneRow(cs[i].coeffs), konst: cs[i].konst, strict: cs[i].strict })
+        }
+        i += 1
+    }
+    return out
+}
+
 // Feasible over the rationals? Eliminate every variable; a surviving constant
 // row that is violated proves the system UNSAT.
 // None = the elimination overflowed, so feasibility is undecided here. Returning `false`
@@ -344,13 +377,52 @@ pub fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64, varIsInt: &Vec<bool>)
         cs.push(reduceConstraint(cs0[i0], rowAllInt(cs0[i0].coeffs, varIsInt)))
         i0 += 1
     }
-    var k: i64 = 0
-    while k < nvars {
-        let Option.Some(next) = eliminateVar(cs, k, varIsInt) else {
+    cs = dropDominated(cs)
+    var done: Vec<bool> = []
+    var d: i64 = 0
+    while d < nvars {
+        done.push(false)
+        d += 1
+    }
+    var round: i64 = 0
+    while round < nvars {
+        // Eliminate the variable whose elimination adds the fewest rows (pos * neg): the
+        // order is what separates a handful of rows from a blow-up.
+        var best: i64 = -1
+        var bestCost: i64 = 0
+        var k: i64 = 0
+        while k < nvars {
+            if !done[k] {
+                var pos: i64 = 0
+                var neg: i64 = 0
+                var r: i64 = 0
+                while r < cs.len {
+                    if cs[r].coeffs[k] > 0 {
+                        pos += 1
+                    }
+                    if cs[r].coeffs[k] < 0 {
+                        neg += 1
+                    }
+                    r += 1
+                }
+                let cost = pos * neg
+                if best < 0 || cost < bestCost {
+                    best = k
+                    bestCost = cost
+                }
+            }
+            k += 1
+        }
+        done[best] = true
+        let Option.Some(next) = eliminateVar(cs, best, varIsInt) else {
             return Option.None
         }
-        cs = next
-        k += 1
+        cs = dropDominated(next)
+        // Too many rows: undecided, never a verdict.
+        if cs.len > 400 {
+            return Option.None
+        }
+        round += 1
     }
     var i: i64 = 0
     while i < cs.len {
@@ -465,61 +537,6 @@ pub fn witnessBound(nvars: i64): i64 {
     return 5
 }
 
-pub fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool {
-    let kind = p.nodeKind[node]
-    if kind == 0 {
-        let a = p.nodeAtom[node]
-        return ((mask >> a) & 1) == 1
-    }
-    if kind == 1 {
-        return !evalNode(p, p.nodeKids[node][0], mask)
-    }
-    if kind == 2 {
-        var i: i64 = 0
-        while i < p.nodeKids[node].len {
-            if !evalNode(p, p.nodeKids[node][i], mask) {
-                return false
-            }
-            i += 1
-        }
-        return true
-    }
-    // or
-    var i: i64 = 0
-    while i < p.nodeKids[node].len {
-        if evalNode(p, p.nodeKids[node][i], mask) {
-            return true
-        }
-        i += 1
-    }
-    return false
-}
-
-// Build the conjunction induced by a truth assignment: atom i as-is when its
-// bit is set, negated otherwise.
-pub fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
-    var cs: Vec<Constraint> = []
-    var a: i64 = 0
-    while a < p.atomKonst.len {
-        let bit = (mask >> a) & 1
-        let row = cloneRow(p.atomCoeffs[a])
-        if bit == 1 {
-            cs.push(Constraint { coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a] })
-        } else {
-            // ¬(L <= 0) is (-L < 0); ¬(L < 0) is (-L <= 0)
-            var nr: Vec<i64> = []
-            var j: i64 = 0
-            while j < row.len {
-                nr.push(-row[j])
-                j += 1
-            }
-            cs.push(Constraint { coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a] })
-        }
-        a += 1
-    }
-    return cs
-}
-
 // Decide SAT of the formula rooted at `root`. In a proof obligation the root is
 // (assumptions ∧ body-paths ∧ ¬goal), so:
 //   Proven      = UNSAT (no assignment yields a feasible conjunction)
@@ -545,47 +562,383 @@ pub fn verdictName(v: &Verdict): string {
     }
 }
 
-pub fn decide(p: &SmtProblem, root: i64): Verdict {
-    let natoms = p.atomKonst.len
-    if natoms > 20 {
-        return Verdict.Unknown
+pub fn floorP(n: i64, d: i64): i64 {
+    let q = n / d
+    if n % d < 0 {
+        return q - 1
     }
-    let total: i64 = 1 << natoms
-    var sawRationalOnly: bool = false
-    var mask: i64 = 0
-    while mask < total {
-        if evalNode(p, root, mask) {
-            let cs = inducedConstraints(p, mask)
-            match feasibleRational(cs, p.nvars, p.varIsInt) {
-                Option.None => {
-                    // Elimination overflowed: this branch is undecided, so the run can no
-                    // longer conclude UNSAT. Fall through to Unknown rather than claim a
-                    // proof we did not establish.
-                    sawRationalOnly = true
+    return q
+}
+
+pub fn ceilP(n: i64, d: i64): i64 {
+    return -floorP(-n, d)
+}
+
+// An integer point of the system by Fourier-Motzkin back-substitution: eliminate the variables
+// in the same cheapest-first order as feasibleRational while keeping each stage, then assign
+// them in reverse, each within the bounds the rows of its stage leave once the later variables
+// are fixed (the value nearest zero). Reaches witnesses far outside findWitness's small box
+// (a raw sensor value of 32768). Empty when rounding leaves a variable no integer; the caller
+// re-checks the point against the original rows, so a wrong answer here cannot become a verdict.
+pub fn fmWitness(cs0: &Vec<Constraint>, nvars: i64, varIsInt: &Vec<bool>): Vec<i64> {
+    let empty: Vec<i64> = []
+    var cs: Vec<Constraint> = []
+    var i0: i64 = 0
+    while i0 < cs0.len {
+        cs.push(reduceConstraint(cs0[i0], rowAllInt(cs0[i0].coeffs, varIsInt)))
+        i0 += 1
+    }
+    cs = dropDominated(cs)
+    var stages: Vec<Vec<Constraint>> = []
+    var order: Vec<i64> = []
+    var done: Vec<bool> = []
+    var d: i64 = 0
+    while d < nvars {
+        done.push(false)
+        d += 1
+    }
+    var round: i64 = 0
+    while round < nvars {
+        var best: i64 = -1
+        var bestCost: i64 = 0
+        var k: i64 = 0
+        while k < nvars {
+            if !done[k] {
+                var pos: i64 = 0
+                var neg: i64 = 0
+                var r: i64 = 0
+                while r < cs.len {
+                    if cs[r].coeffs[k] > 0 {
+                        pos += 1
+                    }
+                    if cs[r].coeffs[k] < 0 {
+                        neg += 1
+                    }
+                    r += 1
                 }
-                Option.Some(feasible) => {
-                    if feasible {
-                        let w = findWitness(cs, p.nvars, witnessBound(p.nvars), 8000000)
-                        if w.len > 0 {
-                            return Verdict.Violated(w)
-                        }
-                        // With no integer variable in the system, Fourier-Motzkin is not a
-                        // relaxation — it decides the reals exactly, so rational-feasible
-                        // IS satisfiable and there is nothing left to be unsure about. The
-                        // witness stays empty because elimination yields no vertex to read
-                        // one off (the same gap that blocks branch-and-bound), so the
-                        // caller reports that a counterexample exists without naming it.
-                        if allReal(p.varIsInt, p.nvars) {
-                            return Verdict.Violated(w)
-                        }
-                        sawRationalOnly = true
+                if best < 0 || pos * neg < bestCost {
+                    best = k
+                    bestCost = pos * neg
+                }
+            }
+            k += 1
+        }
+        done[best] = true
+        stages.push(dropDominated(cs))
+        order.push(best)
+        let Option.Some(next) = eliminateVar(cs, best, varIsInt) else {
+            return empty
+        }
+        cs = dropDominated(next)
+        if cs.len > 400 {
+            return empty
+        }
+        round += 1
+    }
+    var x: Vec<i64> = []
+    var z: i64 = 0
+    while z < nvars {
+        x.push(0)
+        z += 1
+    }
+    var idx: i64 = order.len - 1
+    while idx >= 0 {
+        let v = order[idx]
+        var lo: i64 = -4611686018427387904
+        var hi: i64 = 4611686018427387904
+        var r: i64 = 0
+        while r < stages[idx].len {
+            let c = stages[idx][r]
+            let a = c.coeffs[v]
+            if a != 0 {
+                var rest: i64 = c.konst
+                var j: i64 = 0
+                while j < nvars {
+                    if j != v {
+                        rest = rest + c.coeffs[j] * x[j]
+                    }
+                    j += 1
+                }
+                if a > 0 {
+                    // a*v + rest <= 0 (or < 0): v <= -rest/a
+                    var ub: i64 = floorP(-rest, a)
+                    if c.strict {
+                        ub = ceilP(-rest, a) - 1
+                    }
+                    if ub < hi {
+                        hi = ub
+                    }
+                } else {
+                    // a*v + rest <= 0 with a < 0: v >= rest/(-a)
+                    var lb: i64 = ceilP(rest, -a)
+                    if c.strict {
+                        lb = floorP(rest, -a) + 1
+                    }
+                    if lb > lo {
+                        lo = lb
                     }
                 }
             }
+            r += 1
         }
-        mask += 1
+        if lo > hi {
+            return empty
+        }
+        if lo <= 0 && 0 <= hi {
+            x[v] = 0
+        } else if lo > 0 {
+            x[v] = lo
+        } else {
+            x[v] = hi
+        }
+        idx -= 1
     }
-    if sawRationalOnly {
+    return x
+}
+
+// Three-valued evaluation under a partial assignment: asg[a] is 0 (not chosen yet), 1 (atom
+// true) or 2 (atom false). Returns 0 (formula false whatever the rest is), 1 (formula true
+// whatever the rest is) or 2 (undecided). Pruning on 0 and stopping early on 1 is what keeps
+// the search far below 2^atoms: most obligations are decided by a handful of atoms.
+pub fn evalNode3(p: &SmtProblem, node: i64, asg: &Vec<i64>): i64 {
+    let kind = p.nodeKind[node]
+    if kind == 0 {
+        let v = asg[p.nodeAtom[node]]
+        if v == 0 {
+            return 2
+        }
+        if v == 2 {
+            return 0
+        }
+        return 1
+    }
+    if kind == 1 {
+        let k = evalNode3(p, p.nodeKids[node][0], asg)
+        if k == 2 {
+            return 2
+        }
+        return 1 - k
+    }
+    // and: any false kid is false, all true is true. or: dually.
+    var sawUnknown: bool = false
+    var i: i64 = 0
+    while i < p.nodeKids[node].len {
+        let k = evalNode3(p, p.nodeKids[node][i], asg)
+        if kind == 2 && k == 0 {
+            return 0
+        }
+        if kind == 3 && k == 1 {
+            return 1
+        }
+        if k == 2 {
+            sawUnknown = true
+        }
+        i += 1
+    }
+    if sawUnknown {
+        return 2
+    }
+    if kind == 2 {
+        return 1
+    }
+    return 0
+}
+
+// The conjunction the chosen atoms induce: atom i as-is when true, negated when false.
+pub fn inducedConstraints(p: &SmtProblem, asg: &Vec<i64>): Vec<Constraint> {
+    var cs: Vec<Constraint> = []
+    var a: i64 = 0
+    while a < p.atomKonst.len {
+        if asg[a] != 0 {
+            let row = cloneRow(p.atomCoeffs[a])
+            if asg[a] == 1 {
+                cs.push(Constraint { coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a] })
+            } else {
+                // ¬(L <= 0) is (-L < 0); ¬(L < 0) is (-L <= 0)
+                var nr: Vec<i64> = []
+                var j: i64 = 0
+                while j < row.len {
+                    nr.push(-row[j])
+                    j += 1
+                }
+                cs.push(Constraint { coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a] })
+            }
+        }
+        a += 1
+    }
+    return cs
+}
+
+// Force every atom the current assignment implies (unit propagation). A node that must come out
+// `want` is conjunctive (and/true, or/false): every kid must too. Disjunctive (or/true,
+// and/false): if no kid is satisfied yet and exactly one could still be, that one is forced.
+// Returns true when it assigned something.
+pub fn propagate(p: &SmtProblem, node: i64, want: bool, asg: &mut Vec<i64>): bool {
+    let kind = p.nodeKind[node]
+    if kind == 0 {
+        let a = p.nodeAtom[node]
+        if asg[a] != 0 {
+            return false
+        }
+        if want {
+            asg[a] = 1
+        } else {
+            asg[a] = 2
+        }
+        return true
+    }
+    if kind == 1 {
+        return propagate(p, p.nodeKids[node][0], !want, &mut asg)
+    }
+    let conj = (kind == 2) == want
+    var changed: bool = false
+    if conj {
+        var i: i64 = 0
+        while i < p.nodeKids[node].len {
+            if propagate(p, p.nodeKids[node][i], want, &mut asg) {
+                changed = true
+            }
+            i += 1
+        }
+        return changed
+    }
+    // evalNode3 is 1 for true, 0 for false: the value that satisfies this disjunct.
+    var satisfying: i64 = 0
+    if !want {
+        satisfying = 0
+    } else {
+        satisfying = 1
+    }
+    var open: i64 = 0
+    var only: i64 = -1
+    var i: i64 = 0
+    while i < p.nodeKids[node].len {
+        let k = evalNode3(p, p.nodeKids[node][i], asg)
+        if k == satisfying {
+            return false
+        }
+        if k == 2 {
+            open += 1
+            only = p.nodeKids[node][i]
+        }
+        i += 1
+    }
+    if open == 1 {
+        return propagate(p, only, want, &mut asg)
+    }
+    return false
+}
+
+// Search state shared down the recursion (a struct, so the budgets survive returns).
+pub struct Search {
+    sawRationalOnly: bool,
+    failedSearches: i64,
+    work: i64,
+    witness: Vec<i64>,
+    found: bool,
+    gaveUp: bool,
+}
+
+// Largest number of Fourier-Motzkin runs one problem may spend before it is Unknown.
+pub let MAX_WORK: i64 = 3000
+
+// Depth-first over the atoms in index order, each level starting from its parent's assignment
+// plus whatever propagation forces. A partial assignment whose induced constraints are
+// infeasible over the rationals is pruned: no completion can be feasible. When the formula is
+// already true under the partial assignment the remaining atoms are irrelevant and the induced
+// constraints of the chosen ones are the whole system to test.
+pub fn dfs(p: &SmtProblem, root: i64, asg0: &Vec<i64>, st: &mut Search): void {
+    if st.found || st.gaveUp {
+        return
+    }
+    var asg: Vec<i64> = []
+    var c: i64 = 0
+    while c < asg0.len {
+        asg.push(asg0[c])
+        c += 1
+    }
+    var rounds: i64 = 0
+    while rounds < 64 && propagate(p, root, true, &mut asg) {
+        rounds += 1
+    }
+    let v = evalNode3(p, root, asg)
+    if v == 0 {
+        return
+    }
+    st.work += 1
+    if st.work > MAX_WORK {
+        st.gaveUp = true
+        return
+    }
+    let cs = inducedConstraints(p, asg)
+    match feasibleRational(cs, p.nvars, p.varIsInt) {
+        Option.None => {
+            // Elimination overflowed: undecided, so no pruning and no proof from this branch.
+            st.sawRationalOnly = true
+        }
+        Option.Some(feasible) => {
+            if !feasible {
+                return
+            }
+            if v == 1 {
+                var w = findWitness(cs, p.nvars, witnessBound(p.nvars), 200000)
+                if w.len == 0 {
+                    let w2 = fmWitness(cs, p.nvars, p.varIsInt)
+                    if w2.len > 0 && satisfiesAll(cs, w2) {
+                        w = w2
+                    }
+                }
+                if w.len > 0 {
+                    st.witness = w
+                    st.found = true
+                    return
+                }
+                // With no integer variable in the system, Fourier-Motzkin is not a
+                // relaxation: it decides the reals exactly, so rational-feasible IS
+                // satisfiable. No vertex is read off, so the witness stays empty and the
+                // caller reports that a counterexample exists without naming it.
+                if allReal(p.varIsInt, p.nvars) {
+                    st.found = true
+                    return
+                }
+                st.sawRationalOnly = true
+                // Each failed search walks up to 8M points; past a few the answer is
+                // Unknown for all practical purposes.
+                st.failedSearches += 1
+                if st.failedSearches >= 3 {
+                    st.gaveUp = true
+                }
+                return
+            }
+        }
+    }
+    var a: i64 = 0
+    while a < p.atomKonst.len && asg[a] != 0 {
+        a += 1
+    }
+    if a == p.atomKonst.len {
+        return
+    }
+    asg[a] = 1
+    dfs(p, root, asg, &mut st)
+    asg[a] = 2
+    dfs(p, root, asg, &mut st)
+}
+
+pub fn decide(p: &SmtProblem, root: i64): Verdict {
+    var asg: Vec<i64> = []
+    var a: i64 = 0
+    while a < p.atomKonst.len {
+        asg.push(0)
+        a += 1
+    }
+    let none: Vec<i64> = []
+    var st = Search { sawRationalOnly: false, failedSearches: 0, work: 0, witness: none, found: false, gaveUp: false }
+    dfs(p, root, asg, &mut st)
+    if st.found {
+        return Verdict.Violated(st.witness)
+    }
+    if st.gaveUp || st.sawRationalOnly {
         return Verdict.Unknown
     }
     return Verdict.Proven

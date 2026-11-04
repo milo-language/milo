@@ -11,16 +11,26 @@
 // tags every obligation with the clause it came from) is the evidence, so a green row means
 // a solver discharged exactly that clause, and a `requires` clause is judged at every call site.
 //
-// Without a profile the matrix is a report. Strict (`--strict`, or a DO-178C `--safety`
-// profile) turns the gaps into errors. TODO(coverage): line/branch coverage of the
-// implementing fns by the verifying tests is a later task; today a test is traced, not run
-// (run `milo test`), and a requirement's "verified" means a `@req` test exists.
-import { existsSync, readFileSync, readdirSync } from "fs";
+// Verification follows DO-333 (formal methods supplement): a low-level requirement (one with a
+// parent) is verified by a PROVEN formalizing clause alone or by a passing test; a high-level
+// requirement (no parent), and any requirement with no formalizing clause, needs a passing test
+// of its own, because a proof checks code against the spec, not that the spec is right or that
+// the binary behaves on target. The matrix says which one verified each requirement.
+//
+// `@req` tests are RUN (each in its own process, through `milo test`) unless `--no-run`.
+//
+// Without a profile the matrix is a report. Strict (`--strict`, or `--safety=<profile>` whose
+// traceability field is "strict") turns the gaps into errors, except those listed in a baseline
+// (`--baseline <file>`, written by `--write-baseline`), which stay warnings so an existing
+// codebase can adopt a profile; a baseline entry that is no longer a gap is reported stale.
+// TODO(coverage): line/branch coverage of the implementing fns by the verifying tests.
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
+import { parseSafetyLevel, traceabilityOf } from "./safety";
 
 export const TRACE_ATTRS = new Set(["req", "assume", "derived", "deactivated"]);
 const ID_RE = /^[A-Za-z0-9_.\-]+$/;
@@ -222,6 +232,11 @@ export interface ClauseRow {
 
 interface SiteRow { fn: string; file: string; line: number }
 
+/** A verifying test and, when the tests were run, whether it passed. */
+interface TestRow extends SiteRow { result?: "PASS" | "FAIL"; output?: string }
+
+export type Verification = "proof" | "test" | "proof+test" | "none";
+
 export interface RequirementRow {
   id: string;
   text: string;
@@ -229,10 +244,12 @@ export interface RequirementRow {
   children: string[];
   implementedBy: (SiteRow & { derived?: true })[];
   formalizedBy: ClauseRow[];
-  verifiedBy: SiteRow[];
+  verifiedBy: TestRow[];
   assumedBy: SiteRow[];
-  /** Own or any descendant's implementation / verifying test: a parent is traced through its children. */
+  /** Own or any descendant's implementation: a parent is traced through its children. */
   implemented: boolean;
+  /** DO-333: see the header. How this requirement is verified, "none" when it is not. */
+  verification: Verification;
   verified: boolean;
 }
 
@@ -248,6 +265,12 @@ export interface TraceReport {
   assumptions: SiteRow[];
   noImplementation: string[];
   noVerifyingTest: string[];
+  /** Every gap strict mode would fail on, with the stable key a baseline lists it by. */
+  gaps: { key: string; message: string }[];
+  /** Gaps the baseline lists: still warnings under strict. */
+  baselined: string[];
+  /** Baseline entries that are no longer gaps: remove them. */
+  staleBaseline: string[];
   /** Formalizing clauses whose verdict is UNKNOWN (waived or not). */
   unknown: number;
   /** Problems with the requirements file or with ids the source uses. Always errors. */
@@ -284,6 +307,10 @@ export interface TraceOptions {
   requirementsPath?: string;
   tests?: string;
   strict: boolean;
+  /** Gap keys that stay warnings under strict. */
+  baseline?: Set<string>;
+  /** Verdict per "<abs file>:<test name>" when the tests were run; absent = not run. */
+  testResults?: Map<string, { pass: boolean; output?: string }>;
 }
 
 export function buildTrace(o: TraceOptions): TraceReport {
@@ -313,6 +340,10 @@ export function buildTrace(o: TraceOptions): TraceReport {
   const rel = (f: string) => relative(dir, f) || f;
   const where = (l: Loc) => `${rel(l.file)}:${l.line}`;
   const site = (d: DeclUse): SiteRow => ({ fn: d.name, file: rel(d.loc.file), line: d.loc.line });
+  const testRow = (d: DeclUse): TestRow => {
+    const r = o.testResults?.get(`${d.loc.file}:${d.name}`);
+    return { ...site(d), ...(r ? { result: r.pass ? "PASS" as const : "FAIL" as const, ...(r.pass || !r.output ? {} : { output: r.output }) } : {}) };
+  };
 
   // Every id the source uses must exist.
   const unknownIds = new Set<string>();
@@ -331,7 +362,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
 
   const rows = new Map<string, RequirementRow>(reqs.map(r => [r.id, {
     id: r.id, text: r.text, ...(r.parent ? { parent: r.parent } : {}), children: [],
-    implementedBy: [], formalizedBy: [], verifiedBy: [], assumedBy: [], implemented: false, verified: false,
+    implementedBy: [], formalizedBy: [], verifiedBy: [], assumedBy: [], implemented: false, verification: "none" as Verification, verified: false,
   }]));
   for (const r of reqs) if (r.parent && rows.has(r.parent)) rows.get(r.parent)!.children.push(r.id);
 
@@ -345,7 +376,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
     if (d.assumes.length) assumptions.push(site(d));
     for (const id of d.assumes) rows.get(id)?.assumedBy.push(site(d));
     if (d.isTest) {
-      for (const id of d.implements) rows.get(id)?.verifiedBy.push(site(d));
+      for (const id of d.implements) rows.get(id)?.verifiedBy.push(testRow(d));
       continue;
     }
     for (const id of d.implements) rows.get(id)?.implementedBy.push(site(d));
@@ -371,15 +402,20 @@ export function buildTrace(o: TraceOptions): TraceReport {
     const r = rows.get(id)!;
     return pick(r) || r.children.some(c => subtreeHas(c, pick, seen));
   };
+  const passingTests = (r: RequirementRow) => r.verifiedBy.filter(t => t.result !== "FAIL").length;
   for (const r of rows.values()) {
     r.implemented = subtreeHas(r.id, x => x.implementedBy.length > 0);
-    r.verified = subtreeHas(r.id, x => x.verifiedBy.length > 0);
+    // DO-333: proof alone verifies only a low-level requirement whose every clause is PROVEN.
+    const byProof = !!r.parent && rows.has(r.parent) && r.formalizedBy.length > 0 && r.formalizedBy.every(c => c.status === "PROVEN");
+    const byTest = passingTests(r) > 0;
+    r.verification = byProof && byTest ? "proof+test" : byProof ? "proof" : byTest ? "test" : "none";
+    r.verified = r.verification !== "none";
   }
   for (const r of rows.values()) {
     for (const c of r.formalizedBy) {
       if (c.status !== "UNKNOWN") continue;
       if (r.assumedBy.some(a => a.fn === c.fn)) c.waived = "assume";
-      else if (r.verified) c.waived = "test";
+      else if (passingTests(r) > 0) c.waived = "test";
     }
   }
 
@@ -387,24 +423,47 @@ export function buildTrace(o: TraceOptions): TraceReport {
   const noVerifyingTest = [...rows.values()].filter(r => !r.verified).map(r => r.id);
   const unknown = [...rows.values()].reduce((n, r) => n + r.formalizedBy.filter(c => c.status === "UNKNOWN").length, 0);
 
-  for (const u of untraced) strictFailures.push(`${u.file}:${u.line}: fn '${u.fn}' has no @req (or @derived / @deactivated)`);
-  for (const id of noImplementation) strictFailures.push(`requirement ${id} has no implementation`);
-  for (const id of noVerifyingTest) strictFailures.push(`requirement ${id} has no verifying test`);
+  // Every gap carries a key that survives edits (no line numbers), so a baseline keeps naming the
+  // same gap after the code around it moves.
+  const gaps: { key: string; message: string }[] = [];
+  const gap = (key: string, message: string) => gaps.push({ key, message });
+  for (const u of untraced) gap(`untraced:${u.fn}`, `${u.file}:${u.line}: fn '${u.fn}' has no @req (or @derived / @deactivated)`);
+  for (const id of noImplementation) gap(`no-implementation:${id}`, `requirement ${id} has no implementation`);
   for (const r of rows.values()) {
+    if (r.verified) continue;
+    const failing = r.verifiedBy.filter(t => t.result === "FAIL");
+    const why = failing.length ? `its verifying test${failing.length > 1 ? "s" : ""} fail (${failing.map(t => t.fn).join(", ")})`
+      : r.parent && r.formalizedBy.length > 0 ? "its clauses are not all PROVEN and no test passes"
+      : r.parent ? "it has no formalizing clause and no test"
+      : "a high-level requirement needs a passing test of its own";
+    gap(`no-verifying-test:${r.id}`, `requirement ${r.id} is not verified: ${why}`);
+  }
+  const failedSeen = new Set<string>();
+  for (const r of rows.values()) {
+    for (const t of r.verifiedBy) {
+      if (t.result === "FAIL" && !failedSeen.has(t.fn)) gap(`test-failed:${t.fn}`, `${t.file}:${t.line}: test '${t.fn}' (${r.id}) FAILED`);
+      if (t.result === "FAIL") failedSeen.add(t.fn);
+    }
     for (const c of r.formalizedBy) {
       const at = `${c.file}:${c.line}`;
+      const id = `${r.id}|${c.fn}|${c.kind}|${c.text}`;
       const siteFailed = (c.callSites ?? []).some(s => s.status === "FAILED");
-      if (c.status === "FAILED" && !siteFailed) strictFailures.push(`${at}: ${c.kind} clause of '${c.fn}' (${r.id}) is FAILED${c.detail ? `: ${c.detail}` : ""}`);
+      if (c.status === "FAILED" && !siteFailed) gap(`clause-failed:${id}`, `${at}: ${c.kind} clause of '${c.fn}' (${r.id}) is FAILED${c.detail ? `: ${c.detail}` : ""}`);
       else if (c.status === "UNKNOWN" && !c.waived) {
-        strictFailures.push(`${at}: ${c.kind} clause of '${c.fn}' (${r.id}) is UNKNOWN${c.detail ? `: ${c.detail}` : ""}; prove it, @assume it, or test it`);
+        gap(`clause-unknown:${id}`, `${at}: ${c.kind} clause of '${c.fn}' (${r.id}) is UNKNOWN${c.detail ? `: ${c.detail}` : ""}; prove it, @assume it, or test it`);
       }
       for (const s of c.callSites ?? []) {
         if (s.status === "FAILED") {
-          strictFailures.push(`${s.file}:${s.line}: call from '${s.caller}' violates ${r.id}: ${c.kind} clause of '${c.fn}'${s.detail ? ` (${s.detail})` : ""}`);
+          gap(`call-site:${id}|${s.caller}`, `${s.file}:${s.line}: call from '${s.caller}' violates ${r.id}: ${c.kind} clause of '${c.fn}'${s.detail ? ` (${s.detail})` : ""}`);
         }
       }
     }
   }
+  const listed = o.baseline ?? new Set<string>();
+  const seenKeys2 = new Set(gaps.map(g => g.key));
+  const baselined = gaps.filter(g => listed.has(g.key)).map(g => g.message);
+  for (const g of gaps) if (!listed.has(g.key)) strictFailures.push(g.message);
+  const staleBaseline = [...listed].filter(k => !seenKeys2.has(k)).sort();
 
   return {
     schema: 1,
@@ -418,6 +477,9 @@ export function buildTrace(o: TraceOptions): TraceReport {
     assumptions,
     noImplementation,
     noVerifyingTest,
+    gaps,
+    baselined,
+    staleBaseline,
     unknown,
     errors,
     strictFailures,
@@ -468,9 +530,10 @@ export function formatTrace(r: TraceReport): string {
       }
     }
     for (const a of row.assumedBy) out.push(`${sub}${pad("assumed")}${a.file}:${a.line} ${a.fn}`);
-    for (const t of row.verifiedBy) out.push(`${sub}${pad("verified")}${t.file}:${t.line} ${t.fn}`);
-    const v2 = via(row.verifiedBy, x => x.verifiedBy.length > 0, row.verified);
-    if (v2) out.push(`${sub}${pad("verified")}${v2}`);
+    if (row.verification === "proof" || row.verification === "proof+test") {
+      out.push(`${sub}${pad("verified")}PROOF     ${row.formalizedBy.length} formalizing clause${row.formalizedBy.length === 1 ? "" : "s"} PROVEN`);
+    }
+    for (const t of row.verifiedBy) out.push(`${sub}${pad("verified")}${(t.result ?? "NOT RUN").padEnd(9)} ${t.file}:${t.line} ${t.fn}`);
     if (!row.verified) out.push(`${sub}${pad("verified")}NONE`);
     for (const c of row.children) show(byId.get(c)!, depth + 1);
   };
@@ -488,6 +551,8 @@ export function formatTrace(r: TraceReport): string {
   if (r.assumptions.length) list("assumptions (trusted, for review)", r.assumptions.map(u => `${u.file}:${u.line} ${u.fn}`));
   if (r.deactivated.length) list("deactivated code", r.deactivated.map(u => `${u.file}:${u.line} ${u.fn}: ${u.reason}`));
   out.push(`unknown: ${r.unknown}`);
+  for (const m of r.baselined) out.push(`warning: baselined gap: ${m}`);
+  for (const k of r.staleBaseline) out.push(`warning: baseline lists a gap that is fixed, remove it: ${k}`);
   if (r.strict) {
     out.push("");
     if (r.strictFailures.length === 0 && r.errors.length === 0) out.push("strict: ok");
@@ -506,6 +571,8 @@ export interface TraceDeps {
   frontend(entry: string): { program: Program; check: unknown };
   /** `milo prove` over the program, default solver unless `z3`. */
   prove(program: Program, check: unknown, entry: string, z3: boolean): ProveResult;
+  /** Run the named tests of one file, each in its own process (`milo test`'s runner). Null: the file would not compile. */
+  runTests(file: string, names: string[]): Map<string, { pass: boolean; output?: string }> | null;
 }
 
 export interface TraceArgs {
@@ -515,6 +582,11 @@ export interface TraceArgs {
   requirements?: string;
   tests?: string;
   z3: boolean;
+  /** Skip running the `@req` tests (--no-run). */
+  noRun?: boolean;
+  /** Gap keys that stay warnings under strict (--baseline). */
+  baseline?: string;
+  writeBaseline?: string;
 }
 
 export function parseTraceArgs(args: string[]): TraceArgs | string {
@@ -524,30 +596,86 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     if (a === "--json") out.json = true;
     else if (a === "--strict") out.strict = true;
     else if (a === "--solver=z3") out.z3 = true;
+    else if (a === "--no-run") out.noRun = true;
+    else if (a === "--baseline" || a === "--write-baseline") {
+      const v = args[++i];
+      if (!v) return `${a} expects a path`;
+      if (a === "--baseline") out.baseline = v; else out.writeBaseline = v;
+    } else if (a.startsWith("--baseline=")) out.baseline = a.slice(11);
+    else if (a.startsWith("--write-baseline=")) out.writeBaseline = a.slice(17);
     else if (a === "--requirements" || a === "--tests") {
       const v = args[++i];
       if (!v) return `${a} expects a path`;
       if (a === "--requirements") out.requirements = v; else out.tests = v;
     } else if (a.startsWith("--requirements=")) out.requirements = a.slice(15);
     else if (a.startsWith("--tests=")) out.tests = a.slice(8);
-    else if (a.startsWith("--safety=")) { if (a.slice(9).startsWith("do178")) out.strict = true; }
+    else if (a.startsWith("--safety=")) {
+      const level = parseSafetyLevel(a.slice(9));
+      if (level && traceabilityOf(level) === "strict") out.strict = true;
+    }
     else if (a.startsWith("-")) continue;
     else if (!out.entry) out.entry = a;
   }
-  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>]";
+  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--baseline <file>] [--write-baseline <file>]";
+}
+
+export interface BaselineFile { schema: 1; gaps: string[] }
+
+export function loadBaseline(path: string): Set<string> {
+  let doc: any;
+  try { doc = JSON.parse(readFileSync(path, "utf-8")); } catch (e: any) { throw new Error(`cannot read baseline ${path}: ${e.message}`); }
+  if (!doc || !Array.isArray(doc.gaps)) throw new Error(`${path}: expected {"schema": 1, "gaps": [...]}`);
+  return new Set(doc.gaps.map(String));
 }
 
 /** Run the trace for an entry; returns the report (strict failures are the caller's exit code). */
 export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   const { program, check } = deps.frontend(a.entry);
   const prove = deps.prove(program, check, a.entry, a.z3);
-  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict });
+  const baseline = a.baseline ? loadBaseline(a.baseline) : undefined;
+  // The @req tests, run once: a first pass finds them, a second builds the report with verdicts.
+  let testResults: Map<string, { pass: boolean; output?: string }> | undefined;
+  if (!a.noRun) {
+    const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict });
+    const entryDir = dirname(resolve(a.entry));
+    const byFile = new Map<string, Set<string>>();
+    for (const r of first.requirements) for (const t of r.verifiedBy) {
+      const abs = resolve(entryDir, t.file);
+      if (!byFile.has(abs)) byFile.set(abs, new Set());
+      byFile.get(abs)!.add(t.fn);
+    }
+    testResults = new Map();
+    for (const [file, names] of byFile) {
+      const res = deps.runTests(file, [...names]);
+      for (const n of names) {
+        const r = res?.get(n);
+        testResults.set(`${file}:${n}`, r ?? { pass: false, output: res ? "test did not run" : "test file did not compile" });
+      }
+    }
+  }
+  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, baseline, testResults });
 }
 
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
   const a = parseTraceArgs(args);
   if (typeof a === "string") { console.error(a); return 1; }
   const rep = traceEntry(a, deps);
+  if (a.writeBaseline) {
+    // A baseline only ever shrinks: writing over an existing one may drop fixed gaps but not add new ones.
+    const keys = rep.gaps.map(g => g.key).sort();
+    if (existsSync(a.writeBaseline)) {
+      const old = loadBaseline(a.writeBaseline);
+      const added = keys.filter(k => !old.has(k));
+      if (added.length) {
+        console.error(`error: ${added.length} gap(s) are not in the existing baseline; a baseline can only shrink, so fix them:`);
+        for (const k of added) console.error(`  ${k}`);
+        return 1;
+      }
+    }
+    writeFileSync(a.writeBaseline, JSON.stringify({ schema: 1, gaps: keys } satisfies BaselineFile, null, 2) + "\n");
+    console.log(`baseline: ${keys.length} gap(s) written to ${a.writeBaseline}`);
+    return 0;
+  }
   if (a.json) process.stdout.write(JSON.stringify(rep, null, 2) + "\n");
   else console.log(formatTrace(rep));
   return rep.ok ? 0 : 1;

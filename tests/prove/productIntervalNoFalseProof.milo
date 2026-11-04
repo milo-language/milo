@@ -1,0 +1,13 @@
+// @proven: 0
+// @failed: 0
+// @unknown: 1
+// The corners reach 200 (10 * 20), so `result <= 199` is false. The interval abstraction is an
+// over-approximation, so it may never turn this into a proof, and it may not claim a
+// counterexample either: the solver's witness need not satisfy result == a * b. Unknown.
+pub fn scale(a: i64, b: i64): i64
+requires a >= -10 && a <= 10
+requires b >= -20 && b <= 20
+ensures result >= -199 && result <= 199
+{
+    return a * b
+}

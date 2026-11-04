@@ -80,9 +80,11 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 `@req(ID)` ties functions, contract clauses and tests to a `requirements.json`, and
 `milo trace` prints the matrix: each requirement's implementation, the `milo prove` verdict of
 each clause that formalizes it (a `requires` is judged at every call site), and its tests.
-`--strict` or a DO-178C `--safety` profile turns an untraced function, a requirement with no
-implementation or test, and an unproved clause into build errors. Line coverage of the
-implementing code by the tests is not built yet. See [contracts & proofs](/language/safety#requirements).
+`milo trace` runs the `@req` tests (`--no-run` skips them). `--strict`, or a `--safety` profile whose
+`traceability` field is `strict`, turns an untraced function, a requirement that is not verified
+(DO-333: a proven low-level requirement or a passing test; a high-level one needs a test), a failing
+test and an unproved clause into errors; a dev `build --safety` only warns, and `--baseline` lets an
+existing codebase adopt a profile. Line coverage of the implementing code by the tests is not built yet. See [contracts & proofs](/language/safety#requirements).
 
 ### Runtime-error proofs, with no annotations
 

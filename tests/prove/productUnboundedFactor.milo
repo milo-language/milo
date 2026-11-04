@@ -1,0 +1,10 @@
+// @proven: 0
+// @unknown: 1
+// One factor has no bound, so there is no interval to substitute: the product stays outside
+// the linear fragment and the claim is unknown, never proven.
+pub fn scale(a: i64, b: i64): i64
+requires a >= -10 && a <= 10
+ensures result >= -200 && result <= 200
+{
+    return a * b
+}

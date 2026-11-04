@@ -4,7 +4,7 @@
 // pidStep overflows for unbounded inputs; that finding is requirement LLR-3 here, written as
 // a `requires` clause so every caller must prove it.
 //
-//   milo trace examples/assured/pid/pid.milo --solver=z3
+//   milo trace examples/assured/pid/pid.milo
 
 // Q16.16: integer value n represents the real number n / 65536.
 pub let FP_SHIFT: i32 = 16
@@ -93,13 +93,24 @@ pub fn controlTick(rawSensor: i32, integral: i32, prevError: i32): i32
 @req(LLR-2)
 requires integral >= -1000000 && integral <= 1000000
 requires prevError >= -65534 && prevError <= 65534
+@req(HLR-1)
+ensures result >= 0 && result <= 16711680
 {
     let one: i32 = 65536
     return pidStep(100, clampInput(rawSensor), one / 2, one / 100, one / 10, integral, prevError, 0, 255 * one)
 }
 
-@req(HLR-1)
-pub fn main(): i32 {
+// The demo harness, not flight code: it drives the controller so the example runs. A derived
+// requirement (DR-1) rather than an implementation of HLR-1, which controlTick implements.
+@derived(DR-1)
+pub fn demoCommand(): i32
+ensures result >= 0 && result <= 255
+{
     let out: i32 = controlTick(1200, 0, 0)
     return out >> 16
+}
+
+@derived(DR-1)
+pub fn main(): i32 {
+    return demoCommand()
 }
