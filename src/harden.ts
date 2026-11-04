@@ -6,6 +6,8 @@
 //   2. for a file with a `main` the reference interpreter runs, stdout and exit code equal
 //      the original's (a differing site is dropped on its own);
 //   3. a second harden run proposes nothing that survives 1 and 2.
+// A file without a `main` (a library) has nothing for 2 to run, so its @req tests (the ones
+// `milo trace` finds) stand in: they must pass before, and the same ones after.
 // A file whose edits cannot all pass is never written; the dropped sites are reported
 // because each one means an analysis proposed something unsound.
 import { readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
@@ -18,6 +20,7 @@ import { resolveImports } from "./resolver";
 import { getHostTarget } from "./target";
 import { ParseError } from "./diagnostics";
 import { applyEdits } from "./fixes";
+import { reqTests, runTestsChild, type TraceDeps } from "./requirements";
 import { findSites, REWRITES, type RewriteName, type Site } from "./harden-rewrites";
 
 const MAIN = join(import.meta.dir, "main.ts");
@@ -36,6 +39,11 @@ export interface FileResult {
   diff: string;
   newSource?: string;
 }
+
+// The seams a test uses: a stub runner, and a rewriter that is wrong on purpose.
+export interface HardenOpts { runTests?: TraceDeps["runTests"]; rewrite?: (src: string, sites: Site[]) => string }
+
+const NO_TESTS = "unverified: library has no @req tests, only the type-check gated it";
 
 interface Checked { errors: string[]; sites: Site[]; hasMain: boolean }
 
@@ -75,9 +83,10 @@ function interp(path: string, source: string): Run {
 
 const sameRun = (a: Run, b: Run) => a.code === b.code && a.stdout === b.stdout;
 const siteText = (src: string, s: Site) => src.slice(s.edits[0]!.offset, s.edits[0]!.offset + Math.max(s.edits[0]!.len, 1)).split("\n")[0]!;
-const apply = (src: string, sites: Site[]) => applyEdits(src, sites.flatMap(s => s.edits));
+const applyAll = (src: string, sites: Site[]) => applyEdits(src, sites.flatMap(s => s.edits));
 
-export function hardenFile(path: string, write: boolean): FileResult {
+export function hardenFile(path: string, write: boolean, opts: HardenOpts = {}): FileResult {
+  const apply = opts.rewrite ?? applyAll;
   const original = readFileSync(path, "utf-8");
   const res: FileResult = { file: path, status: "ok", accepted: [], rejected: [], behaviour: "none", diff: "" };
   const first = check(path, original, true);
@@ -150,10 +159,49 @@ export function hardenFile(path: string, write: boolean): FileResult {
   if (res.accepted.length > 0 && first.hasMain && res.behaviour === "none") res.behaviour = "unverified";
   if (current === original) return res;
 
+  if (!first.hasMain) {
+    const refusal = libraryTests(path, current, opts.runTests ?? runTestsChild, res);
+    if (refusal) return { ...res, status: "failed", note: refusal, accepted: [], diff: "" };
+  }
+
   res.newSource = current;
   res.diff = unifiedDiff(path, original, current);
   if (write) writeFileSync(path, current);
   return res;
+}
+
+// Runs the library's @req tests on the file as it is, then with `current` written over it (the
+// tests import it from disk). The file is restored byte for byte either way; the caller writes
+// `current` only after this returns no refusal.
+function libraryTests(path: string, current: string, runTests: NonNullable<HardenOpts["runTests"]>, res: FileResult): string | null {
+  const tests = reqTests(path);
+  if (tests.length === 0) { res.behaviour = NO_TESTS; return null; }
+  const byFile = new Map<string, string[]>();
+  for (const t of tests) (byFile.get(t.file) ?? byFile.set(t.file, []).get(t.file)!).push(t.name);
+  const runAll = (): Map<string, { pass: boolean }> | string => {
+    const out = new Map<string, { pass: boolean }>();
+    for (const [file, names] of byFile) {
+      const r = runTests(file, names);
+      if (!r) return `tests in ${basename(file)} do not compile`;
+      for (const n of names) if (r.has(n)) out.set(`${basename(file)}:${n}`, r.get(n)!);
+    }
+    return out;
+  };
+  const before = runAll();
+  if (typeof before === "string") return `${before} before the rewrite; refusing`;
+  const red = [...before].find(([, r]) => !r.pass);
+  if (red) return `test ${red[0]} fails before the rewrite; refusing to harden on a red baseline`;
+  const original = readFileSync(path);
+  let after: ReturnType<typeof runAll>;
+  try { writeFileSync(path, current); after = runAll(); } finally { writeFileSync(path, original); }
+  if (typeof after === "string") return `${after} after the rewrite; rejected`;
+  for (const name of before.keys()) {
+    const a = after.get(name);
+    if (!a) return `test ${name} disappeared after the rewrite; rejected`;
+    if (!a.pass) return `test ${name} fails after the rewrite; rejected`;
+  }
+  res.behaviour = "verified";
+  return null;
 }
 
 function unifiedDiff(path: string, before: string, after: string): string {
@@ -224,6 +272,7 @@ export async function runHarden(args: string[]): Promise<number> {
     for (const r of unverified) why.set(r.behaviour === "none" ? "no main" : r.behaviour, (why.get(r.behaviour === "none" ? "no main" : r.behaviour) ?? 0) + 1);
     console.error(`  behaviour not compared (type-check and idempotence only): ${unverified.length} changed file(s): ${[...why].map(([k, v]) => `${v} ${k}`).join(", ")}`);
   }
+  for (const r of changed) if (r.behaviour === NO_TESTS) console.error(`  NOTE ${r.file}: ${NO_TESTS.replace("unverified: ", "")}`);
   for (const r of results) {
     if (r.status === "failed") console.error(`  FAILED ${r.file}: ${r.note}`);
     for (const j of r.rejected) console.error(`  REJECTED ${r.file}:${j.line} ${j.rewrite}: ${j.reason}`);

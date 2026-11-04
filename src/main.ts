@@ -31,7 +31,7 @@ import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
 import { withGcovNotes } from "./coverage";
-import { findRequirementsFile, inEntryProject, requirementsDiagnostics, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
+import { findRequirementsFile, inEntryProject, requirementsDiagnostics, runTestsChild, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
 import { PRESETS, parsePreset, checkPreset, formatPresetReport, type Preset, parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf, minTraceDepthOf } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -349,17 +349,7 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
       return findDeadBranches(program, check, { onlyFile: f => mine(resolve(f)) });
     },
     // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
-    runTests(file, names, coverageDir) {
-      const mainTs = join(import.meta.dir, "main.ts");
-      const compiled = import.meta.dir.startsWith("/$bunfs") || !existsSync(mainTs);
-      const r = spawnSync(process.execPath, [...(compiled ? [] : [mainTs]), "test", "--json", ...(coverageDir ? ["--coverage", coverageDir] : []), file, "-t", `^(${names.join("|")})$`], { encoding: "utf-8", timeout: 600000 });
-      let doc: any;
-      try { doc = JSON.parse(r.stdout ?? ""); } catch { return null; }
-      if (doc.compileErrors?.length) return null;
-      const out = new Map<string, { pass: boolean; output?: string }>();
-      for (const t of doc.tests ?? []) out.set(t.name, { pass: !!t.ok, ...(t.output ? { output: String(t.output).trim().split("\n")[0] } : {}) });
-      return out;
-    },
+    runTests: runTestsChild,
   };
 }
 

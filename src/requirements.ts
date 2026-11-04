@@ -34,6 +34,7 @@
 import type { DeadBranch } from "./dead";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { spawnSync } from "child_process";
 import { coverageOf, coverageToolsError, readCoverage, type CoverageReport, type CoverageSite } from "./coverage";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
@@ -839,6 +840,24 @@ export interface TraceDeps {
   dead?(program: Program, check: unknown, entry: string): DeadBranch[];
   /** Run the named tests of one file, each in its own process (`milo test`'s runner). Null: the file would not compile. */
   runTests(file: string, names: string[], coverageDir?: string): Map<string, { pass: boolean; output?: string }> | null;
+}
+
+/** `milo test --json` in a child process: the same runner (one process per test), no copy of it here. */
+export const runTestsChild: TraceDeps["runTests"] = (file, names, coverageDir) => {
+  const mainTs = join(import.meta.dir, "main.ts");
+  const compiled = import.meta.dir.startsWith("/$bunfs") || !existsSync(mainTs);
+  const r = spawnSync(process.execPath, [...(compiled ? [] : [mainTs]), "test", "--json", ...(coverageDir ? ["--coverage", coverageDir] : []), file, "-t", `^(${names.join("|")})$`], { encoding: "utf-8", timeout: 600000 });
+  let doc: any;
+  try { doc = JSON.parse(r.stdout ?? ""); } catch { return null; }
+  if (doc.compileErrors?.length) return null;
+  const out = new Map<string, { pass: boolean; output?: string }>();
+  for (const t of doc.tests ?? []) out.set(t.name, { pass: !!t.ok, ...(t.output ? { output: String(t.output).trim().split("\n")[0] } : {}) });
+  return out;
+};
+
+/** The @req tests beside `entry`, found the way `milo trace` finds them. */
+export function reqTests(entry: string): { file: string; name: string }[] {
+  return testDecls(entry, undefined, () => true).filter(d => d.isTest && d.implements.length).map(d => ({ file: d.loc.file, name: d.name }));
 }
 
 export interface TraceArgs {

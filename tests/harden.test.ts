@@ -7,6 +7,8 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hardenFile } from "../src/harden";
+import { applyEdits } from "../src/fixes";
+import type { Site } from "../src/harden-rewrites";
 
 // Each case checks and interprets the program a few times; a loaded machine needs the room.
 setDefaultTimeout(120000);
@@ -364,4 +366,81 @@ fn main(): i32 {
   expect(written.status).toBe(0);
   expect(readFileSync(path, "utf-8")).toContain("if let Option.Some(oVal) = o {");
   expect(spawnSync("bun", ["run", MAIN, "interp", path], { encoding: "utf8" }).stdout).toBe("5\n");
+});
+
+// ── libraries: no main, so the @req tests are the behaviour gate ──
+
+const LIB = `pub fn sum(v: &Vec<i64>): i64 {
+    var t: i64 = 0
+    for i in 0..v.len {
+        t += v[i]
+    }
+    return t
+}
+`;
+const LIB_TEST = (expected: number) => `from "std/testing" import { assertEq }
+from "./lib" import { sum }
+
+@req(R-1)
+fn testSum(): void {
+    var v: Vec<i64> = Vec.new()
+    v.push(3)
+    v.push(4)
+    assertEq(sum(v), ${expected})
+}
+`;
+const REQS = JSON.stringify({ requirements: [{ id: "R-1", text: "sum adds the elements" }] });
+
+function lib(testExpected: number | null) {
+  const d = mkdtempSync(join(dir, "lib-"));
+  writeFileSync(join(d, "lib.milo"), LIB);
+  writeFileSync(join(d, "requirements.json"), REQS);
+  if (testExpected !== null) writeFileSync(join(d, "lib_test.milo"), LIB_TEST(testExpected));
+  return join(d, "lib.milo");
+}
+// The production rewrite, then a behaviour change the type-checker cannot see.
+const wrongRewrite = (src: string, sites: Site[]) => applyEdits(src, sites.flatMap(s => s.edits)).replace("return t", "return t + 1");
+
+test("library: a rewrite that keeps its @req tests green is applied", () => {
+  const path = lib(7);
+  const res = hardenFile(path, true);
+  expect(res.status).toBe("ok");
+  expect(res.behaviour).toBe("verified");
+  expect(readFileSync(path, "utf-8")).toContain("for x in v {");
+});
+
+test("library: a behaviour-changing rewrite is rejected, the file is byte-identical and the test is named", () => {
+  const path = lib(7);
+  const res = hardenFile(path, true, { rewrite: wrongRewrite });
+  expect(res.status).toBe("failed");
+  expect(res.note).toContain("testSum fails after the rewrite");
+  expect(readFileSync(path, "utf-8")).toBe(LIB);
+});
+
+test("library: a test that fails before the rewrite refuses it, the file unchanged", () => {
+  const path = lib(99);
+  const res = hardenFile(path, true);
+  expect(res.status).toBe("failed");
+  expect(res.note).toContain("testSum fails before the rewrite");
+  expect(readFileSync(path, "utf-8")).toBe(LIB);
+});
+
+test("library: a test that disappears after the rewrite rejects it", () => {
+  const path = lib(7);
+  let calls = 0;
+  const runTests = (_f: string, names: string[]) => new Map(names.filter(() => calls++ === 0).map(n => [n, { pass: true }]));
+  const res = hardenFile(path, true, { runTests });
+  expect(res.note).toContain("testSum disappeared after the rewrite");
+  expect(readFileSync(path, "utf-8")).toBe(LIB);
+});
+
+test("library: with no tests the rewrite is applied and the result says only the type-check gated it", () => {
+  const path = lib(null);
+  const res = hardenFile(path, true);
+  expect(res.status).toBe("ok");
+  expect(res.behaviour).toBe("unverified: library has no @req tests, only the type-check gated it");
+  expect(readFileSync(path, "utf-8")).toContain("for x in v {");
+  const cli = spawnSync("bun", ["run", MAIN, "harden", lib(null)], { encoding: "utf8" });
+  expect(cli.stderr).toContain("NOTE");
+  expect(cli.stderr).toContain("no @req tests, only the type-check gated it");
 });
