@@ -33,7 +33,7 @@
   "src/interp-co.ts": 248,
   "src/interp-explore.ts": 265,
   "src/interp-ffi.ts": 212,
-  "src/interp-gen.ts": 1076,
+  "src/interp-gen.ts": 978,
   "src/interp-hostfs.ts": 17,
   "src/interp-libc.ts": 424,
   "src/interp-mem.ts": 663,

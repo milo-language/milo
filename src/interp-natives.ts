@@ -145,7 +145,7 @@ export const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Va
   const name = (it.T(e!) as { name: string }).name;
   return v === NONE ? it.mkEnum(name, "None", []) : it.mkEnum(name, "Some", [v]);
 };
-export const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
+const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   const i = v as bigint;
   if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`array index out of bounds: ${i}/${n}`);
   return Number(i);
@@ -201,7 +201,7 @@ nat("string$substr", (it, [self, a, b]) => {
 });
 // The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
 // Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
-export const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
 // R-MEM-LOAD
 function withPtr<T>(it: Interp, p: Value, f: (q: Value) => T): T {
   const held: Value[] = [];

@@ -23,8 +23,9 @@ const ROOT = join(import.meta.dir, "..");
 const SRC = join(ROOT, "src");
 const OUT = join(SRC, "interp-gen.ts");
 const SEEDS = new Set(["runNative"]);
-// a global initializer runs as a plain call (a lookup would otherwise suspend everywhere): one that parks its task is reported unsupported
-const EXCLUDE = new Set(["globalSlot", "run", "runMain"]);
+// user Drop bodies run as plain calls: a drop that parks its task is reported unsupported (making dropValue a suspender would
+// turn every callback that drops, such as a .map over deepClone, into a generator)
+const EXCLUDE = new Set(["userDrop", "globalSlot", "run", "runMain"]);
 // parameters / locals holding a thunk that returns a generator in the twin
 const THUNK_PARAMS = new Set(["arg0", "recv"]);
 // calls of a thunk stored in a property: `arm.run()`

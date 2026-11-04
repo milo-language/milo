@@ -279,7 +279,7 @@ parks, yields or ends: nothing preempts it, so no operation needs a lock.
 | R-REPLAY-OFF | Record/replay is off, as in a binary run with neither MILO_RECORD nor MILO_REPLAY set. |
 
 A task operation that would park cannot run where the interpreter is not on a task's own stack: in a
-global's initializer or a closure a library call runs (`map`, `sort_by`). That is reported
+global's initializer, a user `Drop`, or a closure a library call runs (`map`, `sort_by`). That is reported
 as unsupported, never run wrongly.
 
 ### Contracts

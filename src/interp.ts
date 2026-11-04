@@ -1432,7 +1432,7 @@ export class Interp {
       for (let i = from; i + sep.length <= bytes.length; i++) if (sep.every((c, k) => bytes[i + k] === c)) return i;
       return -1;
     };
-    let pos = 0, idx = 0;
+    let pos = 0, count = 0;
     // lines stop at the end of the bytes; a split yields the piece after a trailing separator too, except for an empty separator
     while (split ? pos <= bytes.length && (sep.length > 0 || pos < bytes.length) : pos < bytes.length) {
       const at = split && sep.length === 0 ? pos + 1 : find(pos);
@@ -1440,7 +1440,7 @@ export class Interp {
       const viewEnd = !split && end > pos && bytes[end - 1] === 13 ? end - 1 : end; // CRLF: the \r ends the line
       const piece = bytes.slice(pos, viewEnd);
       pos = at >= 0 ? end + sep.length : bytes.length + 1;
-      const i = idx++;
+      const i = count++;
       const r = fin(this.loopBody(s, sc => {
         if (s.varName2) this.declare(s.varName, BigInt(i), sc);
         this.declare(s.varName2 ?? s.varName, { k: "ref", slot: { v: { k: "str", b: { bytes: piece, rc: 1, id: -1 } } }, path: [] }, sc);
