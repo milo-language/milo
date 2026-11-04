@@ -1,7 +1,13 @@
 // Requirements traceability at the source level: `@req(ID)` ties code, contract clauses and
 // tests to a requirements.json, and `milo trace <entry.milo>` prints the matrix.
 //
-//   fn / struct / `@!req` file   implements ID
+//   fn / struct                  implements ID
+//   `@!req` file                 stamps ID on every decl; strict mode does NOT count it as tracing a
+//                                fn (listed as "coarse trace"), and a fn whose only links are to
+//                                requirements that have children is "traced too coarsely"
+//
+// A requirement with no formalizing clause is evidence by test alone, so in strict mode at least one
+// of its verifying tests must be able to fail: a test that reaches no assert*/expect* call cannot.
 //   requires / ensures / invariant clause (attribute written before it)   formalizes ID
 //   test* fn                     verifies ID
 //   @assume(ID) fn               a trusted axiom, listed for review
@@ -28,6 +34,7 @@ import type { DeadBranch } from "./dead";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
+import { walkExprs } from "./safety";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
@@ -152,14 +159,47 @@ interface DeclUse {
   decl: "fn" | "struct";
   isTest: boolean;
   implements: string[];
+  /** Ids from the decl's own `@req`, without the ones a file-level `@!req` stamped on every decl. */
+  ownReq: string[];
+  /** The body reaches an assert or expect call, directly or through helpers: a test without one cannot fail. */
+  canFail: boolean;
   derived: string[];
   assumes: string[];
   deactivated?: string;
   clauses: ClauseUse[];
 }
 
-const idsOf = (attrs: Attribute[] | undefined, name: string): string[] =>
-  (attrs ?? []).filter(a => a.name === name && a.args.length > 0).map(a => a.args[0]!);
+const idsOf = (attrs: Attribute[] | undefined, name: string, inner?: boolean): string[] =>
+  (attrs ?? []).filter(a => a.name === name && a.args.length > 0 && (inner === undefined || !!a.inner === inner)).map(a => a.args[0]!);
+
+const ASSERT_RE = /^(assert|expect)/;
+
+function callsOf(fn: Function): string[] {
+  const out = new Set<string>();
+  walkExprs(fn.body ?? [], e => {
+    if (e.kind === "Call") out.add(e.func);
+    else if (e.kind === "MethodCall") out.add(e.method);
+  });
+  return [...out];
+}
+
+/** Per fn name: whether it reaches an assert or expect call through the program's own fns. Matched by bare name. */
+function assertReach(fns: { fn: Function }[]): (fn: Function) => boolean {
+  const calls = new Map<string, string[]>();
+  for (const { fn } of fns) calls.set(fn.name, [...(calls.get(fn.name) ?? []), ...callsOf(fn)]);
+  const memo = new Map<string, boolean>();
+  const reach = (name: string, seen: Set<string>): boolean => {
+    if (ASSERT_RE.test(name)) return true;
+    if (memo.has(name)) return memo.get(name)!;
+    if (seen.has(name)) return false;
+    seen.add(name);
+    const r = (calls.get(name) ?? []).some(c => reach(c, seen));
+    // A negative found while a cycle was cut short may be incomplete; only cache positives.
+    if (r) memo.set(name, true);
+    return r;
+  };
+  return fn => callsOf(fn).some(c => reach(c, new Set([fn.name])));
+}
 
 const lineCache = new Map<string, string[]>();
 function sourceLine(file: string, line: number): string {
@@ -171,6 +211,7 @@ function sourceLine(file: string, line: number): string {
 
 function declUses(fns: { fn: Function; name: string }[], structs: Program["structs"], inProject: (f: string) => boolean): DeclUse[] {
   const out: DeclUse[] = [];
+  const canFail = assertReach(fns);
   const clausesOf = (contracts: Contract[], file: string): ClauseUse[] =>
     contracts.filter(c => idsOf(c.attributes, "req").length > 0).map(c => ({
       contract: c, kind: c.kind, ids: idsOf(c.attributes, "req"),
@@ -187,7 +228,7 @@ function declUses(fns: { fn: Function; name: string }[], structs: Program["struc
       name, loc: { file, line: fn.span?.line ?? 0 }, decl: "fn",
       // A test follows the `milo test` convention: top-level `test*`, no parameters.
       isTest: fn.name.startsWith("test") && fn.params.length === 0 && fn.typeParams.length === 0,
-      implements: idsOf(a, "req"), derived: idsOf(a, "derived"), assumes: idsOf(a, "assume"),
+      implements: idsOf(a, "req"), ownReq: idsOf(a, "req", false), canFail: canFail(fn), derived: idsOf(a, "derived"), assumes: idsOf(a, "assume"),
       ...(idsOf(a, "deactivated").length ? { deactivated: idsOf(a, "deactivated")[0] } : {}),
       clauses: clausesOf(fn.contracts, file),
     });
@@ -200,7 +241,7 @@ function declUses(fns: { fn: Function; name: string }[], structs: Program["struc
     const derived = idsOf(s.attributes, "derived");
     const clauses = clausesOf(s.invariants ?? [], file);
     if (ids.length || derived.length || clauses.length) {
-      out.push({ name: s.name, loc: { file, line: s.span?.line ?? 0 }, decl: "struct", isTest: false, implements: ids, derived, assumes: [], clauses });
+      out.push({ name: s.name, loc: { file, line: s.span?.line ?? 0 }, decl: "struct", isTest: false, implements: ids, ownReq: idsOf(s.attributes, "req", false), canFail: false, derived, assumes: [], clauses });
     }
   }
   return out;
@@ -259,7 +300,7 @@ export interface ClauseRow {
 interface SiteRow { fn: string; file: string; line: number }
 
 /** A verifying test and, when the tests were run, whether it passed. */
-interface TestRow extends SiteRow { result?: "PASS" | "FAIL"; output?: string }
+interface TestRow extends SiteRow { result?: "PASS" | "FAIL"; output?: string; /** No assert/expect call is reachable: the test cannot fail. */ cannotFail?: true }
 
 export type Verification = "proof" | "test" | "proof+test" | "none";
 
@@ -291,6 +332,10 @@ export interface TraceReport {
   strict: boolean;
   requirements: RequirementRow[];
   untracedFns: SiteRow[];
+  /** Fns whose only link is a file-level `@!req`: traced coarsely (a gap under strict). */
+  coarseTrace: SiteRow[];
+  /** Fns whose only links are to requirements that have children: name the child (a gap under strict). */
+  tooCoarse: (SiteRow & { ids: string[] })[];
   derived: SiteRow[];
   deactivated: (SiteRow & { reason: string })[];
   /** DO-178C dead code: branches and loop bodies proved unreachable. Empty when the prover did not look. */
@@ -377,7 +422,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
   const site = (d: DeclUse): SiteRow => ({ fn: d.name, file: rel(d.loc.file), line: d.loc.line });
   const testRow = (d: DeclUse): TestRow => {
     const r = o.testResults?.get(`${d.loc.file}:${d.name}`);
-    return { ...site(d), ...(r ? { result: r.pass ? "PASS" as const : "FAIL" as const, ...(r.pass || !r.output ? {} : { output: r.output }) } : {}) };
+    return { ...site(d), ...(d.canFail ? {} : { cannotFail: true as const }), ...(r ? { result: r.pass ? "PASS" as const : "FAIL" as const, ...(r.pass || !r.output ? {} : { output: r.output }) } : {}) };
   };
 
   // Every id the source uses must exist.
@@ -402,6 +447,8 @@ export function buildTrace(o: TraceOptions): TraceReport {
   for (const r of reqs) if (r.parent && rows.has(r.parent)) rows.get(r.parent)!.children.push(r.id);
 
   const untraced: SiteRow[] = [];
+  const coarseTrace: SiteRow[] = [];
+  const tooCoarse: (SiteRow & { ids: string[] })[] = [];
   const derivedFns: SiteRow[] = [];
   const deactivated: (SiteRow & { reason: string })[] = [];
   const assumptions: SiteRow[] = [];
@@ -417,6 +464,11 @@ export function buildTrace(o: TraceOptions): TraceReport {
     for (const id of d.implements) rows.get(id)?.implementedBy.push(site(d));
     for (const id of d.derived) rows.get(id)?.implementedBy.push({ ...site(d), derived: true });
     if (d.decl === "fn" && d.deactivated === undefined && !d.implements.length && !d.derived.length) untraced.push(site(d));
+    if (d.decl === "fn" && d.deactivated === undefined && !d.derived.length && d.implements.length) {
+      const own = d.ownReq;
+      if (own.length === 0) coarseTrace.push(site(d));
+      else if (own.every(id => (rows.get(id)?.children.length ?? 0) > 0)) tooCoarse.push({ ...site(d), ids: own });
+    }
     for (const c of d.clauses) {
       const v = proveVerdict(o.prove, c.contract);
       for (const id of c.ids) {
@@ -463,8 +515,14 @@ export function buildTrace(o: TraceOptions): TraceReport {
   const gaps: { key: string; message: string }[] = [];
   const gap = (key: string, message: string) => gaps.push({ key, message });
   for (const u of untraced) gap(`untraced:${u.fn}`, `${u.file}:${u.line}: fn '${u.fn}' has no @req (or @derived / @deactivated)`);
+  for (const u of coarseTrace) gap(`coarse-trace:${u.fn}`, `${u.file}:${u.line}: fn '${u.fn}' is traced only by a file-level @!req; give it its own @req (or @derived)`);
+  for (const u of tooCoarse) gap(`too-coarse:${u.fn}`, `${u.file}:${u.line}: fn '${u.fn}' traces too coarsely: ${u.ids.join(", ")} ha${u.ids.length === 1 ? "s" : "ve"} child requirements; link the fn to the one it implements`);
   for (const id of noImplementation) gap(`no-implementation:${id}`, `requirement ${id} has no implementation`);
   for (const r of rows.values()) {
+    // No clause formalizes it, so a test is the only evidence; a test with no assertion proves nothing.
+    if (r.formalizedBy.length === 0 && r.verifiedBy.length > 0 && r.verifiedBy.every(t => t.cannotFail)) {
+      gap(`cannot-fail:${r.id}`, `requirement ${r.id} has no formalizing clause and its verifying test${r.verifiedBy.length > 1 ? "s" : ""} (${r.verifiedBy.map(t => t.fn).join(", ")}) cannot fail: no assert/expect call`);
+    }
     if (r.verified) continue;
     const failing = r.verifiedBy.filter(t => t.result === "FAIL");
     const why = failing.length ? `its verifying test${failing.length > 1 ? "s" : ""} fail (${failing.map(t => t.fn).join(", ")})`
@@ -517,6 +575,8 @@ export function buildTrace(o: TraceOptions): TraceReport {
     strict: o.strict,
     requirements: [...rows.values()],
     untracedFns: untraced,
+    coarseTrace,
+    tooCoarse,
     derived: derivedFns,
     deactivated,
     deadBranches,
@@ -581,7 +641,7 @@ export function formatTrace(r: TraceReport): string {
     if (row.verification === "proof" || row.verification === "proof+test") {
       out.push(`${sub}${pad("verified")}PROOF     ${row.formalizedBy.length} formalizing clause${row.formalizedBy.length === 1 ? "" : "s"} PROVEN`);
     }
-    for (const t of row.verifiedBy) out.push(`${sub}${pad("verified")}${(t.result ?? "NOT RUN").padEnd(9)} ${t.file}:${t.line} ${t.fn}`);
+    for (const t of row.verifiedBy) out.push(`${sub}${pad("verified")}${(t.result ?? "NOT RUN").padEnd(9)} ${t.file}:${t.line} ${t.fn}${t.cannotFail ? "  (cannot fail: no assert/expect)" : ""}`);
     if (!row.verified) out.push(`${sub}${pad("verified")}NONE`);
     for (const c of row.children) show(byId.get(c)!, depth + 1);
   };
@@ -593,6 +653,8 @@ export function formatTrace(r: TraceReport): string {
     for (const i of items) out.push(`  ${i}`);
   };
   list("untraced fns", r.untracedFns.map(u => `${u.file}:${u.line} ${u.fn}`));
+  if (r.coarseTrace.length) list("coarse trace (only a file-level @!req)", r.coarseTrace.map(u => `${u.file}:${u.line} ${u.fn}`));
+  if (r.tooCoarse.length) list("traced too coarsely (only a parent requirement)", r.tooCoarse.map(u => `${u.file}:${u.line} ${u.fn} -> ${u.ids.join(", ")}`));
   list("requirements with no implementation", r.noImplementation);
   list("requirements with no verifying test", r.noVerifyingTest);
   if (r.derived.length) list("derived (feed back to the system level)", r.derived.map(u => `${u.file}:${u.line} ${u.fn}`));

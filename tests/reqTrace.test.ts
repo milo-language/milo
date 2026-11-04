@@ -260,13 +260,15 @@ test("the pid demo's trace --json has the documented shape and is strict-clean",
   expect(r.code).toBe(0);
   const rep = JSON.parse(r.out);
   expect(Object.keys(rep).sort()).toEqual([
-    "assumptions", "baselined", "deactivated", "deadBranches", "derived", "entry", "errors", "gaps", "noImplementation", "noVerifyingTest", "ok",
-    "requirements", "requirementsFile", "schema", "staleBaseline", "strict", "strictFailures", "unknown", "untracedFns",
+    "assumptions", "baselined", "coarseTrace", "deactivated", "deadBranches", "derived", "entry", "errors", "gaps", "noImplementation", "noVerifyingTest", "ok",
+    "requirements", "requirementsFile", "schema", "staleBaseline", "strict", "strictFailures", "tooCoarse", "unknown", "untracedFns",
   ]);
   expect(rep.requirements.map((q: any) => q.id)).toEqual(["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].sort((a, b) => ["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].indexOf(a) - ["HLR-1", "DR-1", "HLR-2", "LLR-1", "LLR-2", "LLR-3"].indexOf(b)));
   // The harness is derived, not an implementation of HLR-1 (DO-178C: a test harness is not flight code)
   const hlr1 = rep.requirements.find((q: any) => q.id === "HLR-1");
-  expect(hlr1.implementedBy.map((i: any) => i.fn)).toEqual(["controlTick"]);
+  // controlTick links to the child it implements (LLR-3), not to the parent: HLR-1 is traced through its children
+  expect(hlr1).toMatchObject({ implemented: true, implementedBy: [] });
+  expect(rep.requirements.find((q: any) => q.id === "LLR-3").implementedBy.map((i: any) => i.fn)).toContain("controlTick");
   expect(rep.requirements.find((q: any) => q.id === "DR-1").implementedBy.map((i: any) => i.fn)).toEqual(["demoCommand", "main"]);
   // every @req test ran and passed
   expect(rep.requirements.flatMap((q: any) => q.verifiedBy).every((t: any) => t.result === "PASS")).toBe(true);
@@ -461,3 +463,57 @@ test("milo trace std/json.milo --strict is ok and docs/site/stdlib/json.md lists
   const missing = r.requirements.map((q: any) => q.id).filter((id: string) => !doc.includes("`" + id + "`"));
   expect(missing).toEqual([]);
 }, 180000);
+
+// ── strict: coarse traces and tests that cannot fail ──
+
+test("strict: a file-level @!req is a coarse trace and a parent-only link is too coarse; own child links clear both", () => {
+  const bare = CODE.replace(/@req\(LLR-1\)\n/g, "");
+  const p = project({ "a.milo": `@!req(LLR-1)\n\n${bare}`, "a_test.milo": TEST, "requirements.json": REQS });
+  try {
+    // dev mode lists the fn but does not fail
+    const dev = JSON.parse(trace(p).out);
+    expect(dev.ok).toBe(true);
+    expect(dev.coarseTrace.map((f: any) => f.fn)).toEqual(["inc"]);
+    expect(dev.untracedFns).toEqual([]);
+    expect(milo(["trace", p.entry, "--no-run"]).out).toContain("coarse trace");
+    // strict fails on it
+    expect(failures(p).some(m => m.includes("fn 'inc' is traced only by a file-level @!req"))).toBe(true);
+    // a fn's own @req clears it, even beside the file-level one
+    p.write("a.milo", `@!req(LLR-1)\n\n${CODE}`);
+    expect(trace(p, "--strict").code).toBe(0);
+
+    // only the parent: too coarse
+    p.write("a.milo", CODE.replace("@req(LLR-1)\npub fn", "@req(HLR-1)\npub fn"));
+    const coarse = failures(p);
+    expect(coarse.some(m => m.includes("fn 'inc' traces too coarsely: HLR-1 has child requirements"))).toBe(true);
+    expect(JSON.parse(trace(p).out).tooCoarse.map((f: any) => f.fn)).toEqual(["inc"]);
+    p.write("a.milo", CODE);
+    expect(trace(p, "--strict").code).toBe(0);
+  } finally { p.done(); }
+}, 120000);
+
+test("strict: a requirement with no formalizing clause needs a verifying test that can fail", () => {
+  const noClause = "@req(LLR-1)\npub fn inc(x: i64): i64 {\n    return x + 1\n}\n";
+  const noAssert = TEST.replace("assertEq(inc(1), 2)", "let _y = inc(1)");
+  const p = project({ "a.milo": noClause, "a_test.milo": noAssert, "requirements.json": REQS });
+  try {
+    const rep = JSON.parse(trace(p, "--strict").out);
+    expect(rep.strictFailures.some((m: string) => m.includes("requirement LLR-1 has no formalizing clause") && m.includes("cannot fail"))).toBe(true);
+    expect(rep.requirements.find((r: any) => r.id === "LLR-1").verifiedBy[0].cannotFail).toBe(true);
+    expect(trace(p).code).toBe(0); // a report run only lists it
+    expect(milo(["trace", p.entry, "--no-run"]).out).toContain("cannot fail");
+
+    // an assertion in a helper the test calls counts
+    p.write("a_test.milo", noAssert.replace("let _y = inc(1)", "check(inc(1))") + `\nfn check(v: i64): void {\n    assertEq(v, 2)\n}\n`);
+    expect(trace(p, "--strict").code).toBe(0);
+    // so does one in the test itself
+    p.write("a_test.milo", TEST);
+    expect(trace(p, "--strict").code).toBe(0);
+
+    // a proven clause is the evidence instead, so the assertion-free test is not flagged
+    p.write("a.milo", CODE);
+    p.write("a_test.milo", noAssert);
+    // (the parent HLR-1 has no clause, so its assertion-free test is still flagged)
+    expect(failures(p).filter(m => m.includes("cannot fail")).map(m => m.split(" ")[1])).toEqual(["HLR-1"]);
+  } finally { p.done(); }
+}, 120000);

@@ -81,11 +81,16 @@ Duplicate names are accepted: every member is kept in source order, and a lookup
 returns the first (`JSON-DUP-NAMES`).
 
 The matrix, as `milo trace std/json.milo` prints it (condensed to one row per requirement;
-`JSON-API` is the module-wide `@!req` that covers the accessors, cursors and builders):
+`JSON-API` and its children cover the accessors, cursors, index chains and errors; `JSON-BUILD` the builders; `JSON-POOL` is a derived requirement for the node pool):
 
 | Requirement | Implemented by | Clauses | Verified by |
 |---|---|---|---|
-| `JSON-API` | every fn (`@!req`) |  | test, 1 test |
+| `JSON-API` | (through children) |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-GET` | Json.at, Json.asStr, Json.len, Json.keys, ... |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-PATH` | Json.path, Json.curPath, Json.strPath, ... |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-CURSOR` | Json.curRoot, Json.curChild, Json.curLen, ... |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-INDEX` | Json.idxRoot, Json.idxKey, Json.idxPos, ... |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-ERROR` | JsonError.path, JsonError.message, jsonKindName, ... |  | test, 1 test |
 | `JSON-PARSE` | jsonParse, Json.parse |  | test, 1 test |
 | &nbsp;&nbsp;`JSON-TEXT` | jsonParse, JsonParser.parseValue |  | test, 2 tests |
 | &nbsp;&nbsp;`JSON-WS` | jsonSkipWs |  | test, 2 tests |
@@ -107,7 +112,8 @@ The matrix, as `milo trace std/json.milo` prints it (condensed to one row per re
 | &nbsp;&nbsp;`JSON-SER-GRAMMAR` | jsonSer |  | test, 1 test |
 | &nbsp;&nbsp;`JSON-SER-NUM` | jsonSer, jsonFloatStr |  | test, 1 test |
 | &nbsp;&nbsp;`JSON-SER-ROUNDTRIP` | jsonMaterializeStr, jsonEscapeStr, jsonSer, jsonFloatStr |  | test, 1 test |
-| &nbsp;&nbsp;`JSON-SER-PRETTY` | jsonPretty |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-SER-PRETTY` | jsonPretty, Json.pretty |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-BUILD` | JsonObj.str, JsonObj.build, JsonArr.build, ... |  | test, 1 test |
 | `JSON-JSONC` | jsoncParse, Json.parseJsonc |  | test, 2 tests |
 | &nbsp;&nbsp;`JSON-JSONC-COMMENTS` | jsonStripJsonc |  | test, 1 test |
 | &nbsp;&nbsp;`JSON-JSONC-TRAILING` | jsonStripJsonc |  | test, 1 test |
@@ -119,6 +125,7 @@ The matrix, as `milo trace std/json.milo` prints it (condensed to one row per re
 | `JSON-SAFE` | (through children) |  | test, 2 tests |
 | &nbsp;&nbsp;`JSON-SAFE-BOUNDS` | jsonNodeInt, jsonNodeUint, jsonSkipWs, jsonUtf8SeqLen, ... | 6/6 proven | proof+test, 1 test |
 | &nbsp;&nbsp;`JSON-SAFE-ARITH` | jsonNodeInt, jsonNodeUint |  | test, 1 test |
+| `JSON-POOL` | jsonNew* and jsonNode* pool helpers (derived) |  | test, 1 test |
 
 Clauses are the `requires` / `ensures` the prover discharged. `milo prove std/json.milo --rte`
 also proves, for `jsonUtf8SeqLen`, `jsonScanString`, `jsonScanNumber`, `jsonLitAt`,

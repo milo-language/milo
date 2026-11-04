@@ -134,7 +134,7 @@ $ milo trace examples/assured/pid/pid.milo --strict
 requirements trace: examples/assured/pid/pid.milo  (examples/assured/pid/requirements.json, 6 requirements)
 
 HLR-1  The actuator command shall always lie within the configured output range.
-  implemented   pid.milo:92 controlTick
+  implemented   (through LLR-1, LLR-3)
   formalized    PROVEN   pid.milo:97 ensures result >= 0 && result <= 16711680  [controlTick]
   verified      PASS      pid_test.milo:15 testStepOutputWithinRange
 
@@ -150,6 +150,7 @@ HLR-1  The actuator command shall always lie within the configured output range.
   LLR-3  Sensor and setpoint shall be within +/-32767 (gains within +/-16.0 in Q16.16), so no intermediate value overflows i32.
     implemented   pid.milo:13 fpMul
     implemented   pid.milo:83 clampInput  (derived)
+    implemented   pid.milo:92 controlTick
     formalized    PROVEN   pid.milo:15 requires a >= -1048576 && a <= 1048576  [fpMul]
                 call site PROVEN  pid.milo:63 pidStep
                 call site PROVEN  pid.milo:64 pidStep
@@ -232,6 +233,7 @@ requirements trace: examples/assured/pid/pid_bad_caller.milo  (examples/assured/
   LLR-3  Sensor and setpoint shall be within +/-32767 (gains within +/-16.0 in Q16.16), so no intermediate value overflows i32.
     implemented   pid.milo:13 fpMul
     implemented   pid.milo:83 clampInput  (derived)
+    implemented   pid.milo:92 controlTick
     formalized    PROVEN   pid.milo:15 requires a >= -1048576 && a <= 1048576  [fpMul]
                 call site PROVEN  pid.milo:63 pidStep
                 call site PROVEN  pid.milo:64 pidStep
@@ -403,8 +405,7 @@ requirement:
 ```text
 $ milo trace examples/assured/pid/pid.milo --no-run --object pid_m3
 HLR-1  The actuator command shall always lie within the configured output range.
-  implemented   pid.milo:92 controlTick
-  object        0x7cc-0x8ee (290 B) controlTick  lines 94-100
+  implemented   (through LLR-1, LLR-3)
   ...
   LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
     implemented   pid.milo:27 clampI32

@@ -3,8 +3,6 @@
 // String values stored as offsets into source — zero allocation during parse.
 // ~6 allocations total for any document size.
 
-@!req("JSON-API")
-
 // kind: 0=null 1=bool 2=number 3=string 4=array 5=object
 //
 // 24 bytes, down from 56 with one named field per kind: the pool is the parse's
@@ -27,12 +25,14 @@ pub struct JsonNode {
     b: i64,
 }
 
+@derived(JSON-POOL)
 fn jsonNewNull(): JsonNode {
     return JsonNode {
         kind: 0, a: 0, b: 0
     }
 }
 
+@derived(JSON-POOL)
 fn jsonNewBool(v: bool): JsonNode {
     if v {
         return JsonNode {
@@ -44,6 +44,7 @@ fn jsonNewBool(v: bool): JsonNode {
     }
 }
 
+@derived(JSON-POOL)
 fn jsonNewStr(start: i64, len: i64): JsonNode {
     return JsonNode {
         kind: 3, a: start, b: len
@@ -54,6 +55,7 @@ fn jsonNewStr(start: i64, len: i64): JsonNode {
 // punning its bits through a raw pointer to fit the 24-byte node. The table keeps
 // the node pointer-free and costs 8 bytes per number, against the 8 bytes per node
 // the 24-byte layout saved.
+@derived(JSON-POOL)
 fn jsonNewNum(numIdx: i64, start: i64, len: i64): JsonNode {
     return JsonNode {
         kind: 2, a: numIdx, b: (start << 32) | len
@@ -63,6 +65,7 @@ fn jsonNewNum(numIdx: i64, start: i64, len: i64): JsonNode {
 // `kind` is 4 (array) or 5 (object). Asserted rather than relying on the pool
 // cap alone: the cap is checked after the parse, and this is the one pack that
 // jsonExtractSubtree also performs outside jsonParse.
+@derived(JSON-POOL)
 fn jsonNewContainer(kind: i32, childStart: i64, childCount: i64, keyStart: i64): JsonNode {
     assert(childCount <= 0xFFFFFFFF && keyStart <= 0x7FFFFFFF, "json: container exceeds 2^32 children or 2^31 keys, node cannot pack it")
     return JsonNode {
@@ -70,15 +73,18 @@ fn jsonNewContainer(kind: i32, childStart: i64, childCount: i64, keyStart: i64):
     }
 }
 
+@derived(JSON-POOL)
 fn jsonNodeBool(n: &JsonNode): bool {
     return n.a != 0
 }
 
+@derived(JSON-POOL)
 fn jsonNodeNum(nums: &Vec<f64>, n: &JsonNode): f64 {
     return nums[n.a]
 }
 
 // Source span of a string (kind 3) or number literal (kind 2).
+@derived(JSON-POOL)
 fn jsonNodeStrStart(n: &JsonNode): i64 {
     if n.kind == 2 {
         return n.b >> 32
@@ -86,6 +92,7 @@ fn jsonNodeStrStart(n: &JsonNode): i64 {
     return n.a
 }
 
+@derived(JSON-POOL)
 fn jsonNodeStrLen(n: &JsonNode): i64 {
     if n.kind == 2 {
         return n.b & 0xFFFFFFFF
@@ -93,12 +100,14 @@ fn jsonNodeStrLen(n: &JsonNode): i64 {
     return n.b
 }
 
+@derived(JSON-POOL)
 fn jsonNodeChildStart(n: &JsonNode): i64 {
     return n.a
 }
 
 // 0 for a scalar, as the dedicated field was: len() and jsonExtractSubtree ask
 // without checking the kind first, and a string's b is its length.
+@derived(JSON-POOL)
 fn jsonNodeChildCount(n: &JsonNode): i64 {
     if n.kind < 4 {
         return 0
@@ -106,6 +115,7 @@ fn jsonNodeChildCount(n: &JsonNode): i64 {
     return n.b & 0xFFFFFFFF
 }
 
+@derived(JSON-POOL)
 fn jsonNodeKeyStart(n: &JsonNode): i64 {
     return n.b >> 32
 }
@@ -139,10 +149,12 @@ pub struct Json {
 // -1 stays the "nothing here" cursor: brands fit 31 bits, so every packed
 // cursor is positive and `cur < 0` still separates missing from present.
 
+@req(JSON-CURSOR)
 fn jsonCurPack(docId: i64, idx: i64): i64 {
     return (docId << 32) | idx
 }
 
+@req(JSON-CURSOR)
 fn jsonCurIdx(cur: i64): i64 {
     return cur & 0xFFFFFFFF
 }
@@ -156,6 +168,7 @@ fn jsonCurIdx(cur: i64): i64 {
 // tolerant probe): the accessors abort, and curHolds is the branch point for
 // a cursor of unknown origin. A hand-built integer cursor carries brand 0,
 // which no document ever has, so the old raw-index habit fails closed too.
+@req(JSON-CURSOR)
 fn jsonCurResolve(doc: &Json, cur: i64): i64 {
     if cur < 0 {
         return -1
@@ -169,6 +182,7 @@ fn jsonCurResolve(doc: &Json, cur: i64): i64 {
 // on Promise.blocking worker threads, not only the scheduler thread.
 var nextJsonDocId: i64 = 1
 
+@req(JSON-CURSOR)
 fn jsonMintDocId(): i64 {
     var b: i64 = 0
     unsafe {
@@ -431,6 +445,9 @@ impl Json {
     // the document owns its source, so this copies once. A caller done with its owned
     // buffer can hand it to `jsonParse` and skip the copy.
     @req(JSON-PARSE)
+    @req(JSON-TEXT)
+    @req(JSON-DEPTH)
+    @req(JSON-BOM)
     fn parse(s: &string): Result<Json> {
         return jsonParse(s.clone())
     }
@@ -438,16 +455,21 @@ impl Json {
     // Parse JSON with JSONC extensions (comments, trailing commas). Borrows like `parse`;
     // `jsoncParse` is the owned form.
     @req(JSON-JSONC)
+    @req(JSON-JSONC-STRICT)
+    @req(JSON-JSONC-COMMENTS)
+    @req(JSON-JSONC-TRAILING)
     fn parseJsonc(s: &string): Result<Json> {
         return jsoncParse(s.clone())
     }
 
     // New empty object builder: Json.obj().set("k", ...).build().
+    @req(JSON-BUILD)
     fn obj(): JsonObj {
         return jsonObj()
     }
 
     // New empty array builder.
+    @req(JSON-BUILD)
     fn arr(): JsonArr {
         return jsonArr()
     }
@@ -557,6 +579,7 @@ impl Json {
 
     // Element `index` of an array as its own `Json`, or None if this is not an array or
     // the index is out of range. Deep-clones like `get`.
+    @req(JSON-GET)
     fn at(self: &Self, index: i64): Option<Json> {
         let node = self.nodes[self.root]
         if node.kind != 4 || index < 0 || index >= jsonNodeChildCount(node) {
@@ -592,10 +615,12 @@ impl Json {
     // — which reads better but pays one deep clone per hop. Both replaced the family
     // of fixed-shape accessors (`strAt`, `childI64At`, …) this module used to carry;
     // see docs/breaking-changes.md.
+    @req(JSON-CURSOR)
     fn curRoot(self: &Self): i64 {
         return jsonCurPack(self._docId, self.root)
     }
 
+    @req(JSON-CURSOR)
     fn curChild(self: &Self, cur: i64, index: i64): i64 {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -626,6 +651,7 @@ impl Json {
         return -1
     }
 
+    @req(JSON-CURSOR)
     fn curLen(self: &Self, cur: i64): i64 {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -640,6 +666,7 @@ impl Json {
 
     // Node kind at the cursor: 0 null, 1 bool, 2 number, 3 string, 4 array,
     // 5 object; -1 if the cursor is invalid.
+    @req(JSON-CURSOR)
     fn curKind(self: &Self, cur: i64): i32 {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -651,6 +678,7 @@ impl Json {
     // Whether `cur` is a cursor into THIS document (and in range). Branch on
     // this for a cursor you did not navigate to yourself; the accessors abort
     // on a foreign cursor instead. False for -1. Mirrors Sealed.holds.
+    @req(JSON-CURSOR)
     fn curHolds(self: &Self, cur: i64): bool {
         if cur < 0 {
             return false
@@ -701,6 +729,7 @@ impl Json {
         return Option.None
     }
 
+    @req(JSON-CURSOR)
     fn curBool(self: &Self, cur: i64): Option<bool> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -716,6 +745,7 @@ impl Json {
     // The JSON text of the node at `cur`, as `rawStr` gives for a whole document; ""
     // for a missing cursor. Splicing a subtree into output this way costs one walk of
     // that subtree, where `get`/`at` plus `rawStr` copied the entire document first.
+    @req(JSON-CURSOR)
     fn curRaw(self: &Self, cur: i64): string {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -726,6 +756,7 @@ impl Json {
 
     // The node at `cur` as `JsonVal.JRaw` of its source text (`null` for a missing
     // cursor): what a `JsonVal` field of a @derive(Json) struct decodes to.
+    @req(JSON-CURSOR)
     fn curJsonVal(self: &Self, cur: i64): JsonVal {
         let raw = self.curRaw(cur)
         if raw.len() == 0 {
@@ -736,6 +767,7 @@ impl Json {
 
     // The node at `cur` as a document of its own (null for a missing cursor): what a
     // `Json` field of a @derive(Json) struct decodes to.
+    @req(JSON-CURSOR)
     fn curJson(self: &Self, cur: i64): Json {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -749,6 +781,7 @@ impl Json {
         return jsonExtractSubtree(self, raw)
     }
 
+    @req(JSON-CURSOR)
     fn curStr(self: &Self, cur: i64): Option<string> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -764,6 +797,7 @@ impl Json {
     // ── Bare value extraction ──
 
     // This node as a string, or None if it is not one.
+    @req(JSON-GET)
     fn asStr(self: &Self): Option<string> {
         let node = self.nodes[self.root]
         if node.kind == 3 {
@@ -774,6 +808,7 @@ impl Json {
 
     // This node as an integer, or None if it is not one. Fractional, exponent and
     // out-of-range literals are None, as for `i64`.
+    @req(JSON-GET)
     fn asI64(self: &Self): Option<i64> {
         let node = self.nodes[self.root]
         if node.kind == 2 {
@@ -783,6 +818,7 @@ impl Json {
     }
 
     // This node as a float, or None if it is not a number.
+    @req(JSON-GET)
     fn asF64(self: &Self): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind == 2 {
@@ -792,6 +828,7 @@ impl Json {
     }
 
     // This node as a boolean, or None if it is not one.
+    @req(JSON-GET)
     fn asBool(self: &Self): Option<bool> {
         let node = self.nodes[self.root]
         if node.kind == 1 {
@@ -802,26 +839,33 @@ impl Json {
 
     // ── Type checks ──
 
+    @req(JSON-GET)
     fn isNull(self: &Self): bool {
         return self.nodes[self.root].kind == 0
     }
+    @req(JSON-GET)
     fn isStr(self: &Self): bool {
         return self.nodes[self.root].kind == 3
     }
+    @req(JSON-GET)
     fn isNum(self: &Self): bool {
         return self.nodes[self.root].kind == 2
     }
+    @req(JSON-GET)
     fn isBool(self: &Self): bool {
         return self.nodes[self.root].kind == 1
     }
+    @req(JSON-GET)
     fn isArray(self: &Self): bool {
         return self.nodes[self.root].kind == 4
     }
+    @req(JSON-GET)
     fn isObject(self: &Self): bool {
         return self.nodes[self.root].kind == 5
     }
 
     // Number of elements of an array or members of an object.
+    @req(JSON-GET)
     fn len(self: &Self): i64 {
         return jsonNodeChildCount(self.nodes[self.root])
     }
@@ -835,6 +879,7 @@ impl Json {
     // The document re-rendered with `indent` spaces per level (0 or less
     // minifies). Reformats rawStr(), so what comes out is the same bytes the
     // parse went in with, only re-spaced (see jsonPretty).
+    @req(JSON-SER-PRETTY)
     fn pretty(self: &Self, indent: i64): string {
         let raw = self.rawStr()
         return jsonPretty(raw, indent)
@@ -851,12 +896,14 @@ impl Json {
     // an out-of-range index or a shape mismatch yields -1, which every cursor
     // accessor already reads as "nothing here", so the walk is total for any input.
     // A key containing '.' or '[' is not addressable this way; use get()/at().
+    @req(JSON-PATH)
     fn curPath(self: &Self, p: &string): i64 {
         return self.curAt(self.curRoot(), p)
     }
 
     // curPath relative to a cursor: `doc.curAt(item, "cc.location")`. A path that
     // starts with an index ("[0].name") reads the cursor as an array.
+    @req(JSON-PATH)
     fn curAt(self: &Self, start: i64, p: &string): i64 {
         var cur: i64 = start
         var seg: string = ""
@@ -905,6 +952,7 @@ impl Json {
         return cur
     }
 
+    @req(JSON-PATH)
     fn path(self: &Self, p: &string): Option<Json> {
         let cur = self.curPath(p)
         if cur < 0 {
@@ -919,84 +967,99 @@ impl Json {
     // `doc` every step: a JsonCur cannot read anything alone, because a struct cannot
     // hold the `&Json` it points into. A cursor kept in a variable re-enters the
     // chain as `doc[cur]`. A missing step yields a cursor every read treats as absent.
+    @req(JSON-INDEX)
     fn idxRoot(self: &Self): JsonCur {
         return JsonCur { c: self.curRoot() }
     }
 
     // `doc.at("a.b[0].c")` / `doc[...].at(path)`: the value at a dotted path under `at`
     // (the syntax of curPath); absent when any step is missing.
+    @req(JSON-INDEX)
     fn idxPath(self: &Self, at: JsonCur, p: &string): JsonCur {
         return JsonCur { c: self.curAt(at.c, p) }
     }
 
     // `doc[cur]`: re-enter an index chain at a cursor kept in a variable.
+    @req(JSON-INDEX)
     fn idxCur(self: &Self, at: JsonCur): JsonCur {
         return at
     }
 
     // `doc[...]["key"]`: the member named `key` of the object at `at`; absent when
     // `at` is not an object or has no such key.
+    @req(JSON-INDEX)
     fn idxKey(self: &Self, at: JsonCur, key: &string): JsonCur {
         return JsonCur { c: self.curField(at.c, key) }
     }
 
     // `doc[...][i]`: element `i` of the array at `at`; absent when out of range or
     // not an array.
+    @req(JSON-INDEX)
     fn idxPos(self: &Self, at: JsonCur, i: i64): JsonCur {
         return JsonCur { c: self.curChild(at.c, i) }
     }
 
     // `.str()` at the end of an index chain: the string at `at`, or None.
+    @req(JSON-INDEX)
     fn idxStr(self: &Self, at: JsonCur): Option<string> {
         return self.curStr(at.c)
     }
 
     // `.f64()` at the end of an index chain: the number at `at`, or None.
+    @req(JSON-INDEX)
     fn idxF64(self: &Self, at: JsonCur): Option<f64> {
         return self.curFloat(at.c)
     }
 
     // `.i64()` at the end of an index chain: the integer at `at`, or None.
+    @req(JSON-INDEX)
     fn idxI64(self: &Self, at: JsonCur): Option<i64> {
         return self.curInt(at.c)
     }
 
     // `.bool()` at the end of an index chain: the boolean at `at`, or None.
+    @req(JSON-INDEX)
     fn idxBool(self: &Self, at: JsonCur): Option<bool> {
         return self.curBool(at.c)
     }
 
     // `.len()` at the end of an index chain: element or member count; 0 for a scalar
     // or an absent value.
+    @req(JSON-INDEX)
     fn idxLen(self: &Self, at: JsonCur): i64 {
         return self.curLen(at.c)
     }
 
     // `.kind()` at the end of an index chain: the kind tag `curKind` reports;
     // negative when absent.
+    @req(JSON-INDEX)
     fn idxKind(self: &Self, at: JsonCur): i32 {
         return self.curKind(at.c)
     }
 
     // `.exists()` at the end of an index chain: whether every step found something.
+    @req(JSON-INDEX)
     fn idxExists(self: &Self, at: JsonCur): bool {
         return self.curKind(at.c) >= 0
     }
 
     // `.raw()` at the end of an index chain: the value's JSON text (as `curRaw`);
     // empty when absent.
+    @req(JSON-INDEX)
     fn idxRaw(self: &Self, at: JsonCur): string {
         return self.curRaw(at.c)
     }
 
     // `.json()` at the end of an index chain: the subtree at `at` as a document of
     // its own (as `curJson`).
+    @req(JSON-INDEX)
     fn idxJson(self: &Self, at: JsonCur): Json {
         return self.curJson(at.c)
     }
 
     // `for it in doc[...].items()`: a cursor per element of the array at `at`; empty
     // for anything that is not an array.
+    @req(JSON-INDEX)
     fn idxItems(self: &Self, at: JsonCur): Vec<JsonCur> {
         var out: Vec<JsonCur> = Vec.new()
         if self.curKind(at.c) != 4 {
@@ -1009,6 +1072,7 @@ impl Json {
     }
 
     // Object keys in document order, for `for k in doc["m"].keys()`.
+    @req(JSON-INDEX)
     fn idxKeys(self: &Self, at: JsonCur): Vec<string> {
         var out: Vec<string> = Vec.new()
         if self.curKind(at.c) != 5 {
@@ -1022,33 +1086,39 @@ impl Json {
 
     // The value of the `i`th member of the object at `at`, in document order (pairs
     // with `idxKeys`).
+    @req(JSON-INDEX)
     fn idxValueAt(self: &Self, at: JsonCur, i: i64): JsonCur {
         return JsonCur { c: self.curValueAt(at.c, i) }
     }
 
     // Typed reads at a path under a cursor: `doc.strAt(cc, "location.route")` for
     // `doc.curStr(doc.curField(doc.curField(cc, "location"), "route"))`.
+    @req(JSON-PATH)
     fn strAt(self: &Self, cur: i64, p: &string): Option<string> {
         return self.curStr(self.curAt(cur, p))
     }
 
     // Integer at path `p` under cursor `cur`, or None (see `strAt`).
+    @req(JSON-PATH)
     fn i64At(self: &Self, cur: i64, p: &string): Option<i64> {
         return self.curInt(self.curAt(cur, p))
     }
 
     // Number at path `p` under cursor `cur`, or None (see `strAt`).
+    @req(JSON-PATH)
     fn f64At(self: &Self, cur: i64, p: &string): Option<f64> {
         return self.curFloat(self.curAt(cur, p))
     }
 
     // Boolean at path `p` under cursor `cur`, or None (see `strAt`).
+    @req(JSON-PATH)
     fn boolAt(self: &Self, cur: i64, p: &string): Option<bool> {
         return self.curBool(self.curAt(cur, p))
     }
 
     // Element cursors of the array at `cur`, so a walk reads `for it in doc.curItems(a)`.
     // Empty for anything that is not an array.
+    @req(JSON-CURSOR)
     fn curItems(self: &Self, cur: i64): Vec<i64> {
         var out: Vec<i64> = Vec.new()
         if self.curKind(cur) != 4 {
@@ -1060,18 +1130,22 @@ impl Json {
         return out
     }
 
+    @req(JSON-PATH)
     fn strPath(self: &Self, p: &string): Option<string> {
         return self.curStr(self.curPath(p))
     }
 
+    @req(JSON-PATH)
     fn i64Path(self: &Self, p: &string): Option<i64> {
         return self.curInt(self.curPath(p))
     }
 
+    @req(JSON-PATH)
     fn f64Path(self: &Self, p: &string): Option<f64> {
         return self.curFloat(self.curPath(p))
     }
 
+    @req(JSON-PATH)
     fn boolPath(self: &Self, p: &string): Option<bool> {
         return self.curBool(self.curPath(p))
     }
@@ -1081,6 +1155,7 @@ impl Json {
     // time — decoding a `HashMap<string, V>` field has to walk children it cannot name.
     // Empty string for a non-object cursor or an out-of-range index; "" is also a legal
     // JSON key, so bound the walk with `curLen` rather than testing the result.
+    @req(JSON-CURSOR)
     fn curKeyAt(self: &Self, cur: i64, index: i64): string {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -1097,6 +1172,7 @@ impl Json {
     // separate from `curChild`, which is the ARRAY accessor and returns -1 for an object:
     // "element i of an array" and "entry i of an object" are different questions, and one
     // function answering both would make an object walked as an array look like it worked.
+    @req(JSON-CURSOR)
     fn curValueAt(self: &Self, cur: i64, index: i64): i64 {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -1110,6 +1186,7 @@ impl Json {
     }
 
     // Every key of an object, in document order.
+    @req(JSON-GET)
     fn keys(self: &Self): Vec<string> {
         var result: Vec<string> = Vec.new()
         let root = self.curRoot()
@@ -1122,6 +1199,7 @@ impl Json {
     }
 }
 
+@req(JSON-GET)
 fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
     let node = doc.nodes[nodeIdx]
     if node.kind == 0 {
@@ -1172,6 +1250,7 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
 
 // ── Subtree extraction (for get/at — clones source, remaps indices) ──
 
+@req(JSON-GET)
 fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
     var nodes: Vec<JsonNode> = Vec.new()
     var childIdx: Vec<i64> = Vec.new()
@@ -1666,12 +1745,14 @@ ensures pos <= s.len || pos == old(pos)
 impl JsonParser {
     // Give the source and the pools to the Json. Consumes the parser: a struct
     // cannot lend `s` out as a `&string`, so moving is the only copy-free handover.
+    @derived(JSON-POOL)
     fn finish(self: Self, root: i64): Json {
         return Json {
             source: self.s, nodes: self.nodes, nums: self.nums, childIdx: self.childIdx, keyOffsets: self.keyOffsets, keyLens: self.keyLens, root: root, _docId: jsonMintDocId()
         }
     }
 
+    @req(JSON-WS)
     fn skipWs(self: &mut Self) {
         jsonSkipWs(self.s, &mut self.pos)
     }
@@ -1757,6 +1838,7 @@ impl JsonParser {
         return idx
     }
 
+    @req(JSON-STR-CHARS)
     fn scanString(self: &mut Self) {
         jsonScanString(self.s, &mut self.pos, &mut self.err)
     }
@@ -1786,6 +1868,7 @@ impl JsonParser {
         }
     }
 
+    @req(JSON-NUM-RANGE)
     fn sawFracOrExp(self: &Self, start: i64): bool {
         var i = start
         while i < self.pos {
@@ -2021,11 +2104,13 @@ pub fn jsonEscapeStr(s: &string): string {
 // language: a parsed Json, a builder's build(), the jsonStringify builtin, a
 // payload that arrived off a socket and was never parsed at all.
 
+@req(JSON-SER-PRETTY)
 fn jsonFmtIsSpace(c: u8): bool {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // Index of the next non-whitespace byte at or after `i` (src.len if none).
+@req(JSON-SER-PRETTY)
 fn jsonFmtSkipSpace(src: &string, i: i64): i64 {
     var j = i
     if j < 0 {
@@ -2042,6 +2127,7 @@ fn jsonFmtSkipSpace(src: &string, i: i64): i64 {
     return j
 }
 
+@req(JSON-SER-PRETTY)
 fn jsonFmtNewline(out: &mut string, indent: i64, depth: i64) {
     out.push('\n')
     for _i in 0..(indent * depth) {
@@ -2052,6 +2138,7 @@ fn jsonFmtNewline(out: &mut string, indent: i64, depth: i64) {
 // Copy a string token verbatim from `i` (which must index its opening quote),
 // returning the index just past its closing quote. Escapes are copied as a pair
 // so a \" inside the string is never mistaken for the end of it.
+@req(JSON-SER-PRETTY)
 fn jsonFmtCopyString(src: &string, i: i64, out: &mut string): i64 {
     var j = i
     out.push(src[j])
@@ -2170,6 +2257,7 @@ pub struct JsonMember {
 
 impl JsonVal {
     // Method form of jsonSer, so @derive(Json) output needs no free-function import.
+    @req(JSON-BUILD)
     fn toJsonText(self: &Self): string {
         return jsonSer(self)
     }
@@ -2241,6 +2329,7 @@ pub struct JsonObj {
     merging: bool,
 }
 
+@req(JSON-BUILD)
 fn jsonObj(): JsonObj {
     return JsonObj {
         members: Vec.new(),
@@ -2253,6 +2342,7 @@ fn jsonObj(): JsonObj {
 // `.clone()` at almost every call site. The member stores its own copy.
 impl JsonObj {
     // Append member `key`; after `spread`, overwrite an existing `key` in place.
+    @req(JSON-BUILD)
     fn put(self: &mut Self, key: string, val: JsonVal) {
         if self.merging {
             for i in 0..self.members.len {
@@ -2268,6 +2358,7 @@ impl JsonObj {
     // `{...src, k: v}`: copy every member of the object at `cur` (values verbatim),
     // after which a key added again replaces its value and keeps its position.
     // A non-object cursor contributes nothing, as spreading null does in JS.
+    @req(JSON-BUILD)
     fn spread(self: Self, doc: &Json, cur: i64): Self {
         var m = self
         m.merging = true
@@ -2280,47 +2371,56 @@ impl JsonObj {
         return m
     }
 
+    @req(JSON-BUILD)
     fn str(self: Self, key: &string, val: &string): Self {
         var m = self
         m.put(key.clone(), JsonVal.JStr(val.clone()))
         return m
     }
+    @req(JSON-BUILD)
     fn int(self: Self, key: &string, val: i64): Self {
         var m = self
         m.put(key.clone(), JsonVal.JInt(val))
         return m
     }
+    @req(JSON-BUILD)
     fn float(self: Self, key: &string, val: f64): Self {
         var m = self
         m.put(key.clone(), JsonVal.JFloat(val))
         return m
     }
+    @req(JSON-BUILD)
     fn bool(self: Self, key: &string, val: bool): Self {
         var m = self
         m.put(key.clone(), JsonVal.JBool(val))
         return m
     }
+    @req(JSON-BUILD)
     fn nil(self: Self, key: &string): Self {
         var m = self
         m.put(key.clone(), JsonVal.JNull)
         return m
     }
+    @req(JSON-BUILD)
     fn obj(self: Self, key: &string, val: JsonObj): Self {
         var m = self
         m.put(key.clone(), JsonVal.JObj(val.members))
         return m
     }
+    @req(JSON-BUILD)
     fn arr(self: Self, key: &string, val: JsonArr): Self {
         var m = self
         m.put(key.clone(), JsonVal.JArr(val.items))
         return m
     }
+    @req(JSON-BUILD)
     fn val(self: Self, key: &string, val: JsonVal): Self {
         var m = self
         m.put(key.clone(), val)
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
+    @req(JSON-BUILD)
     fn raw(self: Self, key: &string, json: &string): Self {
         var m = self
         m.put(key.clone(), JsonVal.JRaw(json.clone()))
@@ -2329,6 +2429,7 @@ impl JsonObj {
     // Optional-field helpers: add the key only when the Option is Some, so a
     // conditional field stays inside the fluent chain instead of breaking out
     // to an `if` around each call.
+    @req(JSON-BUILD)
     fn strOpt(self: Self, key: &string, val: Option<string>): Self {
         var m = self
         match val {
@@ -2340,6 +2441,7 @@ impl JsonObj {
         }
         return m
     }
+    @req(JSON-BUILD)
     fn intOpt(self: Self, key: &string, val: Option<i64>): Self {
         var m = self
         match val {
@@ -2351,6 +2453,7 @@ impl JsonObj {
         }
         return m
     }
+    @req(JSON-BUILD)
     fn floatOpt(self: Self, key: &string, val: Option<f64>): Self {
         var m = self
         match val {
@@ -2362,6 +2465,7 @@ impl JsonObj {
         }
         return m
     }
+    @req(JSON-BUILD)
     fn boolOpt(self: Self, key: &string, val: Option<bool>): Self {
         var m = self
         match val {
@@ -2373,6 +2477,7 @@ impl JsonObj {
         }
         return m
     }
+    @req(JSON-BUILD)
     fn build(self: &Self): string {
         var out = "{"
         for i in 0..self.members.len {
@@ -2385,6 +2490,7 @@ impl JsonObj {
     }
 
     // build() with `indent` spaces per nesting level (0 or less minifies).
+    @req(JSON-BUILD)
     fn buildPretty(self: &Self, indent: i64): string {
         let compact = self.build()
         return jsonPretty(compact, indent)
@@ -2397,6 +2503,7 @@ pub struct JsonArr {
     items: Vec<JsonVal>
 }
 
+@req(JSON-BUILD)
 fn jsonArr(): JsonArr {
     return JsonArr {
         items: Vec.new()
@@ -2404,52 +2511,62 @@ fn jsonArr(): JsonArr {
 }
 
 impl JsonArr {
+    @req(JSON-BUILD)
     fn str(self: Self, val: &string): Self {
         var m = self
         m.items.push(JsonVal.JStr(val.clone()))
         return m
     }
+    @req(JSON-BUILD)
     fn int(self: Self, val: i64): Self {
         var m = self
         m.items.push(JsonVal.JInt(val))
         return m
     }
+    @req(JSON-BUILD)
     fn float(self: Self, val: f64): Self {
         var m = self
         m.items.push(JsonVal.JFloat(val))
         return m
     }
+    @req(JSON-BUILD)
     fn bool(self: Self, val: bool): Self {
         var m = self
         m.items.push(JsonVal.JBool(val))
         return m
     }
+    @req(JSON-BUILD)
     fn nil(self: Self): Self {
         var m = self
         m.items.push(JsonVal.JNull)
         return m
     }
+    @req(JSON-BUILD)
     fn obj(self: Self, val: JsonObj): Self {
         var m = self
         m.items.push(JsonVal.JObj(val.members))
         return m
     }
+    @req(JSON-BUILD)
     fn arr(self: Self, val: JsonArr): Self {
         var m = self
         m.items.push(JsonVal.JArr(val.items))
         return m
     }
+    @req(JSON-BUILD)
     fn val(self: Self, val: JsonVal): Self {
         var m = self
         m.items.push(val)
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
+    @req(JSON-BUILD)
     fn raw(self: Self, json: &string): Self {
         var m = self
         m.items.push(JsonVal.JRaw(json.clone()))
         return m
     }
+    @req(JSON-BUILD)
     fn build(self: &Self): string {
         var out = "["
         for i in 0..self.items.len {
@@ -2462,6 +2579,7 @@ impl JsonArr {
     }
 
     // build() with `indent` spaces per nesting level (0 or less minifies).
+    @req(JSON-BUILD)
     fn buildPretty(self: &Self, indent: i64): string {
         let compact = self.build()
         return jsonPretty(compact, indent)
@@ -2493,6 +2611,7 @@ pub struct JsonToken {
     flag: bool, // set for Bool
 }
 
+@req(JSON-PULL-EVENTS)
 fn jsonTok(k: JsonEvent): JsonToken {
     return JsonToken {
         kind: k, text: "", num: 0.0, flag: false
@@ -2643,6 +2762,7 @@ pub enum JsonError {
 
 // Prefix `rest` with one path segment. Array indices already carry their own
 // brackets, so they abut rather than take a dot: ("friends", "[3].city").
+@req(JSON-ERROR)
 fn jsonPathJoin(seg: string, rest: &string): string {
     if rest.len == 0 {
         return seg
@@ -2654,6 +2774,7 @@ fn jsonPathJoin(seg: string, rest: &string): string {
 }
 
 // Human-readable name for a `curKind` result, including -1 for "no such node".
+@req(JSON-ERROR)
 pub fn jsonKindName(kind: i32): string {
     if kind == 0 {
         return "null"
@@ -2678,6 +2799,7 @@ pub fn jsonKindName(kind: i32): string {
 
 impl JsonError {
     // Dotted path to the offending value, "" for a syntax error.
+    @req(JSON-ERROR)
     fn path(self: &Self): string {
         match self {
             JsonError.Syntax(_m) => {
@@ -2692,6 +2814,7 @@ impl JsonError {
         }
     }
 
+    @req(JSON-ERROR)
     fn message(self: &Self): string {
         match self {
             JsonError.Syntax(m) => {
@@ -2711,6 +2834,7 @@ impl JsonError {
 
     // Re-root the error one level up. Decoders build paths bottom-up so the
     // success path never allocates a path string.
+    @req(JSON-ERROR)
     fn under(self: JsonError, seg: string): JsonError {
         match self {
             JsonError.Syntax(m) => {
@@ -2727,12 +2851,14 @@ impl JsonError {
         }
     }
 
+    @req(JSON-ERROR)
     fn underIndex(self: JsonError, index: i64): JsonError {
         return self.under("[" + index.toString() + "]")
     }
 }
 
 // Quote and escape a string as a JSON string literal, brackets included.
+@req(JSON-SER-ESCAPE)
 pub fn jsonQuote(s: &string): string {
     return "\"" + jsonEscapeStr(s) + "\""
 }
@@ -2752,6 +2878,7 @@ pub fn jsonFloatStr(f: f64): string {
 }
 
 // jsonFloatStr for an f32, printed at f32 precision (0.1 stays "0.1").
+@req(JSON-SER-NUM)
 pub fn jsonF32Str(f: f32): string {
     let d = f - f
     if d != d {
@@ -2761,6 +2888,7 @@ pub fn jsonF32Str(f: f32): string {
 }
 
 // `true`/`false` as JSON text.
+@req(JSON-SER-GRAMMAR)
 pub fn jsonBoolStr(b: bool): string {
     if b {
         return "true"

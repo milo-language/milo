@@ -88,7 +88,7 @@ ensures result >= -32767 && result <= 32767
 
 // One control tick from a raw sensor reading. The reading is clamped to the sensor range
 // first, which is how this caller discharges pidStep's LLR-3 obligation.
-@req(HLR-1)
+@req(LLR-3)
 pub fn controlTick(rawSensor: i32, integral: i32, prevError: i32): i32
 @req(LLR-2)
 requires integral >= -1000000 && integral <= 1000000

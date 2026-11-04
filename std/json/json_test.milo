@@ -7,7 +7,7 @@
 // choice recorded in implDefinedRejects, which is also stated in the requirements.
 from "std/testing" import { assertTrue, assertFalse, assertStrEqual, assertEqual64, assertNear }
 from "std/fs" import { readDir, readFile, isDir }
-from "std/json" import { Json, JsonEvent, JsonToken, JsonVal, jsonPull, jsoncParse, jsonSer, jsonEscapeStr, jsonFloatStr, jsonPretty, JSON_MAX_DEPTH }
+from "std/json" import { Json, JsonError, JsonMismatch, jsonKindName, jsonQuote, jsonF32Str, jsonBoolStr, JsonEvent, JsonToken, JsonVal, jsonPull, jsoncParse, jsonSer, jsonEscapeStr, jsonFloatStr, jsonPretty, JSON_MAX_DEPTH }
 
 fn accepts(text: string): bool {
     var ok: bool = false
@@ -892,4 +892,305 @@ fn testHostileShapesTerminate(): void {
     }
     mustAccept(longNum)
     mustReject("1" + "e".repeat(10))
+}
+
+// ── the document API: accessors, paths, cursors, index chains, errors, builders ──
+
+let DOC: string = "{\"s\":\"v\",\"i\":7,\"f\":2.5,\"b\":true,\"n\":null,\"a\":[1,\"x\",[true]],\"o\":{\"k\":1,\"d\":\"deep\"}}"
+
+fn doc(text: &string): Json {
+    let parsed = Json.parse(text)
+    assertTrue(parsed.isOk())
+    return parsed!
+}
+
+@req(JSON-GET)
+fn testAccessorsReturnNothingOnAMismatch(): void {
+    let j = doc(DOC)
+    // wrong kind: never coerced
+    assertTrue(j.str("i").isNone())
+    assertTrue(j.i64("s").isNone())
+    assertTrue(j.i64("f").isNone())
+    assertTrue(j.f64("s").isNone())
+    assertTrue(j.bool("i").isNone())
+    assertTrue(j.get("zz").isNone())
+    assertTrue(j.str("zz").isNone())
+    // right kind
+    assertStrEqual(j.str("s") ?? "", "v")
+    assertEqual64(j.i64("i") ?? 0, 7)
+    assertNear(j.f64("f") ?? 0.0, 2.5, 1e-12)
+    assertTrue(j.bool("b") ?? false)
+    // the subtree is a document of its own holding the same text
+    let o = j.get("o")!
+    assertStrEqual(o.rawStr(), "{\"k\":1,\"d\":\"deep\"}")
+    assertStrEqual(o.str("d") ?? "", "deep")
+    // positions: in range, out of range, negative, and on an object
+    let a = j.get("a")!
+    assertEqual64(a.len(), 3)
+    assertEqual64(a.at(0)!.asI64() ?? 0, 1)
+    assertStrEqual(a.at(1)!.asStr() ?? "", "x")
+    assertTrue(a.at(2)!.at(0)!.asBool() ?? false)
+    assertTrue(a.at(3).isNone())
+    assertTrue(a.at(-1).isNone())
+    assertTrue(j.at(0).isNone())
+    // non-containers have no members and no length
+    let s = j.get("s")!
+    assertTrue(s.get("k").isNone())
+    assertTrue(s.at(0).isNone())
+    assertEqual64(s.len(), 0)
+    assertTrue(s.asI64().isNone())
+    assertTrue(s.asBool().isNone())
+    assertTrue(s.isStr() && !s.isNum() && !s.isBool() && !s.isNull() && !s.isArray() && !s.isObject())
+    assertTrue(j.get("n")!.isNull())
+    assertTrue(a.isArray() && j.isObject())
+    let ks = j.keys()
+    assertEqual64(ks.len, 7)
+    assertStrEqual(ks[0], "s")
+    assertStrEqual(ks[6], "o")
+}
+
+@req(JSON-PATH)
+fn testPathsReturnNoneForAMissingStep(): void {
+    let j = doc(DOC)
+    assertStrEqual(j.strPath("o.d") ?? "", "deep")
+    assertEqual64(j.i64Path("a[0]") ?? 0, 1)
+    assertTrue(j.boolPath("a[2][0]") ?? false)
+    assertNear(j.f64Path("f") ?? 0.0, 2.5, 1e-12)
+    assertStrEqual(j.path("o")!.rawStr(), "{\"k\":1,\"d\":\"deep\"}")
+    // a missing key, an index past the end, a step into a scalar
+    assertTrue(j.path("zz").isNone())
+    assertTrue(j.path("o.zz").isNone())
+    assertTrue(j.strPath("o.zz").isNone())
+    assertTrue(j.path("a[3]").isNone())
+    assertTrue(j.path("s.x").isNone())
+    assertTrue(j.path("s[0]").isNone())
+    // malformed brackets
+    assertTrue(j.path("a[x]").isNone())
+    assertTrue(j.path("a[0").isNone())
+    assertEqual64(j.curPath("a[0"), -1)
+    // a wrong kind at the end
+    assertTrue(j.strPath("i").isNone())
+    assertTrue(j.i64Path("s").isNone())
+    // relative to a cursor
+    let a = j.curPath("a")
+    assertEqual64(j.i64At(a, "[0]") ?? 0, 1)
+    assertStrEqual(j.strAt(a, "[1]") ?? "", "x")
+    assertTrue(j.boolAt(a, "[2][0]") ?? false)
+    assertTrue(j.strAt(a, "[9]").isNone())
+    assertTrue(j.f64At(a, "[1]").isNone())
+    assertEqual64(j.curAt(j.curRoot(), ""), j.curRoot())
+}
+
+@req(JSON-CURSOR)
+fn testCursorMissesReadAsAbsent(): void {
+    let j = doc(DOC)
+    let root = j.curRoot()
+    assertEqual64(j.curKind(root) as i64, 5)
+    assertEqual64(j.curLen(root), 7)
+    let a = j.curField(root, "a")
+    assertEqual64(j.curKind(a) as i64, 4)
+    assertEqual64(j.curLen(a), 3)
+    assertEqual64(j.curInt(j.curChild(a, 0)) ?? 0, 1)
+    assertStrEqual(j.curStr(j.curChild(a, 1)) ?? "", "x")
+    assertStrEqual(j.curRaw(a), "[1,\"x\",[true]]")
+    assertTrue(j.curBool(j.curField(root, "b")) ?? false)
+    assertNear(j.curFloat(j.curField(root, "f")) ?? 0.0, 2.5, 1e-12)
+    // misses are -1 and every reader treats -1 as nothing here
+    let miss = j.curField(root, "zz")
+    assertEqual64(miss, -1)
+    assertEqual64(j.curChild(a, 3), -1)
+    assertEqual64(j.curChild(a, -1), -1)
+    assertEqual64(j.curChild(root, 0), -1)
+    assertEqual64(j.curField(a, "k"), -1)
+    assertEqual64(j.curLen(miss), 0)
+    assertEqual64(j.curKind(miss) as i64, -1)
+    assertTrue(j.curStr(miss).isNone())
+    assertTrue(j.curInt(miss).isNone())
+    assertTrue(j.curBool(miss).isNone())
+    assertStrEqual(j.curRaw(miss), "")
+    assertFalse(j.curHolds(miss))
+    // a wrong kind is absent, not coerced
+    assertTrue(j.curStr(j.curField(root, "i")).isNone())
+    assertTrue(j.curInt(j.curField(root, "s")).isNone())
+    // object entries by position, in document order, and array walks
+    let o = j.curField(root, "o")
+    assertStrEqual(j.curKeyAt(o, 0), "k")
+    assertStrEqual(j.curKeyAt(o, 1), "d")
+    assertStrEqual(j.curKeyAt(o, 2), "")
+    assertEqual64(j.curInt(j.curValueAt(o, 0)) ?? 0, 1)
+    assertEqual64(j.curValueAt(o, 2), -1)
+    assertEqual64(j.curValueAt(a, 0), -1)
+    assertEqual64(j.curItems(a).len, 3)
+    assertEqual64(j.curItems(o).len, 0)
+    // same answers as the owned accessors
+    assertStrEqual(j.curJson(a).rawStr(), j.get("a")!.rawStr())
+    assertTrue(j.curHolds(a))
+    // a cursor from another document is not held
+    let other = doc(DOC)
+    assertFalse(other.curHolds(a))
+}
+
+@req(JSON-INDEX)
+fn testIndexChainAnswersLikeTheCursor(): void {
+    let j = doc(DOC)
+    let root = j.idxRoot()
+    assertStrEqual(j.idxStr(j.idxKey(root, "s")) ?? "", "v")
+    assertEqual64(j.idxI64(j.idxPos(j.idxKey(root, "a"), 0)) ?? 0, 1)
+    assertEqual64(j.idxI64(j.idxPath(root, "a[0]")) ?? 0, 1)
+    assertNear(j.idxF64(j.idxKey(root, "f")) ?? 0.0, 2.5, 1e-12)
+    assertTrue(j.idxBool(j.idxKey(root, "b")) ?? false)
+    assertEqual64(j.idxLen(root), 7)
+    assertEqual64(j.idxKind(root) as i64, 5)
+    assertStrEqual(j.idxRaw(j.idxKey(root, "o")), "{\"k\":1,\"d\":\"deep\"}")
+    assertStrEqual(j.idxJson(j.idxKey(root, "o")).rawStr(), "{\"k\":1,\"d\":\"deep\"}")
+    assertEqual64(j.idxItems(j.idxKey(root, "a")).len, 3)
+    let keys = j.idxKeys(j.idxKey(root, "o"))
+    assertEqual64(keys.len, 2)
+    assertStrEqual(keys[1], "d")
+    assertEqual64(j.idxI64(j.idxValueAt(j.idxKey(root, "o"), 0)) ?? 0, 1)
+    assertEqual64(j.idxCur(root).c, root.c)
+    // a missing step is absent, and stays absent down the chain
+    let miss = j.idxPos(j.idxKey(root, "zz"), 0)
+    assertFalse(j.idxExists(miss))
+    assertTrue(j.idxExists(root))
+    assertTrue(j.idxStr(miss).isNone())
+    assertTrue(j.idxI64(miss).isNone())
+    assertTrue(j.idxF64(miss).isNone())
+    assertTrue(j.idxBool(miss).isNone())
+    assertEqual64(j.idxLen(miss), 0)
+    assertEqual64(j.idxItems(miss).len, 0)
+    assertEqual64(j.idxKeys(miss).len, 0)
+    assertStrEqual(j.idxRaw(miss), "")
+    assertFalse(j.idxExists(j.idxPos(j.idxKey(root, "a"), 3)))
+    assertFalse(j.idxExists(j.idxKey(j.idxKey(root, "a"), "k")))
+}
+
+@req(JSON-ERROR)
+fn testErrorsNameTheLocation(): void {
+    let syn = JsonError.Syntax("bad token")
+    assertStrEqual(syn.path(), "")
+    assertStrEqual(syn.message(), "invalid JSON: bad token")
+    assertStrEqual(JsonError.Syntax("x").under("a").path(), "")
+    let missing = JsonError.Missing("city")
+    assertStrEqual(missing.message(), "missing field 'city'")
+    assertStrEqual(JsonError.Missing("city").under("address").path(), "address.city")
+    // indices abut, they do not take a dot
+    assertStrEqual(JsonError.Missing("city").underIndex(3).path(), "[3].city")
+    assertStrEqual(JsonError.Missing("city").underIndex(3).under("friends").path(), "friends[3].city")
+    let mm = JsonError.Mismatch(JsonMismatch { path: "", expected: "object", actual: "array" })
+    assertStrEqual(mm.message(), "document root: expected object, got array")
+    let deep = JsonError.Mismatch(JsonMismatch { path: "n", expected: "number", actual: "string" }).under("a")
+    assertStrEqual(deep.path(), "a.n")
+    assertStrEqual(deep.message(), "field 'a.n': expected number, got string")
+    assertStrEqual(jsonKindName(0), "null")
+    assertStrEqual(jsonKindName(1), "bool")
+    assertStrEqual(jsonKindName(2), "number")
+    assertStrEqual(jsonKindName(3), "string")
+    assertStrEqual(jsonKindName(4), "array")
+    assertStrEqual(jsonKindName(5), "object")
+    assertStrEqual(jsonKindName(-1), "missing")
+}
+
+@req(JSON-BUILD)
+fn testBuilderOutputParsesBack(): void {
+    let inner = Json.obj().int("x", -5).nil("n")
+    let text = Json.obj().str("s", "q\"\\\n").int("i", 9).float("f", 0.25).bool("b", false).nil("z").obj("o", inner).arr("a", Json.arr().int(1).str("t").bool(true).nil().float(1.5).obj(Json.obj().int("k", 2)).arr(Json.arr().int(3))).raw("r", "[1, 2]").val("v", JsonVal.JInt(4)).build()
+    let j = doc(text)
+    // members come back in call order, with their kinds and values
+    let ks = j.keys()
+    assertEqual64(ks.len, 9)
+    assertStrEqual(ks[0], "s")
+    assertStrEqual(ks[1], "i")
+    assertStrEqual(ks[2], "f")
+    assertStrEqual(ks[3], "b")
+    assertStrEqual(ks[4], "z")
+    assertStrEqual(ks[5], "o")
+    assertStrEqual(ks[6], "a")
+    assertStrEqual(ks[7], "r")
+    assertStrEqual(ks[8], "v")
+    assertStrEqual(j.str("s") ?? "", "q\"\\\n")
+    assertEqual64(j.i64("i") ?? 0, 9)
+    assertNear(j.f64("f") ?? 0.0, 0.25, 1e-12)
+    assertFalse(j.bool("b") ?? true)
+    assertTrue(j.get("z")!.isNull())
+    assertEqual64(j.i64Path("o.x") ?? 0, -5)
+    assertTrue(j.path("o.n")!.isNull())
+    assertEqual64(j.get("a")!.len(), 7)
+    assertEqual64(j.i64Path("a[0]") ?? 0, 1)
+    assertStrEqual(j.strPath("a[1]") ?? "", "t")
+    assertTrue(j.boolPath("a[2]") ?? false)
+    assertTrue(j.path("a[3]")!.isNull())
+    assertNear(j.f64Path("a[4]") ?? 0.0, 1.5, 1e-12)
+    assertEqual64(j.i64Path("a[5].k") ?? 0, 2)
+    assertEqual64(j.i64Path("a[6][0]") ?? 0, 3)
+    assertEqual64(j.i64Path("r[1]") ?? 0, 2)
+    assertEqual64(j.i64("v") ?? 0, 4)
+    // an *Opt method adds its key only for Some
+    let opt = Json.obj().strOpt("a", Option.Some("x")).strOpt("b", Option.None).intOpt("c", Option.Some(1)).intOpt("d", Option.None).floatOpt("e", Option.Some(0.5)).floatOpt("f", Option.None).boolOpt("g", Option.Some(true)).boolOpt("h", Option.None).build()
+    let oj = doc(opt)
+    let oks = oj.keys()
+    assertEqual64(oks.len, 4)
+    assertStrEqual(oks[0], "a")
+    assertStrEqual(oks[1], "c")
+    assertStrEqual(oks[2], "e")
+    assertStrEqual(oks[3], "g")
+    // empty builders, and the array builder alone
+    assertStrEqual(Json.obj().build(), "{}")
+    assertStrEqual(Json.arr().build(), "[]")
+    assertEqual64(doc(Json.arr().int(1).int(2).build()).len(), 2)
+    // buildPretty is the same value, re-spaced
+    let pretty = Json.obj().int("a", 1).arr("b", Json.arr().int(2).int(3)).buildPretty(2)
+    assertTrue(pretty.contains("\n"))
+    assertStrEqual(jsonPretty(pretty, 0), Json.obj().int("a", 1).arr("b", Json.arr().int(2).int(3)).build())
+    assertStrEqual(Json.arr().int(1).buildPretty(0), "[1]")
+    // spread copies the members of a parsed object; a key added again replaces its value in place
+    let src = doc("{\"a\":1,\"b\":{\"c\":2}}")
+    let merged = doc(Json.obj().spread(src, src.curRoot()).int("a", 5).int("d", 6).build())
+    let mks = merged.keys()
+    assertEqual64(mks.len, 3)
+    assertStrEqual(mks[0], "a")
+    assertStrEqual(mks[1], "b")
+    assertStrEqual(mks[2], "d")
+    assertEqual64(merged.i64("a") ?? 0, 5)
+    assertEqual64(merged.i64Path("b.c") ?? 0, 2)
+    // spreading a non-object contributes nothing
+    assertStrEqual(Json.obj().spread(src, src.curField(src.curRoot(), "a")).build(), "{}")
+}
+
+@req(JSON-SER-ESCAPE)
+@req(JSON-SER-NUM)
+@req(JSON-SER-GRAMMAR)
+fn testSmallSerializers(): void {
+    assertStrEqual(jsonQuote("a\"b\n"), "\"a\\\"b\\n\"")
+    assertStrEqual(jsonBoolStr(true), "true")
+    assertStrEqual(jsonBoolStr(false), "false")
+    assertStrEqual(jsonF32Str(0.1), "0.1")
+    let inf: f32 = 1.0e30 * 1.0e30
+    assertStrEqual(jsonF32Str(inf), "null")
+    assertStrEqual(jsonSer(JsonVal.JBool(true)), "true")
+    assertStrEqual(JsonVal.JNull.toJsonText(), "null")
+}
+
+@req(JSON-POOL)
+fn testPoolReadsBackWhatTheSourceHolds(): void {
+    let src = "[null,true,false,-12.5e1,\"str\",[1,2],{\"k\":\"v\",\"e\":{}},[]]"
+    let j = doc(src)
+    let r = j.curRoot()
+    assertEqual64(j.curLen(r), 8)
+    let kinds: Vec<i64> = [0, 1, 1, 2, 3, 4, 5, 4]
+    for i in 0..8 {
+        assertEqual64(j.curKind(j.curChild(r, i)) as i64, kinds[i])
+    }
+    assertTrue(j.curBool(j.curChild(r, 1)) ?? false)
+    assertFalse(j.curBool(j.curChild(r, 2)) ?? true)
+    assertNear(j.curFloat(j.curChild(r, 3)) ?? 0.0, -125.0, 1e-9)
+    assertStrEqual(j.curStr(j.curChild(r, 4)) ?? "", "str")
+    assertEqual64(j.curLen(j.curChild(r, 5)), 2)
+    assertEqual64(j.curInt(j.curChild(j.curChild(r, 5), 1)) ?? 0, 2)
+    assertStrEqual(j.curKeyAt(j.curChild(r, 6), 1), "e")
+    assertEqual64(j.curLen(j.curChild(r, 7)), 0)
+    // the whole document, and a subtree handed to a new pool, give the source text back
+    assertStrEqual(j.rawStr(), src)
+    assertStrEqual(j.at(6)!.rawStr(), "{\"k\":\"v\",\"e\":{}}")
+    assertStrEqual(j.at(5)!.rawStr(), "[1,2]")
 }
