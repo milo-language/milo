@@ -257,7 +257,6 @@ class GlueFn {
         const w = scalar === "i64" ? "si64" : "ui64";
         if (ty !== w) { v = this.def(`milo.cast ${v} : ${ty} to ${w}`); arg = w; }
       }
-      this.cx.mlirPushScalar(scalar);
       this.call(`milo.string.push_${scalar}`, [[dst, STR_REF], [v, arg]], PTR);
       return;
     }
@@ -323,7 +322,6 @@ class GlueFn {
     switch (t.tag) {
       case "string": {
         // The runtime's share takes the string by value (src/runtime/str.ll).
-        this.cx.mlirStringOps();
         const v = this.def(`milo.ptr.load ${s} : ${STR}`);
         this.emit(`milo.ptr.store ${this.call("milo.str.share", [[v, STR]], STR)}, ${d} : ${STR}`);
         return;
@@ -334,7 +332,6 @@ class GlueFn {
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${vh}`)} : ${PTR}`);
         const len = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[1] : ${vh}`)} : si64`);
         const es = size(t.element);
-        this.cx.mlirCloneOps();
         const buf = this.call("milo.buf.clone", [[data, PTR], [len, "si64"], [this.def(`milo.const ${es} : si64`), "si64"]], PTR);
         this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${vh}`)} : ${PTR}`);
         this.emit(`milo.ptr.store ${len}, ${this.def(`milo.ptr.field ${d}[2] : ${vh}`)} : si64`);
@@ -349,7 +346,6 @@ class GlueFn {
       }
       case "heap": {
         const box = this.def(`milo.ptr.load ${s} : ${PTR}`);
-        this.cx.mlirCloneOps();
         // A one-element buffer copy of the box, then its contents' owning parts.
         const nb = this.call("milo.buf.clone", [[box, PTR], [this.def("milo.const 1 : si64"), "si64"], [this.def(`milo.const ${size(t.inner)} : si64`), "si64"]], PTR);
         this.call(this.glue.clone(t.inner), [[box, PTR], [nb, PTR]], null);
@@ -363,7 +359,6 @@ class GlueFn {
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${head}`)} : ${PTR}`);
         const cap = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[2] : ${head}`)} : si64`);
         const lay = this.cx.mapSlotLayout(t.key, t.value);
-        this.cx.mlirCloneOps();
         const buf = this.call("milo.buf.clone", [[data, PTR], [cap, "si64"], [this.def(`milo.const ${lay.size} : si64`), "si64"]], PTR);
         this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${head}`)} : ${PTR}`);
         const kOwn = this.cx.needsDropCg(t.key), vOwn = this.cx.needsDropCg(t.value);
@@ -458,8 +453,8 @@ class GlueFn {
     }
     const size = (x: TypeKind) => this.cx.typeSizeOf(x);
     switch (t.tag) {
-      case "string": this.cx.mlirDropOps(); this.call("milo.string.drop", [[p, PTR]], null); return;
-      case "fn": this.cx.mlirDropOps(); this.call("milo.closure.drop", [[p, PTR]], null); return;
+      case "string": this.call("milo.string.drop", [[p, PTR]], null); return;
+      case "fn": this.call("milo.closure.drop", [[p, PTR]], null); return;
       case "vec": {
         const vh = `!milo.struct<"Vec", ${PTR}, si64, si64>`;
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[0] : ${vh}`)} : ${PTR}`);
@@ -476,7 +471,6 @@ class GlueFn {
       case "heap": {
         if (t.inner.tag === "interface") {
           const n = this.cx.mlirIfaceMethodCount(t.inner.name);
-          this.cx.mlirDropOps();
           if (n === null) {
             // No itable has this interface: no box can be live with a destructor to run.
             const data = this.def(`milo.ptr.load ${p} : ${PTR}`);
@@ -621,7 +615,6 @@ class GlueFn {
       const fr = this.def(`milo.field_ref ${p}[${i}] : !milo.ref<${sty}> -> !milo.ref<${fty}>`);
       if (f.typeKind.tag === "string") {
         const s = this.def(`milo.load ${fr} : ${STR_REF}`);
-        this.cx.mlirPushScalar("json");
         this.text('"', dst);
         this.call("milo.string.push_json", [[dst, STR_REF], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], PTR);
         this.text('"', dst);
@@ -639,7 +632,6 @@ class GlueFn {
       return this.def(`milo.cmp eq, ${this.def(`milo.load ${a} : !milo.ref<${ty}>`)}, ${this.def(`milo.load ${b} : !milo.ref<${ty}>`)} : ${ty}`);
     }
     if (t.tag === "string") {
-      this.cx.mlirStringOps();
       return this.call("milo.string.eq", [[a, STR_REF], [b, STR_REF]], "i1");
     }
     if (t.tag === "struct") {

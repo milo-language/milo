@@ -113,7 +113,7 @@ try {
       out = (e.stdout ?? "") + (e.stderr ?? "");
     }
     ran++;
-    // MILO_SANITIZE=thread makes `--sanitize` ThreadSanitizer (src/codegen.ts sanitizerKind).
+    // MILO_SANITIZE=thread makes `--sanitize` ThreadSanitizer (src/mlir-backend.ts sanitizerKind).
     const m = /(?:ERROR: AddressSanitizer|WARNING: ThreadSanitizer): ([^\n]*)/.exec(out);
     if (m) errors.push({ name, detail: m[1]!.slice(0, 120) });
     else if (VERBOSE) console.log(`ok   ${name}`);

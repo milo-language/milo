@@ -1,4 +1,4 @@
-; HashMap runtime helpers, as LLVM IR text sections (src/codegen-runtime.ts).
+; HashMap runtime helpers, as LLVM IR text sections (src/runtime-ir.ts).
 
 ; @@ milo.map.alloc
 ; `_mapAlloc(n, size)`: n * size zeroed bytes from malloc; null when the product

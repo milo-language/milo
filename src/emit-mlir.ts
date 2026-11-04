@@ -12,12 +12,13 @@ type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import { MlirGlue } from "./mlir-glue";
+import { MAIN_BODY_FN as MAIN_BODY, PROCESS_INIT_FN } from "./startup";
 
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
   // -g: every op carries its source loc (the line table); off, the text has none of them.
   readonly emitDebug: boolean;
-  // std/replay is in the program, so replay-engine fns count their depth (codegen replayEngineScope).
+  // std/replay is in the program, so replay-engine fns count their depth (milo.replay.enter).
   replayScope: boolean;
   // requires/ensures/invariant become runtime checks only when on (-O0 by default).
   contractChecks: boolean;
@@ -26,15 +27,17 @@ export interface MlirEmitCtx {
   fnSigs: Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>;
   sretFns: Set<string>;
   llvmType(t: TypeKind): string;
-  // main is taken only when it is the process entry (no green-task wrapper around it).
+  // main is the process entry itself, not a body a green-task wrapper runs (src/startup.ts).
   readonly mlirMainOk: boolean;
+  // A function's `attributes {...}` (linkage, pass-through LLVM attributes), and the
+  // attribute dictionary of its param i (nonnull, dereferenceable, noalias; src/noalias.ts).
+  fnAttrs(fn: HIRFunction, name: string): string;
+  paramAttrs(fn: string, i: number): string;
+  // -g: `loc` (a function's own, or closure body `name`'s) fused with its DISubprogram (src/mlir-debug.ts).
+  debugFnLoc(fn: HIRFunction, loc: string): string;
+  debugClosureLoc(name: string, span: Span | undefined, loc: string): string;
   mlirStrViewStep(): string;
-  mlirStringOps(): void;
-  mlirMapOps(): void;
-  mlirCloneOps(): void;
-  mlirDropOps(): void;
   mlirIfaceMethodCount(name: string): number | null;
-  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr" | "json" | "cstr"): void;
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
   mlirDisplayName(name: string): string;
@@ -45,7 +48,6 @@ export interface MlirEmitCtx {
   mlirItable(from: string, iface: string): string;
   mlirItableDrop(concrete: string): string | null;
   mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string;
-  mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   hasStringType: boolean;
@@ -58,12 +60,9 @@ export interface MlirEmitCtx {
   // A HashMap slot { i8 state, K, V } (hashMapEntryType).
   mapSlotLayout(k: TypeKind, v: TypeKind): { size: number; keyOffset: number; valueOffset: number };
   mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null;
-  // libc calls that keep a pointer argument past the call (codegen RETAINING_LIBC).
+  // libc calls that keep a pointer argument past the call (src/noalias.ts RETAINING_LIBC).
   readonly retainingLibc: ReadonlySet<string>;
 }
-
-// What codegen names main's body behind the green-task wrapper (Codegen.MAIN_BODY_FN).
-const MAIN_BODY = "__milo_main_body";
 
 const CALLBACK_OPS = new Set(["map", "optionAndThen", "optionOrElse", "resultMap", "resultMapErr", "unwrapOrElse", "resultAndThen", "resultOrElse", "resultUnwrapOrElse", "resultContext"]);
 const PROBE = !!process.env.MILO_MLIR_PROBE;
@@ -78,7 +77,7 @@ const PTR = "!milo.ptr";
 // Only ever a literal until drops exist (Milo.td StringType).
 const STR = "!milo.string";
 
-/** A function's own loc: the line its DISubprogram (codegen-dwarf.ts) names. */
+/** A function's own loc: the line its DISubprogram (src/mlir-debug.ts) names. */
 function fnDebugLoc(cx: MlirEmitCtx, fn: HIRFunction): string {
   return debugLocOf(cx, { file: fn.sourceFile, line: fn.line ?? 0, col: 1 }) ?? "loc(unknown)";
 }
@@ -642,7 +641,7 @@ class FnEmitter {
     this.closeScope(0, jumped, null);
     if (!jumped) this.emit(ret === null ? "milo.return" : "milo.unreachable");
     const head = `func.func @${quote(name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} attributes {llvm.linkage = #llvm.linkage<internal>} {`;
-    return [head, ...this.vars, ...this.body, this.cx.emitDebug ? `} ${this.debugLoc}` : "}"].join("\n");
+    return [head, ...this.vars, ...this.body, this.cx.emitDebug ? `} ${this.cx.debugClosureLoc(name, e.span, this.debugLoc)}` : "}"].join("\n");
   }
 
   /**
@@ -715,9 +714,9 @@ class FnEmitter {
     if (fn.isExtern) throw new MlirUnsupported("extern fn");
     if (fn.isVariadic) throw new MlirUnsupported("variadic fn");
     if (this.cx.emitDebug) this.debugLoc = fnDebugLoc(this.cx, fn);
-    // main's prologue (argc/argv, global init, stdout buffering) is codegen.ts's; the
-    // splice keeps it. Behind a green-task wrapper main's body is MAIN_BODY, which the
-    // wrapper's task calls with nothing and takes its i32 as the exit code.
+    // main first calls the scaffold's process init (argc/argv, stdout buffering, global
+    // init). Behind a green-task wrapper main's body is MAIN_BODY, which the wrapper's task
+    // calls with nothing (the wrapper ran the init) and takes its i32 as the exit code.
     const isMain = fn.name === "main";
     // `fn main(): i32` returns its exit code; a void main returns 0.
     const mainI32 = isMain && fn.retType.tag === "int" && fn.retType.bits === 32 && fn.retType.signed && fn.retType.min === undefined && fn.retType.max === undefined;
@@ -728,25 +727,31 @@ class FnEmitter {
       // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
       // function qualifies only if it never names it (lookup refuses).
       const elem = vecElem(this.cx, p.type);
+      const attrs = this.cx.paramAttrs(fn.name, i);
       if ((p.isRef || p.isRefMut) && elem !== null) {
         this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem, param: i });
-        return `%p${i}: !milo.vec<${elem}>`;
+        return `%p${i}: !milo.vec<${elem}>${attrs}`;
       }
       if ((p.isRef || p.isRefMut) && placeType(this.cx, p.type) === null) {
         this.bind(p.name, { kind: "opaque", what: placeBlocker(this.cx, p.type) });
-        return `%p${i}: ${PTR}`;
+        return `%p${i}: ${PTR}${attrs}`;
       }
       const pt = placeType(this.cx, p.type);
       const ty = p.isRef || p.isRefMut ? pt! : this.place$(p.type, "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
-        return `%p${i}: !milo.ref<${ty}>`;
+        return `%p${i}: !milo.ref<${ty}>${attrs}`;
       }
       this.bindParam(p.name, `%p${i}`, ty, p.type, i + 1);
       return `%p${i}: ${ty}`;
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0.
-    if (isMain && !green) params.push("%argc: si32", `%argv: ${PTR}`);
+    if (isMain && !green) {
+      params.push("%argc: si32", `%argv: ${PTR}`);
+      const ty = `(si32, ${PTR}) -> ()`;
+      this.callees.set(PROCESS_INIT_FN, ty);
+      this.emit(`func.call @${quote(PROCESS_INIT_FN)}(%argc, %argv) : ${ty}`);
+    }
     // An sret function (a 128+ byte result) writes its result through `%out`, the hidden
     // first param of `void @f(ptr %__sret.out, ...)`, and returns nothing.
     if (this.cx.sretFns.has(fn.name)) {
@@ -764,7 +769,6 @@ class FnEmitter {
     // A contract-checking build: the old(...) snapshots, then every
     // requires clause, at entry; the ensures clauses at every return (ret).
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) {
-      this.cx.mlirContractFail();
       if (fn.oldSnapshots && this.stmts(fn.oldSnapshots)) throw new MlirUnsupported("old() snapshot that jumps");
       for (const c of fn.contracts ?? []) if (c.kind === "requires") this.contractCheck(c.kind, c.expr, c.span);
       this.ensures = (fn.contracts ?? []).filter(c => c.kind === "ensures");
@@ -783,7 +787,8 @@ class FnEmitter {
       else if (ret === null) this.ret("milo.return");
       else this.emit("milo.unreachable");
     }
-    const head = `func.func @${quote(green ? MAIN_BODY : fn.name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} {`;
+    const name = green ? MAIN_BODY : fn.name;
+    const head = `func.func @${quote(name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`}${this.cx.fnAttrs(fn, name)} {`;
     return [head, ...this.vars, ...this.body, "}"].join("\n");
   }
 
@@ -1452,7 +1457,6 @@ class FnEmitter {
     } else if (v.ty === "f64" || v.ty === "f32" || v.ty === "i1" || v.ty === PTR) {
       kind = v.ty === "i1" ? "bool" : v.ty === PTR ? "ptr" : v.ty;
     } else throw new MlirUnsupported(`text of a ${v.ty}`);
-    this.cx.mlirPushScalar(kind);
     this.allocCheck(this.rtCall(`milo.string.push_${kind}`, [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
   }
 
@@ -2538,7 +2542,6 @@ class FnEmitter {
           p = { ref, ty: STR };
         }
         if (p.ty !== STR) throw new MlirUnsupported("string copy of another type");
-        this.cx.mlirStringOps();
         return { ...this.def(`milo.string.share ${p.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       }
       case "InterfaceMethodCall": return this.dynCall(e);
@@ -2677,14 +2680,12 @@ class FnEmitter {
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
         const n = this.expr(e.extra);
         if (n.ty !== "si64") throw new MlirUnsupported("string reserve size type");
-        this.stringHelpers();
         return this.allocCheck(this.rtCall("milo.string.reserve", [{ ref: str, ty: `!milo.ref<${STR}>` }, n], PTR), e.span);
       }
       case "StrAlloc": {
         if (scalar(e.type, "string buffer") !== PTR) throw new MlirUnsupported("string alloc type");
         const n = this.expr(e.size);
         if (n.ty !== "si64") throw new MlirUnsupported("string alloc size type");
-        this.stringHelpers();
         return this.allocCheck(this.rtCall("milo.str.alloc", [n], PTR), e.span);
       }
       case "StrRangeCheck": {
@@ -2697,7 +2698,6 @@ class FnEmitter {
       }
       case "StrUnique": {
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
-        this.stringHelpers();
         return this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
       }
       case "MapHash": {
@@ -2706,7 +2706,6 @@ class FnEmitter {
         const seed = this.expr(e.seed);
         if (seed.ty !== "si64") throw new MlirUnsupported("map seed type");
         if (scalar(e.type, "map hash") !== "si64") throw new MlirUnsupported("map hash type");
-        this.cx.mlirMapOps();
         // FNV-1a from its offset basis xor the seed.
         const h0 = this.def(`milo.xor ${this.def("milo.const -3750763034362895579 : si64", "si64").ref}, ${seed.ref} : si64`, "si64");
         const kp = refOf(this.value(kt, "map key"));
@@ -2723,7 +2722,6 @@ class FnEmitter {
         // order, floats ordered (NaN is never less), ints by signedness, false < true.
         const ty = this.value(kt, "compared key");
         if (ty === STR) {
-          this.stringHelpers();
           const c = this.rtCall("milo.string.cmp", [{ ref: a, ty: rt }, { ref: b, ty: rt }], "si32");
           return this.def(`milo.cmp lt, ${c.ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
         }
@@ -2734,13 +2732,11 @@ class FnEmitter {
       }
       case "MapSeed":
         if (scalar(e.type, "map seed") !== "si64") throw new MlirUnsupported("map seed type");
-        this.cx.mlirMapOps();
         return this.rtCall("__milo_hash_seed", [], "si64");
       case "MapAlloc": {
         const n = this.expr(e.count), z = this.expr(e.size);
         if (n.ty !== "si64" || z.ty !== "si64") throw new MlirUnsupported("map alloc operand types");
         if (scalar(e.type, "map buffer") !== PTR) throw new MlirUnsupported("map buffer type");
-        this.cx.mlirMapOps();
         return this.allocCheck(this.rtCall("milo.map.alloc", [n, z], PTR), e.span);
       }
       case "MapCopyOut": {
@@ -2756,7 +2752,6 @@ class FnEmitter {
         // C may write through the bytes: a string owned outright here is made the only
         // handle to its buffer first (the helper sees only a reference).
         if (this.ownedLocal(e.object)) {
-          this.stringHelpers();
           this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
         }
         return this.def(`milo.string.data ${this.def(`milo.load ${str} : !milo.ref<${STR}>`, STR).ref}`, PTR);
@@ -3304,7 +3299,6 @@ class FnEmitter {
         const dst = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
         const x = this.borrow(this.expr(e.other), e.other.type);
         if (x.ty !== STR) throw new MlirUnsupported("pushStr of a non-string");
-        this.stringHelpers();
         this.emit(`milo.string.append ${dst}, ${x.ref} : !milo.ref<${STR}>`);
         return { ref: "", ty: "" };
       }
@@ -3334,7 +3328,6 @@ class FnEmitter {
         const mark = this.pending.length;
         const vals = placeOnly ? [] : e.elements.map(x => this.pend(this.operand(x, ety, "Vec literal element"), x.type));
         this.pending.length = mark;
-        this.cx.mlirCloneOps();
         const buf = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def(`milo.const ${n} : si64`, "si64"), this.def(`milo.const ${es} : si64`, "si64")], PTR), e.span);
         const at = (k: number) => k === 0 ? buf.ref : this.def(`milo.ptr.elem ${buf.ref}[${this.def(`milo.const ${k} : si64`, "si64").ref}] : ${pty}`, PTR).ref;
         if (placeOnly) {
@@ -3452,7 +3445,6 @@ class FnEmitter {
       else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported(`capture binding (${b.kind === "var" ? `${b.ty} for ${cty}` : b.kind} ${c.name})`);
       else if (!this.hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
       else if (c.share && cty === STR) {
-        this.cx.mlirStringOps();
         v = { ...this.def(`milo.string.share ${b.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       } else if (b.owned && !c.share) v = { ...this.def(`milo.move ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
       else if (b.flag && !c.share) {
@@ -3487,7 +3479,6 @@ class FnEmitter {
     let at = table;
     for (const c of e.captures) { offs.push(at); at += align(this.cx.typeSizeOf(c.type)); }
     const flagOffs = own.map(() => { const o = at; at += 8; return o; });
-    this.cx.mlirCloneOps();
     const env = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def("milo.const 1 : si64", "si64"), this.def(`milo.const ${at} : si64`, "si64")], PTR), e.span);
     const off = (o: number) => o === 0 ? env.ref : this.def(`milo.ptr.elem ${env.ref}[${this.def(`milo.const ${o} : si64`, "si64").ref}] : ui8`, PTR).ref;
     this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(`${name}$envdrop`)}`, PTR).ref}, ${env.ref} : ${PTR}`);
@@ -4414,11 +4405,6 @@ class FnEmitter {
     return this.def(call, ret);
   }
 
-  private stringHelpers(): void {
-    // Runtime sections (src/runtime/str.ll), not generated helpers.
-    this.cx.mlirStringOps();
-  }
-
   /** `a == b`, `a < b`, `a + b` on two borrowed strings. */
   private stringBinop(e: HIRExpr & { kind: "BinOp" }): Val {
     const names: Record<string, string> = { "==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "+": "concat" };
@@ -4428,7 +4414,6 @@ class FnEmitter {
     const r = this.borrow(this.expr(e.right), e.right.type);
     if (op === "concat") {
       // Both helpers: milo-append-in-place may turn `s = s + x` into the append.
-      this.stringHelpers();
       return { ...this.def(`milo.string.concat ${l.ref}, ${r.ref}`, STR), own: "owned" };
     }
     const slot = (v: Val) => {
@@ -4439,7 +4424,6 @@ class FnEmitter {
     };
     const [a, b] = [slot(l), slot(r)];
     // Runtime sections (src/runtime/str.ll): equality, and a three-way compare for order.
-    this.stringHelpers();
     const eq = op === "eq" || op === "ne";
     const name = eq ? "milo.string.eq" : "milo.string.cmp";
     const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> ${eq ? "i1" : "si32"}`;
@@ -4811,7 +4795,6 @@ class FnEmitter {
     empty();
     this.appendText(slot, args, formatted ? null : flush);
     if (newline) {
-      this.stringHelpers();
       this.emit(`milo.string.append ${slot}, ${this.def('milo.string.lit "\\0A"', STR).ref} : !milo.ref<${STR}>`);
     }
     flush();
@@ -4858,7 +4841,6 @@ class FnEmitter {
         const i = arg(0, "si64");
         const argv = this.def(`milo.ptr.load ${this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("argv"))}`, PTR).ref} : ${PTR}`, PTR);
         const p = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${argv.ref}[${i.ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
-        this.stringHelpers();
         return { ...this.rtCall("milo.str.from", [p, this.libcCall("strlen", [p], "si64")], STR), own: "owned" };
       }
       case "_schedulerGet":
@@ -4879,7 +4861,6 @@ class FnEmitter {
         // A fresh NUL-terminated copy, so the string can go back to C without another.
         const p = arg(0, PTR);
         const n = e.func === "_bytesToString" ? arg(1, "si64") : this.libcCall("strlen", [p], "si64");
-        this.stringHelpers();
         return { ...this.rtCall("milo.str.from", [p, n], STR), own: "owned" };
       }
       case "_strDataPtr": {
@@ -4915,7 +4896,6 @@ class FnEmitter {
       } else if (t.tag === "string") {
         const v = this.borrow(this.expr(a.expr), t);
         if (v.ty !== STR) throw new MlirUnsupported("print part string type");
-        this.stringHelpers();
         this.emit(`milo.string.append ${slot}, ${v.ref} : !milo.ref<${STR}>`);
         if (afterString && i < args.length - 1) afterString();
       } else {
@@ -4964,8 +4944,8 @@ class FnEmitter {
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
     // Only C coerces a struct by value (the ABI); a Milo callee that took a string as *u8
     // takes any other value as the normal call path passes it.
-    // A struct by value to or from C goes through the module's shim for f (Codegen
-    // mlirCAbiShim), which does the C ABI's coercion; to the shim it is a plain value.
+    // A struct by value to or from C goes through the module's shim for f (src/scaffold.ts
+    // cAbiShim), which does the C ABI's coercion; to the shim it is a plain value.
     const shim = callee.isExtern ? this.cx.mlirCAbiShim(e.func, !!(sig.variadic || e.variadic)) : null;
     const cAbi = callee.isExtern && !shim;
     if (ret !== null && !isScalarTy(ret) && ret !== PTR && (cAbi || ret === STR || this.hasDrop(ret) || (shim && inSlot(this.cx, ret)))) return null;
@@ -5003,13 +4983,11 @@ class FnEmitter {
           else ref = this.tempSlot("cstr", STR, t, v);
           this.emit(`milo.store ${v.ref}, ${ref}${keep ? "" : " init"} : !milo.ref<${STR}>`);
         }
-        this.stringHelpers();
         // C may write through the bytes: a string owned outright here is made unique first.
         if (local || (a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")) this.rtCall("milo.str.unique", [{ ref, ty: `!milo.ref<${STR}>` }], null);
         const copy = keep ? this.fresh() : this.tempSlot("cstr.copy", STR, { tag: "string" });
         if (keep) this.vars.push(`  ${copy} = milo.var "cstr.copy" : !milo.ref<${STR}>`);
         this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${copy} init : !milo.ref<${STR}>`);
-        this.cx.mlirPushScalar("cstr");
         vals.push(this.rtCall("milo.string.cstr", [{ ref, ty: `!milo.ref<${STR}>` }, { ref: copy, ty: `!milo.ref<${STR}>` }], PTR));
       } else if (t.tag === "array") {
         vals.push(this.decay(a.expr));
@@ -5071,7 +5049,6 @@ class FnEmitter {
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var "panic.msg" : !milo.ref<${STR}>`);
     this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
-    this.stringHelpers();
     for (const p of parts) {
       if (typeof p === "string") this.emit(`milo.string.append ${slot}, ${this.def(`milo.string.lit ${quote(p)}`, STR).ref} : !milo.ref<${STR}>`);
       else if ("place" in p) {
@@ -5413,8 +5390,15 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
   try {
     const text = em.run();
     if (em.probed.length) return [...new Set(em.probed)].join("\n");
-    const all = [text, ...em.closures.texts].join("\n");
-    return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: cx.emitDebug ? fillDebugLocs(all, fnDebugLoc(cx, fn)) : all, callees: em.callees, calls: em.calls, closures: em.closures.names };
+    let all = [text, ...em.closures.texts].join("\n");
+    if (cx.emitDebug) {
+      // The function's own loc names its subprogram; its closures' get one of their own.
+      const loc = fnDebugLoc(cx, fn);
+      const own = fillDebugLocs(text, loc).split("\n");
+      own[own.length - 1] = `} ${cx.debugFnLoc(fn, loc)}`;
+      all = [own.join("\n"), ...em.closures.texts.map(t => fillDebugLocs(t, loc))].join("\n");
+    }
+    return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: all, callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
     if (err instanceof MlirUnsupported) return [...new Set([...em.probed, err.reason])].filter(r => !r.includes(PROBE_SKIPPED)).join("\n") || err.reason;
     if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");

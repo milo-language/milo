@@ -9,7 +9,7 @@ import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { TargetInfo } from "./target";
 import type { MlirEmitCtx } from "./emit-mlir";
-import { Layout } from "./layout";
+import { Layout, HASHMAP_FIELDS } from "./layout";
 import { Ownership } from "./owned-temp";
 import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -369,7 +369,7 @@ export class ModuleCtx implements MlirEmitCtx {
   // The body of a named type as mlir/Scalar.cpp's type converter builds it.
   private namedBody(name: string): string[] {
     if (name === "String" || name === "Vec") return ["ptr", "i64", "i64"];
-    if (name === "HashMap") return ["ptr", "i64", "i64", "i64", "i64"];
+    if (name === "HashMap") return ["ptr", ...Array<string>(HASHMAP_FIELDS - 1).fill("i64")];
     const s = this.structLayouts.get(name);
     if (s) return s.fields.map(f => f.type);
     const e = this.layout.enumLayouts.get(name);

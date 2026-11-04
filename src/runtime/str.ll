@@ -1,4 +1,4 @@
-; Fixed IR runtime helpers, loaded by section from src/codegen-runtime.ts.
+; Fixed IR runtime helpers, loaded by section from src/runtime-ir.ts.
 ; Whole-line `;` comments are dropped on load; `{{name}}` is filled in by the caller.
 
 ; @@ milo.strfind

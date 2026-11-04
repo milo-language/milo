@@ -1,13 +1,17 @@
 // Type layout: struct and enum registration, sizes, alignments, field offsets, niches and
-// which types need drop glue. Pure functions of the HIRModule's types, split out of
-// codegen.ts so layouts are independent of the emitter. llvmType also records which builtin
-// struct types (%String, %Vec, %HashMap) were mentioned, because the emitter has to
-// define exactly those.
+// which types need drop glue. Pure functions of the HIRModule's types, the one source of
+// truth for them: emit-mlir spells the dialect's types from it, and mlir/Scalar.cpp's type
+// converter must build the same bodies (src/mlir-ctx.ts dialectType).
 
 import type { HIRModule } from "./hir";
 import { type TypeKind, needsDrop } from "./types";
-import { HASHMAP_FIELDS } from "./codegen-map";
+
 import { must } from "./must";
+
+// Field count of %HashMap { ptr, i64 x 4 }, and the single source for its size. Every field
+// is 8 bytes, so the size is just the count, but the COUNT has to come from one place or the
+// two drift, which is exactly what happened.
+export const HASHMAP_FIELDS = 5;
 
 export interface StructLayout {
   name: string;

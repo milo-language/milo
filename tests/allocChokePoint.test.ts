@@ -11,7 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseSections } from "../src/codegen-runtime";
+import { parseSections } from "../src/runtime-ir";
 
 const ROOT = join(import.meta.dir, "..");
 const RUNTIME_DIR = join(ROOT, "src", "runtime");
@@ -19,10 +19,10 @@ const runtime = new Map<string, string[]>();
 for (const f of readdirSync(RUNTIME_DIR).filter(f => f.endsWith(".ll")))
   for (const [k, body] of parseSections(readFileSync(join(RUNTIME_DIR, f), "utf8"))) runtime.set(k, [...body]);
 
-// Every generator that can put a malloc into a program: the module scaffold, the MLIR
+// Every generator that can put a malloc into a program: the process scaffold, the MLIR
 // emitter and drop/clone glue, and the milo-opt lowerings.
 const GENERATORS = [
-  ...readdirSync(join(ROOT, "src")).filter(f => /^(codegen(-[\w-]+)?|emit-mlir|mlir-[\w-]+)\.ts$/.test(f)).map(f => join(ROOT, "src", f)),
+  ...readdirSync(join(ROOT, "src")).filter(f => /^(scaffold|emit-mlir|mlir-[\w-]+)\.ts$/.test(f)).map(f => join(ROOT, "src", f)),
   ...readdirSync(join(ROOT, "mlir")).filter(f => f.endsWith(".cpp")).map(f => join(ROOT, "mlir", f)),
 ];
 

@@ -15,7 +15,7 @@ import {
   parseModule, mapSymbols, mapGlobalSymbols, referencedSymbols, referencedInGlobal,
   declareFor, externDeclFor, endOfType, textHash, quoteIfNeeded, type Module, type Func, type Global,
 } from "./cgu";
-import { GLOBAL_INIT_FN } from "./codegen";
+import { GLOBAL_INIT_FN } from "./startup";
 import { LAZY_INIT_PREFIX } from "./lazy-globals";
 import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 

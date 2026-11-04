@@ -1,7 +1,7 @@
 // The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims
 // against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by
-// verifyCDecls, then discarded). Extracted from codegen.ts: it needs nothing from codegen
-// but the recorded claims and the layout math that placed the structs.
+// verifyCDecls, then discarded). It needs nothing from the build but the recorded claims
+// and the layout math that placed the structs (src/layout.ts).
 import type { HIRStruct } from "./hir";
 import { type TypeKind, typeName } from "./types";
 import { cSigParams, headerLabel } from "./csig";

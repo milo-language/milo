@@ -148,7 +148,8 @@ export function parseModule(ir: string): Module | null {
 
   for (let i = 0; i < lines.length; offset += lines[i]!.length + 1, i++) {
     const line = lines[i]!;
-    if (!line.trim()) continue;
+    // LLVM's printer annotates the module (`; ModuleID`, `; Function Attrs: ...`).
+    if (!line.trim() || line.startsWith(";")) continue;
 
     if (line.startsWith("define")) {
       // Our emitter always closes a function with `}` in column 0, and never emits a

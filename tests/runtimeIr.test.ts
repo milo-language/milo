@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
-import { parseSections, runtimeFn, runtimeSectionKeys } from "../src/codegen-runtime";
+import { parseSections, runtimeFn, runtimeSectionKeys } from "../src/runtime-ir";
 
 test("sections: comments dropped, trailing blanks trimmed, stray text and duplicates rejected", () => {
   const s = parseSections("; header\n\n; @@ a\nentry:\n  ; note\n  ret void\n\n; @@ b\n}\n");
@@ -23,8 +23,8 @@ test("runtimeFn substitutes every placeholder and rejects a mismatch either way"
 });
 
 // Keys are named in full at every call so this can find them. A section nobody loads is dead runtime text that still looks maintained.
-test("every section in src/runtime/*.ll is loaded by codegen", () => {
-  const cg = readFileSync(join(import.meta.dir, "..", "src", "codegen.ts"), "utf-8");
+test("every section in src/runtime/*.ll is loaded by src/runtime-ir.ts", () => {
+  const cg = readFileSync(join(import.meta.dir, "..", "src", "runtime-ir.ts"), "utf-8");
   const keys = runtimeSectionKeys();
   // Every marker in the files parsed into a section: a loader that drops a file finds fewer.
   const dir = join(import.meta.dir, "..", "src", "runtime");
@@ -32,5 +32,5 @@ test("every section in src/runtime/*.ll is loaded by codegen", () => {
     .map(f => (readFileSync(join(dir, f), "utf-8").match(/^; @@ /gm) ?? []).length).reduce((x, y) => x + y, 0);
   expect(markers).toBeGreaterThan(0);
   expect(keys.length).toBe(markers);
-  expect(keys.filter(k => !cg.includes(`"${k}"`))).toEqual([]);
+  expect(keys.filter((k: string) => !cg.includes(`"${k}"`))).toEqual([]);
 });

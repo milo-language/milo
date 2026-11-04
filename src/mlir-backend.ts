@@ -1,31 +1,26 @@
-// MLIR driver (the build path) (docs/mlir-backend.md): the functions the milo dialect covers go
-// HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
-// replace the stubs src/codegen.ts leaves in the one LLVM module clang sees.
-//
-// Linking is a textual splice, not llvm-link. src/codegen.ts makes every non-exported fn
-// `internal`, and two modules cannot reference each other's internal symbols, so llvm-link
-// would need every cross-module callee promoted and re-internalized afterwards. In one
-// module the names simply resolve. src/codegen.ts emits only a stub for a taken function
-// (MlirPlan.take), with its real `define` line and its call edges.
-// The `define` line is codegen.ts's (linkage, attributes, ABI), with params renumbered
-// to the MLIR body's `%0..%n-1`. Under -g it keeps its `!dbg` (codegen-dwarf.ts's
-// DISubprogram), and the body's DILocations are rescoped to it: the line table. Local
-// variables (scalars and structs of them) are dbg.declare records on stack slots; enum, string and Vec
-// type DIEs are not emitted yet.
+// MLIR driver (the build path) (docs/mlir-backend.md): HIR -> milo MLIR (src/emit-mlir.ts),
+// one module holding every function, the module globals and itables, the type-directed glue
+// (src/mlir-glue.ts) and the process scaffold (src/scaffold.ts) -> milo-opt (the passes, then
+// LLVM IR with the runtime sections linked in, mlir/Link.cpp). milo-opt's LLVM IR is the
+// module clang compiles.
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
 import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
-import { mapSymbols } from "./cgu";
 import type { TargetInfo } from "./target";
-import { emitMlirFunction, globalOps, itableOps, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
+import { emitMlirFunction, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
+import { ModuleCtx, type BuildOptions } from "./mlir-ctx";
+import { planStartup } from "./startup";
+import { scaffoldModule, HASH_SEED_FN } from "./scaffold";
+import { runtimeModule } from "./runtime-ir";
+import { noaliasEnabled } from "./noalias";
+import { DebugInfo } from "./mlir-debug";
+import { mlirStringBody } from "./mlir-llvm";
 
-
-// The data layout clang uses for `triple` (the one source of truth for it: codegen.ts
-// emits no `target datalayout` and lets clang pick). Asked of the clang of milo-opt's LLVM,
+// The data layout clang uses for `triple`. Asked of the clang of milo-opt's LLVM,
 // the same one that later compiles the module, so both halves of the module agree by
 // construction.
 const dataLayouts = new Map<string, string>();
@@ -103,20 +98,15 @@ const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
   ].join(",") + ")",
   "convert-milo-to-llvm",
   "reconcile-unrealized-casts",
+  // The scaffold's symbols join the program's (mlir/Link.cpp): a declaration on either side
+  // meets its definition on the other.
+  "milo-merge-scaffold",
   "llvm.func(mem2reg," + CANONICALIZE + ")",
 ].join(",") + ")";
-// -g: a DISubprogram per llvm.func, so the translation turns op locs into DILocations. The
-// splice swaps these subprograms for codegen-dwarf.ts's.
-const MLIR_PIPELINE_DEBUG = MLIR_PIPELINE.slice(0, -1) + ",ensure-debug-info-scope-on-llvm-func{emission-kind=LineTablesOnly},llvm.func(milo-lower-debug-vars))";
+// -g: the subprograms are src/mlir-debug.ts's, on the function locs; the local variables
+// become dbg.declare records in them.
+const MLIR_PIPELINE_DEBUG = MLIR_PIPELINE.slice(0, -1) + ",llvm.func(milo-lower-debug-vars))";
 
-const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
-const DEFINE_RE = new RegExp(String.raw`^define [^@]*@(${IDENT})\(`);
-const DECL_RE = new RegExp(String.raw`^(?:define|declare) [^@]*@(${IDENT})\(`);
-const GLOBAL_RE = new RegExp(String.raw`^@(${IDENT}) = `);
-
-function unquote(n: string): string {
-  return n.startsWith('"') ? n.slice(1, -1).replace(/\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : n;
-}
 
 // The clang that compiles an MLIR-path module: the one from the LLVM install milo-opt
 // comes from. Its IR is that LLVM's, and an older clang (Apple's) may
@@ -175,61 +165,60 @@ function run(cmd: string, args: string[], input: string): string {
   return r.stdout;
 }
 
-const STUB_MARK = "; milo.mlir.stub";
-const STUB_FIRST = "  unreachable";
 
-/**
- * Which functions go through MLIR, decided by codegen.ts as it reaches each one
- * (`take`, called from genFunction once signatures are known). A taken function gets a stub
- * body there; `compileThroughMlir` replaces the stub.
- */
+// Which sanitizer `--sanitize` means: AddressSanitizer, or ThreadSanitizer under
+// `--sanitize=thread` (MILO_SANITIZE=thread). Read by milo-opt's function attribute and the
+// link flag in main.ts, which have to agree: clang instruments only functions carrying the
+// matching `sanitize_*` attribute.
+export function sanitizerKind(): "address" | "thread" {
+  return process.env.MILO_SANITIZE === "thread" ? "thread" : "address";
+}
+
+const mlirString = (s: string) => `"${mlirStringBody(new TextEncoder().encode(s))}"`;
+
+/** One build's module: every function through the milo dialect, then milo-opt. */
 export class MlirPlan {
-  private taken: MlirFunction[] = [];
-  private takenNames = new Set<string>();
-  private log: string[] = [];
+  readonly cx: ModuleCtx;
   private readonly fns = new Map<string, HIRFunction>();
-  // Type-directed glue (display, ...) every taken function shares: emitted once, appended
-  // to the module as closure bodies are.
   private readonly glue: MlirGlue;
+  private readonly debug: DebugInfo | null;
 
-  constructor(private hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
+  constructor(private hir: HIRModule, private target: TargetInfo, opts: BuildOptions) {
+    const cx = this.cx = new ModuleCtx(hir, target, opts);
+    cx.plan = planStartup(hir, cx.layout, target);
     this.glue = new MlirGlue(cx);
     for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
+    for (const f of cx.plan.initFns) this.fns.set(f.name, f);
+    this.debug = opts.emitDebug ? new DebugInfo(cx.dwarfPath(opts.filePath), s => cx.mlirDisplayName(s), f => cx.dwarfPath(f)) : null;
+    cx.debugFnLoc = (fn, loc) => this.debug ? this.debug.fnLoc(fn, loc) : loc;
+    cx.debugClosureLoc = (name, span, loc) => this.debug ? this.debug.closureLoc(name, span?.file ?? opts.filePath, span?.line ?? 0, loc) : loc;
+    // An itable's destructor slot is the type's drop glue, when it has one.
+    cx.mlirItableDrop = concrete => cx.needsDropCg({ tag: "struct", name: concrete }) ? this.glue.drop({ tag: "struct", name: concrete }) : null;
   }
 
-  /**
-   * The stub body for `fn` when MLIR takes it, else null: a placeholder the splice
-   * replaces with the MLIR body, never executed and never shipped.
-   */
-  take(fn: HIRFunction): string[] | null {
-    if (fn.isExtern) return null;
-    const r = emitMlirFunction(fn, this.cx, this.fns, this.glue);
-    if (typeof r === "string") {
-      const [first, ...more] = r.split("\n");
-      this.log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
-      // There is no other backend to fall back to: the dialect must cover every function.
-      throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
+  /** Runtime-initialized globals nothing reads: they are filled before main. */
+  get startupGlobals(): string[] { return this.cx.plan.startupGlobals; }
+
+  /** The LLVM IR of the whole module. */
+  compile(): string {
+    const cx = this.cx;
+    const functions = [...this.hir.functions.filter(f => !f.isExtern), ...cx.plan.initFns];
+    cx.planAttributes(functions);
+    const log: string[] = [];
+    const taken: MlirFunction[] = [];
+    for (const fn of functions) {
+      const r = emitMlirFunction(fn, cx, this.fns, this.glue);
+      if (typeof r === "string") {
+        const [first, ...more] = r.split("\n");
+        log.push(`${fn.name}\t${first}`, ...more.map(m => `${fn.name}\t${m}\tmore`));
+        flushLog(log);
+        // There is no other backend to fall back to: the dialect must cover every function.
+        throw new Error(`mlir: ${fn.name} is not covered: ${first}`);
+      }
+      taken.push(r);
+      log.push(`${fn.name}\tok`);
     }
-    // A lazy global's init function is codegen's own, not in the HIR module.
-    if (!this.fns.has(r.name)) this.fns.set(r.name, fn);
-    this.taken.push(r);
-    this.log.push(`${fn.name}\tok`);
-    this.takenNames.add(r.name);
-    // The noalias pass runs on the spliced module (Codegen.noaliasOnFinal), so the stub
-    // only holds the place: the splice replaces it whole.
-    return [STUB_FIRST, "mlir.stub.calls:", STUB_MARK, "  unreachable"];
-  }
-
-  /** The closure bodies MLIR emitted (not their env drops), for the noalias pass. */
-  closureBodies(): string[] {
-    return this.taken.flatMap(f => f.closures).filter(n => !n.endsWith("$envdrop"));
-  }
-
-  /** `ir` with every stub replaced by the function's body compiled through MLIR. */
-  compile(ir: string): string {
-    const logPath = process.env.MILO_MLIR_LOG;
-    if (logPath && this.log.length) appendFileSync(logPath, this.log.join("\n") + "\n");
-    if (this.taken.length === 0) return ir;
+    flushLog(log);
     mlirClang();
     const optPath = tool(MILO_OPT, "milo-opt");
     // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
@@ -240,184 +229,35 @@ export class MlirPlan {
       console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
       process.exit(1);
     }
+    // Before the glue's text is taken: an itable's drop slot asks the glue for its drop.
+    const itables = itableOps(this.hir.itables, cx);
+    const glue = this.glue.module();
+    const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
+    const all = [...taken, ...glueFn];
+    const scaffold = scaffoldModule(cx, { hashSeed: all.some(f => f.callees.has(HASH_SEED_FN)) });
     // The MLIR module is for the TARGET: the translation reads both attributes, and the
     // lowering sizes types with the data layout.
     const triple = this.target.triple;
-    const dl = targetDataLayout(triple);
-    const glue = this.glue.module();
-    const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
-    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${globalOps(this.hir.globals, this.cx)}${itableOps(this.hir.itables, this.cx)}${mlirModuleText([...this.taken, ...glueFn])}}\n`;
+    const attrs = [
+      `llvm.target_triple = "${triple}"`,
+      `llvm.data_layout = "${targetDataLayout(triple)}"`,
+      `milo.runtime_ir = ${mlirString(runtimeModule(this.target, noaliasEnabled()))}`,
+    ];
+    // A per-module extern is one more typed view of a C symbol: its calls go to that symbol.
+    const links = [...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name);
+    if (links.length) attrs.push(`milo.link_names = {${links.map(f => `${mlirString(f.name)} = ${mlirString(f.linkName!)}`).join(", ")}}`);
+    if (cx.opts.sanitize) attrs.push(`milo.sanitize = "${sanitizerKind()}"`);
+    if (this.fns.get("replayHeapMalloc")?.isExtern === false) attrs.push("milo.replay_heap");
+    const flags = this.debug ? `llvm.module_flags [#llvm.mlir.module_flag<warning, "Dwarf Version", 4 : i32>]\n` : "";
+    const text = `${this.debug?.aliases() ?? ""}module attributes {${attrs.join(", ")}} {\n${globalOps(this.hir.globals, cx)}${itables}${flags}${mlirModuleText(all)}${scaffold}}${this.debug ? ` ${this.debug.moduleLoc()}` : ""}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
-    // A per-module extern is one more typed view of a C symbol: codegen.ts renames its
-    // calls to that symbol at the end of generate(), so the MLIR side is renamed the same way.
-    const links = new Map([...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name).map(f => [f.name, f.linkName!]));
-    const debug = this.cx.emitDebug;
-    const llText = run(optPath, ["--emit-llvmir", debug ? MLIR_PIPELINE_DEBUG : MLIR_PIPELINE], text);
-    const ll = (links.size ? mapSymbols(llText, n => links.get(n)) : llText).split("\n");
-    // The bodies are spliced into codegen.ts's module: a triple or layout the two disagree on
-    // would size a struct differently on each side of a call.
-    if (!ll.includes(`target triple = "${triple}"`) || !ll.includes(`target datalayout = "${dl}"`)) throw new Error(`mlir: milo-opt did not emit for ${triple}`);
-    if (!ir.split("\n").includes(`target triple = "${triple}"`)) throw new Error(`mlir: the legacy module is not for ${triple}`);
-
-    const bodies = new Map<string, { header: string; body: string[] }>();
-    const decls: { name: string; line: string }[] = [];
-    const globals: string[] = [];
-    const metadata: string[] = [];
-    for (let i = 0; i < ll.length; i++) {
-      const l = ll[i];
-      if (l.startsWith("define")) {
-        const m = DEFINE_RE.exec(l);
-        if (!m) throw new Error(`mlir: unparsed define: ${l}`);
-        const end = ll.indexOf("}", i);
-        bodies.set(unquote(m[1]), { header: l, body: ll.slice(i + 1, end) });
-        i = end;
-      } else if (l.startsWith("declare")) {
-        const m = DECL_RE.exec(l);
-        if (m) decls.push({ name: unquote(m[1]), line: l.replace(/ #\d+$/, "").replace(/ !dbg !\d+/, "") });
-      } else if (/^!\d+ = /.test(l)) {
-        metadata.push(l);
-      } else if (l.startsWith("@")) {
-        globals.push(l);
-      }
-    }
-
-    const lines = ir.split("\n");
-    const known = new Set<string>();
-    // MLIR's metadata ids start at 0, as codegen.ts's do: shift them past those.
-    let mdBase = 0;
-    for (const l of lines) { const m = /^!(\d+) = /.exec(l); if (m) mdBase = Math.max(mdBase, Number(m[1]) + 1); }
-    // -g: the scaffold's DICompileUnit and DISubprograms (codegen-dwarf.ts) stay the module's;
-    // a reference to MLIR's compile unit or to a taken function's MLIR subprogram is
-    // redirected to them, so MLIR's DILocations (and any DILexicalBlockFile under them)
-    // land in the scaffold's scopes.
-    const redirect = new Map<number, number>();
-    if (debug) {
-      const cu = lines.map(l => /^!(\d+) = distinct !DICompileUnit\(/.exec(l)).find(m => m);
-      const mlirCu = ll.map(l => /^!(\d+) = distinct !DICompileUnit\(/.exec(l)).find(m => m);
-      if (!cu) throw new Error("mlir: -g module has no DICompileUnit");
-      if (mlirCu) redirect.set(Number(mlirCu[1]), Number(cu[1]));
-    }
-    const renumber = (s: string) => s.replace(/!(\d+)\b/g, (_, n: string) => `!${redirect.get(Number(n)) ?? Number(n) + mdBase}`);
-    // The body is spliced into a module whose attribute groups it does not know, and whose
-    // metadata numbering it shares: TBAA tags (and under -g, DILocations) are renumbered,
-    // anything else is not something these ops lower to.
-    const checkBody = (name: string, body: string[]) => {
-      for (const b of body) {
-        // A local variable is the debug record `#dbg_declare(ptr %slot, !var, !DIExpression(), !loc)`.
-        if (debug && /^\s*#dbg_declare\(ptr %[-\w$.]+, !\d+, !DIExpression\(\), !\d+\)$/.test(b)) continue;
-        const rest = b.replace(/, !tbaa !\d+/g, "");
-        if (/ #\d+\b/.test(b) || /!\w/.test(debug ? rest.replace(/, !dbg !\d+/g, "") : rest)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
-      }
-    };
-    const dbgOf = (l: string) => { const m = / !dbg !(\d+)/.exec(l); return m ? Number(m[1]) : null; };
-    // What the module takes from MLIR, in MLIR's numbering: where -g's metadata is reached from.
-    const fromMlir: string[] = [];
-    const out: string[] = [];
-    let spliced = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      const d = DECL_RE.exec(l);
-      if (d) known.add(unquote(d[1]));
-      const g = GLOBAL_RE.exec(l);
-      if (g) known.add(unquote(g[1]));
-      const def = l.startsWith("define") ? DEFINE_RE.exec(l) : null;
-      const name = def ? unquote(def[1]) : null;
-      if (name === null || !this.takenNames.has(name)) {
-        out.push(l);
-        continue;
-      }
-      const got = bodies.get(name);
-      if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
-      checkBody(name, got.body);
-      let header = debug ? l : l.replace(/ !dbg !\d+/, "");
-      const sp = dbgOf(header), mlirSp = dbgOf(got.header);
-      if (debug && mlirSp !== null) {
-        if (sp !== null) redirect.set(mlirSp, sp);
-        else header = header.replace(/ \{$/, ` !dbg !${mlirSp + mdBase} {`);
-      }
-      // main's are the process entry's argc/argv (codegen genFunction), not Milo params.
-      const paramNames = name === "main" ? ["_milo_argc", "_milo_argv"] : this.fns.get(name)!.params.map(p => p.name);
-      if (this.cx.sretFns.has(name)) paramNames.unshift("__sret.out");
-      const renames: [RegExp, string][] = [];
-      paramNames.forEach((p, k) => {
-        const re = new RegExp(String.raw` %${p.replace(/[$.]/g, "\\$&")}(?=[,)])`);
-        if (!re.test(header)) throw new Error(`mlir: no param %${p} in ${header}`);
-        header = header.replace(re, ` %${k}`);
-        renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
-      });
-      // Lines ahead of the stub (main's prologue: argc/argv globals, stdout
-      // buffering, global init) run first, at the top of the MLIR entry block. They are
-      // calls and stores of params and globals, so they number no values of their own.
-      const prologue: string[] = [];
-      for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
-        if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
-        // The entry label goes; the MLIR body brings its own entry block.
-        if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
-        // Under -g its DILocations are the scaffold's, in the subprogram the header keeps.
-        let p = debug ? lines[j] : lines[j].replace(/, !dbg !\d+/, "");
-        for (const [re, to] of renames) p = p.replace(re, to);
-        if (/^\s*%\d+ = |^\S.*:$/.test(p)) throw new Error(`mlir: ${name} prologue defines a value or a block: ${p}`);
-        prologue.push(p);
-      }
-      // Return type and param types; param attributes (nonnull, noalias, ...) are codegen.ts's.
-      // MLIR quotes a type name with `$` in it (`%"a$B"`); unquoted it is the same name.
-      const sig = (h: string) => {
-        h = h.replace(/%"([-\w$.]+)"/g, "%$1");
-        const m = /^define [^@]*?(\S+) @[^(]*\((.*)\)/.exec(h);
-        return m ? `${m[1]}(${m[2].split(", ").map(p => p.split(" ")[0]).join(", ")})` : h;
-      };
-      if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
-      const body = got.body.map(renumber);
-      fromMlir.push(got.header, ...got.body);
-      // An entry block is printed unlabeled unless something branches to it.
-      const at = body.length && /^\S.*:/.test(body[0]) ? 1 : 0;
-      body.splice(at, 0, ...prologue);
-      out.push(header, ...body);
-      while (lines[i] !== "}") i++;
-      out.push("}");
-      spliced++;
-    }
-    // A stub that ships would be an `unreachable` where a function body belongs.
-    if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
-    if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
-    // Closure bodies are functions codegen.ts never defined: appended whole, MLIR's `define internal` line and all.
-    // Under -g a closure keeps MLIR's DISubprogram (codegen.ts has none for it), now in the
-    // scaffold's compile unit. Glue has no source, so its locs are the dialect text's: none ship.
-    const glueNames = new Set(glueFn.flatMap(f => f.closures));
-    for (const name of [...this.taken, ...glueFn].flatMap(f => f.closures)) {
-      const got = bodies.get(name);
-      if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
-      checkBody(name, got.body);
-      const header = got.header.replace(/ #\d+/g, "");
-      if (glueNames.has(name)) out.push(header.replace(/ !dbg !\d+/, ""), ...got.body.map(b => renumber(b.replace(/, !dbg !\d+/g, ""))), "}");
-      else { out.push(renumber(header), ...got.body.map(renumber), "}"); fromMlir.push(header, ...got.body); }
-    }
-    if (!debug) out.push(...metadata.map(renumber));
-    else {
-      // Only the nodes the spliced code reaches: MLIR's compile unit, its subprograms for
-      // taken functions and declarations, and its module flags are the scaffold's to say.
-      const nodes = new Map(metadata.map(m => [Number(/^!(\d+)/.exec(m)![1]), m]));
-      const seen = new Set<number>();
-      const reach = (s: string) => {
-        for (const [, n] of s.matchAll(/!(\d+)\b/g)) {
-          const id = Number(n);
-          if (redirect.has(id) || seen.has(id) || !nodes.has(id)) continue;
-          seen.add(id);
-          reach(nodes.get(id)!.replace(/^!\d+ = /, ""));
-        }
-      };
-      for (const l of fromMlir) reach(l);
-      out.push(...[...seen].sort((a, b) => a - b).map(id => renumber(nodes.get(id)!)));
-    }
-    // A global MLIR only declares (the recorder's counters) is codegen.ts's module's own.
-    const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
-    // codegen.ts names no data layout (clang picks it from the triple); name the one the bodies
-    // were lowered with.
-    const tripleAt = out.indexOf(`target triple = "${triple}"`);
-    out.splice(tripleAt, 0, `target datalayout = "${dl}"`);
-    const firstDefine = out.findIndex(l => l.startsWith("define"));
-    out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");
-    return out.join("\n");
+    return run(optPath, ["--emit-llvmir", cx.emitDebug ? MLIR_PIPELINE_DEBUG : MLIR_PIPELINE], text);
   }
+}
+
+function flushLog(log: string[]): void {
+  const logPath = process.env.MILO_MLIR_LOG;
+  if (logPath && log.length) appendFileSync(logPath, log.join("\n") + "\n");
+  log.length = 0;
 }

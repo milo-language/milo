@@ -16,8 +16,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
-import { Codegen, sanitizerKind } from "./codegen";
-import { MlirPlan, mlirClang } from "./mlir-backend";
+import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
 import { lower } from "./lower";
 import { runInterp } from "./interp-run";
 import { resolveImports } from "./resolver";
@@ -303,22 +302,19 @@ function parseAndCheck(src: string, target: TargetInfo, filePath: string, warnin
 }
 
 // `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
-// neither) — see Codegen.cDeclGuards. It rides alongside the IR because only codegen
-// knows the field offsets and return widths it asserts.
+// neither), see ModuleCtx.cDeclGuards. It rides alongside the IR because only the layout
+// that built the module knows the field offsets and return widths it asserts.
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  const plan = new MlirPlan(hirModule, cg, target);
-  cg.mlirTake = fn => plan.take(fn);
-  let ir = phase("codegen", () => cg.generate(hirModule));
-  ir = phase("mlir", () => cg.sanitizeOnFinal(cg.noaliasOnFinal(cg.replayHeapOnFinal(plan.compile(ir)), plan.closureBodies())));
+  const plan = new MlirPlan(hirModule, target, { filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize });
+  const ir = phase("mlir", () => plan.compile());
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
-  return { ir, cGuards: cg.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [], hasMain,
+  return { ir, cGuards: plan.cx.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [], hasMain,
            // Only the ones that still run at startup: a global something reads is
            // initialized at that first read, which needs no entry point.
-           nonConstGlobals: cg.startupGlobals,
+           nonConstGlobals: plan.startupGlobals,
            varGlobals: hirModule.globals.filter(g => g.mutable).map(g => g.name) };
 }
 
