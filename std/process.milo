@@ -461,8 +461,8 @@ impl Command {
     // Append several arguments.
     fn args(self: Command, values: &Vec<string>): Command {
         var c = self
-        for i in 0..values.len {
-            c.argv.push(values[i].clone())
+        for x in values {
+            c.argv.push(x.clone())
         }
         return c
     }
@@ -680,14 +680,7 @@ fn commandSpawn(cmd: &Command): Result<Child> {
 @replayHooked
 fn commandSpawnLive(cmd: &Command): Result<Child> {
     unsafe {
-        let inFds = match openStdio(cmd.inMode, false, "stdin") {
-            Result.Ok(f) => {
-                f
-            }
-            Result.Err(e) => {
-                return Result.Err(e)
-            }
-        }
+        let inFds = openStdio(cmd.inMode, false, "stdin")?
         let outFds = match openStdio(cmd.outMode, true, "stdout") {
             Result.Ok(f) => {
                 f
@@ -925,8 +918,8 @@ fn buildCArray(items: &Vec<string>): *u8 {
 fn buildArgv(program: &string, args: &Vec<string>): *u8 {
     var items: Vec<string> = Vec.new()
     items.push(program.clone())
-    for i in 0..args.len {
-        items.push(args[i].clone())
+    for x in args {
+        items.push(x.clone())
     }
     return buildCArray(items)
 }

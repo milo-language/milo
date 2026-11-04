@@ -174,8 +174,8 @@ fn buildHuff(counts: &Vec<i64>, vals: &Vec<i64>): Result<Huff, string> {
         code = code << 1
     }
     var vs: Vec<i64> = Vec.new()
-    for i in 0..vals.len {
-        vs.push(vals[i])
+    for x in vals {
+        vs.push(x)
     }
     return Result.Ok(Huff { present: true, look: look, maxcode: maxcode, valoff: valoff, vals: vs })
 }
@@ -1567,8 +1567,8 @@ fn putDht(out: &mut string, cls: i64, bits: &[i64; 16], vals: &Vec<i64>) {
     for i in 0..16 {
         out.push(bits[i] as u8)
     }
-    for i in 0..vals.len {
-        out.push(vals[i] as u8)
+    for x in vals {
+        out.push(x as u8)
     }
 }
 

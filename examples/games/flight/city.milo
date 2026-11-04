@@ -916,9 +916,9 @@ pub fn cityParse(src: &string): Result<City, string> {
 // ground — which is what a ceiling wants: it can only ever be too generous.
 fn computeTop(c: &mut City) {
     var top = 0.0
-    for i in 0..c.dem.len {
-        if c.dem[i] > top {
-            top = c.dem[i]
+    for x in c.dem {
+        if x > top {
+            top = x
         }
     }
     var tallest = 0.0
@@ -1510,8 +1510,8 @@ pub fn cityHasSea(c: &City): bool {
     if !c.loaded {
         return false
     }
-    for i in 0..c.dem.len {
-        if c.dem[i] < 0.0 - 0.5 {
+    for x in c.dem {
+        if x < 0.0 - 0.5 {
             return true
         }
     }

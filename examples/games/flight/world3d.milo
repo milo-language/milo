@@ -1081,10 +1081,10 @@ fn computeFence(w: &mut World) {
         return
     }
     var lim = w.city.reach - FENCE_HARD
-    for i in 0..w.marks.len {
+    for x in w.marks {
         // Half the collection radius past the landmark, so it can be flown OVER
         // rather than only just touched from the side of it.
-        let need = Math.maxF64(Math.abs(w.marks[i].x), Math.abs(w.marks[i].z)) + MARK_REACH * 0.5
+        let need = Math.maxF64(Math.abs(x.x), Math.abs(x.z)) + MARK_REACH * 0.5
         if need > lim {
             lim = need
         }

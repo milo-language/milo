@@ -71,8 +71,8 @@ pub fn main(): i32 {
         shots.push(400)
     }
     var maxFrame: i64 = 0
-    for i in 0..shots.len {
-        maxFrame = Math.maxI64(maxFrame, shots[i])
+    for x in shots {
+        maxFrame = Math.maxI64(maxFrame, x)
     }
 
     var c = canvasNew(W, H)
@@ -83,10 +83,10 @@ pub fn main(): i32 {
         // a perfect paddle: track the lowest descending ball
         var target = g.padX
         var bestY = 0.0 - 1.0
-        for i in 0..g.balls.len {
-            if g.balls[i].y > bestY {
-                bestY = g.balls[i].y
-                target = g.balls[i].x
+        for item in g.balls {
+            if item.y > bestY {
+                bestY = item.y
+                target = item.x
             }
         }
         // Deliberately imperfect: a paddle that tracks exactly returns every ball
@@ -94,8 +94,8 @@ pub fn main(): i32 {
         gameUpdate(&mut g, dt, target + Math.sin((frame as f64) * 0.11) * 26.0, true)
 
         var want = false
-        for i in 0..shots.len {
-            if shots[i] == frame {
+        for elem in shots {
+            if elem == frame {
                 want = true
             }
         }

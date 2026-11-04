@@ -249,9 +249,9 @@ impl Multipart {
     // Returns an owned copy. File parts are included: this asks about the field
     // name, not about whether the value came from a file input.
     fn field(parts: &Vec<Part>, name: &string): Option<string> {
-        for i in 0..parts.len {
-            if parts[i].name == name {
-                return Option.Some(parts[i].body)
+        for x in parts {
+            if x.name == name {
+                return Option.Some(x.body)
             }
         }
         return Option.None

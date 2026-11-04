@@ -69,8 +69,8 @@ pub fn main(): i32 {
         shots.push(1500)
     }
     var maxFrame: i64 = 0
-    for i in 0..shots.len {
-        maxFrame = Math.maxI64(maxFrame, shots[i])
+    for item in shots {
+        maxFrame = Math.maxI64(maxFrame, item)
     }
 
     var c = canvasNew(W, H)
@@ -151,8 +151,8 @@ pub fn main(): i32 {
         mineUpdate(&mut m, dt, ix, iy, W as f64, H as f64)
 
         var want = false
-        for i in 0..shots.len {
-            if shots[i] == frame {
+        for elem in shots {
+            if elem == frame {
                 want = true
             }
         }

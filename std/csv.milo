@@ -131,12 +131,12 @@ fn csvQuoteField(val: &string): string {
 // Serialize rows to a CSV string.
 fn csvStringify(rows: &Vec<Vec<string>>): string {
     var output = ""
-    for ri in 0..rows.len {
-        for ci in 0..rows[ri].len {
+    for x in rows {
+        for ci in 0..x.len {
             if ci > 0 {
                 output += ","
             }
-            output += csvQuoteField(rows[ri][ci])
+            output += csvQuoteField(x[ci])
         }
         output += "\n"
     }

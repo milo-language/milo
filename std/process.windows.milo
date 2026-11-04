@@ -703,14 +703,7 @@ fn closeStreamFds(fds: &StreamFds): void {
 }
 
 fn commandSpawn(cmd: &Command): Result<Child> {
-    let inFds = match openStdio(cmd.inMode, false, "stdin") {
-        Result.Ok(f) => {
-            f
-        }
-        Result.Err(e) => {
-            return Result.Err(e)
-        }
-    }
+    let inFds = openStdio(cmd.inMode, false, "stdin")?
     let outFds = match openStdio(cmd.outMode, true, "stdout") {
         Result.Ok(f) => {
             f

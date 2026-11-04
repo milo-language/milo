@@ -908,12 +908,12 @@ pub fn drawMine(c: &mut Canvas, m: &Mine, ox: f64, oy: f64) {
     }
 
     // particles
-    for i in 0..m.parts.len {
-        let t = m.parts[i].life / m.parts[i].maxLife
+    for x in m.parts {
+        let t = x.life / x.maxLife
         let f = t * t
         // Dust swells as it thins out; debris just shrinks.
-        let sz = m.parts[i].size * (1.0 + m.parts[i].grow * (1.0 - t))
-        spot(&mut c, m.parts[i].x - camX, m.parts[i].y - camY, sz, m.parts[i].cr * f, m.parts[i].cg * f, m.parts[i].cb * f)
+        let sz = x.size * (1.0 + x.grow * (1.0 - t))
+        spot(&mut c, x.x - camX, x.y - camY, sz, x.cr * f, x.cg * f, x.cb * f)
     }
 
     // the digger
@@ -936,13 +936,13 @@ pub fn drawMine(c: &mut Canvas, m: &Mine, ox: f64, oy: f64) {
     }
 
     // nuggets in flight
-    for i in 0..m.flies.len {
-        if m.flies[i].age < 0.0 {
+    for item in m.flies {
+        if item.age < 0.0 {
             continue
         }
-        let col = tileColor(m.flies[i].kind)
-        let fx = m.flies[i].x - camX
-        let fy = m.flies[i].y - camY
+        let col = tileColor(item.kind)
+        let fx = item.x - camX
+        let fy = item.y - camY
         spot(&mut c, fx, fy, 6.0, col.r * 0.30, col.g * 0.30, col.b * 0.30)
         spot(&mut c, fx, fy, 2.6, col.r * 1.2, col.g * 1.2, col.b * 1.2)
     }
@@ -952,9 +952,9 @@ pub fn drawMine(c: &mut Canvas, m: &Mine, ox: f64, oy: f64) {
     drawDoorMouth(&mut c, m, camX, camY)
 
     // floating labels
-    for i in 0..m.pops.len {
-        let f = Math.minF64(1.0, m.pops[i].life)
-        textCentered(&mut c, (m.pops[i].x - camX) as i64, (m.pops[i].y - camY) as i64, m.pops[i].text, 2, m.pops[i].cr * f, m.pops[i].cg * f, m.pops[i].cb * f)
+    for elem in m.pops {
+        let f = Math.minF64(1.0, elem.life)
+        textCentered(&mut c, (elem.x - camX) as i64, (elem.y - camY) as i64, elem.text, 2, elem.cr * f, elem.cg * f, elem.cb * f)
     }
 }
 

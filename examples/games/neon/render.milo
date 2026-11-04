@@ -226,10 +226,10 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
     backdrop(&mut c, w)
     // Drifting spores. Dim and cold on purpose — this layer used to be bright
     // enough to hide a bullet in.
-    for i in 0..w.stars.len {
-        let z = w.stars[i].z
+    for item in w.stars {
+        let z = item.z
         let f = 0.03 + z * 0.11
-        spot(&mut c, w.stars[i].x, w.stars[i].y, 0.6 + z * 1.1, f * 0.55, f * 0.6, f * 0.7)
+        spot(&mut c, item.x, item.y, 0.6 + z * 1.1, f * 0.55, f * 0.6, f * 0.7)
     }
     terrainDraw(&mut c, w.terrain)
     // The lattice is invisible until something shoves it; what you see here is
@@ -237,35 +237,35 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
     gridDrawShock(&mut c, w.grid, 0.10, 0.22, 0.40)
 
     // links drawn straight from the handles
-    for i in 0..w.ents.len {
-        if !w.ents[i].alive || w.ents[i].spawnT > 0.0 {
+    for elem in w.ents {
+        if !elem.alive || elem.spawnT > 0.0 {
             continue
         }
-        match w.ents[i].kind {
+        match elem.kind {
             Kind.Healer => {
-                let t = w.ents[i].target
+                let t = elem.target
                 if alive(w, t) {
                     let pulse = 0.6 + 0.4 * Math.sin(w.time * 14.0)
-                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[t.slot].x, w.ents[t.slot].y, 0.15 * pulse, 1.5 * pulse, 0.7 * pulse)
+                    line(&mut c, elem.x, elem.y, w.ents[t.slot].x, w.ents[t.slot].y, 0.15 * pulse, 1.5 * pulse, 0.7 * pulse)
                     spot(&mut c, w.ents[t.slot].x, w.ents[t.slot].y, 9.0, 0.1, 0.9, 0.4)
                 }
             }
             Kind.Plate => {
-                let core = w.ents[i].leader
+                let core = elem.leader
                 if alive(w, core) {
-                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[core.slot].x, w.ents[core.slot].y, 0.55, 0.34, 0.08)
+                    line(&mut c, elem.x, elem.y, w.ents[core.slot].x, w.ents[core.slot].y, 0.55, 0.34, 0.08)
                 }
             }
             Kind.SnakeSeg => {
-                let ld = w.ents[i].leader
+                let ld = elem.leader
                 if alive(w, ld) {
-                    line(&mut c, w.ents[i].x, w.ents[i].y, w.ents[ld.slot].x, w.ents[ld.slot].y, 0.5, 0.45, 0.30)
+                    line(&mut c, elem.x, elem.y, w.ents[ld.slot].x, w.ents[ld.slot].y, 0.5, 0.45, 0.30)
                 }
             }
             Kind.Pod => {
                 // A short tether to the ship, so a pod reads as yours and not as
                 // one more thing trying to kill you.
-                line(&mut c, w.ents[i].x, w.ents[i].y, w.player.x, w.player.y, 0.55, 0.25, 0.05)
+                line(&mut c, elem.x, elem.y, w.player.x, w.player.y, 0.55, 0.25, 0.05)
             }
             _ => {
             }
@@ -273,10 +273,10 @@ pub fn drawWorld(c: &mut Canvas, w: &World, s: &Sprites, ox: f64, oy: f64) {
     }
 
     // particles
-    for i in 0..w.parts.len {
-        let t = w.parts[i].life / w.parts[i].maxLife
+    for elem2 in w.parts {
+        let t = elem2.life / elem2.maxLife
         let f = t * t
-        spot(&mut c, w.parts[i].x, w.parts[i].y, w.parts[i].size * (0.5 + t), w.parts[i].cr * f, w.parts[i].cg * f, w.parts[i].cb * f)
+        spot(&mut c, elem2.x, elem2.y, elem2.size * (0.5 + t), elem2.cr * f, elem2.cg * f, elem2.cb * f)
     }
 
     // lightning arcs

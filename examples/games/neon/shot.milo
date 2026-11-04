@@ -80,8 +80,8 @@ pub fn main(): i32 {
         shots.push(600)
     }
     var maxFrame: i64 = 0
-    for i in 0..shots.len {
-        maxFrame = Math.maxI64(maxFrame, shots[i])
+    for x in shots {
+        maxFrame = Math.maxI64(maxFrame, x)
     }
 
     var c = canvasNew(W, H)
@@ -124,8 +124,8 @@ pub fn main(): i32 {
         worldUpdate(&mut world, dt, mvx, mvy, charging)
 
         var want = false
-        for i in 0..shots.len {
-            if shots[i] == frame {
+        for item in shots {
+            if item == frame {
                 want = true
             }
         }

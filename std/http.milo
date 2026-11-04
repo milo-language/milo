@@ -94,9 +94,9 @@ impl Context {
     // Value of the route parameter `name`, or None if the route has no such
     // parameter. A matched-but-empty segment is Some("").
     fn param(self: &Self, name: &string): Option<string> {
-        for i in 0..self.params.len {
-            if self.params[i].name == name {
-                return Option.Some(self.params[i].value)
+        for x in self.params {
+            if x.name == name {
+                return Option.Some(x.value)
             }
         }
         return Option.None
@@ -105,9 +105,9 @@ impl Context {
     // Value of query-string parameter `name`, or None if it was not in the URL.
     // `?name=` and `?name` are both present with an empty value: Some("").
     fn query(self: &Self, name: &string): Option<string> {
-        for i in 0..self.req.queryParams.len {
-            if self.req.queryParams[i].name == name {
-                return Option.Some(self.req.queryParams[i].value)
+        for x in self.req.queryParams {
+            if x.name == name {
+                return Option.Some(x.value)
             }
         }
         return Option.None
@@ -116,9 +116,9 @@ impl Context {
     // Value of request header `name` (case-insensitive), or None if the request
     // did not carry it. A header sent with an empty value is Some("").
     fn header(self: &Self, name: &string): Option<string> {
-        for i in 0..self.req.headers.len {
-            if eqIgnoreCase(self.req.headers[i].name, name) {
-                return Option.Some(self.req.headers[i].value)
+        for x in self.req.headers {
+            if eqIgnoreCase(x.name, name) {
+                return Option.Some(x.value)
             }
         }
         return Option.None
@@ -672,8 +672,8 @@ fn renderRawAs(status: i32, contentType: &string, body: &string, extraHeaders: &
 }
 
 fn hasHeader(headers: &Vec<Param>, name: &string): bool {
-    for i in 0..headers.len {
-        if eqIgnoreCase(headers[i].name, name) {
+    for x in headers {
+        if eqIgnoreCase(x.name, name) {
             return true
         }
     }
@@ -2487,15 +2487,15 @@ fn runLongRoute(req: &Request, fd: i32, router: &Router): bool {
         return false
     }
     if isUpgradeRequest(req) {
-        for i in 0..router.sockets.len {
-            if let Option.Some(matched) = matchRoute(router.sockets[i].pattern, router.sockets[i].paramNames, req.path) {
-                runWsRoute(req, fd, matched, router.sockets[i].handler)
+        for x in router.sockets {
+            if let Option.Some(matched) = matchRoute(x.pattern, x.paramNames, req.path) {
+                runWsRoute(req, fd, matched, x.handler)
                 return true
             }
         }
     }
-    for i in 0..router.streams.len {
-        if let Option.Some(matched) = matchRoute(router.streams[i].pattern, router.streams[i].paramNames, req.path) {
+    for item in router.streams {
+        if let Option.Some(matched) = matchRoute(item.pattern, item.paramNames, req.path) {
             var ctx = Context {
                 req: req.clone(),
                 params: matched,
@@ -2505,7 +2505,7 @@ fn runLongRoute(req: &Request, fd: i32, router: &Router): bool {
             var conn = Stream {
                 _fd: fd, _state: streamFresh, _head: "", _out: Option.None
             }
-            router.streams[i].handler(&mut ctx, &mut conn)
+            item.handler(&mut ctx, &mut conn)
             streamPump(&mut conn)
             finishStream(&mut conn)
             return true

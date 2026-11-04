@@ -1096,7 +1096,7 @@ fn fseBuildCTable(dist: Vec<i64>, accuracyLog: i64): FseCTable {
     }
     // stateTable: for each spread position u (in symbol order via cumul), store size+u.
     var stateTable = zeroVec(size)
-    var cuml = cumul.clone()
+    var cuml = cumul
     for i in 0..size {
         let s = tableSymbol[i]
         stateTable[cuml[s]] = size + i

@@ -51,8 +51,8 @@ fn pbkdf2Block(password: &string, salt: &string, iterations: i64, index: i64, ma
             acc[i] ^= u[i]
         }
     }
-    for i in 0..acc.len {
-        out.push(acc[i])
+    for x in acc {
+        out.push(x)
     }
 }
 

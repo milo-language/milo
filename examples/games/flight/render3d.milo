@@ -880,18 +880,18 @@ fn drawFalls(s: &mut Scene, w: &World, v: &View) {
     if !w.city.loaded {
         return
     }
-    for i in 0..w.marks.len {
-        if w.marks[i].fall <= 0.0 {
+    for x in w.marks {
+        if x.fall <= 0.0 {
             continue
         }
-        let fx = w.marks[i].x
-        let fz = w.marks[i].z
+        let fx = x.x
+        let fz = x.z
         let dx = fx - w.cam.x
         let dz = fz - w.cam.z
         if dx * dx + dz * dz > v.far * v.far {
             continue
         }
-        fallRibbon(&mut s, w, v, fx, fz, w.marks[i].fall)
+        fallRibbon(&mut s, w, v, fx, fz, x.fall)
     }
 }
 
@@ -2011,31 +2011,31 @@ fn shapedRoof(s: &mut Scene, v: &View, px: &Vec<f64>, pz: &Vec<f64>, m: i64, yEa
 fn drawRings(s: &mut Scene, w: &World, v: &View) {
     let segs = 22
     let tube = 5.0
-    for i in 0..w.rings.len {
+    for x in w.rings {
         // A landmark beacon is a column of light, drawn in drawMarkBeam after the
         // geometry pass so it shows through whatever is in front of it. There is
         // no hoop to draw here.
-        if w.rings[i].beacon {
+        if x.beacon {
             continue
         }
-        var rad = w.rings[i].r
+        var rad = x.r
         var br = 1.0
         var col = rgb(1.5, 1.15, 0.25)
-        if w.rings[i].bonus {
+        if x.bonus {
             col = rgb(0.30, 1.05, 1.75)
         }
-        if !w.rings[i].alive {
-            rad = w.rings[i].r * (1.0 + (1.0 - w.rings[i].pop) * 1.2)
-            br = w.rings[i].pop
+        if !x.alive {
+            rad = x.r * (1.0 + (1.0 - x.pop) * 1.2)
+            br = x.pop
             col = rgb(0.5, 1.7, 0.7)
             if br <= 0.03 {
                 continue
             }
         }
-        let centre = v3(w.rings[i].x, w.rings[i].y, w.rings[i].z)
+        let centre = v3(x.x, x.y, x.z)
         // The hoop stands across the course: its normal points along `face`, and
         // the tube is swept around the two axes perpendicular to that.
-        let across = v3(Math.cos(w.rings[i].face), 0.0, 0.0 - Math.sin(w.rings[i].face))
+        let across = v3(Math.cos(x.face), 0.0, 0.0 - Math.sin(x.face))
         let upward = v3(0.0, 1.0, 0.0)
         let step = TAU / (segs as f64)
         for k in 0..segs {
@@ -2093,17 +2093,17 @@ fn drawOneTrail(c: &mut Canvas, t: &Vec<Trail>, v: &View) {
 // Sparks are camera-facing quads, so they stay visible whatever angle you clear
 // the ring at.
 fn drawSparks(c: &mut Canvas, w: &World, v: &View) {
-    for i in 0..w.sparks.len {
-        let p = toCamera(v, w.sparks[i].x, w.sparks[i].y, w.sparks[i].z)
+    for x in w.sparks {
+        let p = toCamera(v, x.x, x.y, x.z)
         if p.z < 1.0 {
             continue
         }
         let sx = v.cx + p.x * v.scale / p.z
         let sy = v.cy - p.y * v.scale / p.z
-        let t = w.sparks[i].life / w.sparks[i].maxLife
+        let t = x.life / x.maxLife
         let size = Math.clampF64(v.scale * 1.6 / p.z, 1.2, 14.0) * (0.4 + t)
         let f = t * t
-        spot(&mut c, sx, sy, size, w.sparks[i].cr * f, w.sparks[i].cg * f, w.sparks[i].cb * f)
+        spot(&mut c, sx, sy, size, x.cr * f, x.cg * f, x.cb * f)
     }
 }
 
@@ -2347,13 +2347,13 @@ pub fn drawMarkBeam(c: &mut Canvas, w: &World, v: &View) {
     }
     // The beam stays up through the survey — it is the one thing the opening
     // shot is establishing, and it is scenery rather than UI.
-    for i in 0..w.rings.len {
-        if !w.rings[i].beacon || !w.rings[i].alive {
+    for x in w.rings {
+        if !x.beacon || !x.alive {
             continue
         }
-        let bx = w.rings[i].x
-        let bz = w.rings[i].z
-        let by = w.rings[i].y
+        let bx = x.x
+        let bz = x.z
+        let by = x.y
         // Slow pulse, so a beam reads as a signal rather than as scenery.
         let pulse = 0.72 + 0.28 * Math.sin(w.time * 2.4)
         let dxc = bx - w.cam.x

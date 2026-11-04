@@ -77,11 +77,11 @@ fn rootF64(text: string): f64 {
 
 // Fails (with the offending text in the message) when `text` is not accepted / not rejected.
 fn mustAccept(text: string) {
-    assertTrue(accepts(text.clone()))
+    assertTrue(accepts(text))
 }
 
 fn mustReject(text: string) {
-    assertFalse(accepts(text.clone()))
+    assertFalse(accepts(text))
 }
 
 // ── JSONTestSuite ──
@@ -522,7 +522,7 @@ fn testTruncationAndCorruptionNeverCrash(): void {
         if acceptsJsonc(cut.clone()) {
             accepted += 0
         }
-        var p = jsonPull(cut.clone())
+        var p = jsonPull(cut)
         var steps: i64 = 0
         while steps < doc.len + 8 {
             let t = p.next()
@@ -542,7 +542,7 @@ fn testTruncationAndCorruptionNeverCrash(): void {
             if accepts(mutated.clone()) {
                 accepted += 0
             }
-            var p = jsonPull(mutated.clone())
+            var p = jsonPull(mutated)
             var steps: i64 = 0
             while steps < doc.len + 16 {
                 let t = p.next()

@@ -119,21 +119,21 @@ pub fn literalIn(content: &string, needle: &string, ci: bool): bool {
 
 pub fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
     var result: Vec<RegexMatch> = Vec.new()
-    for i in 0..matches.len {
+    for x in matches {
         var ok = true
-        if matches[i].start > 0 {
-            if isWordChar(line[matches[i].start - 1]) {
+        if x.start > 0 {
+            if isWordChar(line[x.start - 1]) {
                 ok = false
             }
         }
-        if ok && matches[i].end < line.len {
-            if isWordChar(line[matches[i].end]) {
+        if ok && x.end < line.len {
+            if isWordChar(line[x.end]) {
                 ok = false
             }
         }
         if ok {
             result.push(RegexMatch {
-                start: matches[i].start, end: matches[i].end
+                start: x.start, end: x.end
             })
         }
     }
@@ -198,13 +198,13 @@ pub fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): s
     }
     var result: string = ""
     var pos: i64 = 0
-    for i in 0..matches.len {
-        if matches[i].start > pos {
-            result.pushStr(line.substr(pos, matches[i].start))
+    for x in matches {
+        if x.start > pos {
+            result.pushStr(line.substr(pos, x.start))
         }
-        let m = line.substr(matches[i].start, matches[i].end)
+        let m = line.substr(x.start, x.end)
         result.pushStr(Color.bold(Color.red(m)))
-        pos = matches[i].end
+        pos = x.end
     }
     if pos < line.len {
         result += line.substr(pos, line.len)
@@ -785,14 +785,14 @@ pub fn searchDirParallel(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): v
             }
         }
 
-        for j in 0..done.len {
-            if done[j].formatted {
-                emitResult(done[j].result, &mut opts)
+        for x in done {
+            if x.formatted {
+                emitResult(x.result, &mut opts)
             } else {
                 // The worker read it but could not format it — a regex pattern, and the
                 // engine only runs here. Same work as before, just no longer the whole
                 // job for every search.
-                let res = searchWithRegex(done[j].content, done[j].path, &mut re, opts, true)
+                let res = searchWithRegex(x.content, x.path, &mut re, opts, true)
                 emitResult(res, &mut opts)
             }
         }
@@ -810,10 +810,10 @@ pub fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts, sets: &mut
             pushed = true
         }
     }
-    for i in 0..entries.len {
-        let name = entries[i].name
-        let entryIsDir = entries[i].isDir
-        let entryIsFile = entries[i].isFile
+    for x in entries {
+        let name = x.name
+        let entryIsDir = x.isDir
+        let entryIsFile = x.isFile
 
         if !opts.searchHidden && name.len > 0 && name[0] == '.' {
             continue

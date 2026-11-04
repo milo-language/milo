@@ -847,17 +847,17 @@ impl Targets {
             return
         }
         var b = builder()
-        for i in 0..self.shards.len {
-            let s = Math.sin(self.shards[i].spin)
-            let cth = Math.cos(self.shards[i].spin)
-            let ax = self.shards[i].axis
-            let fade = 1.0 - Math.maxF64(0.0, (self.shards[i].life - self.shards[i].maxLife + 0.5) / 0.5)
+        for x in self.shards {
+            let s = Math.sin(x.spin)
+            let cth = Math.cos(x.spin)
+            let ax = x.axis
+            let fade = 1.0 - Math.maxF64(0.0, (x.life - x.maxLife + 0.5) / 0.5)
             let k = Math.clampF64(fade, 0.0, 1.0)
-            b.setTint(self.shards[i].r * k, self.shards[i].g * k, self.shards[i].bl * k)
+            b.setTint(x.r * k, x.g * k, x.bl * k)
             b.setAo(k)
-            let pa = self.shards[i].pos + rotAbout(self.shards[i].a, ax, s, cth).scale(k)
-            let pb = self.shards[i].pos + rotAbout(self.shards[i].b, ax, s, cth).scale(k)
-            let pc = self.shards[i].pos + rotAbout(self.shards[i].c, ax, s, cth).scale(k)
+            let pa = x.pos + rotAbout(x.a, ax, s, cth).scale(k)
+            let pb = x.pos + rotAbout(x.b, ax, s, cth).scale(k)
+            let pc = x.pos + rotAbout(x.c, ax, s, cth).scale(k)
             // Both windings: a piece is a flake with no inside, and one that
             // vanishes when it tumbles past edge-on reads as a flicker.
             b.tri(pa, pb, pc, 0.0, 0.0, 1.0, 0.0, 0.5, 1.0)

@@ -167,39 +167,39 @@ impl ArgParser {
             text = text + "usage: " + self.usage + "\n\n"
         } else {
             var usageLine: string = "usage: " + self.name + " [options]"
-            for pi in 0..self.positionals.len {
-                if self.positionals[pi].required {
-                    usageLine = usageLine + " <" + self.positionals[pi].name + ">"
+            for x in self.positionals {
+                if x.required {
+                    usageLine = usageLine + " <" + x.name + ">"
                 } else {
-                    usageLine = usageLine + " [" + self.positionals[pi].name + "]"
+                    usageLine = usageLine + " [" + x.name + "]"
                 }
             }
             text = text + usageLine + "\n\n"
         }
         if self.positionals.len > 0 {
             text += "arguments:\n"
-            for pi2 in 0..self.positionals.len {
-                var pline: string = "  <" + self.positionals[pi2].name + ">"
+            for item in self.positionals {
+                var pline: string = "  <" + item.name + ">"
                 while pline.len < 30 {
                     pline += " "
                 }
-                pline = pline + self.positionals[pi2].help
+                pline = pline + item.help
                 text = text + pline + "\n"
             }
             text += "\n"
         }
 
         text += "options:\n"
-        for i in 0..self.flags.len {
+        for elem in self.flags {
             var fline: string = "  "
-            if self.flags[i].shortName.len > 0 {
-                fline = fline + "-" + self.flags[i].shortName + ", "
+            if elem.shortName.len > 0 {
+                fline = fline + "-" + elem.shortName + ", "
             } else {
                 fline += "    "
             }
-            fline = fline + "--" + self.flags[i].longName
-            if !self.flags[i].isBool {
-                if self.flags[i].isI64 {
+            fline = fline + "--" + elem.longName
+            if !elem.isBool {
+                if elem.isI64 {
                     fline += " <int>"
                 } else {
                     fline += " <value>"
@@ -208,11 +208,11 @@ impl ArgParser {
             while fline.len < 30 {
                 fline += " "
             }
-            fline = fline + self.flags[i].help
-            if !self.flags[i].isBool && self.flags[i].defaultVal.len > 0 {
-                fline = fline + " (default: " + self.flags[i].defaultVal + ")"
+            fline = fline + elem.help
+            if !elem.isBool && elem.defaultVal.len > 0 {
+                fline = fline + " (default: " + elem.defaultVal + ")"
             }
-            if self.flags[i].required {
+            if elem.required {
                 fline += " (required)"
             }
             text = text + fline + "\n"
@@ -245,18 +245,18 @@ impl ArgParser {
         }
 
         // initialize flag entries with defaults
-        for fi in 0..self.flags.len {
+        for x in self.flags {
             result.entries.push(ArgEntry {
-                name: self.flags[fi].longName,
-                value: self.flags[fi].defaultVal,
+                name: x.longName,
+                value: x.defaultVal,
                 present: false,
             })
         }
 
         // initialize positional entries
-        for pi in 0..self.positionals.len {
+        for item in self.positionals {
             result.entries.push(ArgEntry {
-                name: self.positionals[pi].name,
+                name: item.name,
                 value: "",
                 present: false,
             })

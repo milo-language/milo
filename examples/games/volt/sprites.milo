@@ -285,8 +285,8 @@ fn outlinePass(g: &mut Vec<i64>, w: i64, h: i64) {
             }
         }
     }
-    for i in 0..marks.len {
-        g[marks[i]] = C_OUTLINE
+    for item in marks {
+        g[item] = C_OUTLINE
     }
 }
 

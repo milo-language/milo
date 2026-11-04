@@ -213,8 +213,8 @@ pub fn main(): i32 {
         shots.push(700)
     }
     var maxFrame: i64 = 0
-    for k in 0..shots.len {
-        maxFrame = Math.maxI64(maxFrame, shots[k])
+    for x in shots {
+        maxFrame = Math.maxI64(maxFrame, x)
     }
 
     var c = canvasNew(W, H)
@@ -240,8 +240,8 @@ pub fn main(): i32 {
             print("marking a hydrant at frame " + frame.toString())
         }
         var want = false
-        for k in 0..shots.len {
-            if shots[k] == frame {
+        for item in shots {
+            if item == frame {
                 want = true
             }
         }

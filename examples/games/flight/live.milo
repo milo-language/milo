@@ -355,8 +355,8 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
     var wet = 0
     match fetchRadar(lat, lon, reach, CLOUD_N) {
         Some(g) => {
-            for i in 0..g.len {
-                let v = g[i] as f64
+            for x in g {
+                let v = x as f64
                 if v > peak {
                     peak = v
                 }
@@ -389,8 +389,8 @@ fn buildSnapshot(lat: f64, lon: f64, reachIn: f64, groundM: f64): WxSnapshot {
     // brightness of the infrared composite — which depends on the season, the
     // hour and the ground temperature — would set how cloudy the game is.
     var mean = 0.0
-    for i in 0..structure.len {
-        mean += (structure[i] as f64)
+    for item in structure {
+        mean += (item as f64)
     }
     mean /= (structure.len as f64)
     if mean < 0.02 {

@@ -1464,8 +1464,8 @@ impl World {
                 chosenD[worst] = d
             }
         }
-        for k in 0..chosen.len {
-            let o = chosen[k] * LIGHT_FLOATS
+        for x in chosen {
+            let o = x * LIGHT_FLOATS
             for f in 0..LIGHT_FLOATS {
                 out.push(self.lightPool[o + f])
             }

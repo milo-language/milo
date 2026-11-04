@@ -277,8 +277,8 @@ pub fn resetBall(g: &mut Game) {
 
 pub fn bricksLeft(g: &Game): i64 {
     var n: i64 = 0
-    for i in 0..g.bricks.len {
-        if g.bricks[i].alive && g.bricks[i].kind != 1 {
+    for x in g.bricks {
+        if x.alive && x.kind != 1 {
             n += 1
         }
     }
