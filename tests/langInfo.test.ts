@@ -191,7 +191,11 @@ test("every documented example actually provokes its own warning", () => {
     // diagnostics never print the warning name, so this is the only name-keyed oracle.
     const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "check", f, `--expect=${w.name}`], { encoding: "utf-8" });
     const out = (r.stdout ?? "") + (r.stderr ?? "");
-    if (out.includes(`no '${w.name}' warning was reported`)) {
+    if (w.hardError) {
+      // A hard error is not suppressible, so --expect cannot see it: the oracle is the
+      // error itself, printed with its name, and a non-zero exit.
+      if (!out.includes(`error[${w.name}]`) || r.status === 0) wrong.push(`${w.name}: example did not provoke the hard error`);
+    } else if (out.includes(`no '${w.name}' warning was reported`)) {
       wrong.push(`${w.name}: example did not provoke it`);
     } else if ((r.status ?? 1) !== 0) {
       // The example must be otherwise clean: a program that fails to type-check would
@@ -219,7 +223,9 @@ test("explain answers for every name the vocabulary has", () => {
   for (const w of WARNINGS) {
     const text = explainText(w.name)!;
     expect({ name: w.name, hasFix: text.includes("fix: ") }).toEqual({ name: w.name, hasFix: true });
-    expect({ name: w.name, hasFlag: text.includes(`--allow=${w.name}`) }).toEqual({ name: w.name, hasFlag: true });
+    // Hard errors have no flag: the entry says so instead.
+    const flagText = w.hardError ? "no flag silences it" : `--allow=${w.name}`;
+    expect({ name: w.name, hasFlag: text.includes(flagText) }).toEqual({ name: w.name, hasFlag: true });
   }
 });
 

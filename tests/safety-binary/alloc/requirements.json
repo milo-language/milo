@@ -1,0 +1,6 @@
+{
+  "requirements": [
+    { "id": "HLR-1", "text": "The program shall return the length of the banner." },
+    { "id": "LLR-1", "parent": "HLR-1", "text": "banner shall build a string of 2n bytes." }
+  ]
+}

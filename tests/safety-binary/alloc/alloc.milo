@@ -1,0 +1,25 @@
+// Planted: a string builder that grows on the heap, hidden behind a plain-looking helper.
+// Otherwise conformant (contracts, invariants, @req) so only the binary allocation check can fail it.
+@req(LLR-1)
+fn banner(n: i32): string
+requires n >= 0 && n <= 100
+ensures result.len() >= 0
+{
+    var s: string = ""
+    var k: i32 = 0
+    while k < n
+    invariant k >= 0 && k <= n
+    {
+        s = s + "ab"
+        k += 1
+    }
+    return s
+}
+
+@req(HLR-1)
+pub fn main(): i32
+ensures result >= 0
+{
+    let s: string = banner(5)
+    return s.len() as i32
+}

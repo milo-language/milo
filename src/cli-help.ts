@@ -89,10 +89,6 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     name: "interp", usage: "interp <file>", summary: "run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck",
     flags: [{ flag: "--live", help: "report live heap blocks at exit on stderr" }],
   },
-  {
-    name: "interp", usage: "interp <file>", summary: "run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck",
-    flags: [{ flag: "--live", help: "report live heap blocks at exit on stderr" }],
-  },
   { name: "emit-ir", usage: "emit-ir <file>", summary: "emit LLVM IR" },
   { name: "emit-obj", usage: "emit-obj <file>", summary: "compile to object file (.o)" },
   { name: "build-lib", usage: "build-lib <files...>", summary: "compile to static library (.a)" },

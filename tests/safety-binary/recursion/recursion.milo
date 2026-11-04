@@ -1,3 +1,6 @@
+// Layering: the source profile bans recursion first (call-graph rule), so `build --safety`
+// never reaches the binary check for this program. The test builds it WITHOUT --safety and
+// runs the object-level cycle check on the resulting image directly.
 // Planted: mutual recursion across two functions, with work between the calls so the
 // optimizer cannot turn it into a loop.
 fn ping(n: i32, acc: i32): i32 {

@@ -1,0 +1,28 @@
+// Integer-only, bounded, no allocation, no recursion: passes do178c-a on the binary.
+// Conformant to the whole profile (contracts, loop invariants, @req on every fn) so that the
+// only thing under test is the binary check, not an earlier source or trace gate.
+@req(LLR-1)
+fn clamp(x: i32, lo: i32, hi: i32): i32
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+@req(HLR-1)
+pub fn main(): i32
+ensures result >= 0 && result <= 1000
+{
+    var v: i32 = 0
+    var k: i32 = 0
+    while k < 100
+    invariant k >= 0 && k <= 100
+    invariant v >= 0 && v <= 1000
+    {
+        v = clamp(v + k, 0, 1000)
+        k += 1
+    }
+    return v
+}

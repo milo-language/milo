@@ -1,0 +1,12 @@
+from "std/testing" import { assertEq }
+from "./alloc" import { banner, main }
+
+@req(LLR-1)
+fn testBanner(): void {
+    assertEq(banner(3).len(), 6)
+}
+
+@req(HLR-1)
+fn testMain(): void {
+    assertEq(main(), 10)
+}
