@@ -1490,7 +1490,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
     const fieldType = !target.includes("_") ? undefined : BOOL_FIELDS.has(leaf) ? "bool" : FLOAT_FIELDS.has(leaf) ? "f64" : undefined;
     const typeName = varTypes.get(target) ?? fieldType ?? "i64";
     ctx.havocDecls.push(declareConst(fresh, typeName));
-    const facts = [intRangeAssumption(fresh, typeName), isLenSymbol(fresh) ? `(assert (>= ${fresh} 0))` : null];
+    const facts = [intRangeAssumption(fresh, typeName), isLenSymbol(fresh) ? `(assert (and (>= ${fresh} 0) (<= ${fresh} 9223372036854775807)))` : null];
     for (const fact of facts) {
       if (!fact) continue;
       ctx.havocDecls.push(fact);
@@ -2198,7 +2198,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
 // Havoc symbols get theirs at minting (mintHavoc); this covers the symbols the declaration
 // block is built from, including the ones lowering invented by rebasing.
 function lengthNonNeg(refs: Set<string>): string[] {
-  return [...refs].filter(isLenSymbol).map(r => `(assert (>= ${r} 0))`);
+  return [...refs].filter(isLenSymbol).map(r => `(assert (and (>= ${r} 0) (<= ${r} 9223372036854775807)))`);
 }
 
 // `if c { a } else { b }` as a VALUE, which is `ite` in SMT. Both arms must be a single
@@ -2465,6 +2465,7 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>, foreign = false,
     const bit = bitOpToSmt(expr.op, left, expr.right);
     if (bit) return bit;
     const right = exprToSmtWithEnv(expr.right, env, foreign, oldEnv);
+    if (isSelfComparison(expr)) return `(UNSUPPORTED SelfComparison)`;
     const rdiv = realDivToSmt(expr.op, left, right);
     if (rdiv) return rdiv;
     if (expr.op === "/" || expr.op === "%") {
@@ -3244,6 +3245,7 @@ function exprToSmt(expr: Expr): string {
       const bit = bitOpToSmt(expr.op, left, expr.right);
       if (bit) return bit;
       const right = exprToSmt(expr.right);
+      if (isSelfComparison(expr)) return `(UNSUPPORTED SelfComparison)`;
       const rdiv = realDivToSmt(expr.op, left, right);
       if (rdiv) return rdiv;
       if (expr.op === "/" || expr.op === "%") {
@@ -3291,6 +3293,12 @@ function exprToSmt(expr: Expr): string {
     default:
       return `(UNSUPPORTED ${expr.kind})`;
   }
+}
+
+// `x != x` is the NaN test. Floats are Reals here and a Real equals itself, so modelling it
+// would "prove" the NaN branch dead (dead.ts reported std/json's non-finite guard as dead code).
+function isSelfComparison(e: any): boolean {
+  return (e.op === "==" || e.op === "!=") && e.left.kind === "Ident" && e.right.kind === "Ident" && e.left.name === e.right.name && e.left.name !== "result";
 }
 
 function binOpToSmt(op: string): string {
