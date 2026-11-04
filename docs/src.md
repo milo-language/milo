@@ -95,6 +95,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/playground-stubs.ts` | Seams the playground bundle cuts: pkg.ts (git/tarball dependency fetching, child_process), bun:sqlite (the @sql attribute's schema check) and stdlibBundle.ts (std comes from the in-memory file map). |
 | `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
+| `src/requirements.ts` | Requirements traceability at the source level: `@req(ID)` ties code, contract clauses and tests to a requirements.json, and `milo trace <entry.milo>` prints the matrix. |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
 | `src/runtime-ir.ts` | The one fixed runtime piece still kept as LLVM IR text: the atomics (src/runtime/atomic.ll), linked into milo-opt's module (mlir/Link.cpp). |
 | `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/runtime-ir.ts). |

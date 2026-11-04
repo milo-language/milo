@@ -793,6 +793,18 @@ call back into the runtime through it. No such function exists today.
 All three are enforced annotations, not documentation: `milo lang --json` reports the
 whole attribute vocabulary, so an editor or linter outside this repo can discover them.
 
+### Requirements traceability — `@req`
+
+`@req(ID)` ties source to a `requirements.json` (`{"requirements": [{"id", "text", "parent"?}]}`
+beside the entry file). What it means depends on what it is written on: a `fn`, `struct` or
+file (`@!req(ID)`) **implements** ID; a `requires`/`ensures`/`invariant` clause (the attribute
+goes before the clause) **formalizes** it; a `test*` fn **verifies** it. `@assume(ID)` marks a
+trusted axiom, `@derived(ID)` code for a derived requirement, `@deactivated("reason")` code that
+is present but not active. IDs use letters, numbers, `-`, `_` and `.`; a quoted string works too.
+`milo trace <entry.milo>` prints the matrix and each formalizing clause's `milo prove` verdict;
+`--strict` (implied by a DO-178C `--safety` profile) fails on any gap. See
+[contracts & proofs](site/language/safety.md#requirements).
+
 ### Purity — `@pure`
 
 A signature already tells you what a function may *mutate*: only what it was passed,

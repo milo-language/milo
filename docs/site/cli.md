@@ -37,13 +37,14 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`fmt <file...>`](#fmt) | Format source files (to stdout unless -w). |
 | [`prove <file>`](#prove) | Prove contracts hold, via std/smt, the milo-native prover. |
 | [`safety <file> --safety=<level>`](#safety) | Check safety profile compliance. |
+| [`verify <file> --profile <level>`](#verify) | One pass over a certification profile: its rules, the strict requirements matrix, and prove --rte. |
 | [`wcet <file> [-o out]`](#wcet) | Emit OTAWA flow facts (loop bounds) for WCET analysis. |
 | [`lsp`](#lsp) | Run the language server on stdio (what an editor launches). |
 | [`skill`](#skill) | Print language guide for LLMs. |
 | [`help`](#help) | Print this help (also --help, -h). |
 | [`lang`](#lang) | The language's vocabulary as data: keywords, types, operators, builtins, warnings, attributes, commands. |
 | [`explain <name>`](#explain) | What one warning, @attribute or keyword means, with an example and how to silence it. |
-| [`trace <file>`](#trace) | List a record/replay trace's records: seq, kind, call argument, payload size. |
+| [`trace <file>`](#trace) | A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
 | [`upgrade \| update`](#upgrade) | Replace this milo binary with the newest release (deps: `pkg update`). |
@@ -229,6 +230,19 @@ Check safety profile compliance.
 |---|---|
 | `--json` | Machine-readable violations. |
 
+### verify
+
+```sh
+milo verify <file> --profile <level>
+```
+
+One pass over a certification profile: its rules, the strict requirements matrix, and prove --rte.
+
+| Flag | Effect |
+|---|---|
+| `--profile <level>` | The safety profile (milo safety --list); do178 profiles make the requirements matrix strict. |
+| `--solver=z3` | Prove with z3 instead of std/smt. |
+
 ### wcet
 
 ```sh
@@ -295,11 +309,15 @@ What one warning, @attribute or keyword means, with an example and how to silenc
 milo trace <file>
 ```
 
-List a record/replay trace's records: seq, kind, call argument, payload size.
+A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records.
 
 | Flag | Effect |
 |---|---|
-| `--json` | {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
+| `--strict` | (.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause. |
+| `--safety=<do178 profile>` | (.milo) same as --strict. |
+| `--requirements <file>` | (.milo) requirements.json elsewhere than next to the entry. |
+| `--tests <file\|dir>` | (.milo) where the @req tests live (default: \*\_test.milo beside the entry). |
+| `--json` | (.milo) the matrix as data; (trace file) {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
 | `--kind <prefix>` | Only records whose kind starts with \<prefix\> (net., sched.). |
 | `--payload <seq>` | Write one record's payload bytes to stdout. |
 

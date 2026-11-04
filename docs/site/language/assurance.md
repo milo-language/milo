@@ -3,7 +3,7 @@ system: site-assurance
 purpose: the public page on how Milo is checked: written semantics, reference interpreter, MLIR backend, contracts and proofs, runtime-error proofs; built vs planned stated plainly
 key-files: docs/semantics/milo.md, src/interp.ts, src/verify.ts, docs/verification-roadmap.md, docs/plans/parallelism.md
 update-when: a layer below ships, a number changes, or a planned item moves to built
-last-verified: 2026-11-03
+last-verified: 2026-11-04
 -->
 
 # How Milo is checked
@@ -74,6 +74,15 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
     return x
 }
 ```
+
+### Requirements traceability
+
+`@req(ID)` ties functions, contract clauses and tests to a `requirements.json`, and
+`milo trace` prints the matrix: each requirement's implementation, the `milo prove` verdict of
+each clause that formalizes it (a `requires` is judged at every call site), and its tests.
+`--strict` or a DO-178C `--safety` profile turns an untraced function, a requirement with no
+implementation or test, and an unproved clause into build errors. Line coverage of the
+implementing code by the tests is not built yet. See [contracts & proofs](/language/safety#requirements).
 
 ### Runtime-error proofs, with no annotations
 

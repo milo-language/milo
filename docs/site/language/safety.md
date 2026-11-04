@@ -350,6 +350,52 @@ By default `milo prove` uses `std/smt`, a solver written in Milo and shipped in 
 A recursive function *is* modelled — the self-call is handled by induction, assuming the function's own `ensures` — but that assumption is only sound if the recursion terminates, which is what `decreases` above is for. Whether the resulting obligation is decided is a separate question, and one the solver choice does affect: `std/smt` will report `no integer witness (rational-only)` on some it cannot settle, where Z3 answers.
 
 
+## Requirements
+
+A certification review asks which requirement each piece of code implements, which clause
+formalizes it, and which test verifies it. `@req(ID)` records that in the source, against a
+`requirements.json` next to the entry file:
+
+```json
+{ "requirements": [
+  { "id": "HLR-1", "text": "The actuator command stays within the output range." },
+  { "id": "LLR-1", "parent": "HLR-1", "text": "Every command is clamped to [outLo, outHi]." }
+] }
+```
+
+What `@req` means depends on what it is written on:
+
+| On | Meaning |
+|---|---|
+| a `fn`, `struct`, or a whole file (`@!req(ID)`) | implements ID |
+| a `requires` / `ensures` / `invariant` clause (written before the clause) | formalizes ID |
+| a `test*` fn | verifies ID |
+
+`@assume(ID)` marks a fn whose contract is a trusted axiom, `@derived(ID)` code for a
+derived requirement, and `@deactivated("reason")` code that is present but not active. IDs
+use letters, numbers, `-`, `_` and `.`, or a quoted string. An unknown ID, a duplicate ID, a
+`parent` that does not exist and a cycle in the parents are compile errors.
+
+`milo trace <entry.milo>` prints the matrix: per requirement (a tree by `parent`), the
+implementing fns, the formalizing clauses with their `milo prove` verdict (`PROVEN`,
+`FAILED` or `UNKNOWN`), and the verifying tests. A `requires` clause is judged at every
+call site, with the file and line, so a caller that cannot meet it shows up as `FAILED` where
+it is written. Below the matrix: fns with no `@req`, requirements with no implementation or
+test, and the count of unknowns. `--json` prints the same as data.
+
+Without a profile the matrix is a report. With `--strict`, or `--safety=` a DO-178C profile
+(also on `milo build` and `milo verify --profile`), these are errors: a fn with no `@req`
+(`@derived` and `@deactivated` are exempt), a requirement with no implementation or no
+verifying test (a parent is traced through its children), and a formalizing clause that is
+`FAILED` or `UNKNOWN`. A law has to be `PROVEN`, covered by a `@req` test, or `@assume`d.
+Tests are traced, not run, and line coverage is not measured yet.
+
+A clause that proves itself (`ensures result == result`) would trace a requirement to
+nothing, so the [`vacuous-contract`](/language/warnings-and-errors#vacuous-contract) warning
+flags it. A worked example, with the overflow that `milo prove --rte` found becoming a
+requirement, is in
+[examples/assured/pid](https://github.com/milo-language/milo/tree/main/examples/assured/pid).
+
 ## Safety profiles
 
 Checking code against DO-178C, ISO 26262 and other coding standards with `milo safety` has its own page: [Safety profiles](/language/safety-profiles).

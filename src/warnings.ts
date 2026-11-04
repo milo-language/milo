@@ -456,6 +456,21 @@ fn main() {
 `,
   },
   {
+    name: "vacuous-contract",
+    doc: "A `requires`, `ensures` or `invariant` that is true for every input, with no assumption about its variables (`ensures result == result`, `requires true`). `milo prove` proves it at once, and the green tick means nothing: the clause constrains no behaviour. It matters most under `@req`, where a requirement would be traced to a clause that proves itself. Found by structure (a comparison of an expression with itself, a constant, `a || !a`); floats are skipped because `x == x` is false for NaN.",
+    fix: "State something about the result or the inputs, or delete the clause.",
+    example: `fn same(x: i64): i64
+ensures result == result
+{
+  return x
+}
+
+fn main() {
+  print(same(1).toString())
+}
+`,
+  },
+  {
     name: "unused-unsafe",
     doc: "Nothing inside this `unsafe` block actually requires it. An `unsafe` that guards nothing trains readers to skim past the ones that guard something.",
     fix: "Remove the `unsafe` wrapper.",

@@ -213,6 +213,15 @@ The order, each step building on the last:
    merges on its own; a weakening needs a human. `milo spec --diff <base>` prints the intent
    surface a reviewer reads.
 
+### Shipped alongside: requirements traceability (2026-11-04)
+
+`@req(ID)` on fns, contract clauses and tests, `requirements.json`, and `milo trace <entry.milo>`
+(src/requirements.ts): the matrix pairs each requirement with its implementing fns, the
+`milo prove` verdict of each formalizing clause (a `requires` is judged per call site) and its
+tests. `--strict`, or a DO-178C `--safety` profile on `build` / `verify --profile`, fails on gaps.
+Worked example: examples/assured/pid. Not yet: line/branch coverage of the implementing fns by
+the verifying tests (a test is traced, not run), and a requirements.json importer.
+
 ### Prior art
 
 Design by contract comes from Eiffel; temporal invariants and `always`/`eventually` from TLA+;

@@ -259,6 +259,8 @@ export interface Contract {
   kind: "requires" | "ensures" | "invariant" | "decreases";
   expr: Expr;
   span?: Span;
+  // `@req(ID)` written before the clause: it formalizes requirement ID (src/requirements.ts).
+  attributes?: Attribute[];
 }
 
 export interface Function {

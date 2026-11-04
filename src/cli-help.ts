@@ -117,9 +117,14 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     extraRows: [{ usage: "safety --list", help: "list available safety profiles" }],
   },
   {
-    name: "verify", usage: "verify --profile <level> <binary>",
-    summary: "check a built binary against a safety profile: pinned build record, no allocation, no call cycles, runtime-symbol allowlist",
-    flags: [{ flag: "--json", help: "machine-readable findings" }, { flag: "--all", help: "list every finding (default: first 8 per check)" }],
+    name: "verify", usage: "verify --profile <level> <file.milo | binary>",
+    summary: "check against a safety profile: a .milo source gets the profile's rules, the strict requirements matrix and prove --rte; a built binary gets its pinned build record, no allocation, no call cycles and the runtime-symbol allowlist",
+    flags: [
+      { flag: "--profile <level>", help: "the safety profile (milo safety --list); do178 profiles make the requirements matrix strict" },
+      { flag: "--solver=z3", help: "source: prove with z3 instead of std/smt" },
+      { flag: "--json", help: "binary: machine-readable findings" },
+      { flag: "--all", help: "binary: list every finding (default: first 8 per check)" },
+    ],
   },
   {
     name: "wcet", usage: "wcet <file> [-o out]", summary: "emit OTAWA flow facts (loop bounds) for WCET analysis",
@@ -140,9 +145,13 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   },
   {
     name: "trace", usage: "trace <file>",
-    summary: "list a record/replay trace's records: seq, kind, call argument, payload size",
+    summary: "a .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records",
     flags: [
-      { flag: "--json", help: "{version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
+      { flag: "--strict", help: "(.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause" },
+      { flag: "--safety=<do178 profile>", help: "(.milo) same as --strict" },
+      { flag: "--requirements <file>", help: "(.milo) requirements.json elsewhere than next to the entry" },
+      { flag: "--tests <file|dir>", help: "(.milo) where the @req tests live (default: *_test.milo beside the entry)" },
+      { flag: "--json", help: "(.milo) the matrix as data; (trace file) {version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
       { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
       { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
     ],

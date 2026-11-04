@@ -12,7 +12,7 @@
 // `targets` is what the attribute may be written on; the checker derives its per-target
 // checks from this rather than restating them. Adding an entry here is what makes an
 // attribute known, documented in `milo lang --json`, and legal on its targets.
-type AttrTarget = "fn" | "method" | "struct" | "enum" | "extern" | "global" | "field";
+type AttrTarget = "fn" | "method" | "struct" | "enum" | "extern" | "global" | "field" | "clause";
 
 interface AttrInfo {
   name: string;
@@ -24,6 +24,45 @@ interface AttrInfo {
 }
 
 export const ATTRIBUTES: AttrInfo[] = [
+  {
+    name: "req",
+    targets: ["fn", "method", "struct", "clause"],
+    takesArgs: true,
+    doc:
+      "Trace this to requirement ID from requirements.json: `@req(HLR-1)` (or `@req(\"HLR-1\")`). " +
+      "On a fn, struct or file (`@!req(ID)`) it says the code implements the requirement; on a " +
+      "`requires`/`ensures`/`invariant` clause (written before the clause) it says the clause " +
+      "formalizes it, and `milo trace` reports that clause's `milo prove` verdict; on a " +
+      "`test*` fn it says the test verifies it. `milo trace` prints the matrix, and a strict " +
+      "run (`--strict`, or a DO-178C `--safety` profile) fails on a gap.",
+  },
+  {
+    name: "assume",
+    targets: ["fn", "method"],
+    takesArgs: true,
+    doc:
+      "A trusted axiom: this fn's contract for requirement ID is taken on trust (an extern, " +
+      "hardware, a model of the plant), not proved. `milo trace` lists every one for review, " +
+      "and in a strict run it is the one way an UNKNOWN clause of that requirement passes.",
+  },
+  {
+    name: "derived",
+    targets: ["fn", "method", "struct"],
+    takesArgs: true,
+    doc:
+      "This code exists for a derived requirement ID that no parent asks for (a scheduling tick, " +
+      "a helper the design needs). Counts as traced in a strict run, and `milo trace` lists it " +
+      "so a reviewer can feed it back to the system level.",
+  },
+  {
+    name: "deactivated",
+    targets: ["fn", "method"],
+    takesArgs: true,
+    doc:
+      "Deactivated code: present in the source but not meant to run in this configuration, with " +
+      "the reason as a string, `@deactivated(\"flight-test hook\")`. Exempt from the every-fn-has-" +
+      "an-@req rule and listed by `milo trace`.",
+  },
   {
     name: "derive",
     targets: ["struct"],

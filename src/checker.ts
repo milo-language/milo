@@ -4,6 +4,7 @@
 // Error recovery: an erroneous declaration still binds, an erroneous expression is typed
 // `unknown`, and nothing reports about `unknown` (enforced in `error()`).
 import { attributesFor } from "./attributes";
+import { TRACE_ATTRS, traceAttrError } from "./requirements";
 import { HARD_ERRORS } from "./warnings";
 import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from "./replay-externs";
 import { walkExprs } from "./safety";
@@ -2214,6 +2215,10 @@ export class TypeChecker {
   // A `decreases` measure is an integer that must fall toward zero, so it is the one clause
   // that is not a boolean claim.
   private checkContractClause(c: import("./ast").Contract): void {
+    for (const attr of c.attributes ?? []) {
+      const bad = attr.name === "req" ? traceAttrError(attr, "clause") : `only '@req(ID)' goes before a ${c.kind} clause`;
+      if (bad) this.error(`'@${attr.name}' on a ${c.kind} clause: ${bad}`, c.span);
+    }
     const prev = this.contractScope;
     this.contractScope = c.kind;
     const cType = this.checkExpr(c.expr);
@@ -2228,7 +2233,52 @@ export class TypeChecker {
     }
     if (cType.tag !== "bool") {
       this.error(`${c.kind} clause must be bool, got ${this.show(cType)}`, c.span);
+    } else if (this.isTrivialClause(c.expr) && !this.vacuousSeen.has(c)) {
+      this.vacuousSeen.add(c);
+      this.warn("vacuous-contract", `this ${c.kind} clause is true for every input, so it says nothing: ${this.contractExprToString(c.expr)}`, c.span,
+        `state something about the result or the inputs, or delete the clause; a requirement traced to a clause that proves itself is not formalized`);
     }
+  }
+
+  private vacuousSeen = new WeakSet<object>();
+
+  // True only when the clause holds with NO assumption about its variables, found by
+  // structure, not by the solver: a comparison of an expression with itself, `true`, a
+  // constant comparison, `a || !a`. Floats are skipped (`x == x` is false for NaN), and an
+  // operand the checker cannot cheaply type (a field, a call) is skipped too, so the
+  // warning never fires on a clause that says something.
+  private isTrivialClause(e: import("./ast").Expr): boolean {
+    const simple = (x: import("./ast").Expr): boolean => {
+      if (x.kind === "Ident") {
+        const t = this.lookup(x.name)?.type;
+        return !!t && t.tag !== "float" && t.tag !== "unknown";
+      }
+      if (x.kind === "IntLit") return true;
+      if (x.kind === "BinOp" && ["+", "-", "*"].includes(x.op)) return simple(x.left) && simple(x.right);
+      return false;
+    };
+    const strip = (_k: string, v: unknown) => (_k === "span" ? undefined : typeof v === "bigint" ? `${v}n` : v);
+    const same = (a: import("./ast").Expr, b: import("./ast").Expr) => JSON.stringify(a, strip) === JSON.stringify(b, strip);
+    if (e.kind === "BoolLit") return e.value === true;
+    if (e.kind !== "BinOp") return false;
+    if (e.op === "&&") return this.isTrivialClause(e.left) && this.isTrivialClause(e.right);
+    if (e.op === "||") {
+      if (this.isTrivialClause(e.left) || this.isTrivialClause(e.right)) return true;
+      const neg = (a: import("./ast").Expr, b: import("./ast").Expr) => b.kind === "UnaryOp" && b.op === "!" && same(a, b.operand);
+      return neg(e.left, e.right) || neg(e.right, e.left);
+    }
+    if (e.left.kind === "IntLit" && e.right.kind === "IntLit") {
+      const a = BigInt(e.left.value as any), b = BigInt(e.right.value as any);
+      if (e.op === "<") return a < b;
+      if (e.op === ">") return a > b;
+      if (e.op === "!=") return a !== b;
+      if (e.op === "<=") return a <= b;
+      if (e.op === ">=") return a >= b;
+      if (e.op === "==") return a === b;
+      return false;
+    }
+    if (["==", "<=", ">="].includes(e.op)) return simple(e.left) && simple(e.right) && same(e.left, e.right);
+    return false;
   }
 
   // Reconstruct a readable string from a contract expression
@@ -4385,6 +4435,10 @@ export class TypeChecker {
               this.error(`'@mustUse' takes no arguments`, undefined, `write '@mustUse fn ${fn.name}(...)'`);
             }
           }
+          else if (TRACE_ATTRS.has(attr.name)) {
+            const bad = traceAttrError(attr, "fn");
+            if (bad) this.error(`'@${attr.name}' on '${fn.name}': ${bad}`, fn.span);
+          }
           else if (attr.name === "unsafe") {
             if (attr.args.length > 0) {
               this.error(`'@unsafe' takes no arguments`, undefined, `write '@unsafe fn ${fn.name}(...)'`);
@@ -5447,6 +5501,9 @@ export class TypeChecker {
     for (const attr of attrs) {
       if (!TypeChecker.KNOWN_ATTRS.includes(attr.name)) {
         this.error(`unknown attribute '@${attr.name}' on '${declName}'`, undefined, `known attributes: ${known}`);
+      } else if (TRACE_ATTRS.has(attr.name) && target === "struct") {
+        const bad = traceAttrError(attr, "struct");
+        if (bad) this.error(`'@${attr.name}' on '${declName}': ${bad}`);
       } else if (target === "enum") {
         // Clone is the one derive an enum consumes (processDerives); Eq/Json/user
         // templates still only expand over a struct, so they keep the old rejection.
@@ -5811,6 +5868,9 @@ export class TypeChecker {
         } else if (attr.name === "trackCaller" && !isStdCollectionModule((m.span ?? impl.span)?.file)) {
           this.error(`'@trackCaller' on '${typeName}.${m.name}': only the std collection modules may report their caller's location`, m.span ?? impl.span,
             `drop '@trackCaller'; a panic names the line it happens on`);
+        } else if (TRACE_ATTRS.has(attr.name)) {
+          const bad = traceAttrError(attr, "fn");
+          if (bad) this.error(`'@${attr.name}' on '${typeName}.${m.name}': ${bad}`, m.span ?? impl.span);
         } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);

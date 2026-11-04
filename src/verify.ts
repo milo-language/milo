@@ -45,6 +45,13 @@ interface VerificationCondition {
   // "refuted" with `v_len__mut1 = 0` before push had a contract. Same rule as opaqueCalls:
   // PROVEN is still meaningful, REFUTED degrades to `unknown`.
   unconstrainedHavocs?: string[];
+  // The source clause this VC discharges: a postcondition's `ensures`, a loop or struct
+  // `invariant`, a `decreases`, and, on a call-site precondition, the CALLEE's `requires`.
+  // The object itself, so `milo trace` can ask "what became of the clause tagged @req(X)"
+  // without re-deriving it from the description text.
+  clause?: Contract;
+  // Where a call-site precondition's call is written.
+  site?: { file?: string; line: number };
 }
 
 // The reason a sat verdict on `vc` cannot be reported as `failed`, or null when the model
@@ -716,6 +723,7 @@ interface CallSite {
   // Flattened field symbols of any struct argument, in the callee's naming. See fieldBindings.
   fields: Map<string, string>;
   conditions: string[];
+  span?: { file?: string; line: number };
 }
 
 // walkNodes' totality rule, plus the path conditions in force at each node.
@@ -810,6 +818,7 @@ function collectCallsInExpr(expr: Expr, conds: string[], env: Map<string, string
       args: (n.args ?? []).map((a: Expr) => exprToSmtWithEnv(a, env)),
       fields: callee ? fieldBindings(callee.params, n.args ?? [], env) : new Map(),
       conditions: [...active],
+      ...(n.span?.line ? { span: { file: n.span.file, line: n.span.line } } : {}),
     });
   });
 }
@@ -2479,7 +2488,7 @@ function constructsInvariantStruct(stmts: Stmt[]): boolean {
 
 // methods: the checker's bindings for method calls (see MethodBindings); without them
 // every method call havocs its receiver.
-export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string; methods?: MethodBindings; rte?: boolean }): VerifyResult {
+export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string | ((file: string) => boolean); methods?: MethodBindings; rte?: boolean }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
@@ -2552,7 +2561,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
   }
 
   for (const fn of allFns) {
-    if (opts?.onlyFile && fn.sourceFile && fn.sourceFile !== opts.onlyFile) continue;
+    if (opts?.onlyFile && fn.sourceFile && (typeof opts.onlyFile === "function" ? !opts.onlyFile(fn.sourceFile) : fn.sourceFile !== opts.onlyFile)) continue;
     // A fn with no contracts of its own still has to honour the ones it calls.
     const callsContracted = callsAContractedFn(fn.body, requiresByFn);
     // A constructor may carry no contract of its own and still owe one: every reader of the
@@ -2628,7 +2637,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     // Lowered BEFORE the declaration block is assembled: substituting the callee's params
     // for the caller's arguments is what invents symbols like `key_len`, and they have to
     // reach `fieldRefs` in time to be declared.
-    const callObligations: { callee: string; obligation: string; guard: string; conds: string[] }[] = [];
+    const callObligations: { callee: string; obligation: string; guard: string; conds: string[]; clause: Contract; site?: { file?: string; line: number } }[] = [];
     for (const call of symResult.calls) {
       const callee = requiresByFn.get(call.name);
       if (!callee || callee.name === fn.name) continue;   // self-recursion: needs induction, skip
@@ -2643,7 +2652,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         // an unchecked precondition indistinguishable from a checked one — the call simply
         // wasn't in the report, so nothing said the guarantee was resting on nothing.
         const guard = call.conditions.length > 0 ? `(assert (and ${call.conditions.join(" ")}))` : "";
-        callObligations.push({ callee: callee.name, obligation, guard, conds: call.conditions });
+        callObligations.push({ callee: callee.name, obligation, guard, conds: call.conditions, clause: req, site: call.span });
       }
     }
 
@@ -2714,6 +2723,8 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         fn: fn.name,
         kind: "precondition",
         ...(leansOn.length ? { assumesCuts: leansOn } : {}),
+        clause: o.clause,
+        ...(o.site ? { site: o.site } : {}),
         description: `call to ${o.callee} from ${fn.name}: ${o.obligation}`,
         smtlib: [
           `; Call-site precondition proof: ${fn.name} -> ${o.callee}`,
@@ -2819,6 +2830,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
             fn: fn.name,
             kind: "postcondition",
             ...(leansOn.length ? { assumesCuts: leansOn } : {}),
+            clause: ens,
             description: `postcondition of ${fn.name}: ${postSmt}`,
             smtlib: [
               `; Postcondition proof for ${fn.name}`,
@@ -2835,6 +2847,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
           conditions.push({
             fn: fn.name,
             kind: "postcondition",
+            clause: ens,
             description: `postcondition of ${fn.name}: ${postSmt}`,
             smtlib: [
               `; Postcondition check for ${fn.name} (no body analysis)`,
@@ -2861,6 +2874,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
           fn: fn.name,
           kind: "struct-invariant",
           invariantOf: lit.struct,
+          clause: inv,
           description: `invariant of ${lit.struct} holds at construction in ${fn.name}: ${exprToSmt(inv.expr)}`,
           smtlib: [
             `; Struct invariant establishment: ${lit.struct} built in ${fn.name}`,
@@ -2901,6 +2915,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
           fn: fn.name,
           kind: "struct-invariant",
           invariantOf: p.type.name,
+          clause: inv,
           description: `invariant of ${p.type.name} maintained by ${fn.name}: ${exprToSmt(inv.expr)}`,
           smtlib: [
             `; Struct invariant maintenance: ${p.name}: &mut ${p.type.name} in ${fn.name}`,
@@ -2929,6 +2944,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         conditions.push({
           fn: fn.name,
           kind: "termination",
+          clause: dec,
           description: `recursion of ${fn.name} decreases: ${atCall} < ${atEntry} and ${atEntry} >= 0`,
           smtlib: [
             `; Termination measure for the self-call in ${fn.name}`,
@@ -2976,6 +2992,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         conditions.push({
           fn: fn.name,
           kind: "loop-invariant",
+          clause: inv,
           description: `loop invariant holds on entry in ${fn.name}: ${atEntry}`,
           smtlib: [
             `; Loop invariant establishment for ${fn.name}`,
@@ -3039,6 +3056,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         conditions.push({
           fn: fn.name,
           kind: "loop-invariant",
+          clause: inv,
           description: `loop invariant preserved by body in ${fn.name}: ${exprToSmt(inv.expr)}`,
           smtlib: [
             `; Loop invariant preservation for ${fn.name}`,
@@ -3071,6 +3089,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
         conditions.push({
           fn: fn.name,
           kind: "termination",
+          clause: dec,
           description: `loop measure decreases in ${fn.name}: ${exprToSmt(dec.expr)}`,
           smtlib: [
             `; Loop termination measure for ${fn.name}`,

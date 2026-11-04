@@ -30,6 +30,7 @@ import { proveWithMilo } from "./prove-milo";
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
+import { requirementsDiagnostics, runTraceCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
 import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -161,6 +162,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
 
   const result = phase("check", () => new TypeChecker(warningConfig).check(program!));
   const errors = result.diagnostics.filter(d => d.severity === "error");
+  if (filePath) for (const message of requirementsDiagnostics(program!, filePath)) errors.push({ severity: "error", message });
   const warnings = result.diagnostics.filter(d => d.severity !== "error");
   // Diagnostics from imported modules carry span.file; resolve their source off
   // disk (cached) so the caret renders against the right file, not the entry.
@@ -257,6 +259,7 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
     let program = new Parser(tokens, source, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
     diagnostics = new TypeChecker(warningConfig).check(program).diagnostics;
+    for (const message of requirementsDiagnostics(program, filePath)) diagnostics.push({ severity: "error", message });
   } catch (e: any) {
     // A parse error ends the run, but it is still a diagnostic — a consumer should not
     // have to handle "crashed" and "rejected" as two different shapes.
@@ -320,6 +323,110 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 
 // The prover reads which method each call resolved to (verify.ts MethodBindings), so it
 // needs the check result as well as the program.
+// `milo trace <entry.milo>` and `milo verify`: the requirements matrix needs the program, its
+// check result and the prover, all over the entry's own project files (never std).
+function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps {
+  return {
+    frontend(entry) {
+      const diagnostics: Diagnostic[] = [];
+      const { program, check } = parseAndCheck(readFileSync(entry, "utf-8"), target, entry, warningConfig, diagnostics);
+      const errors = diagnostics.filter(d => d.severity === "error");
+      if (errors.length) {
+        const src = readFileSync(entry, "utf-8");
+        for (const d of errors) console.error(formatDiagnostic(d, src, entry));
+        process.exit(1);
+      }
+      return { program, check };
+    },
+    prove(program, check, entry, z3) {
+      const dir = dirname(resolve(entry)) + "/";
+      const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any });
+      return z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+    },
+  };
+}
+
+// A DO-178C profile makes the requirements matrix strict, so `build --safety=do178c-a` fails on
+// a fn with no @req, a requirement with no implementation or test, or a clause the prover
+// cannot discharge. Other profiles have no traceability objective here.
+function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean): void {
+  const rep = traceEntry({ entry, json: false, strict: true, z3 }, traceDeps(target, warningConfig));
+  if (!rep.ok) {
+    console.error(formatTrace(rep));
+    console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under --safety=${level}`);
+    process.exit(1);
+  }
+}
+
+// The safety profile's own rules (src/safety.ts), shared by `safety`, `build --safety` and `verify`.
+function safetyViolationsFor(source: string, level: ReturnType<typeof parseSafetyLevel> & string, target: TargetInfo, warningConfig: WarningConfig) {
+  // A profile that requires used results must see every finding: an `--allow` or a
+  // project-level allow would otherwise suppress the warning inside the checker and the
+  // profile would report pass on the code it exists to reject.
+  if (requiresUsedResults(level)) {
+    warningConfig.allowed.delete("unused-result");
+    warningConfig.expected?.delete("unused-result");
+  }
+  const diagnostics: Diagnostic[] = [];
+  const program = parseCheckProgram(readFileSync(source, "utf-8"), target, source, warningConfig, diagnostics);
+  const unusedResults = diagnostics.filter(d => d.code === "unused-result");
+  return { program, violations: checkSafetyCompliance(program, level, unusedResults) };
+}
+
+function enforceSafetyProfile(source: string, levelName: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean): void {
+  const level = parseSafetyLevel(levelName);
+  if (!level) { console.error(`unknown safety level: ${levelName}\nuse 'milo safety --list' to see available profiles`); process.exit(1); }
+  const { program, violations } = safetyViolationsFor(source, level, target, warningConfig);
+  if (violations.some(v => v.severity === "error")) {
+    console.error(display(program.displayNames, formatSafetyReport(violations, level)));
+    process.exit(1);
+  }
+  if (level.startsWith("do178")) enforceTraceability(source, level, target, warningConfig, z3);
+}
+
+// `milo verify <entry.milo> --profile <level>`: everything a certification review reads in one
+// pass: the profile's rules, the strict requirements matrix (do178 profiles, or whenever a
+// requirements.json is present), and `prove --rte`. Exit 1 on any hard failure; unknown
+// runtime-error proofs are counted, not failed.
+function runVerify(args: string[]): number {
+  let profile: string | null = null;
+  let entry = "";
+  const z3 = args.includes("--solver=z3");
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--profile" || a === "--safety") profile = args[++i] ?? null;
+    else if (a.startsWith("--profile=")) profile = a.slice(10);
+    else if (a.startsWith("--safety=")) profile = a.slice(9);
+    else if (!a.startsWith("-") && !entry) entry = a;
+  }
+  const level = profile ? parseSafetyLevel(profile) : null;
+  if (!entry || !level) { console.error("usage: milo verify <entry.milo> --profile <level>   (milo safety --list shows the levels)"); return 1; }
+  const target = getHostTarget();
+  const wc = parseArgs([]).warningConfig;
+  let ok = true;
+
+  const { program, violations } = safetyViolationsFor(entry, level, target, wc);
+  const errs = violations.filter(v => v.severity === "error");
+  console.log(`profile ${level}: ${errs.length === 0 ? "ok" : `${errs.length} violation(s)`}`);
+  if (errs.length) { console.log(display(program.displayNames, formatSafetyReport(violations, level))); ok = false; }
+
+  const rep = traceEntry({ entry, json: false, strict: level.startsWith("do178"), z3 }, traceDeps(target, wc));
+  if (rep.requirementsFile || rep.strict) {
+    const fails = rep.errors.length + (rep.strict ? rep.strictFailures.length : 0);
+    console.log(`requirements: ${fails === 0 ? "ok" : `${fails} failure(s)`} (${rep.requirements.length} requirements, ${rep.unknown} unknown)`);
+    if (fails) { for (const f of [...rep.errors, ...(rep.strict ? rep.strictFailures : [])]) console.log(`  error: ${f}`); ok = false; }
+  }
+
+  const { program: p2, check } = traceDeps(target, wc).frontend(entry);
+  const dir = dirname(resolve(entry)) + "/";
+  const vcs = generateVerificationConditions(p2, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any, rte: true });
+  const pr = z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+  console.log(`proofs (prove --rte): ${pr.proven} proven, ${pr.failed} failed, ${pr.unknown + pr.errors} unknown`);
+  if (pr.failed > 0) ok = false;
+  console.log(`verify: ${ok ? "PASS" : "FAIL"}`);
+  return ok ? 0 : 1;
+}
+
 function parseAndCheck(src: string, target: TargetInfo, filePath: string, warningConfig?: WarningConfig, diagnosticsOut?: Diagnostic[]) {
   const sourceDir = dirname(resolve(filePath));
   try {
@@ -1994,6 +2101,18 @@ async function main() {
     process.exit(runLangInfo(args.slice(1)));
   }
 
+  // `trace` is two commands: a .milo entry prints the requirements matrix (src/requirements.ts);
+  // anything else is a record/replay trace file (src/trace.ts).
+  if (cmd === "trace" && args.slice(1).some(a => a.endsWith(".milo"))) {
+    process.exit(runTraceCommand(args.slice(1), traceDeps(getHostTarget(), parseArgs([]).warningConfig)));
+  }
+
+  // `milo verify` checks a source (`.milo`: profile rules, the requirement matrix, prove --rte)
+  // or a built binary (anything else: the pinned record and the object checks, below).
+  if (cmd === "verify" && args.slice(1).some(a => a.endsWith(".milo"))) {
+    process.exit(runVerify(args.slice(1)));
+  }
+
   if (cmd === "trace") {
     const { runTrace } = require("./trace");
     process.exit(runTrace(args.slice(1)));
@@ -2242,18 +2361,7 @@ async function main() {
       console.error("use 'milo safety --list' to see available profiles");
       process.exit(1);
     }
-    const src = readFileSync(source!, "utf-8");
-    const diagnostics: Diagnostic[] = [];
-    // A profile that requires used results must see every finding: an `--allow` or a
-    // project-level allow would otherwise suppress the warning inside the checker and the
-    // profile would report pass on the code it exists to reject.
-    if (requiresUsedResults(level)) {
-      warningConfig.allowed.delete("unused-result");
-      warningConfig.expected?.delete("unused-result");
-    }
-    const program = parseCheckProgram(src, target, source!, warningConfig, diagnostics);
-    const unusedResults = diagnostics.filter(d => d.code === "unused-result");
-    const violations = checkSafetyCompliance(program, level, unusedResults);
+    const { program, violations } = safetyViolationsFor(source!, level, target, warningConfig);
     if (rest.includes("--json")) writeStdout(display(program.displayNames, safetyJson(violations, level, source!)));
     else console.log(display(program.displayNames, formatSafetyReport(violations, level)));
     if (violations.some(v => v.severity === "error")) process.exit(1);
@@ -2284,6 +2392,7 @@ async function main() {
     }
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
+    if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, rest.includes("--solver=z3"));
     const t0 = Date.now();
     if (safetyLevel) {
       const level = parseSafetyLevel(safetyLevel);

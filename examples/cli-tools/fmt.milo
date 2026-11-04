@@ -876,8 +876,56 @@ pub fn isMoveFnType(tokens: &Vec<Token>, i: i64): bool {
     return false
 }
 
+// True when tokens[i] sits inside the parens of a requirement-id attribute,
+// `@req(LLR-3)`, `@assume(...)` or `@derived(...)`. The id is one word that happens to
+// lex as ident, minus, int, so spacing it as an expression would print `LLR - 3`.
+pub fn inRequirementId(tokens: &Vec<Token>, i: i64): bool {
+    var k = i - 1
+    while k >= 0 && tokens[k].kind != TokKind.LParen && tokens[k].kind != TokKind.RParen &&
+    tokens[k].kind != TokKind.Eof {
+        k -= 1
+    }
+    if k < 2 || tokens[k].kind != TokKind.LParen {
+        return false
+    }
+    let name = tokens[k - 1]
+    let isIdAttr = name.kind == TokKind.Ident && (name.text == "req" || name.text == "assume" || name.text == "derived")
+    return isIdAttr && isAtToken(tokens[k - 2])
+}
+
+// True when the `@` at tokens[i] starts attributes that sit before a contract clause
+// (`@req(LLR-3)` above `requires ...`) rather than before a declaration. Those belong to
+// the clause: no blank line goes above them.
+pub fn isClauseAttribute(tokens: &Vec<Token>, i: i64): bool {
+    var j = i
+    while j + 1 < tokens.len && isAtToken(tokens[j]) {
+        j += 2
+        if j < tokens.len && tokens[j].kind == TokKind.LParen {
+            var depth = 0
+            while j < tokens.len {
+                if tokens[j].kind == TokKind.LParen {
+                    depth += 1
+                } else if tokens[j].kind == TokKind.RParen {
+                    depth -= 1
+                    if depth == 0 {
+                        j += 1
+                        break
+                    }
+                } else if tokens[j].kind == TokKind.Eof {
+                    return false
+                }
+                j += 1
+            }
+        }
+    }
+    return j < tokens.len && tokens[j].kind == TokKind.Ident && isContractLeadKeyword(tokens[j].text)
+}
+
 pub fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if i == 0 {
+        return false
+    }
+    if inRequirementId(tokens, i) {
         return false
     }
     let tok = tokens[i]
@@ -1230,7 +1278,7 @@ pub fn formatSource(src: string): string {
         // the blank goes above it (and any doc comment above that); no blank is
         // inserted between the attribute and the decl it prefixes (afterAttr).
         let startsTopLevelItem = (tok.kind == TokKind.Keyword && isTopLevel(tok.text)) ||
-        (isAtToken(tok) && depth == 0) || (depth == 0 && pubLeadsDecl(tokens, i))
+        (isAtToken(tok) && depth == 0 && !isClauseAttribute(tokens, i)) || (depth == 0 && pubLeadsDecl(tokens, i))
         if depth == 0 && startsTopLevelItem && !hugExtern && !hugPub && !attachedDoc && !afterAttr {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
@@ -1352,7 +1400,7 @@ pub fn formatSource(src: string): string {
         // A top-level `@` opens an attribute that prefixes the next decl: hold
         // afterAttr across the attribute so no blank splits it from the decl, then
         // clear it once the decl keyword lands.
-        if isAtToken(tok) && depth == 0 {
+        if isAtToken(tok) && depth == 0 && !isClauseAttribute(tokens, i) {
             afterAttr = true
         } else if tok.kind == TokKind.Keyword && isTopLevel(tok.text) && depth == 0 {
             afterAttr = false

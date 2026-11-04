@@ -22,11 +22,15 @@ function typeSpelled(name: string): boolean {
   return head >= "A" && head <= "Z";
 }
 
+// Attributes whose argument is a requirement id (src/requirements.ts), not an ident or string.
+const REQ_ATTRS = new Set(["req", "assume", "derived"]);
+
 export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
   private moduleWrapping = false; // set by a file-level `@!wrapping` directive
   private moduleReplayHooked = false; // set by a file-level `@!replayHooked` directive
+  private moduleReqs: Attribute[] = []; // file-level `@!req(ID)`: every fn and struct here implements ID
 
   // Builtins that may be written with the `@` sigil in expression position. These
   // are compile-time-only: the compiler, not the runtime, does the work.
@@ -151,7 +155,8 @@ export class Parser {
       while (this.at(TokenKind.At)) {
         const a = this.parseAttribute();
         if (a.inner) {
-          if (a.name !== "wrapping" && a.name !== "replayHooked") this.error(`unknown module directive '@!${a.name}' — only '@!wrapping' and '@!replayHooked' are supported`, this.peek());
+          if (a.name === "req") { this.moduleReqs.push(a); continue; }
+          if (a.name !== "wrapping" && a.name !== "replayHooked") this.error(`unknown module directive '@!${a.name}' — only '@!wrapping', '@!replayHooked' and '@!req(ID)' are supported`, this.peek());
           else if (a.args.length > 0) this.error(`'@!${a.name}' takes no arguments`, this.peek());
           else if (a.name === "wrapping") this.moduleWrapping = true;
           else this.moduleReplayHooked = true;
@@ -258,6 +263,14 @@ export class Parser {
     if (this.moduleReplayHooked) {
       for (const f of functions) if (!f.isExtern) f.fromReplayHookedModule = true;
       for (const im of impls) for (const m of im.methods) m.fromReplayHookedModule = true;
+    }
+    // `@!req(ID)` says the whole module implements ID, so stamp it on each decl as an ordinary
+    // `@req` (marked inner so tooling can tell it was inherited). Per-file, like @!wrapping.
+    if (this.moduleReqs.length > 0) {
+      const stamp = (d: { attributes?: Attribute[] }) => { d.attributes = [...(d.attributes ?? []), ...this.moduleReqs]; };
+      for (const f of functions) if (!f.isExtern) stamp(f);
+      for (const im of impls) for (const m of im.methods) stamp(m);
+      for (const s of structs) if (!s.isExtern) stamp(s);
     }
     return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates, ...(this.moduleWrapping && { moduleWrapping: true }), ...(this.moduleReplayHooked && { moduleReplayHooked: true }) };
   }
@@ -641,14 +654,43 @@ export class Parser {
 
   private parseContracts(): import("./ast").Contract[] {
     const contracts: import("./ast").Contract[] = [];
-    while (this.at(TokenKind.Requires) || this.at(TokenKind.Ensures)
-        || this.at(TokenKind.Invariant) || this.at(TokenKind.Decreases)) {
+    const atClause = () => this.at(TokenKind.Requires) || this.at(TokenKind.Ensures)
+        || this.at(TokenKind.Invariant) || this.at(TokenKind.Decreases);
+    while (true) {
+      // `@req(ID) ensures ...`: attributes before a clause. A struct's trailing invariants
+      // are followed by the NEXT declaration, which may start with its own attribute, so
+      // read ahead and only keep the attributes when a clause keyword follows them.
+      let attrs: Attribute[] | undefined;
+      if (this.at(TokenKind.At) && this.clauseFollowsAttributes()) {
+        attrs = [];
+        while (this.at(TokenKind.At)) attrs.push(this.parseAttribute());
+      }
+      if (!atClause()) break;
       const s = this.span(this.peek());
       const kind = this.advance().value as "requires" | "ensures" | "invariant" | "decreases";
       const expr = this.parseExpr();
-      contracts.push({ kind, expr, span: s });
+      contracts.push({ kind, expr, span: s, ...(attrs ? { attributes: attrs } : {}) });
     }
     return contracts;
+  }
+
+  // True when the `@name(...)` run at the cursor is followed by a contract keyword. Token
+  // scan only, so a malformed attribute is reported by parseAttribute, not swallowed here.
+  private clauseFollowsAttributes(): boolean {
+    let p = this.pos;
+    while (this.tokens[p]?.kind === TokenKind.At) {
+      p += 2; // '@' and the name
+      if (this.tokens[p]?.kind === TokenKind.LParen) {
+        for (let depth = 0; p < this.tokens.length; p++) {
+          const k = this.tokens[p]!.kind;
+          if (k === TokenKind.LParen) depth++;
+          else if (k === TokenKind.RParen && --depth === 0) { p++; break; }
+          else if (k === TokenKind.Eof) return false;
+        }
+      }
+    }
+    const k = this.tokens[p]?.kind;
+    return k === TokenKind.Requires || k === TokenKind.Ensures || k === TokenKind.Invariant || k === TokenKind.Decreases;
   }
 
   private parseTypeParams(): import("./ast").TypeParam[] {
@@ -711,7 +753,13 @@ export class Parser {
     const name = this.at(TokenKind.Unsafe) ? this.advance().value : this.expect(TokenKind.Ident).value;
     const args: string[] = [];
     const argKinds: ("ident" | "string")[] = [];
-    if (this.match(TokenKind.LParen)) {
+    if (REQ_ATTRS.has(name) && this.at(TokenKind.LParen) && this.peekN(1).kind !== TokenKind.String) {
+      this.advance();
+      const id = this.parseRequirementId();
+      args.push(id);
+      argKinds.push("ident");
+      this.expect(TokenKind.RParen);
+    } else if (this.match(TokenKind.LParen)) {
       this.parseAttributeArg(args, argKinds);
       while (this.match(TokenKind.Comma)) {
         this.parseAttributeArg(args, argKinds);
@@ -719,6 +767,28 @@ export class Parser {
       this.expect(TokenKind.RParen);
     }
     return { name, args, argKinds, ...(inner && { inner: true }) };
+  }
+
+  // A requirement token like `HLR-1` or `LLR-3.2` lexes as several tokens (ident, minus,
+  // int, dot...), so take the raw source text up to the closing paren instead. Checking
+  // the character set here keeps `@req(HLR - 1)` or an expression from parsing as an id.
+  private parseRequirementId(): string {
+    const first = this.peek();
+    let last = first;
+    while (!this.at(TokenKind.RParen) && !this.at(TokenKind.Eof)) {
+      if (this.peek().line !== first.line) this.error("a requirement id must be on one line", this.peek());
+      last = this.advance();
+    }
+    if (this.at(TokenKind.RParen) && first.kind === TokenKind.RParen) {
+      this.error("write a requirement id, e.g. @req(HLR-1)", first);
+    }
+    const line = this.source?.split("\n")[first.line - 1];
+    const end = this.peek();
+    const text = line !== undefined ? line.slice(first.col - 1, end.col - 1).trim() : last.value;
+    if (!/^[A-Za-z0-9_.\-]+$/.test(text)) {
+      this.error(`'${text}' is not a requirement id — use letters, digits, '-', '_' and '.', e.g. HLR-1, or quote it`, first);
+    }
+    return text;
   }
 
   private parseAttributeArg(args: string[], argKinds: ("ident" | "string")[]): void {

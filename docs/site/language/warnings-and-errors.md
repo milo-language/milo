@@ -60,6 +60,7 @@ build rather than quietly teaching the wrong thing.
 | [`unchecked-ffi-contract`](#unchecked-ffi-contract) | allow |
 | [`unused-move`](#unused-move) | allow |
 | [`unused-result`](#unused-result) | warn |
+| [`vacuous-contract`](#vacuous-contract) | warn |
 | [`unused-unsafe`](#unused-unsafe) | warn |
 | [`unused-variable`](#unused-variable) | warn |
 | [`useless-forget`](#useless-forget) | warn |
@@ -584,6 +585,26 @@ fn main() {
 ```
 
 **Fix:** Handle the value, or write `let _ = ...` to discard it on purpose.
+
+### vacuous-contract
+
+_On by default._
+
+A `requires`, `ensures` or `invariant` that is true for every input, with no assumption about its variables (`ensures result == result`, `requires true`). `milo prove` proves it at once, and the green tick means nothing: the clause constrains no behaviour. It matters most under `@req`, where a requirement would be traced to a clause that proves itself. Found by structure (a comparison of an expression with itself, a constant, `a || !a`); floats are skipped because `x == x` is false for NaN.
+
+```milo
+fn same(x: i64): i64
+ensures result == result
+{
+  return x
+}
+
+fn main() {
+  print(same(1).toString())
+}
+```
+
+**Fix:** State something about the result or the inputs, or delete the clause.
 
 ### unused-unsafe
 
