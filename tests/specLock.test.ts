@@ -148,6 +148,16 @@ impl Box {
     }
 }
 
+pub trait Shape {
+    fn area(self: &Self): i32 { return 7 + BODY_SENTINEL_T1() }
+}
+
+let globalSENTINEL_G1: i32 = 41
+
+let contractLimit: i32 = 10
+
+fn BODY_SENTINEL_T1(): i32 { return 1 }
+
 fn privateHelperSENTINEL_P1(x: i32): i32 {
     let BODY_SENTINEL_P2 = x
     return BODY_SENTINEL_P2
@@ -155,7 +165,7 @@ fn privateHelperSENTINEL_P1(x: i32): i32 {
 
 @req(R-1)
 pub fn pubFn(x: i32): i32
-requires x >= 0 && x <= 10
+requires x >= 0 && x <= contractLimit
 @req(R-1) ensures result >= 0 // COMMENT_SENTINEL_A4
 {
     // COMMENT_SENTINEL_A5
@@ -177,6 +187,8 @@ fn main(): i32 {
     // The scan must be able to fail: the interface we do keep is present, the sentinels are not.
     expect(text).toContain("pub fn pubFn(x: i32): i32");
     expect(text).toContain("fn get(self: &Self): i32");
+    expect(text).toContain("fn area(self: &Self): i32");
+    expect(text).toContain("let contractLimit: i32 = 10"); // a kept contract names it
     for (const s of ["SENTINEL", "BODY_", "MAIN_", "privateHelper", "fn main", "SECRET_SOURCE"]) expect(text).not.toContain(s);
     expect(text).not.toContain("//");
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(join(out, ".."), { recursive: true, force: true }); }

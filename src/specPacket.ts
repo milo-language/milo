@@ -123,6 +123,8 @@ export function stubSource(text: string, file: string): string {
   const fns: Fn[] = [];
   const impls: { c: Chunk; open: number; methods: Fn[]; keepAll: boolean }[] = [];
   const verbatim: Chunk[] = [];
+  // A private global's initializer is implementation: it stays only if something kept names it.
+  const privateGlobals: { c: Chunk; name: string; keep: boolean }[] = [];
   for (const c of chunks) {
     if (c.kw === "fn") {
       const body = bodyOf(c.head);
@@ -148,9 +150,19 @@ export function stubSource(text: string, file: string): string {
       impls.push({ c, open, methods, keepAll });
     } else if (c.kw === "derive") {
       continue; // a derive template is code, not interface
+    } else if (!c.pub && (c.kw === "let" || c.kw === "var" || c.kw === "thread_local")) {
+      privateGlobals.push({ c, name: val(c.head + (c.kw === "thread_local" ? 2 : 1)), keep: false });
     } else {
       verbatim.push(c);
-      identsIn(c.s, c.e, need);
+      if (c.kw === "trait" || c.kw === "interface") {
+        // A default body is stubbed, so what it calls is not interface.
+        let open = c.head;
+        while (kind(open) !== "{") open++;
+        for (let k = c.s; k < c.e; k++) {
+          if (kind(k) === "{" && depth[k] === depth[open]! + 1) { k = match.get(k)!; continue; }
+          if (kind(k) === "IDENT") need.add(val(k));
+        }
+      } else identsIn(c.s, c.e, need);
     }
   }
   const candidates = [...fns, ...impls.flatMap(i => i.keepAll ? [] : i.methods)];
@@ -161,10 +173,33 @@ export function stubSource(text: string, file: string): string {
       f.keep = true; changed = true;
       identsIn(f.s, f.body, need);
     }
+    for (const g of privateGlobals) {
+      if (g.keep || !need.has(g.name)) continue;
+      g.keep = true; changed = true;
+      identsIn(g.c.s, g.c.e, need);
+    }
   }
 
+  /** A trait's text with each default method body replaced: a default is code, not interface. */
+  const stubDefaults = (c: Chunk) => {
+    let open = c.head;
+    while (kind(open) !== "{") open++;
+    const close = match.get(open)!;
+    let text = "", pos = c.s;
+    for (let k = open + 1; k < close; k++) {
+      if (kind(k) !== "{" || depth[k] !== depth[open]! + 1) continue;
+      const indent = " ".repeat(toks[k]!.col > 1 ? 4 : 0);
+      text += slice(pos, k).trimEnd() + " " + STUB.split("\n").join("\n" + indent) + "\n";
+      pos = match.get(k)! + 1;
+      text += " ".repeat(toks[pos]!.col - 1);
+      k = pos - 1;
+    }
+    return text + slice(pos, c.e);
+  };
+
   const out: { at: number; text: string }[] = [];
-  for (const c of verbatim) out.push({ at: c.s, text: slice(c.s, c.e) });
+  for (const c of verbatim) out.push({ at: c.s, text: c.kw === "trait" || c.kw === "interface" ? stubDefaults(c) : slice(c.s, c.e) });
+  for (const g of privateGlobals) if (g.keep) out.push({ at: g.c.s, text: slice(g.c.s, g.c.e) });
   for (const f of fns) if (f.keep) out.push({ at: f.s, text: stubFn(f.s, f.body) });
   for (const im of impls) {
     const ms = im.methods.filter(m => m.keep);
