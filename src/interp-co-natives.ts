@@ -59,12 +59,14 @@ co("Task$join", function* (it, [self]) {
 // R-TASK-SCOPE: the body runs, then the caller parks until every task spawned on the scope has ended.
 co("Task$scope", function* (it, [body]) {
   const sc = new ScopeObj();
+  const scopeBlock = it.alloc(); // R-TASK-SCOPE: an open scope owns one block; a program that exits inside it leaves the block
   const slot = { v: handle("scope", sc) };
   const me = it.cur;
   me.scopesOpen++;
   yield* it.callValue$g(body, [{ k: "mut", slot, path: [] } as Ref]);
   while (sc.live > 0) { sc.waiter = me; yield* it.park("Task.scope (waiting for its tasks)"); }
   me.scopesOpen--;
+  it.free(scopeBlock);
   it.dropValue(body);
   return undefined;
 });
@@ -216,12 +218,12 @@ const armReady = (it: InterpCo, a: Arm): boolean => {
 const armChan = (it: Interp, self: Value, ch: Value, kind: "recv" | "send"): Value => {
   const c = chan(it, ch), o = sel(it, self);
   c.rc++;
-  o.blocks.push(...count(it, o.arms.some(a => a.chan) ? 1 : 2));
+  o.blocks.push(...count(it, 1));
   o.arms.push({ kind, chan: c });
   return undefined;
 };
 const SELECT_NATIVES: Record<string, Native> = {
-  new: it => handle("select", new SelObj(count(it, 3))), // measured on compiled programs: three blocks for the state and its node array
+  new: it => handle("select", new SelObj(count(it, 4))), // measured on compiled programs: the state (three blocks) and the node array
   onRecv: (it, [self, ch]) => armChan(it, self, ch, "recv"),
   onSend: (it, [self, ch]) => armChan(it, self, ch, "send"),
   onTimeout: (it, [self, ms]) => { sel(it, self).arms.push({ kind: "timer", at: (it as InterpCo).clock + Math.max(0, Number(ms as bigint)) }); return undefined; },
@@ -234,7 +236,6 @@ const fdArm = (kind: "read" | "write", ty: string | undefined): Native => (it, [
 };
 const SELECT_WAIT: CoNative = function* (it, [self]) {
   const o = sel(it, self);
-  if (o.arms.some(a => a.kind === "read" || a.kind === "write")) it.fdWaited = true; // registering an fd arm makes the scheduler size its table of fd waiters
   for (;;) {
     for (let i = 0; i < o.arms.length; i++) if (armReady(it, o.arms[i]!)) return BigInt(i);
     const me = it.cur, net = netWaiters(it);

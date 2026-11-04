@@ -28,6 +28,7 @@ export interface Task {
   scopesOpen: number; // Task.scope calls this task is inside: a panic then aborts instead of retiring it
   scope: { live: number; waiter: Task | null } | null;
   cacheable: boolean; // spawned with the default stack size
+  envBlock?: number; // the heap block holding a capturing closure's environment, freed when the task ends
   why: string; // what a parked task waits for, for the deadlock report
   panicReply?: { fd: number; bytes: Uint8Array }; // R-TASK-PANIC: sent on fd if the task panics
 }
@@ -86,6 +87,7 @@ export class InterpCo extends InterpGen {
     this.touch("spawn"); // task ids come from one counter, so two spawns do not commute
     const t: Task = { id: this.nextTaskId++, state: "ready", gen: null, ctx: { frames: [], temps: [], depth: 0, pend: [] }, isMain: false, joiner: null, scopesOpen: 0, scope, cacheable: true, why: "" };
     t.cacheable = cacheable;
+    if (f.env.length > 0) t.envBlock = this.alloc(); // R-TASK-ABANDON: a task whose closure captures owns its environment on the heap
     t.gen = this.taskBody(f);
     this.tasks.set(t.id, t);
     this.runq.push(t);
@@ -166,13 +168,12 @@ export class InterpCo extends InterpGen {
   // R-TASK-JOIN
   private reap(t: Task): void {
     this.tasks.delete(t.id);
+    if (t.envBlock !== undefined) this.free(t.envBlock);
     this.touch(t);
     if (t.scope) this.touch(t.scope);
     if (t.isMain) this.touch("exit"); // ends the program: every task still ready is abandoned
-    // Measured on compiled programs with a plain main: the stack of a task reaped with no other task left does not
-    // end up in the cache. (With a green main the main task is always still there.)
-    const othersLeft = this.greenMain || [...this.tasks.values()].some(x => !x.isMain);
-    if (t.cacheable && othersLeft && this.cachedContexts < 64) this.cachedContexts++;
+    // A finished default-stack task leaves its context in the cache (R-TASK-ABANDON).
+    if (t.cacheable && this.cachedContexts < 64) this.cachedContexts++;
     if (t.joiner) this.unpark(t.joiner);
     const sc = t.scope;
     if (sc && --sc.live === 0 && sc.waiter) { const w = sc.waiter; sc.waiter = null; this.unpark(w); }
@@ -183,14 +184,12 @@ export class InterpCo extends InterpGen {
   // transfer mutex, stack cache), three for each abandoned task (task, join cell, context) and three more
   // for one asleep (its select state). Idle stack contexts in the cache stay too. With no task left and
   // a green main the scheduler is torn down and nothing remains.
-  // exiting: the task that called exit. Measured on compiled programs: main exiting by itself accounts for 2 blocks, not 3.
-  private leakRuntime(exiting?: Task): void {
+  private leakRuntime(): void {
     // No task left: a green main tears the scheduler down; a plain main (scope-only programs) never does.
     if (this.tasks.size === 0 && (this.greenMain || !this.scopeSpawned)) return;
     const asleep = new Set(this.sleepers.filter(x => !x.quiet).map(x => x.t));
-    let n = 5 + this.cachedContexts + (this.fdWaited ? 1 : 0);
-    for (const t of this.tasks.values()) n += asleep.has(t) ? 6 : 3;
-    if (exiting?.isMain) n -= 1;
+    let n = 4 + this.cachedContexts + (this.fdWaited ? 1 : 0);
+    for (const t of this.tasks.values()) n += asleep.has(t) ? 7 : 3; // asleep: sleepMs's Select, four blocks
     for (let i = 0; i < n; i++) this.alloc();
   }
   private deadlock(): never {
@@ -216,7 +215,7 @@ export class InterpCo extends InterpGen {
       try { r = task.gen!.next(); }
       catch (e) {
         // R-TASK-ABANDON: exit from a task leaves the scheduler up and the other tasks where they stand, as main returning does
-        if (e instanceof ExitProgram && !e.killed) this.leakRuntime(task);
+        if (e instanceof ExitProgram && !e.killed) this.leakRuntime();
         // R-TASK-PANIC: a panic in a task that is not main and has no open scope retires that task, not the program
         if (!(e instanceof Panic) || task.isMain || task.scopesOpen > 0) throw e;
         this.err.push(...new TextEncoder().encode(e.message + "\n"));
