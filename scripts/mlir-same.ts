@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
-// Conformance gate for the MLIR backend: every fixture's stdout, stderr and exit must equal its
-// golden. Each fixture is built through MLIR (docs/mlir-backend.md), the binary runs, and the
-// result is compared with the recorded golden in tests/golden. The goldens are the frozen oracle (recorded from the legacy backend before it was
-// deleted); a mismatch is a regression in the MLIR backend, not a stale file. It prints the
+// Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks
+// must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for
+// it. The interpreter is the oracle because it follows the written rules: a recorded golden only
+// says "same as before", and two goldens recorded tonight's bugs as correct. A program the
+// interpreter can't run yet (it reports `unsupported`) falls back to its recorded golden in
+// tests/golden; `--golden` uses the goldens for everything. It prints the
 // coverage number (function instances compiled through MLIR / all non-extern function
 // instances, from MILO_MLIR_LOG), the most common reasons the rest were not lowered, and the
 // corpus build time.
@@ -37,6 +39,7 @@ const argv = process.argv.slice(2);
 const opt = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const filter = opt("--filter");
 const RECORD = argv.includes("--record-golden");
+const GOLDEN_ONLY = argv.includes("--golden");
 const GOLDEN_DIR = join(ROOT, "tests", "golden");
 const jobs = Number(opt("--jobs") ?? 2);
 const GUARD_TRIES = 3;
@@ -150,11 +153,13 @@ async function measureLive(name: string, bin: string): Promise<Live> {
 }
 
 // ref is the golden: its exit code and live counts (live null without --owned or off darwin).
-type Ref = { code: number | null; live: Live | null };
+type Ref = { code: number | null; live: Live | null; liveOptional?: boolean };
 async function ownership(name: string, mlirBin: string, ref: Ref): Promise<string | null> {
   if (LIVECOUNT) {
     const lm = await measureLive(name, mlirBin);
     const lh = ref.live;
+    // An aborted run reports no live count in the interpreter (S-PANIC-ABORT), so nothing to compare.
+    if (!lh && ref.liveOptional) return null;
     if (!lh) return "live blocks: golden has no live counts (record with --owned on darwin)";
     // No count from a program that exits normally means the counter was not loaded.
     if (lh.o2 === null && ref.code === 0) return "live blocks: scripts/livecount.c did not load";
@@ -200,10 +205,23 @@ async function record(name: string): Promise<void> {
   results.push({ name, verdict: "recorded" });
 }
 
+// The reference interpreter's result, or null when it can't run the program (it falls back to
+// the golden). stderr is not compared against it: panic and diagnostic text is the runtime's.
+async function interpRef(name: string): Promise<Golden | null> {
+  const r = await guarded(`interp ${name}`, "bun", ["run", MAIN, "interp", `${name}.milo`, "--live", ...extraFlags(name)], { timeoutMs: 600_000, cwd: tmp });
+  if (/^interp: (unsupported|stuck at)/m.test(r.stderr) || /^\w*Error: /m.test(r.stderr)) return null;
+  if (r.code === 1 && !r.stdout && /error/.test(r.stderr) && !/live blocks/.test(r.stderr)) return null;
+  const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
+  return { code: r.code, signal: null, stdout: r.stdout, stderr: "", live: live === null ? undefined : { o0: live, o2: live } };
+}
+const oracle = { interp: 0, golden: 0 };
+
 async function one(name: string): Promise<void> {
   if (RECORD) return record(name);
-  if (!existsSync(goldenPath(name))) { results.push({ name, verdict: "no-golden" }); return; }
-  const gold: Golden = JSON.parse(readFileSync(goldenPath(name), "utf-8"));
+  const fromInterp = GOLDEN_ONLY ? null : await interpRef(name);
+  if (!fromInterp && !existsSync(goldenPath(name))) { results.push({ name, verdict: "no-golden" }); return; }
+  const gold: Golden = fromInterp ?? JSON.parse(readFileSync(goldenPath(name), "utf-8"));
+  oracle[fromInterp ? "interp" : "golden"]++;
   const m = await build(name);
   if (m.lowered > 0) fixturesLowered++;
   else if (programs.includes(name)) {
@@ -216,12 +234,13 @@ async function one(name: string): Promise<void> {
   }
   let rm = await run(m.bin);
   const refKey = JSON.stringify([gold.code, gold.signal ?? null, gold.stdout, gold.stderr]);
+  const matches = (r: RunResult) => fromInterp ? r.code === gold.code && r.stdout === gold.stdout : key(r) === refKey;
   const same = async () => {
     let bad: string | null = null;
-    if (OWNED && m.lowered > 0) bad = await ownership(name, m.bin, { code: gold.code, live: gold.live ?? null });
+    if (OWNED && m.lowered > 0) bad = await ownership(name, m.bin, { code: gold.code, live: gold.live ?? null, liveOptional: !!fromInterp });
     results.push(bad ? { name, verdict: "owned-differ", detail: bad } : { name, verdict: "same" });
   };
-  if (key(rm) === refKey) return same();
+  if (matches(rm)) return same();
   const rm2 = await run(m.bin);
   if (key(rm2) !== key(rm)) { results.push({ name, verdict: "nondeterministic" }); return; }
   rm = rm2;
@@ -251,6 +270,7 @@ const s = (ms: number) => (ms / 1000).toFixed(1);
 console.log(`build time (sum over fixtures): ${s(buildMs)}s`);
 const bad = count("differ") + count("build-differ") + count("owned-differ");
 const compared = count("same") + bad;
+console.log(`mlir-same: oracle interpreter ${oracle.interp}, golden fallback ${oracle.golden}`);
 console.log(`mlir-same: ${count("same")}/${compared} same, ${bad} differ${OWNED ? ` (${count("owned-differ")} in ownership)` : ""}, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither, ${count("no-golden")} no golden`);
 if (compared === 0) { console.error("mlir-same: nothing compared"); process.exit(1); }
 if (fnTotal.ok === 0) { console.error("mlir-same: no function went through MLIR, so nothing was tested"); process.exit(1); }
