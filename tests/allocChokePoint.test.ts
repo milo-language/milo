@@ -30,7 +30,6 @@ const GENERATORS = [
 
 // The allocators that take a count and an element size. Each multiplies them itself.
 const COUNTED = ["rtBufAlloc", "rtBufClone", "rtMapAlloc", "rtVecGrowRealloc", "rtVecGrowCopy"];
-const MUL_LL = /= mul (nuw |nsw )*i64/;
 // Every spelling of a multiply in the generators: IR text, the typed builder, the milo
 // dialect, and an MLIR builder op.
 const MALLOC_GEN = /call ptr @malloc|"@malloc"|"malloc"/;
