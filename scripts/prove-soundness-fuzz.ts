@@ -29,7 +29,7 @@
 // a counterexample. A program whose mutation nothing models (a contract-less callee, a loop
 // with no invariant) must not `fail` either: `unknown` is the only honest verdict there.
 //
-// Usage: bun scripts/prove-soundness-fuzz.ts [--cases N] [--seed N] [--keep] [--solver=native]
+// Usage: bun scripts/prove-soundness-fuzz.ts [--cases N] [--seed N] [--keep]
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { execSync } from "child_process";
 import { tmpdir } from "os";
@@ -43,10 +43,6 @@ const argOf = (flag: string, dflt: number) => {
 const CASES = argOf("--cases", 60);
 const SEED = argOf("--seed", 1);
 const KEEP = process.argv.includes("--keep");
-// Which engine is under test. Both must be sound — `std/smt` is written in Milo and has
-// had a false proof of its own before (an i64 overflow inside Fourier-Motzkin elimination
-// that reported UNSAT for a satisfiable system), so it gets the same treatment as z3.
-const SOLVER = process.argv.includes("--solver=native") ? "" : " --solver=z3";
 
 // Seeded PRNG so a failure is reproducible from the seed printed in the report.
 let state = SEED >>> 0 || 1;
@@ -269,7 +265,7 @@ function generateContainer(): ContainerCase {
     : `v.len == ${len.c + off}`;
   const setup = Array.from({ length: need.n + int(0, 2) }, (_, i) => `    v.push(${i})`).join("\n");
   const src =
-    `fn frob(_v: &mut Vec<i64>): void {\n}\n\n` +
+    `pub fn frob(_v: &mut Vec<i64>): void {\n}\n\n` +
     `fn probe(v: &mut Vec<i64>, a: i64, b: i64): void\n` +
     (need.n > 0 ? `requires v.len >= ${need.n}\n` : "") +
     `ensures ${clause}\n{\n${ops.map(o => o.code).join("")}}\n\n` +
@@ -309,7 +305,7 @@ for (let i = 0; i < CASES; i++) {
 
   let proveOut = "";
   try {
-    proveOut = execSync(`bun ${join(ROOT, "src", "main.ts")} prove ${file}${SOLVER}`, {
+    proveOut = execSync(`bun ${join(ROOT, "src", "main.ts")} prove ${file}`, {
       encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 60000,
     });
   } catch (e: any) {
@@ -383,9 +379,8 @@ console.log(`containers, oracle says holds:    ${vec.holdsProven} proven, ${vec.
 console.log(`containers, oracle says violated: ${vec.wrongFailed} failed with counterexample, ${vec.wrongUnknown} unknown, ${vec.wrongProven.length} FALSE PROOF`);
 console.log(`containers, unmodelled mutation:  ${vec.unmodelledUnknown} unknown, ${vec.unmodelledProven} proven, ${vec.unmodelledFailed.length} FALSE FAILED`);
 console.log(`containers, oracle vs runtime disagreements: ${vec.oracleDisagreed.length}`);
-// A deliberately wrong contract that z3 cannot refute means the table is not being applied
-// at all; with the native engine `unknown` is its atom budget, and only counted.
-const wrongUndecided = SOLVER ? vec.wrongUnknown : 0;
+// A deliberately wrong contract that z3 cannot refute means the table is not being applied at all.
+const wrongUndecided = vec.wrongUnknown;
 const vecBad = [...vec.falseFailed, ...vec.wrongProven, ...vec.unmodelledFailed, ...vec.oracleDisagreed];
 if (vecBad.length || wrongUndecided) {
   console.log(`\nCONTAINER GATE FAILED (${vecBad.length} wrong verdicts${wrongUndecided ? `, ${wrongUndecided} wrong contracts left undecided` : ""}):`);

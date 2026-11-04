@@ -1,10 +1,8 @@
 // Locks the `milo prove` pipeline end-to-end: contract → verify.ts VC generation
-// → prove-milo.ts linearization → std/smt native solver → verdict counts. Each
-// fixture in tests/prove/ annotates the expected proven/failed/unknown tallies;
-// the driver runs the default (std/smt) engine and asserts the report matches.
+// → z3 → verdict counts. Each fixture in tests/prove/ annotates the expected
+// proven/failed/unknown tallies; the driver runs z3 and asserts the report matches.
 //
-// A `// @flags: --rte --solver=z3` header adds those flags to the prove command. Fixtures that
-// name `--solver=z3` are skipped when z3 is not installed.
+// A `// @flags: --rte` header adds those flags to the prove command.
 //
 // A fixture that also carries `// @expect:` lines is built with `--debug` and RUN, and its
 // stdout must match line for line. `--debug` turns every contract into a runtime assert,
@@ -36,16 +34,12 @@ function annCount(src: string, key: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
-const HAVE_Z3 = spawnSync("z3", ["--version"]).status === 0;
-
-describe("prove (std/smt engine)", () => {
+describe("prove (z3)", () => {
   const files = readdirSync(PROVE_DIR).filter(f => f.endsWith(".milo"));
 
   for (const file of files) {
     const flags = (readFileSync(join(PROVE_DIR, file), "utf-8").match(/\/\/\s*@flags:\s*(.*)$/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
-    // skip: a z3 fixture says nothing on a box without z3.
-    const run = flags.includes("--solver=z3") && !HAVE_Z3 ? test.skip : test;
-    run(file.replace(".milo", ""), async () => {
+    test(file.replace(".milo", ""), async () => {
       const src = readFileSync(join(PROVE_DIR, file), "utf-8");
       // prove exits 1 when a contract is refuted; the report still prints first.
       const r = await guardedRun(MILOC, ["prove", join(PROVE_DIR, file), ...flags], {
@@ -78,4 +72,28 @@ describe("prove (std/smt engine)", () => {
       expect(ran.stdout.trimEnd().split("\n")).toEqual(expected);
     }, 120000);
   }
+});
+
+describe("solver selection", () => {
+  const MAIN = join(MILO_ROOT, "src", "main.ts");
+  const FILE = join(PROVE_DIR, "productIntervalProven.milo");
+  const PID = join(MILO_ROOT, "examples/assured/pid/pid.milo");
+
+  test("--solver=z3 is accepted; any other solver is a clear error", () => {
+    const ok = spawnSync(process.execPath, [MAIN, "prove", FILE, "--solver=z3"], { encoding: "utf-8" });
+    expect(ok.status).toBe(0);
+    const bad = spawnSync(process.execPath, [MAIN, "prove", FILE, "--solver=native"], { encoding: "utf-8" });
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("z3 is the only solver");
+  });
+
+  test("without z3 on PATH, prove/trace/verify stop with an install hint", () => {
+    const env = { ...process.env, PATH: "/usr/bin:/bin" };
+    if (spawnSync("which", ["z3"], { env }).status === 0) return; // a box with z3 in /usr/bin
+    for (const args of [["prove", FILE], ["trace", PID], ["verify", PID, "--profile", "do178c-a"]]) {
+      const r = spawnSync(process.execPath, [MAIN, ...args], { encoding: "utf-8", env });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("brew install z3");
+    }
+  });
 });

@@ -14,8 +14,7 @@
 // solver weakness — it is the invariant being too weak, and the prover says so with a
 // counterexample naming the offending `i`.
 //
-// Count: 1 postcondition + establishment x2 + preservation x2 = 5, all decided by std/smt
-// with no external solver.
+// Count: 1 postcondition + establishment x2 + preservation x2 = 5, all decided by z3.
 pub fn sumTo(n: i64): i64
 requires n >= 0
 ensures result >= 0

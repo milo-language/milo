@@ -1,7 +1,8 @@
 // @proven: 0
-// @unknown: 1
-// One factor has no bound, so there is no interval to substitute: the product stays outside
-// the linear fragment and the claim is unknown, never proven.
+// @failed: 1
+// @unknown: 0
+// One factor has no bound, so the claim is false (a = 10, b = 21): z3 refutes it with a real
+// counterexample, and it must never come back proven.
 pub fn scale(a: i64, b: i64): i64
 requires a >= -10 && a <= 10
 ensures result >= -200 && result <= 200

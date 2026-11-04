@@ -265,7 +265,6 @@ const stdlibSidebar = [
       { text: 'std/foreign', link: '/stdlib/foreign' },
       { text: 'std/cstr', link: '/stdlib/cstr' },
       { text: 'std/pool', link: '/stdlib/pool' },
-      { text: 'std/smt', link: '/stdlib/smt' },
     ]
   },
   {

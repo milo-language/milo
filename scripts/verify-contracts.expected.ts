@@ -26,8 +26,8 @@ export interface Expected {
 }
 
 export const EXPECTED: Record<string, Expected> = {
-  "examples/assured/pid/pid.milo": { proven: 22, unknown: 0, errors: 0 },
-  "examples/assured/pid/pid_bad_caller.milo": { proven: 5, unknown: 0, errors: 0 },
+  "examples/assured/pid/pid.milo": { proven: 24, unknown: 0, errors: 0 },
+  "examples/assured/pid/pid_bad_caller.milo": { proven: 8, unknown: 0, errors: 0 },
   "examples/basics/kvstore.milo": { proven: 4, unknown: 19, errors: 0 },
   "examples/embedded/flightController.milo": { proven: 64, unknown: 2, errors: 0 },
   "examples/embedded/pidStep.milo": { proven: 8, unknown: 0, errors: 0 },

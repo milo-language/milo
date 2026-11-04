@@ -449,7 +449,6 @@ ptrFieldAccess
 pty
 ptySpawn
 pureFn
-qfliaSolver
 rangedIntegers
 rangeEnforced
 rangePropagation

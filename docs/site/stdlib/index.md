@@ -135,7 +135,6 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/pool`](pool) | Fixed-size block pool allocator: `Pool` |
 | [`std/foreign`](foreign) | Borrow and adopt foreign memory: `withRaw`, `adopt` |
 | [`std/cstr`](cstr) | NUL-terminated C string view: `CStr.wrap` |
-| [`std/smt`](smt) | The QF_LIA decision procedure behind `milo prove` |
 | [`std/prelude`](prelude) | Auto-imported: `Error`, `Unit`, `ErrorContext` |
 
 ## Cryptography

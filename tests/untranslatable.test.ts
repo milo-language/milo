@@ -1,9 +1,8 @@
 // The SMT translator emits an `UNSUPPORTED` marker for constructs it has no rule for.
 // That marker is what keeps the prover SOUND — it poisons the formula so nothing is
-// proven by accident — but it then reaches the solver as an undeclared symbol, and both
-// backends used to blame themselves: std/smt reported "outside linear fragment" for a
-// perfectly linear contract, z3 emitted a parse error naming a constant the user never
-// wrote. Neither named the real cause.
+// proven by accident — but it then reaches the solver as an undeclared symbol, and z3 used
+// to emit a parse error naming a constant the user never wrote. That did not name the real
+// cause.
 //
 // The discrimination is the point: a genuinely nonlinear contract must STILL report
 // nonlinearity. Relabelling everything would just move the lie.

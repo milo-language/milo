@@ -105,7 +105,6 @@ TUIs in [`examples/terminal/`](https://github.com/milo-language/milo/tree/main/e
 
 | Program | What it is |
 |---------|-----------|
-| [smtSolve](https://github.com/milo-language/milo/blob/main/tools/smtSolve.milo) | The SMT solver behind `milo prove`. Milo's contracts are discharged by a Milo binary |
 | [fmt](https://github.com/milo-language/milo/blob/main/examples/cli-tools/fmt.milo) | The Milo source formatter, in Milo |
 
 ## CLI tools

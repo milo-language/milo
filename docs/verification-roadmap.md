@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: verification
 purpose: the path from sealed safety to SMT-discharged contracts, and what each stage buys
-key-files: src/checker.ts, std/smt.milo, src/verify.ts
+key-files: src/checker.ts, src/verify.ts
 update-when: a verification stage ships, a discharge strategy changes, or the solver story moves
-last-verified: 2026-09-19
+last-verified: 2026-11-04 (z3 is the only solver; std/smt removed)
 -->
 
 # Verification Roadmap: From Sealed Safety to Provable Properties
@@ -13,8 +13,11 @@ doc is the original exploratory reasoning, kept because the tier argument still 
 
 ## What shipped
 
-`milo prove` discharges contracts against `std/smt` (native, no external solver) or z3
-(`--solver=z3`). The contract vocabulary is now:
+`milo prove` discharges contracts with z3, the only solver (a runtime requirement: `brew install z3` /
+`apt install z3`). The in-tree solver written in Milo (`std/smt`, Fourier-Motzkin over linear
+integers) was removed on 2026-11-04: z3 proves what it could not (bool-valued contracts,
+nonlinear arithmetic) and there is one less decision procedure to keep sound. The contract
+vocabulary is now:
 
 | Clause | Meaning |
 |---|---|
@@ -54,9 +57,7 @@ states input ranges. Quantifiers are the step after silver, toward functional co
 sequence theory to go with them. Without it, sortedness is not merely hard to prove, it is
 *unstateable*, and binary search cannot be specified at all. Deliberately not chased: trigger
 selection is where Dafny/Verus users actually burn their time, and it contradicts this doc's
-own "no annotation burden" principle. `std/smt` is Fourier-Motzkin over linear integers and
-cannot represent quantifiers at all, so adding them would also make the in-box solver
-permanently second-class. Revisit only with a concrete demand that nothing else answers.
+own "no annotation burden" principle. z3 can take quantifiers, but only with triggers. Revisit only with a concrete demand that nothing else answers.
 
 **Floats (2026-07-25).** `f32`/`f64` were declared as SMT `Real` all along, but `exprToSmt`
 had no `FloatLit` case, so the first constant in a float contract turned the whole VC into
@@ -66,20 +67,12 @@ had no `FloatLit` case, so the first constant in a float contract turned the who
 failures the fix surfaced were real: `pidNew` checked `outMin < outMax` and `pidUpdate` had
 no way to know it, which is what `invariant outMin < outMax` on the struct now carries.
 
-Translating floats meant `std/smt` finally saw a `Real`, and that exposed a **false proof**
-that had been reachable the whole time through a plain `f64` parameter. Its two integer
-tightenings — folding `L < 0` into `L + 1 <= 0`, and rounding a bound in by the coefficient
-gcd — are exact over Z and nonsense over R. Applied to `requires x > 0.0 && x < 1.0` they
-produced `x >= 1 && x <= 0`, the system went infeasible, and infeasible is how this solver
-spells *proven*: every postcondition of such a function verified, z3 refuting them all the
-while. `SmtProblem` now carries a `varIsInt` flag per variable and the tightenings are
-skipped for any row mentioning a real. Regression: `tests/prove/floatNoFalseProof.milo`.
-
-Capability did not have to be given up for it. Fourier-Motzkin is a *relaxation* only when
-integers are involved; on an all-real system it decides satisfiability exactly, so those
-now come back `failed` with a real counterexample instead of `unknown`. Rational
-coefficients reach the i64 rows by per-atom scaling (multiplying an inequality by a
-positive constant preserves its solution set).
+Translating floats also exposed a **false proof** in the since-removed `std/smt` solver: its
+integer tightenings (folding `L < 0` into `L + 1 <= 0`) are nonsense over R, and
+`requires x > 0.0 && x < 1.0` came out infeasible, so every postcondition of such a function
+"verified". z3 never had the problem, and the regression fixture
+(`tests/prove/floatNoFalseProof.milo`) keeps pinning the property: a false bound over a
+strict real interval must be refuted.
 
 **`assert E` as a proof cut (2026-08-16).** The practical substitute for quantifiers, and
 it needed no new syntax at all: `assert` was already a builtin. Each one is now proven where
@@ -102,12 +95,9 @@ because the walker havocs `s` at the loop and the postcondition becomes a claim 
 variable. With the cut it is proven, and the report says which fact it rests on until a loop
 invariant discharges the cut too (`tests/prove/proofCut.milo`: 7/7, unconditional).
 
-**Where a cut does NOT help, and it is worth knowing before reaching for one.** `std/smt`
-rejects any row containing a nonlinear product, so asserting a fact *about* such a term
-leaves both the cut and its consumer unknown — `let a = w * h; assert(a >= 1)` lowers `a`
-back to `(* w h)` in both. A cut buys something only where the connection was lost
-(a loop havoc, a branch) and not where the *term* is untranslatable. Fixing that case means
-abstracting a nonlinear subterm to a fresh constant, which is a different change.
+**Where a cut does NOT help.** A cut buys something only where the connection was lost (a
+loop havoc, a branch), not where the *term* is untranslatable to SMT-LIB (`UNSUPPORTED`
+markers): asserting a fact about such a term leaves both the cut and its consumer unknown.
 
 **Next, in order of leverage per unit of syntax:**
 
@@ -186,9 +176,9 @@ The order, each step building on the last:
    obligations (909 proven sites across std and examples). It becomes the default once its
    unknowns stop dominating the report. Triage of the first run on real code is in
    [plans/rte-triage-2026-11.md](plans/rte-triage-2026-11.md).
-2. **A small trusted checker.** std/smt returns a Farkas certificate when it refutes a linear
-   system; a checker of about 50 lines verifies it, so trust rests on that checker rather than
-   the solver. z3 answers are cross-checked or marked provisional.
+2. **Check z3's proof output.** An `unsat` verdict is currently taken on z3's word. Ask z3 for
+   a proof (`(get-proof)`) and check it with a small independent checker, so trust rests on
+   that checker rather than on the solver. Until then z3 answers are marked provisional.
 3. **Gold: functional correctness.** `forall`/`exists`, ghost sequence and map types for
    specifications, and lemma functions (ghost, erased before codegen, with `decreases`).
    Quantified obligations go to z3. This reverses the "no quantifiers" call above: agents now

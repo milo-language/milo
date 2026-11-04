@@ -32,7 +32,6 @@ const REQS = JSON.stringify({
   ],
 });
 
-// Linear on purpose: the default solver (std/smt) proves it, so no z3 is needed.
 const CODE = `@req(LLR-1)
 pub fn inc(x: i64): i64
 requires x < 100
@@ -169,8 +168,9 @@ test("trace is a report without a profile; strict fails on each gap and each fix
     expect(failures(p).some(m => m.includes("ensures clause of 'inc' (LLR-1) is FAILED"))).toBe(true);
     p.write("a.milo", CODE);
 
-    // 4. a clause the prover cannot decide (nonlinear for std/smt), with no test to stand behind it
-    const unknownCode = CODE.replace("ensures result > x", "ensures result == x * x").replace("return x + 1", "return x * x");
+    // 4. a clause the prover cannot decide (the callee has no contract, so its result is
+    // unconstrained), with no test to stand behind it
+    const unknownCode = "fn opaque(x: i64): i64 {\n    return x * x\n}\n\n" + CODE.replace("ensures result > x", "ensures result == opaque(x)").replace("return x + 1", "return opaque(x)");
     p.write("a.milo", unknownCode);
     p.write("a_test.milo", TEST.replace("@req(LLR-1)\n", ""));
     expect(failures(p).some(m => m.includes("is UNKNOWN"))).toBe(true);
@@ -256,7 +256,7 @@ test("vacuous-contract: a clause that proves itself warns; a real one does not",
 // ── the demo ──
 
 test("the pid demo's trace --json has the documented shape and is strict-clean", () => {
-  const r = milo(["trace", "examples/assured/pid/pid.milo", "--strict", "--json"]); // no --solver=z3: the default prover does it
+  const r = milo(["trace", "examples/assured/pid/pid.milo", "--strict", "--json"]);
   expect(r.code).toBe(0);
   const rep = JSON.parse(r.out);
   expect(Object.keys(rep).sort()).toEqual([

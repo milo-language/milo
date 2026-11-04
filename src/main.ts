@@ -26,8 +26,7 @@ import { generateHeader } from "./headergen";
 import { writeStdout } from "./stdout";
 import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig, type Diagnostic } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets, UnsupportedHostError } from "./target";
-import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport, proveJson } from "./verify";
-import { proveWithMilo } from "./prove-milo";
+import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport, proveJson, requireZ3, checkSolverFlag } from "./verify";
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
@@ -340,14 +339,15 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
       }
       return { program, check };
     },
-    prove(program, check, entry, z3) {
+    prove(program, check, entry) {
+      requireZ3();
       const dir = dirname(resolve(entry)) + "/";
       const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any });
-      return z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+      return proveWithZ3(vcs);
     },
-    dead(program, check, entry, z3) {
+    dead(program, check, entry) {
       const dir = dirname(resolve(entry)) + "/";
-      return findDeadBranches(program, check, { z3, onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry) });
+      return findDeadBranches(program, check, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry) });
     },
     // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
     runTests(file, names) {
@@ -387,8 +387,8 @@ function takeTraceFlags(args: string[]): { args: string[]; strict: boolean; base
 // gap as a warning and succeeds; --strict (release, CI) turns the gaps into errors, except those
 // a --baseline lists, which stay warnings so an existing codebase can adopt a profile.
 // Tests are run only under --strict: a dev build must stay fast.
-function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean, strict: boolean, baseline?: string): void {
-  const rep = traceEntry({ entry, json: false, strict, z3, noRun: !strict, ...(baseline ? { baseline } : {}) }, traceDeps(target, warningConfig));
+function enforceTraceability(entry: string, level: string, target: TargetInfo, warningConfig: WarningConfig, strict: boolean, baseline?: string): void {
+  const rep = traceEntry({ entry, json: false, strict, noRun: !strict, ...(baseline ? { baseline } : {}) }, traceDeps(target, warningConfig));
   if (!rep.ok) {
     console.error(formatTrace(rep));
     console.error(`error: ${rep.errors.length + rep.strictFailures.length} traceability failure(s) under --safety=${level}`);
@@ -418,7 +418,7 @@ function safetyViolationsFor(source: string, level: ReturnType<typeof parseSafet
   return { program, violations: checkSafetyCompliance(program, level, unusedResults) };
 }
 
-function enforceSafetyProfile(source: string, levelName: string, target: TargetInfo, warningConfig: WarningConfig, z3: boolean, strict: boolean, baseline?: string): void {
+function enforceSafetyProfile(source: string, levelName: string, target: TargetInfo, warningConfig: WarningConfig, strict: boolean, baseline?: string): void {
   const level = parseSafetyLevel(levelName);
   if (!level) { console.error(`unknown safety level: ${levelName}\nuse 'milo safety --list' to see available profiles`); process.exit(1); }
   const { program, violations } = safetyViolationsFor(source, level, target, warningConfig);
@@ -426,7 +426,7 @@ function enforceSafetyProfile(source: string, levelName: string, target: TargetI
     console.error(display(program.displayNames, formatSafetyReport(violations, level)));
     process.exit(1);
   }
-  if (traceabilityOf(level) === "strict") enforceTraceability(source, level, target, warningConfig, z3, strict, baseline);
+  if (traceabilityOf(level) === "strict") enforceTraceability(source, level, target, warningConfig, strict, baseline);
 }
 
 // `milo verify <entry.milo> --profile <level>`: everything a certification review reads in one
@@ -436,7 +436,6 @@ function enforceSafetyProfile(source: string, levelName: string, target: TargetI
 function runVerify(args: string[]): number {
   let profile: string | null = null;
   let entry = "";
-  const z3 = args.includes("--solver=z3");
   const tf = takeTraceFlags(args);
   args = tf.args;
   for (let i = 0; i < args.length; i++) {
@@ -451,6 +450,7 @@ function runVerify(args: string[]): number {
   const target = getHostTarget();
   const wc = parseArgs([]).warningConfig;
   let ok = true;
+  requireZ3();
 
   const { program, violations } = safetyViolationsFor(entry, level, target, wc);
   const errs = violations.filter(v => v.severity === "error");
@@ -458,7 +458,7 @@ function runVerify(args: string[]): number {
   if (errs.length) { console.log(display(program.displayNames, formatSafetyReport(violations, level))); ok = false; }
 
   // verify is the release path: a strict-traceability profile is always enforced here.
-  const rep = traceEntry({ entry, json: false, strict: traceabilityOf(level) === "strict", z3, ...(tf.baseline ? { baseline: tf.baseline } : {}) }, traceDeps(target, wc));
+  const rep = traceEntry({ entry, json: false, strict: traceabilityOf(level) === "strict", ...(tf.baseline ? { baseline: tf.baseline } : {}) }, traceDeps(target, wc));
   for (const m of rep.baselined) console.log(`  warning: baselined gap: ${m}`);
   for (const k of rep.staleBaseline) console.log(`  warning: baseline lists a gap that is fixed, remove it: ${k}`);
   if (rep.requirementsFile || rep.strict) {
@@ -470,7 +470,7 @@ function runVerify(args: string[]): number {
   const { program: p2, check } = traceDeps(target, wc).frontend(entry);
   const dir = dirname(resolve(entry)) + "/";
   const vcs = generateVerificationConditions(p2, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any, rte: true });
-  const pr = z3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+  const pr = proveWithZ3(vcs);
   console.log(`proofs (prove --rte): ${pr.proven} proven, ${pr.failed} failed, ${pr.unknown + pr.errors} unknown`);
   if (pr.failed > 0) ok = false;
   console.log(`verify: ${ok ? "PASS" : "FAIL"}`);
@@ -2086,6 +2086,7 @@ async function main() {
   }
 
   const cmd = args[0];
+  checkSolverFlag(args);
 
   // `--help` was exempted from the unknown-command guard but nothing then printed the
   // banner: it fell through the whole dispatch to `unknown command: --help`, and `-h`
@@ -2394,17 +2395,15 @@ async function main() {
   if (cmd === "prove") {
     const src = readFileSync(source!, "utf-8");
     const { program, check } = parseAndCheck(src, target, source!, warningConfig);
+    requireZ3();
     if (rest.includes("--dead")) {
-      const dead = findDeadBranches(program, check, { z3: rest.includes("--solver=z3"), onlyFile: rest.includes("--all") ? undefined : source! });
+      const dead = findDeadBranches(program, check, { onlyFile: rest.includes("--all") ? undefined : source! });
       if (rest.includes("--json")) writeStdout(JSON.stringify({ schema: 1, dead }, null, 2) + "\n");
       else console.log(display(program.displayNames, formatDead(dead, f => { const r = relative(process.cwd(), f); return r && !r.startsWith("..") ? r : f; })));
       return;
     }
     const vcs = generateVerificationConditions(program, { onlyFile: rest.includes("--all") ? undefined : source!, methods: check, rte: rest.includes("--rte") });
-    // Default engine is std/smt (the prover written in Milo itself); --solver=z3
-    // opts into z3 for the theories std/smt doesn't yet model.
-    const useZ3 = rest.includes("--solver=z3");
-    const pr = useZ3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
+    const pr = proveWithZ3(vcs);
     if (rest.includes("--json")) writeStdout(display(program.displayNames, proveJson(pr)));
     else console.log(display(program.displayNames, formatProveReport(pr)));
     if (pr.failed > 0) process.exit(1);
@@ -2449,7 +2448,7 @@ async function main() {
     }
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
-    if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, rest.includes("--solver=z3"), traceFlags.strict, traceFlags.baseline);
+    if (safetyLevel) enforceSafetyProfile(source!, safetyLevel, target, warningConfig, traceFlags.strict, traceFlags.baseline);
     const t0 = Date.now();
     if (safetyLevel) {
       const level = parseSafetyLevel(safetyLevel);

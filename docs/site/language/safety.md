@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: contracts-safety-guide
 purpose: how-to guide to contracts, proof, loop invariants and runtime checks (safety profiles live in safety-profiles.md)
-key-files: src/verify.ts, src/prove-milo.ts, src/codegen.ts
+key-files: src/verify.ts, src/codegen.ts
 update-when: contract semantics, proof obligations, runtime checks, or the solver change
 last-verified: 2026-07-24
 -->
@@ -139,17 +139,15 @@ pub fn scale(raw: i64): i64 {
 ```
 $ milo prove sqrt.milo
 verification: 2 conditions
-  proven: 0  failed: 1  unknown: 1  errors: 0
+  proven: 1  failed: 1  unknown: 0  errors: 0
 
-  ? [postcondition] sqrt: unknown — outside linear fragment (std/smt)
-  ✗ [precondition] scale: failed — counterexample: raw = -1, sqrt__ret0 = -1
+  ✓ [postcondition] sqrt: proven
+  ✗ [precondition] scale: failed — counterexample exists
 $ echo $?
 1
 ```
 
-Nothing was run and no input was supplied — the solver derived `raw = -1` by itself.
-
-Notice the other line too. The postcondition came back **unknown**, not proven: `(r + 1) * (r + 1)` is nonlinear, and the built-in `std/smt` solver handles linear arithmetic only. That is the prover being honest rather than useful — an unproven obligation is never reported as proven. `--solver=z3` swaps in Z3 for the nonlinear case.
+Nothing was run and no input was supplied: the solver found a `raw` below zero by itself. Notice the other line too. `sqrt`'s postcondition is **proven** even though `(r + 1) * (r + 1)` is nonlinear, because Z3 decides nonlinear integer arithmetic. When it cannot decide an obligation the line reads **unknown**, never proven.
 
 **Now that we have the violation of the contract, we can modify the code to satisfy it, then run the prover again.**
 
@@ -176,12 +174,10 @@ pub fn scale(raw: i64): i64 {
 ```
 $ milo prove sqrt.milo
 verification: 2 conditions
-  proven: 1  failed: 0  unknown: 1  errors: 0
+  proven: 2  failed: 0  unknown: 0  errors: 0
 
-  ? [postcondition] sqrt: unknown — outside linear fragment (std/smt)
-  ✓ [precondition] scale: proven — conditional: assumes sqrt, whose own postcondition is not established
-
-  1 of 1 proofs are conditional on something this run did not establish.
+  ✓ [postcondition] sqrt: proven
+  ✓ [precondition] scale: proven
 $ echo $?
 0
 ```
@@ -345,9 +341,9 @@ ensures result >= 0.0 && result <= 5.0
 
 ### Which solver
 
-By default `milo prove` uses `std/smt`, a solver written in Milo and shipped in the standard library, so the walkthrough above needs nothing installed. It is not in Z3's league: it decides linear arithmetic over integers and reals — `+`, `-`, comparisons, multiplication by a constant — and returns `unknown` on anything else, `n * n` included. Pass `--solver=z3` to send the same obligations to Z3, which does decide the nonlinear ones, or `--emit-smt` to print them as SMT-LIB2 for another tool.
+`milo prove` sends every obligation to [Z3](https://github.com/Z3Prover/z3), the only solver. It is a runtime requirement of `milo prove`, `--rte`, `--dead`, `milo trace` and `milo verify`: install it with `brew install z3` or `apt install z3`; without it those commands stop with an install hint. Pass `--emit-smt` to print the obligations as SMT-LIB2 for another tool.
 
-A recursive function *is* modelled — the self-call is handled by induction, assuming the function's own `ensures` — but that assumption is only sound if the recursion terminates, which is what `decreases` above is for. Whether the resulting obligation is decided is a separate question, and one the solver choice does affect: `std/smt` will report `no integer witness (rational-only)` on some it cannot settle, where Z3 answers.
+A recursive function *is* modelled — the self-call is handled by induction, assuming the function's own `ensures` — but that assumption is only sound if the recursion terminates, which is what `decreases` above is for. Whether the resulting obligation is decided is a separate question: Z3 answers `unknown` on some it cannot settle.
 
 
 ## Requirements

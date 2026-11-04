@@ -97,7 +97,6 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/playground-os.ts` | `os` for the playground bundle: target.ts imports these for getHostTarget, which the playground never calls (it passes an explicit linux-x64 target). |
 | `src/playground-std.d.ts` | Virtual module scripts/build-playground.ts generates: std/*.milo keyed by /milo/std/<name>. |
 | `src/playground-stubs.ts` | Seams the playground bundle cuts: pkg.ts (git/tarball dependency fetching, child_process), bun:sqlite (the @sql attribute's schema check) and stdlibBundle.ts (std comes from the in-memory file map). |
-| `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/requirements.ts` | Requirements traceability at the source level: `@req(ID)` ties code, contract clauses and tests to a requirements.json, and `milo trace <entry.milo>` prints the matrix. |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |

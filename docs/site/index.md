@@ -262,12 +262,6 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
         <div class="tile-tags"><span>mark-sweep GC</span><span>closures</span><span>event loop</span><span>TLS fetch</span></div>
         <span class="tile-copy" role="button" tabindex="0" data-cmd="git clone https://github.com/milo-language/milojs && milo run milojs/milojs.milo milojs/bench/realistic.js" title="git clone https://github.com/milo-language/milojs && milo run milojs/milojs.milo milojs/bench/realistic.js">⧉ copy run command</span>
       </a>
-      <a class="tile" href="https://github.com/milo-language/milo/blob/main/tools/smtSolve.milo">
-        <h3>The Prover</h3>
-        <p>The SMT prover that verifies Milo contracts, written in Milo.</p>
-        <div class="tile-tags"><span>SMT solver</span><span>bitvectors</span><span>recursion</span></div>
-        <span class="tile-copy" role="button" tabindex="0" data-cmd="milo prove yourfile.milo" title="milo prove yourfile.milo">⧉ copy run command</span>
-      </a>
     </div>
   </div>
   <div class="cat cat-dev">

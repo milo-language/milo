@@ -43,9 +43,12 @@ contents:
 # then fails on the first build. Recommends rather than Depends: `milo emit-ir`,
 # `emit-ast`, and the LSP all work without a linker.
 # The compiler compiles through the clang of milo-opt's LLVM (docs/mlir-backend.md).
+# z3 is the solver behind `milo prove`, `--rte`, `milo trace --strict` and `milo verify`;
+# nothing else needs it.
 recommends:
   - clang-23
   - llvm-23
+  - z3
 
 rpm:
   # rpmbuild otherwise picks its own compression per host and the artifact name drifts.

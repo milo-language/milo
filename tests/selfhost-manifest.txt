@@ -427,7 +427,6 @@ pty
 ptyLifecycle
 ptySpawn
 pureFn
-qfliaSolver
 rangedIntegers
 rangeEnforced
 rangePropagation

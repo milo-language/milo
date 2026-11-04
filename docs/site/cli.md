@@ -34,7 +34,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`emit-obj <file>`](#emit-obj) | Compile to object file (.o). |
 | [`build-lib <files...>`](#build-lib) | Compile to static library (.a). |
 | [`fmt <file...>`](#fmt) | Format source files (to stdout unless -w). |
-| [`prove <file>`](#prove) | Prove contracts hold, via std/smt, the milo-native prover. |
+| [`prove <file>`](#prove) | Prove contracts hold, via z3 (a runtime requirement: brew install z3 / apt install z3). |
 | [`safety <file> --safety=<level>`](#safety) | Check safety profile compliance. |
 | [`verify --profile <level> <file.milo \| binary>`](#verify) | Check against a safety profile: a .milo source gets the profile's rules, the strict requirements matrix and prove --rte; a built binary gets its pinned build record, no allocation, no call cycles and the runtime-symbol allowlist. |
 | [`wcet <file> [-o out]`](#wcet) | Emit OTAWA flow facts (loop bounds) for WCET analysis. |
@@ -192,12 +192,12 @@ Format source files (to stdout unless -w).
 milo prove <file>
 ```
 
-Prove contracts hold, via std/smt, the milo-native prover.
+Prove contracts hold, via z3 (a runtime requirement: brew install z3 / apt install z3).
 
 | Flag | Effect |
 |---|---|
-| `--solver=z3` | Use z3 instead (adds non-linear arithmetic). |
 | `--rte` | Also prove no overflow, no out-of-bounds index, no division by zero. |
+| `--dead` | List branches and loop bodies the solver proves can never run (unknown is not reported). |
 | `--emit-smt` | Print the SMT-LIB2 obligations instead of solving them. |
 | `--all` | Include imported stdlib. |
 | `--json` | Machine-readable report. |
@@ -229,7 +229,6 @@ Check against a safety profile: a .milo source gets the profile's rules, the str
 | Flag | Effect |
 |---|---|
 | `--profile <level>` | The safety profile (milo safety --list); do178 profiles make the requirements matrix strict. |
-| `--solver=z3` | Source: prove with z3 instead of std/smt. |
 | `--json` | Binary: machine-readable findings. |
 | `--all` | Binary: list every finding (default: first 8 per check). |
 

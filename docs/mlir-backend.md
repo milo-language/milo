@@ -122,8 +122,7 @@ See `docs/collections-in-std.md`.
 Decided, not built. Contracts (`requires`, `ensures`, loop invariants) lower to the
 upstream `smt` dialect from the same milo IR that is compiled, so what is proven is what
 runs, rather than a separate model of the source (`src/verify.ts` today). The `smt` ops
-export through upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver
-(`std/smt.milo`), which `src/prove-milo.ts` already drives from SMT-LIB text.
+export through upstream's SMT-LIB exporter to z3, the only solver.
 
 ## Raising
 

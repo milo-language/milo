@@ -712,7 +712,7 @@ constructor that builds a short `prg` is refuted; a mutator that could break the
 cannot be shown not to is reported as unknown, and every proof that leaned on the invariant
 is then marked conditional.
 
-Use `milo prove file.milo` to discharge contracts against the built-in `std/smt` prover (`--solver=z3` for theories it doesn't model, `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts.
+Use `milo prove file.milo` to discharge contracts with z3 (required at runtime: `brew install z3` / `apt install z3`; `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts.
 
 That makes a `requires` on a function whose body enters `unsafe` a guard that the
 default build removes, and past `unsafe` there is nothing else: an out-of-contract length

@@ -72,8 +72,8 @@ export interface DeadProbe {
 interface DeadSite { line: number; file?: string; what: string; conditions: string[] }
 
 // The reason a sat verdict on `vc` cannot be reported as `failed`, or null when the model
-// ranges only over symbols the program constrains. Shared by both solver back ends so the
-// two cannot drift on which verdicts are honest.
+// ranges only over symbols the program constrains. Every solver verdict goes through it so
+// the report stays honest about which counterexamples are real.
 export function unreproducibleCounterexample(vc: VerificationCondition): string | null {
   if (vc.opaqueCalls?.length) {
     return `the value of ${vc.opaqueCalls.map(n => `'${n}'`).join(", ")} is unconstrained — it is @pure but declares no 'ensures', so any counterexample here is not reproducible`;
@@ -487,7 +487,7 @@ function bitOpToSmt(op: string, leftStr: string, rightExpr: Expr): string | null
 // Truncation is rebuilt from floor division, which agrees with truncation whenever the
 // operands are non-negative, so each sign quadrant is handled explicitly. A constant
 // divisor keeps the whole thing linear; a symbolic one leaves `(* b q)` in the remainder,
-// which z3 can often still decide and the native linear solver reports unknown for.
+// which z3 can often still decide.
 function truncDivToSmt(op: string, leftStr: string, rightStr: string, rightConst: bigint | null): string | null {
   if (rightConst === 0n) return null;   // division by zero: no meaning to model
   const neg = (x: string) => `(- ${x})`;
@@ -1230,10 +1230,9 @@ function mentionsMutParamPostState(expr: Expr, mutParams: Set<string>): boolean 
 let BOOL_FIELDS = new Set<string>();
 
 // Same idea one sort over, and it is a soundness guard rather than a validity one: a float
-// field left as `Int` is not rejected by z3 — it silently coerces — and std/smt would then
-// apply its integer tightenings to a value that can sit between two integers. That is the
-// false proof the SmtProblem comment describes, reached through a struct field instead of a
-// parameter. It only became reachable when float literals started translating.
+// field left as `Int` is not rejected by z3 — it silently coerces — and a solver reasoning over
+// integers would then treat a value that can sit between two integers as an integer. It only
+// became reachable when float literals started translating.
 let FLOAT_FIELDS = new Set<string>();
 
 function collectFieldsOfSort(program: Program, isSort: (t: any) => boolean): Set<string> {
@@ -2283,7 +2282,7 @@ function flattenFieldAccess(expr: Expr): string | null {
 // Substitute a field access through its BASE identifier. At a call site the env maps the
 // callee's parameter (`key`) to the caller's argument, never the flattened `key_len` — so
 // lowering `requires key.len == 16` against the flat name alone emitted the CALLEE's
-// symbol into the CALLER's query, where nothing declares it. Both solvers then reported an
+// symbol into the CALLER's query, where nothing declares it. The solver then reported an
 // error about a constant the user never wrote, and the precondition went unchecked: 13 of
 // the tree's translator errors were this one bug (`key_len`, `iv_len`, `s_len`).
 //
@@ -2821,7 +2820,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
       });
     }
 
-    // i64/u64 params carry no range in allDecls (the native solver cannot take 2^63), so an
+    // i64/u64 params carry no range in allDecls (see INT_RANGES), so an
     // rte query states it itself: otherwise a counterexample could be a value no i64 holds.
     const wideRanges = fn.params
       .filter(p => p.type?.name && RTE_RANGES[p.type.name] && !INT_RANGES[p.type.name])
@@ -3036,7 +3035,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     // Loop invariants, the two halves of the induction. Both are stated in the same
     // declaration block as everything else, so the fresh havoc constants they quantify over
     // are actually declared — the previous stub emitted a bare `(assert (not INV))` with no
-    // declarations at all, which z3 rejected outright and std/smt reported as unknown.
+    // declarations at all, which z3 rejected outright.
     for (const loop of symResult.loops) {
       const entryCond = loop.entryConds.length > 0 ? `(assert (and true ${loop.entryConds.join(" ")}))` : "";
       for (const inv of loop.invariants) {
@@ -3326,14 +3325,9 @@ function binOpToSmt(op: string): string {
 // "refute" a contract like `requires a >= -2147483648` that no i32 can actually violate.
 // It is an assumption about the inputs, so it only ever makes a proof easier — it cannot
 // turn a proven VC into a failing one.
-// i64/u64 are deliberately absent, and it is a usability call, not a soundness one:
-// std/smt's Fourier-Motzkin multiplies constants, so bounds at ±2^63 overflow during
-// elimination. That used to yield a FALSE PROOF (unsat for a satisfiable formula); it now
-// yields `unknown`, because combine() detects the overflow — but `unknown` for every i64
-// contract is worse than no range at all, since the refutations go with it. Verified: with
-// i64 ranges on, a genuinely broken call reports `unknown` instead of its counterexample.
-// The narrow types carry the weight anyway — they are what the solver cannot otherwise
-// know. Retire this when the solver's arithmetic is widened (backlog).
+// i64/u64 are absent for a historical reason: the removed std/smt solver could not take
+// bounds at ±2^63. z3 can, so this is now only an unrevisited choice (rte queries add the
+// wide ranges themselves, see wideRanges). The narrow types carry the weight anyway.
 const INT_RANGES: Record<string, [string, string]> = {
   i8: ["(- 128)", "127"],
   i16: ["(- 32768)", "32767"],
@@ -3381,11 +3375,9 @@ export interface ProveResult {
 //
 // exprToSmt emits an `UNSUPPORTED` marker rather than dropping the term — which is what
 // keeps the prover sound (the marker poisons the formula, so nothing gets proven by
-// accident). But the marker then reaches the solver as an undeclared symbol, and both
-// backends blame themselves for it: std/smt reports "outside linear fragment" about a
-// perfectly linear contract, and z3 emits a raw parse error naming a constant the user
-// never wrote. Neither points at the actual cause, so both send you off optimizing a
-// contract that was never the problem.
+// accident). But the marker then reaches the solver as an undeclared symbol, and z3 emits a raw
+// parse error naming a constant the user never wrote. That does not point at the actual
+// cause, and sends you off optimizing a contract that was never the problem.
 export function untranslatable(smtlib: string): string[] {
   const out = new Set<string>();
   for (const m of smtlib.matchAll(/\(UNSUPPORTED (\w+)\)/g)) out.add(`${m[1]} expressions`);
@@ -3478,14 +3470,36 @@ export function untranslatableDetail(kinds: string[]): string {
   return `the SMT translator has no rule for ${kinds.join(", ")} — the contract is not the problem`;
 }
 
+export const Z3_INSTALL_HINT = "z3 not found in PATH: install it (macOS: brew install z3; Debian/Ubuntu: apt install z3)";
+
+export function hasZ3(): boolean {
+  const { spawnSync } = require("child_process") as typeof import("child_process");
+  return spawnSync("which", ["z3"], { encoding: "utf-8" }).status === 0;
+}
+
+// z3 is the only solver. CLI entry points call this before proving so a missing install is
+// one clear message, not a column of per-obligation errors.
+export function requireZ3(): void {
+  if (!hasZ3()) { console.error(`error: ${Z3_INSTALL_HINT}`); process.exit(1); }
+}
+
+// `--solver=z3` is accepted (it was the opt-in before z3 became the only backend); any
+// other value names a backend that no longer exists.
+export function checkSolverFlag(args: string[]): void {
+  for (const a of args) {
+    if (a.startsWith("--solver=") && a !== "--solver=z3") {
+      console.error(`error: ${a}: z3 is the only solver (the built-in solver was removed); use --solver=z3 or omit the flag`);
+      process.exit(1);
+    }
+  }
+}
+
 export function proveWithZ3(result: VerifyResult): ProveResult {
   const { spawnSync } = require("child_process") as typeof import("child_process");
 
-  // check z3 is available
-  const which = spawnSync("which", ["z3"], { encoding: "utf-8" });
-  if (which.status !== 0) {
+  if (!hasZ3()) {
     return {
-      results: result.conditions.map(vc => ({ vc, status: "error" as const, detail: "z3 not found in PATH" })),
+      results: result.conditions.map(vc => ({ vc, status: "error" as const, detail: Z3_INSTALL_HINT })),
       proven: 0, failed: 0, unknown: 0, errors: result.conditions.length,
     };
   }
@@ -3518,7 +3532,7 @@ export function proveWithZ3(result: VerifyResult): ProveResult {
       // negation is sat → contract can be violated. Unless the model ranges over a value
       // nothing constrains (an invented call result, a contract-less havoc): then the
       // witness may be a state the program never reaches, and `unknown` is the honest
-      // verdict. Mirrors the std/smt path.
+      // verdict.
       const why = unreproducibleCounterexample(vc);
       if (why) {
         results.push({ vc, status: "unknown", detail: why });

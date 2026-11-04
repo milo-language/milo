@@ -9,8 +9,6 @@
 // entry copies, or the prover refutes a clause the runtime honours.
 //
 // The count is the 20 postconditions plus the 6 `requires` obligations the drivers owe.
-// The drivers are deliberately short: the native solver enumerates atoms and gives up past
-// 20 of them, and every `len` frame fact in a driver costs two.
 //
 // @expect: 0
 // @expect: 0

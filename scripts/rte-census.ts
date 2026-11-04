@@ -1,15 +1,13 @@
 // Silver-progress number: `milo prove --rte` over examples/embedded and std, tallied per
 // runtime-error site and kind (overflow / bounds / division) as proven / failed / unknown(+error).
-// Usage: bun scripts/rte-census.ts [--solver=z3|std] [files or dirs...]
+// Usage: bun scripts/rte-census.ts [files or dirs...]
 import { readdirSync, statSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 
 const ROOT = join(import.meta.dir, "..");
 const args = process.argv.slice(2);
-const solver = args.find(a => a.startsWith("--solver="));
 const targets = args.filter(a => !a.startsWith("--"));
-const useZ3 = solver ? solver === "--solver=z3" : true;
 
 const files: string[] = [];
 for (const t of targets.length ? targets : ["examples/embedded", "std"]) {
@@ -25,7 +23,7 @@ let broken = 0;
 
 function prove(file: string): Promise<string> {
   return new Promise(resolve => {
-    const child = spawn("bun", [join(ROOT, "src/main.ts"), "prove", file, "--rte", "--json", ...(useZ3 ? ["--solver=z3"] : [])], { cwd: ROOT, env: { ...process.env, MILO_ROOT: ROOT } });
+    const child = spawn("bun", [join(ROOT, "src/main.ts"), "prove", file, "--rte", "--json"], { cwd: ROOT, env: { ...process.env, MILO_ROOT: ROOT } });
     let out = "";
     child.stdout.on("data", d => (out += d));
     const timer = setTimeout(() => child.kill("SIGKILL"), 90_000);
@@ -59,7 +57,7 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: 4 }, worker));
 
-console.log(`rte census (${useZ3 ? "z3" : "std/smt"}), ${files.length} files, ${broken} without a report`);
+console.log(`rte census (z3), ${files.length} files, ${broken} without a report`);
 console.log("kind       proven  failed  unknown");
 const total = { proven: 0, failed: 0, unknown: 0 };
 for (const k of KINDS) {

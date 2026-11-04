@@ -2,16 +2,12 @@
 // @failed: 1
 // @unknown: 0
 //
-// Float literals in contracts and bodies, decided by the native solver.
+// Float literals in contracts and bodies.
 //
-// `miloTypeToSmt` has always mapped f32/f64 to the SMT sort `Real`, but `exprToSmt` had no
+// `miloTypeToSmt` maps f32/f64 to the SMT sort `Real`, but `exprToSmt` once had no
 // `FloatLit` case, so the first constant in a float contract turned the whole verification
 // condition into `(UNSUPPORTED FloatLit)`. That is why examples/embedded/flightController
 // scored zero: not a missing theory, a missing switch arm.
-//
-// Getting them to std/smt needs one more step. Its rows are i64, so a rational row is
-// scaled by the power of ten that clears the denominators — exact, because multiplying an
-// inequality by a positive constant preserves its solution set.
 
 pub fn halve(x: f64): f64
 requires x >= 0.0 && x <= 10.0

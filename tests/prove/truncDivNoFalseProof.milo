@@ -1,6 +1,6 @@
-// @proven: 3
-// @failed: 0
-// @unknown: 3
+// @proven: 5
+// @failed: 1
+// @unknown: 0
 // Soundness: `/` and `%` must be modelled with MILO's semantics, not SMT-LIB's.
 //
 // SMT-LIB `div`/`mod` are Euclidean — the remainder is never negative, so `-7 mod 3` is 2.
@@ -12,10 +12,8 @@
 // Truncation is now rebuilt from floor division, which agrees with truncation on
 // non-negative operands. A non-constant divisor gets no rule rather than the wrong one.
 //
-// The tallies above are the NATIVE std/smt engine, which this driver runs: the rebuilt
-// form uses `ite`, outside its linear fragment, so all three land on `unknown` — safe, but
-// it does not pin the bug. The z3 verdicts (proven/proven/REFUTED) are asserted in
-// tests/proveSoundness.test.ts, which is where the false proof actually lived.
+// trueRem and trueDiv prove, `wrong` is refuted, and main's three calls to it are conditional
+// proofs. Also asserted directly in tests/proveSoundness.test.ts.
 fn trueRem(a: i64): i64
 requires a == -7
 ensures result == -1

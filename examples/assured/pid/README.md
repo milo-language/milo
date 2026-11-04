@@ -12,8 +12,8 @@ tested. Based on [`examples/embedded/pidStep.milo`](../../embedded/pidStep.milo)
 | `pid_bad_caller.milo` | one caller that breaks LLR-3, to show what a violation looks like |
 
 Every command below was run from the repository root; the output is pasted as printed.
-Nothing here needs z3: the default `std/smt` prover decides every obligation, including the
-nonlinear `a * b` in `fpMul` (see [How the product is proved](#how-the-product-is-proved)).
+`milo prove` needs z3 installed (`brew install z3` / `apt install z3`). It decides every obligation here,
+including the nonlinear `a * b` in `fpMul` (see [How the product is proved](#how-the-product-is-proved)).
 
 ## The syntax
 
@@ -42,33 +42,31 @@ proof obligation for every arithmetic operation and asks whether it can overflow
 ```text
 $ milo prove examples/embedded/pidStep.milo --rte
 verification: 23 conditions
-  proven: 10  failed: 8  unknown: 5  errors: 0
+  proven: 12  failed: 8  unknown: 3  errors: 0
 
-  ? [overflow] fpMul (overflow in fpMul:22: CastExpr * CastExpr (i64)): unknown — outside linear fragment (std/smt)
-  ? [postcondition] fpMul: unknown — outside linear fragment (std/smt)
+  ✓ [overflow] fpMul (overflow in fpMul:22: CastExpr * CastExpr (i64)): proven
+  ✓ [postcondition] fpMul: proven
   ✓ [postcondition] clampI32: proven
-  ✗ [precondition] pidStep: failed — counterexample: setpoint = -2147483648, measured = 1, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [precondition] pidStep: failed — counterexample: setpoint = -1, measured = 0, kp = 0, ki = 0, kd = 0, integral = -2147483648, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [precondition] pidStep: failed — counterexample: setpoint = -2, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 2147483647, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✓ [precondition] pidStep: proven — conditional: assumes fpMul, whose own postcondition is not established
-  ✗ [overflow] pidStep (overflow in pidStep:45: setpoint - measured (i32)): failed — counterexample: setpoint = 2147483647, measured = -1, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [overflow] pidStep (overflow in pidStep:46: integral + error (i32)): failed — counterexample: setpoint = 1, measured = 0, kp = 0, ki = 0, kd = 0, integral = 2147483647, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [overflow] pidStep (overflow in pidStep:47: error - prevError (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = -2147483648, outLo = 0, outHi = 0, fpMul__ret0 = 0, fpMul__ret1 = 0, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [overflow] pidStep (overflow in pidStep:53: p + i (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 2147483647, fpMul__ret1 = 1, fpMul__ret2 = 0, clampI32__ret3 = 0
-  ✗ [overflow] pidStep (overflow in pidStep:53: (p + i) + d (i32)): failed — counterexample: setpoint = 0, measured = 0, kp = 0, ki = 0, kd = 0, integral = 0, prevError = 0, outLo = 0, outHi = 0, fpMul__ret0 = 1, fpMul__ret1 = 0, fpMul__ret2 = 2147483647, clampI32__ret3 = 0
+  ✗ [precondition] pidStep: failed — counterexample exists
+  ✗ [precondition] pidStep: failed — counterexample exists
+  ✗ [precondition] pidStep: failed — counterexample exists
+  ✓ [precondition] pidStep: proven
+  ✗ [overflow] pidStep (overflow in pidStep:45: setpoint - measured (i32)): failed — counterexample exists
+  ✗ [overflow] pidStep (overflow in pidStep:46: integral + error (i32)): failed — counterexample exists
+  ✗ [overflow] pidStep (overflow in pidStep:47: error - prevError (i32)): failed — counterexample exists
+  ✗ [overflow] pidStep (overflow in pidStep:53: p + i (i32)): failed — counterexample exists
+  ✗ [overflow] pidStep (overflow in pidStep:53: (p + i) + d (i32)): failed — counterexample exists
   ✓ [precondition] settle: proven
   ✓ [precondition] settle: proven
   ✓ [precondition] settle: proven
-  ? [overflow] settle (overflow in settle:76: setpoint - measured (i32)): unknown — the value of 'measured' after the loop at line 73 (no invariant names it) is unconstrained, so any counterexample here is not reproducible
-  ? [overflow] settle (overflow in settle:77: integral + (error >> 8) (i32)): unknown — the value of 'integral' after the loop at line 73 (no invariant names it), 'measured' after the loop at line 73 (no invariant names it) is unconstrained, so any counterexample here is not reproducible
+  ? [overflow] settle (overflow in settle:76: setpoint - measured (i32)): unknown — the value of 'measured' after the loop at line 73 (no invariant names it) is unconstrained, so any counterexample he
+  ? [overflow] settle (overflow in settle:77: integral + (error >> 8) (i32)): unknown — the value of 'integral' after the loop at line 73 (no invariant names it), 'measured' after the loop at line 73 
   ✓ [overflow] settle (overflow in settle:77: 0 - iLimit (i32)): proven
-  ? [overflow] settle (overflow in settle:79: measured + (cmd >> 8) (i32)): unknown — the value of 'measured' after the loop at line 73 (no invariant names it), 'pidStep(…)' after a call to 'pidStep' (it declares no 'ensures' to model its result by) is unconstrained, so any counterexample here is not reproducible
+  ? [overflow] settle (overflow in settle:79: measured + (cmd >> 8) (i32)): unknown — the value of 'measured' after the loop at line 73 (no invariant names it), 'pidStep(…)' after a call to 'pidStep' 
   ✓ [postcondition] settle: proven
   ✓ [precondition] main: proven
   ✓ [overflow] main (overflow in main:90: 100 * one (i32)): proven
   ✓ [overflow] main (overflow in main:95: 255 * one (i32)): proven
-
-  1 of 10 proofs are conditional on something this run did not establish.
 ```
 
 `setpoint - measured`, `integral + error` and the sum of the three terms each have a
@@ -119,15 +117,11 @@ verification: 32 conditions
 
 ## How the product is proved
 
-`fpMul` multiplies two variables, which is outside the linear arithmetic `std/smt` decides.
-When both factors have bounds in the constraint set (the `requires` clauses, the type ranges), the
-prover replaces `a * b` by a fresh symbol constrained to `[min, max]` of the four corner products,
-and `n / c` (a constant divisor, which is what `>> 16` lowers to) by its exact definition
-`c*q <= n <= c*q + c-1`. The product bound is an over-approximation, so it can prove a claim but
-never refute one: a "counterexample" found against a product is reported `unknown`, not `failed`,
-and a product with an unbounded factor stays `unknown`. The gates are
+`fpMul` multiplies two variables, which is nonlinear integer arithmetic. z3 decides it exactly, using the
+bounds in the constraint set (the `requires` clauses, the type ranges); there is no interval
+approximation in the translator. The gates are
 `tests/prove/productIntervalProven.milo` (a true bound proves),
-`tests/prove/productIntervalNoFalseProof.milo` (`|a*b| <= A*B - 1` is not proven) and
+`tests/prove/productIntervalNoFalseProof.milo` (`|a*b| <= A*B - 1` is refuted, never proven) and
 `tests/prove/productUnboundedFactor.milo`, plus `scripts/prove-soundness-fuzz.ts`.
 
 ## The trace matrix

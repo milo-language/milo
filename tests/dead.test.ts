@@ -81,9 +81,14 @@ test("sequential ifs: the path through the first then-arm rules the second out, 
 });
 
 test("a branch the solver cannot decide is not reported", () => {
-  // x * y is nonlinear: std/smt bounds the product and answers unknown for a satisfiable query.
-  const src = `pub fn f(x: i64, y: i64): i64 {
-    if x * y == 7 {
+  // `g` has no contract, so its result is an unconstrained value: the branch condition is
+  // not something the solver can call infeasible. Not dead.
+  const src = `fn g(x: i64): i64 {
+    return x * 3
+}
+
+pub fn f(x: i64): i64 {
+    if g(x) == 7 {
         return 1
     }
     return 2

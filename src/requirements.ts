@@ -594,10 +594,10 @@ export function formatTrace(r: TraceReport): string {
 export interface TraceDeps {
   /** Parse, resolve and type-check; exits with the diagnostics on failure. */
   frontend(entry: string): { program: Program; check: unknown };
-  /** `milo prove` over the program, default solver unless `z3`. */
-  prove(program: Program, check: unknown, entry: string, z3: boolean): ProveResult;
+  /** `milo prove` over the program (z3). */
+  prove(program: Program, check: unknown, entry: string): ProveResult;
   /** Provably dead branches over the program (dead.ts). Optional: a caller without a prover skips it. */
-  dead?(program: Program, check: unknown, entry: string, z3: boolean): DeadBranch[];
+  dead?(program: Program, check: unknown, entry: string): DeadBranch[];
   /** Run the named tests of one file, each in its own process (`milo test`'s runner). Null: the file would not compile. */
   runTests(file: string, names: string[]): Map<string, { pass: boolean; output?: string }> | null;
 }
@@ -608,7 +608,6 @@ export interface TraceArgs {
   strict: boolean;
   requirements?: string;
   tests?: string;
-  z3: boolean;
   /** Skip running the `@req` tests (--no-run). */
   noRun?: boolean;
   /** Gap keys that stay warnings under strict (--baseline). */
@@ -617,12 +616,12 @@ export interface TraceArgs {
 }
 
 export function parseTraceArgs(args: string[]): TraceArgs | string {
-  const out: TraceArgs = { entry: "", json: false, strict: false, z3: false };
+  const out: TraceArgs = { entry: "", json: false, strict: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--json") out.json = true;
     else if (a === "--strict") out.strict = true;
-    else if (a === "--solver=z3") out.z3 = true;
+    else if (a === "--solver=z3") continue; // accepted for compatibility; z3 is the only solver
     else if (a === "--no-run") out.noRun = true;
     else if (a === "--baseline" || a === "--write-baseline") {
       const v = args[++i];
@@ -658,8 +657,8 @@ export function loadBaseline(path: string): Set<string> {
 /** Run the trace for an entry; returns the report (strict failures are the caller's exit code). */
 export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   const { program, check } = deps.frontend(a.entry);
-  const prove = deps.prove(program, check, a.entry, a.z3);
-  const dead = deps.dead?.(program, check, a.entry, a.z3);
+  const prove = deps.prove(program, check, a.entry);
+  const dead = deps.dead?.(program, check, a.entry);
   const baseline = a.baseline ? loadBaseline(a.baseline) : undefined;
   // The @req tests, run once: a first pass finds them, a second builds the report with verdicts.
   let testResults: Map<string, { pass: boolean; output?: string }> | undefined;

@@ -70,6 +70,8 @@ ${block(intel("linux"), "      ")}
   # produces the function bodies and the clang of Homebrew's LLVM compiles the module
   # (docs/mlir-backend.md), so llvm is a real dependency, not just a linker driver.
   depends_on "llvm"
+  # The solver behind milo prove, --rte, milo trace --strict and milo verify.
+  depends_on "z3"
 
   def caveats
     <<~EOS

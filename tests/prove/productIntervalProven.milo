@@ -1,8 +1,7 @@
 // @proven: 1
 // @failed: 0
 // @unknown: 0
-// A product of two bounded factors is replaced by the interval of its four corner products,
-// so a bound that holds at the corners is proven with the default solver (no z3).
+// A bound that holds at the corners of the product of two bounded factors proves.
 pub fn scale(a: i64, b: i64): i64
 requires a >= -10 && a <= 10
 requires b >= -20 && b <= 20

@@ -98,9 +98,8 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   },
   {
     name: "prove", usage: "prove <file>",
-    summary: "prove contracts hold, via std/smt, the milo-native prover",
+    summary: "prove contracts hold, via z3 (a runtime requirement: brew install z3 / apt install z3)",
     flags: [
-      { flag: "--solver=z3", help: "use z3 instead (adds non-linear arithmetic)" },
       { flag: "--rte", help: "also prove no overflow, no out-of-bounds index, no division by zero" },
       { flag: "--dead", help: "list branches and loop bodies the solver proves can never run (unknown is not reported)" },
       { flag: "--emit-smt", help: "print the SMT-LIB2 obligations instead of solving them" },
@@ -118,7 +117,6 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     summary: "check against a safety profile: a .milo source gets the profile's rules, the strict requirements matrix and prove --rte; a built binary gets its pinned build record, no allocation, no call cycles and the runtime-symbol allowlist",
     flags: [
       { flag: "--profile <level>", help: "the safety profile (milo safety --list); do178 profiles make the requirements matrix strict" },
-      { flag: "--solver=z3", help: "source: prove with z3 instead of std/smt" },
       { flag: "--json", help: "binary: machine-readable findings" },
       { flag: "--all", help: "binary: list every finding (default: first 8 per check)" },
     ],

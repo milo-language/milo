@@ -11,15 +11,11 @@
 // The rolls arrive as parameters because randomness is not provable. Drawing them
 // at the call site leaves behind a decision that is.
 //
-// Both functions are written for the bundled Fourier-Motzkin solver, which is
-// worth knowing before editing them: it decides a straight-line chain of up to
-// three branches and reports `unknown — no integer witness (rational-only)` at
-// four or more, because it finds a rational vertex and has no branch-and-bound to
-// hunt for an integer one. `--solver=z3` proves the longer forms happily. So
-// `unlockedSquads` is a clamp-and-offset rather than the five-arm staircase it
-// reads as, and the rarity re-roll lives at the call site rather than in here.
-// Neither shape is contorted for its own sake; both are the price of staying
-// inside a fragment the default solver can actually decide.
+// Both functions were shaped for the old Fourier-Motzkin solver (removed; z3 is the only
+// solver now), which decided a straight-line chain of up to three branches and gave up
+// at four. `unlockedSquads` stays a clamp-and-offset rather than the five-arm staircase
+// it reads as, and the rarity re-roll lives at the call site rather than in here;
+// z3 would prove the longer forms too.
 
 pub let SQUAD_DRONES: i64 = 0
 

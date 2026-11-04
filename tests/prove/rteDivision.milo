@@ -1,4 +1,4 @@
-// @flags: --rte --solver=z3
+// @flags: --rte
 // @proven: 3
 // @failed: 3
 // @unknown: 0

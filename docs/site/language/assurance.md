@@ -105,7 +105,7 @@ These are designed, and written up in the repository, but not built:
   invariants proved by induction over critical sections.
 - **A spec lock for agent-written code:** a change that strengthens a contract merges on its own;
   one that weakens it needs a human, decided by the solver.
-- **A small trusted checker:** the prover hands back a certificate, and a tiny independent
+- **Check Z3's proof output:** the prover asks Z3 for a proof, and a tiny independent
   checker verifies it, so trust rests on that checker rather than on the solver.
 
 The plans live in

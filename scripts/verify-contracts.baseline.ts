@@ -2,7 +2,7 @@
 //
 // These are contracts `milo prove` reports as
 // `failed` today that are NOT bugs — they are true facts the current native
-// solver cannot establish (chiefly struct invariants, which prove-milo does not
+// solver cannot establish (chiefly struct invariants, which the translator does not
 // model yet — see docs/verification-roadmap.md). The gate fails on any refuted
 // contract NOT listed here, so a genuinely broken contract breaks the build
 // while these known solver limits do not. Burn this list down as the verifier
@@ -20,7 +20,7 @@ export const BASELINE: Record<string, string> = {
     "(the Bump.remaining wrapper) holds an arbitrary &Bump the solver won't assume the " +
     "invariant for, so it refutes with used=1,cap=0. Propagating `requires used <= cap` " +
     "onto the wrapper would be tautological ceremony on a getter; retire this once " +
-    "prove-milo models struct invariants (docs/verification-roadmap.md).",
+    "the translator models struct invariants (docs/verification-roadmap.md).",
   "std/arena.milo::arenaAlloc":
     "the runtime capacity guard `assert(idx <= 2147483647)`, now a proof obligation " +
     "because `assert` became a proof cut (docs/verification-roadmap.md). `idx` is " +

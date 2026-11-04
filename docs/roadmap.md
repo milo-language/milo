@@ -59,7 +59,7 @@ See [safety-roadmap.md](safety-roadmap.md) for the enforced-vs-remaining breakdo
 
 - `requires` / `ensures` on functions, `invariant` on `while` **and** `for in` loops and on structs, `decreases` termination measures, and `old(e)` for a parameter's entry value; runtime asserts at `--debug`, forced either way with `--contract-checks` / `--no-contract-checks` (`decreases` is static-only — there is nothing for a runtime check to assert)
 - The compiler rejects violations it can see statically
-- **`milo prove`** discharges obligations through **`std/smt`** — a solver written *in Milo* (Fourier-Motzkin over linear scalar arithmetic), dogfooding the language on its own verification. `--solver=z3` swaps in Z3 for non-linear arithmetic; `--emit-smt` prints SMT-LIB2 instead of solving; `--all` includes imported stdlib
+- **`milo prove`** discharges obligations with **z3**, the only solver (a runtime requirement: `brew install z3` / `apt install z3`); `--emit-smt` prints SMT-LIB2 instead of solving; `--all` includes imported stdlib
 - Loop invariants proved by induction, on both loop forms. A `for` loop needs no invariant about its own index: the range supplies `lo <= i < hi` inside the body and the invariant is carried to the final index on exit
 - **Struct invariants** are two-sided — assumed wherever a value of the type is observed, and owed at every struct literal and every `&mut` function that could break one. A use-site proof resting on an invariant this run could not establish everywhere is reported as conditional, not clean
 - **Frame conditions**: `ensures h.count.len == old(h.count.len)` survives across a call. A `&mut` argument is havoced at the call site (keeping the walker sound), and the callee's contract is what puts the information back — without it a mutating callee taught its caller nothing
@@ -159,7 +159,7 @@ Green-tier concurrency with one OS-thread escape hatch:
 - **`main` is itself a green task** wherever the program can reach `spawn`. Before this, a blocking call in `main` starved the very tasks that would satisfy it — `main` ran on the OS thread and nothing else could progress. Codegen decides this per program, so a program with no spawn keeps a plain `main`. Std APIs that block must therefore branch on `schedulerCurrent()` rather than assume they are off-scheduler
 - Public `Thread`/`Mutex`/`RwLock`/`parallel` were **removed** 2026-07-10 (green tier only — see [concurrency-simplification.md](concurrency-simplification.md))
 
-### Standard Library (<!-- stat:std-modules -->101<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->100<!-- /stat --> modules)
 
 I/O & system: `io`, `fs`, `path`, `env`, `environ`, `args`, `replay` (record/replay of clock, entropy, env, argv), `process`, `signal`, `dl`, `sysinfo`, `mem`, `os`, `platform`, `term`, `pty`, `keys`, `ansi`, `foreign` (views over memory C allocated)
 Networking: `net` (TCP + DNS), `unix` (AF_UNIX), `fetch` (HTTPS client + TLS), `tls` (TLS server transport), `openssl` (the libssl binding both use), `https` (HTTPS server), `http`, `httpmw`, `multipart`, `mime`, `html`, `ws`, `wsframe` (the WebSocket wire format, no IO), `chunked` (chunked transfer coding, no IO), `url`, `webpush` (Web Push encryption and VAPID), `browser` (headless Chrome over DevTools)
@@ -168,7 +168,7 @@ Compression: `deflate`, `inflate`, `zip`, `zstd`
 Crypto & auth: `crypto`, `cryptosys` (platform arms), `sha256`, `sha512`, `sha1`, `hmac`, `hkdf`, `pbkdf2`, `subtle`, `jwt`, `totp`, `checksum`, `xxhash`
 Concurrency: `runtime`, `sync`, `select`, `event`, `timer`
 Strings: `string`, `fmt`, `strconv`, `unicode`, `re`, `regex`, `cstr`
-Math & verification: `math`, `random`, `rng`, `sort`, `smt`
+Math: `math`, `random`, `rng`, `sort`
 
 The supported surface follows [the stdlib design](stdlib-design.md): `milo api`
 hides private/internal plumbing, commands use `Result<Unit>`, ordinary absence
@@ -220,7 +220,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 - **Package manager**: `milo init/new/add/remove/install/update/tree/why/vendor/publish` plus `tool install/uninstall/list/run`, git-based cache with a lockfile, GitHub repos as the registry, per-package name mangling. Folded into the one `milo` binary.
 - **Published packages (8)**: postgres, redis, markdown, toml, yaml, json-rpc, gl, sdl — indexed on [the packages page](site/packages.md), each graded against something that is *not itself* (CommonMark's 655 spec examples and `cmark`, Python's `tomllib`, a real PostgreSQL requiring SCRAM, a real Redis, `ruamel.yaml`). `scripts/ecosystem-check.ts` is the gate that installs each one from GitHub and builds it against this checkout — added after two packages shipped green in-repo and uninstallable to everyone else, for two different reasons (a string global invisible to its own package's functions, and a capitalised global parsing as an enumlit and recovering by a value lookup that mangling had already renamed away)
 - **Docs from source**: `milo doc <file|dir>` generates reference markdown from doc-comments; `milo api <terms>` searches std signatures
-- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->1072<!-- /stat --> fixtures, <!-- stat:error-fixtures -->760<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->52<!-- /stat --> prove fixtures
+- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->1071<!-- /stat --> fixtures, <!-- stat:error-fixtures -->760<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->52<!-- /stat --> prove fixtures
 - **Fuzzers**: `scripts/fuzz-frontend.ts` (2 bugs per 150k mutants) and `scripts/fuzz-ownership.ts`, which grades ownership bugs under a *real* ASan oracle. Two silent-success bugs were found in the harness itself before it graded anything: `--sanitize` linked the ASan runtime but instrumented nothing, so every use-after-free read passed while the interceptors kept the sanitizer looking alive; and the fuzzer graded a UAF by whether the freed bytes happened to be reused. Surface coverage is 27 of 39 expression and statement forms, now composed at depth 5–7 rather than emitted alone at the top level of `main` — a generator can reach 39/39 wide and still test nothing about how the rules compose
 - **Benchmarks**: `benchmarks/run.sh` with per-benchmark `results-*.md` (fib, binarytrees, grep, json, matmul, maplookup)
 - **CI**: build + test on push/PR across macOS-arm64, linux-x64 and Windows-x64 (**no linux-arm64 — see In Progress**); release pipeline with `--static-deps` static linking (built on ubuntu-22.04 runners for glibc compatibility, never musl)

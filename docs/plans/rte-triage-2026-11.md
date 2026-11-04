@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: prove-rte
 purpose: triage of `milo prove --rte` on real Milo code (milojs, tahoeroads api): totals, 30 failed and 10 unknown sampled by hand, and the prover fixes that cut the most noise
-key-files: src/prove-milo.ts, src/verify.ts, scripts/rte-census.ts
+key-files: src/verify.ts, scripts/rte-census.ts
 update-when: the RTE prover changes enough to re-run the experiment
 last-verified: 2026-11-03
 status: findings, one-off experiment

@@ -48,7 +48,7 @@ jobs:
       # `bun test` runs fine without deps, so a missing install only shows up as the
       # typecheck gate reporting 162 phantom "cannot find name 'console'" errors.
       - run: bun install --frozen-lockfile
-      # Match the CI workflow's toolchain: z3 for the contract gate, lld for the
+      # Match the CI workflow's toolchain: z3 (the only prover; the contract gate needs it), lld for the
       # bare-metal ARM link tests (-fuse-ld=lld in tests/embedded.test.ts).
       - run: brew install z3
       - run: brew install lld
@@ -208,6 +208,10 @@ jobs:
             brew install milo-language/tap/milo     # macOS / Linuxbrew
             ```
 
+            `milo prove`, `--rte`, `milo trace --strict` and `milo verify` need z3 at runtime
+            (`brew install z3` / `apt install z3`); the Homebrew formula and the .deb/.rpm
+            packages pull it in.
+
             Or grab a tarball below. macOS quarantines anything downloaded through a
             browser and will refuse to run it — use a package manager, or `curl -L` the
             tarball directly, or clear it with `xattr -d com.apple.quarantine milo`.
@@ -238,6 +242,10 @@ jobs:
             Debian/Ubuntu and Fedora/RHEL packages are attached below
             (`sudo dpkg -i milo_*.deb`, `sudo rpm -i milo-*.rpm`), as are plain
             tarballs and `SHA256SUMS`.
+
+            `milo prove`, `--rte`, `milo trace --strict` and `milo verify` need z3 at runtime
+            (`brew install z3` / `apt install z3`); the Homebrew formula and the .deb/.rpm
+            packages pull it in.
 
             macOS quarantines anything downloaded through a browser and will refuse to
             run it — install with a package manager, `curl -L` the tarball directly, or

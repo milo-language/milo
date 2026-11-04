@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: verification
 purpose: why Milo proves properties with SMT-discharged contracts instead of Curry-Howard proof terms, and what was measured before deciding
-key-files: src/verify.ts, std/smt.milo, docs/verification-roadmap.md, docs/ownership-model.md, docs/milo-idioms.md
+key-files: src/verify.ts, docs/verification-roadmap.md, docs/ownership-model.md, docs/milo-idioms.md
 update-when: one of the revisit triggers below fires, or the propositional encoding stops working
 last-verified: 2026-09-01 (every command in this file was run; the counterexample and the two compile results are real output)
 -->

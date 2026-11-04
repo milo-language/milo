@@ -5,7 +5,7 @@
 //
 // `unknown` and translator `errors` are reported but do NOT fail the gate: they are
 // solver/translator limitations, not contract violations. `unknown` covers two distinct
-// causes — nonlinear/bitwise terms the native QF_LIA solver can't decide, and constructs
+// causes: terms z3 cannot decide, and constructs
 // the SMT translator has no rule for at all (the per-VC detail says which). Only a `failed` verdict — a proven-false
 // contract — breaks the build. That is the guarantee the prover can give today,
 // and it can never regress silently: break a provable contract and this goes red.
@@ -75,18 +75,11 @@ export interface FileResult {
   noReport: boolean;   // prove printed no tally (compile failure etc.)
 }
 
-// Solver for the gate. z3 discharges nonlinear/bitwise contracts the native
-// QF_LIA prover can only mark `unknown`; the native prover needs no external
-// dependency. Default to z3 when it's on PATH (CI installs it), else native.
-function gateSolver(): "z3" | "native" {
-  if (process.env.MILO_VERIFY_SOLVER === "native") return "native";
-  if (process.env.MILO_VERIFY_SOLVER === "z3") return "z3";
-  const which = Bun.spawnSync(["which", "z3"]);
-  return which.exitCode === 0 ? "z3" : "native";
-}
-
-export async function proveFile(miloc: string, file: string, solver = gateSolver()): Promise<FileResult> {
-  const args = solver === "z3" ? ["prove", file, "--solver=z3"] : ["prove", file];
+export async function proveFile(miloc: string, file: string): Promise<FileResult> {
+  // z3 is the only solver; without it every obligation is an error and the gate would
+  // report a wall of "errors" instead of the one cause.
+  if (Bun.spawnSync(["which", "z3"]).exitCode !== 0) throw new Error("z3 not found in PATH (brew install z3 / apt install z3)");
+  const args = ["prove", file];
   // MILO_ROOT is not optional here: the gate runs a miloc compiled into a tmpdir, so the
   // binary has no repo to resolve `std/` against and every file that imports another std
   // module dies at `cannot open 'std/os'`. That surfaced as noReport — the file was simply
@@ -118,9 +111,8 @@ export async function proveFile(miloc: string, file: string, solver = gateSolver
 async function verifyAll(miloc: string): Promise<FileResult[]> {
   // Serial: prove is CPU-bound and guardedRun already caps memory; parallel runs
   // would fight over the same budget on CI's small runners.
-  const solver = gateSolver();
   const results: FileResult[] = [];
-  for (const f of contractFiles()) results.push(await proveFile(miloc, f, solver));
+  for (const f of contractFiles()) results.push(await proveFile(miloc, f));
   return results;
 }
 
@@ -175,7 +167,7 @@ export function report(results: FileResult[]): Gate {
   let tP = 0, tF = 0, tU = 0, tE = 0, tC = 0;
   const allRefs: Refutation[] = [];
   const ratch = { regressions: [] as string[], gains: [] as string[], untracked: [] as string[] };
-  console.log(`contract gate — solver: ${gateSolver()}\n`);
+  console.log(`contract gate — solver: z3\n`);
   console.log(pad("FILE", 44) + "proven  failed  unknown  errors");
   for (const r of results) {
     tP += r.proven; tF += r.failed; tU += r.unknown; tE += r.errors; tC += r.conditional;

@@ -1,22 +1,13 @@
 // @proven: 1
 // @failed: 1
 // @unknown: 0
-// Soundness: an overflow inside the solver must never be reported as a proof.
-//
-// std/smt decides feasibility by Fourier-Motzkin elimination, which multiplies constraint
-// constants together. A bound near 2^62 overflows i64 on the first combine; at -O2 that
-// wraps, the row's sign flips, the system looks infeasible, and the old code reported
-// UNSAT — i.e. **proven**. Verified against z3, which says sat: `x = -1` satisfies
+// Soundness: a contract that only holds for non-negative n must not prove for a caller whose
+// bound allows a negative one. `x = -1` satisfies
 //   (>= x -4611686018427387904) & (<= x 4611686018427387904) & (not (>= x 0))
-// so `half(x)` here really can be called with a negative n. A false proof is the worst
-// answer a prover can give — worse than no answer — so combine() now detects the overflow
-// and the verdict degrades to `unknown`.
+// so `buggy` really can call `half` with a negative n. A false proof is the worst answer a
+// prover can give, so the check is that this comes back `failed` with that witness.
 //
-// Since `n / 2` became a linear definition (n = 2q + r) the system no longer reaches the
-// overflowing combine, and the solver reports the true answer: `failed`, with the witness x = -1.
-//
-// (The 1 proven is main's own call, buggy(10) — a constant that satisfies the bound.)
-// What must never come back is `proven`.
+// (The 1 proven is main's own call, buggy(10), a constant that satisfies the bound.)
 pub fn half(n: i64): i64
 requires n >= 0
 {

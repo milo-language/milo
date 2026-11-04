@@ -7,7 +7,6 @@
 import type { Program } from "./ast";
 import { generateVerificationConditions, proveWithZ3 } from "./verify";
 import type { VerificationCondition } from "./verify";
-import { proveWithMilo } from "./prove-milo";
 
 export interface DeadBranch {
   fn: string;
@@ -22,7 +21,6 @@ export interface DeadBranch {
 }
 
 export interface DeadOptions {
-  z3?: boolean;
   onlyFile?: string | ((file: string) => boolean);
   /** Test seam: replace the solver (the planted-bug test makes everything "dead"). */
   solve?: (vcs: VerificationCondition[]) => ("proven" | "other")[];
@@ -33,7 +31,7 @@ export function findDeadBranches(program: Program, check: unknown, o: DeadOption
   const probes = gen.deadProbes ?? [];
   const solve = o.solve ?? ((vcs: VerificationCondition[]) => {
     if (vcs.length === 0) return [];
-    const res = (o.z3 ? proveWithZ3 : proveWithMilo)({ conditions: vcs, stats: gen.stats });
+    const res = proveWithZ3({ conditions: vcs, stats: gen.stats });
     return res.results.map(r => (r.status === "proven" ? "proven" as const : "other" as const));
   });
 
