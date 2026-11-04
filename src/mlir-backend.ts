@@ -16,7 +16,6 @@ import { ModuleCtx, type BuildOptions } from "./mlir-ctx";
 import { planStartup } from "./startup";
 import { scaffoldModule, HASH_SEED_FN } from "./scaffold";
 import { runtimeModule } from "./runtime-ir";
-import { noaliasEnabled } from "./noalias";
 import { DebugInfo } from "./mlir-debug";
 import { mlirStringBody } from "./mlir-llvm";
 
@@ -241,7 +240,7 @@ export class MlirPlan {
     const attrs = [
       `llvm.target_triple = "${triple}"`,
       `llvm.data_layout = "${targetDataLayout(triple)}"`,
-      `milo.runtime_ir = ${mlirString(runtimeModule(this.target, noaliasEnabled()))}`,
+      `milo.runtime_ir = ${mlirString(runtimeModule())}`,
     ];
     // A per-module extern is one more typed view of a C symbol: its calls go to that symbol.
     const links = [...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name);

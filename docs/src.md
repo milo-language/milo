@@ -94,7 +94,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
-| `src/runtime-ir.ts` | The fixed runtime helpers (string buffers, int and float formatting, map buffers, atomics), kept as LLVM IR text in src/runtime/*.ll and linked into milo-opt's module (mlir/Link.cpp). |
+| `src/runtime-ir.ts` | The one fixed runtime piece still kept as LLVM IR text: the atomics (src/runtime/atomic.ll), linked into milo-opt's module (mlir/Link.cpp). |
 | `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/runtime-ir.ts). |
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
 | `src/scaffold.ts` | The process scaffold around the program's functions, as an LLVM-dialect module (`milo.scaffold`, folded into the program by milo-opt's milo-merge-scaffold): - the process entry: argc/argv, record/rep… |

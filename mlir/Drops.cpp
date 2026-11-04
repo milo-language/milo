@@ -792,7 +792,14 @@ struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   }
 };
 
-// The runtime's `@milo.str.share` (src/runtime/str.ll): a new handle to the same buffer.
+// A call of std/rt's `name` (std/rt.milo), a func.func of the module that is not converted
+// yet: called by symbol, its operand and result types already the converted ones.
+static LLVM::CallOp callRt(ConversionPatternRewriter &rw, Operation *op, StringRef name,
+                     TypeRange results, ValueRange args) {
+  return LLVM::CallOp::create(rw, op->getLoc(), results, name, args);
+}
+
+// std/rt's `rtStrShare`: a new handle to the same buffer.
 struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -800,29 +807,22 @@ struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
                   ConversionPatternRewriter &rw) const override {
     Type st = getTypeConverter()->convertType(op.getType());
     Value s = LLVM::LoadOp::create(rw, op.getLoc(), st, a.getRef());
-    auto fn = runtimeFn(rw, op, "milo.str.share", {st}, st);
-    if (!fn)
-      return failure();
-    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{s});
+    rw.replaceOp(op, callRt(rw, op, "rtStrShare", st, ValueRange{s}).getResults());
     return success();
   }
 };
 
-// Legacy's helpers take strings by reference: each operand goes through an entry slot.
+// std/rt's helpers take strings by reference: each operand goes through an entry slot.
 struct StringConcatLowering : ConvertOpToLLVMPattern<StringConcatOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(StringConcatOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Type st = getTypeConverter()->convertType(op.getType());
     Value l = entrySlot(rw, op, st), r = entrySlot(rw, op, st);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getLhs(), l);
     LLVM::StoreOp::create(rw, op.getLoc(), a.getRhs(), r);
-    auto fn = runtimeFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
-    if (!fn)
-      return failure();
-    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{l, r});
+    rw.replaceOp(op, callRt(rw, op, "rtStringConcat", st, ValueRange{l, r}).getResults());
     return success();
   }
 };
@@ -832,14 +832,10 @@ struct StringAppendLowering : ConvertOpToLLVMPattern<StringAppendOp> {
   LogicalResult
   matchAndRewrite(StringAppendOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     Value v = entrySlot(rw, op, a.getValue().getType());
     LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), v);
-    auto fn = runtimeFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
-                       LLVM::LLVMVoidType::get(rw.getContext()));
-    if (!fn)
-      return failure();
-    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{a.getDst(), v});
+    callRt(rw, op, "rtStringAppend", TypeRange{}, ValueRange{a.getDst(), v});
+    rw.eraseOp(op);
     return success();
   }
 };

@@ -65,9 +65,9 @@ export type HIRExpr =
   // the map keeps its own copy). `field` says which half of the entry to collect.
   // std/string `_strReserve(&mut s, extra)`: s's data pointer with room for extra bytes + NUL, s's alone.
   | { kind: "StrReserve"; str: HIRExpr; extra: HIRExpr; type: TypeKind; span?: Span }
-  // std/string `_strUnique(&mut s)`: make s the only handle to its buffer (@milo.str.unique).
+  // std/string `_strUnique(&mut s)`: make s the only handle to its buffer (rtStrUnique).
   | { kind: "StrUnique"; str: HIRExpr; type: TypeKind; span?: Span }
-  // std/string `_strAlloc(n)`: an n-byte string buffer with its count word (@milo.str.alloc), checked.
+  // std/string `_strAlloc(n)`: an n-byte string buffer with its count word (rtStrAlloc), checked.
   | { kind: "StrAlloc"; size: HIRExpr; type: TypeKind; span?: Span }
   // std/string `_strPanic("head", n, "tail")`: prints "head<n>tail at <location>" and aborts.
   | { kind: "StrPanic"; head: string; value: HIRExpr; tail: string; type: TypeKind; span?: Span }

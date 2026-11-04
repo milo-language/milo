@@ -1620,7 +1620,7 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   }
 };
 
-// `%String`, by name: the runtime sections (src/runtime/str.ll) spell the same type.
+// `%String`, by name: the runtime helpers (std/rt.milo) spell the same type.
 LLVM::LLVMStructType stringStruct(MLIRContext *ctx) {
   auto s = LLVM::LLVMStructType::getIdentified(ctx, "String");
   if (!s.isInitialized()) {

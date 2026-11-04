@@ -125,7 +125,7 @@ export class ModuleCtx implements MlirEmitCtx {
   isBuiltinName(name: string): boolean { return BUILTINS.has(name) && !this.userDeclaredFns.has(name); }
   mlirBlockValueOwnsResult(e: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean { return this.own.blockValueOwnsResult(e); }
   mlirClosureParamEscapes(fnName: string, idx: number): boolean { return this.own.closureParamEscapes(fnName, idx); }
-  mlirStrViewStep(): string { return "milo.strview.step"; }
+  mlirStrViewStep(): string { return "rtStrViewStep"; }
   mlirOutWrite(stderr: boolean): string { return stderr ? "milo.err.write" : "milo.out.write"; }
   mlirPanicText(): string { return "milo.panic.text"; }
   mlirAtomic(builtin: string): string | null { return atomicFn(builtin); }

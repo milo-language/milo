@@ -12,14 +12,12 @@ test("sections: comments dropped, trailing blanks trimmed, stray text and duplic
 });
 
 test("runtimeFn substitutes every placeholder and rejects a mismatch either way", () => {
-  expect(runtimeFn("milo.str.oom", { where: "@.str.9" })).toContain("  call void @__milo_overflow_fail(ptr @.str.9, i32 0)");
-  expect(() => runtimeFn("milo.str.oom")).toThrow("needs a value for {{where}}");
-  expect(() => runtimeFn("milo.str.free", { where: "x" })).toThrow("has no {{where}}");
+  const load = runtimeFn("milo.atomic.load", { name: "f", ty: "i64", align: "8" });
+  expect(load).toContain("define internal i64 @f(ptr %p) {");
+  expect(() => runtimeFn("milo.atomic.load", { name: "f", ty: "i64" })).toThrow("needs a value for {{align}}");
+  expect(() => runtimeFn("milo.atomic.load", { name: "f", ty: "i64", align: "8", extra: "x" })).toThrow("has no {{extra}}");
   expect(() => runtimeFn("milo.nope")).toThrow("no section milo.nope");
-  const grow = ["  a", "b:"];
-  const r = runtimeFn("milo.str.reserve", { grow, reallocMin: "4096", reIn: "[ %r, %re ]" });
-  expect(r.slice(r.indexOf("  a"), r.indexOf("  a") + 2)).toEqual(grow);
-  expect(() => runtimeFn("milo.str.reserve", { grow: "x", reallocMin: ["1"], reIn: "" })).toThrow("takes a string");
+  expect(() => runtimeFn("milo.atomic.load", { name: ["a"], ty: "i64", align: "8" })).toThrow("takes a string");
 });
 
 // Keys are named in full at every call so this can find them. A section nobody loads is dead runtime text that still looks maintained.

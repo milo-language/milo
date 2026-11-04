@@ -25,11 +25,12 @@
 // a Heap its contents then the box; an enum the payload of the variant it holds.
 // `milo.drop.vectail.<key>` / `arraytail`: what a consuming for-in left, elements from
 // its cursor on.
-// hash: `milo.hash.<key>(ref K, si64 h) -> si64`, FNV-1a folded over the key (map.ll): a
+// hash: `milo.hash.<key>(ref K, si64 h) -> si64`, FNV-1a folded over the key (std/rt.milo): a
 // bool's one byte, an int's 8 bytes widened by its signedness, a string's bytes, a
 // struct's fields in order.
 import type { TypeKind } from "./types";
 import { MlirUnsupported, type MlirEmitCtx, glueHelpers } from "./emit-mlir";
+import { PUSH_SCALAR_FN } from "./runtime-ir";
 
 const STR = "!milo.string";
 const PTR = "!milo.ptr";
@@ -257,7 +258,7 @@ class GlueFn {
         const w = scalar === "i64" ? "si64" : "ui64";
         if (ty !== w) { v = this.def(`milo.cast ${v} : ${ty} to ${w}`); arg = w; }
       }
-      this.call(`milo.string.push_${scalar}`, [[dst, STR_REF], [v, arg]], PTR);
+      this.call(PUSH_SCALAR_FN[scalar], [[dst, STR_REF], [v, arg]], PTR);
       return;
     }
     if (t.tag !== "struct" && t.tag !== "enum" && t.tag !== "vec" && t.tag !== "array" && t.tag !== "hashmap") {
@@ -321,9 +322,9 @@ class GlueFn {
     const size = (x: TypeKind) => this.cx.typeSizeOf(x);
     switch (t.tag) {
       case "string": {
-        // The runtime's share takes the string by value (src/runtime/str.ll).
+        // The runtime's share takes the string by value (std/rt.milo).
         const v = this.def(`milo.ptr.load ${s} : ${STR}`);
-        this.emit(`milo.ptr.store ${this.call("milo.str.share", [[v, STR]], STR)}, ${d} : ${STR}`);
+        this.emit(`milo.ptr.store ${this.call("rtStrShare", [[v, STR]], STR)}, ${d} : ${STR}`);
         return;
       }
       case "vec": {
@@ -332,7 +333,7 @@ class GlueFn {
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${vh}`)} : ${PTR}`);
         const len = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[1] : ${vh}`)} : si64`);
         const es = size(t.element);
-        const buf = this.call("milo.buf.clone", [[data, PTR], [len, "si64"], [this.def(`milo.const ${es} : si64`), "si64"]], PTR);
+        const buf = this.call("rtBufClone", [[data, PTR], [len, "si64"], [this.def(`milo.const ${es} : si64`), "si64"]], PTR);
         this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${vh}`)} : ${PTR}`);
         this.emit(`milo.ptr.store ${len}, ${this.def(`milo.ptr.field ${d}[2] : ${vh}`)} : si64`);
         if (this.cx.needsDropCg(t.element)) {
@@ -347,7 +348,7 @@ class GlueFn {
       case "heap": {
         const box = this.def(`milo.ptr.load ${s} : ${PTR}`);
         // A one-element buffer copy of the box, then its contents' owning parts.
-        const nb = this.call("milo.buf.clone", [[box, PTR], [this.def("milo.const 1 : si64"), "si64"], [this.def(`milo.const ${size(t.inner)} : si64`), "si64"]], PTR);
+        const nb = this.call("rtBufClone", [[box, PTR], [this.def("milo.const 1 : si64"), "si64"], [this.def(`milo.const ${size(t.inner)} : si64`), "si64"]], PTR);
         this.call(this.glue.clone(t.inner), [[box, PTR], [nb, PTR]], null);
         this.emit(`milo.ptr.store ${nb}, ${d} : ${PTR}`);
         return;
@@ -359,7 +360,7 @@ class GlueFn {
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${head}`)} : ${PTR}`);
         const cap = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[2] : ${head}`)} : si64`);
         const lay = this.cx.mapSlotLayout(t.key, t.value);
-        const buf = this.call("milo.buf.clone", [[data, PTR], [cap, "si64"], [this.def(`milo.const ${lay.size} : si64`), "si64"]], PTR);
+        const buf = this.call("rtBufClone", [[data, PTR], [cap, "si64"], [this.def(`milo.const ${lay.size} : si64`), "si64"]], PTR);
         this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${head}`)} : ${PTR}`);
         const kOwn = this.cx.needsDropCg(t.key), vOwn = this.cx.needsDropCg(t.value);
         if (kOwn || vOwn) {
@@ -453,8 +454,8 @@ class GlueFn {
     }
     const size = (x: TypeKind) => this.cx.typeSizeOf(x);
     switch (t.tag) {
-      case "string": this.call("milo.string.drop", [[p, PTR]], null); return;
-      case "fn": this.call("milo.closure.drop", [[p, PTR]], null); return;
+      case "string": this.call("rtStringDrop", [[p, PTR]], null); return;
+      case "fn": this.call("rtClosureDrop", [[p, PTR]], null); return;
       case "vec": {
         const vh = `!milo.struct<"Vec", ${PTR}, si64, si64>`;
         const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[0] : ${vh}`)} : ${PTR}`);
@@ -477,7 +478,7 @@ class GlueFn {
             this.unlessNull(data, () => this.call("free", [[data, PTR]], null));
             return;
           }
-          this.call("milo.iface.drop", [[p, PTR], [this.def(`milo.const ${n} : si64`), "si64"]], null);
+          this.call("rtIfaceDrop", [[p, PTR], [this.def(`milo.const ${n} : si64`), "si64"]], null);
           return;
         }
         const box = this.def(`milo.ptr.load ${p} : ${PTR}`);
@@ -616,7 +617,7 @@ class GlueFn {
       if (f.typeKind.tag === "string") {
         const s = this.def(`milo.load ${fr} : ${STR_REF}`);
         this.text('"', dst);
-        this.call("milo.string.push_json", [[dst, STR_REF], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], PTR);
+        this.call("rtStringPushJson", [[dst, STR_REF], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], PTR);
         this.text('"', dst);
       } else this.part(f.typeKind, fr, dst, false);
     });
@@ -632,7 +633,7 @@ class GlueFn {
       return this.def(`milo.cmp eq, ${this.def(`milo.load ${a} : !milo.ref<${ty}>`)}, ${this.def(`milo.load ${b} : !milo.ref<${ty}>`)} : ${ty}`);
     }
     if (t.tag === "string") {
-      return this.call("milo.string.eq", [[a, STR_REF], [b, STR_REF]], "i1");
+      return this.call("rtStringEq", [[a, STR_REF], [b, STR_REF]], "i1");
     }
     if (t.tag === "struct") {
       const layout = this.cx.structLayouts.get(t.name);
@@ -660,18 +661,18 @@ class GlueFn {
     t = h.stripRefs(t);
     if (t.tag === "bool") {
       const b = this.def(`milo.cast ${this.def(`milo.cast ${this.def(`milo.load ${p} : !milo.ref<i1>`)} : i1 to ui64`)} : ui64 to si64`);
-      return this.call("milo.hash.byte", [[acc, "si64"], [b, "si64"]], "si64");
+      return this.call("rtHashByte", [[acc, "si64"], [b, "si64"]], "si64");
     }
     if (t.tag === "int") {
       const ty = h.placeType(this.cx, t)!;
       let v = this.def(`milo.load ${p} : !milo.ref<${ty}>`);
       if (!t.signed) { if (ty !== "ui64") v = this.def(`milo.cast ${v} : ${ty} to ui64`); v = this.def(`milo.cast ${v} : ui64 to si64`); }
       else if (ty !== "si64") v = this.def(`milo.cast ${v} : ${ty} to si64`);
-      return this.call("milo.hash.u64", [[acc, "si64"], [v, "si64"]], "si64");
+      return this.call("rtHashU64", [[acc, "si64"], [v, "si64"]], "si64");
     }
     if (t.tag === "string") {
       const s = this.def(`milo.load ${p} : ${STR_REF}`);
-      return this.call("milo.hash.bytes", [[acc, "si64"], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], "si64");
+      return this.call("rtHashBytes", [[acc, "si64"], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], "si64");
     }
     if (t.tag === "struct") {
       const layout = this.cx.structLayouts.get(t.name);

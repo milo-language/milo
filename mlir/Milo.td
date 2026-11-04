@@ -260,7 +260,7 @@ def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
   let summary = "Milo's string value";
   let description = [{
     Milo's `string` value: `%String = { ptr data, i64 len, i64 cap }`, the same
-    bytes the runtime sections (src/runtime/str.ll) read. A literal has cap 0: its buffer is static, so its
+    bytes the runtime helpers (std/rt.milo) read. A literal has cap 0: its buffer is static, so its
     drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
   }];
   let mnemonic = "string";
@@ -1227,7 +1227,7 @@ def Milo_StringConcatOp : Milo_Op<"string.concat", [MemoryEffects<[MemRead, MemA
   let summary = "concatenate two strings into a new one";
   let description = [{
     `a + b` on strings: a new owned string, made by the runtime's concatenation
-    (`milo.string.concat`, src/runtime/str.ll, the operands through slots). Allocates, so two are
+    (`milo.string.concat`, std/rt.milo, the operands through slots). Allocates, so two are
     never merged: each result is an owner of its own.
   }];
   let arguments = (ins Milo_StringType:$lhs, Milo_StringType:$rhs);

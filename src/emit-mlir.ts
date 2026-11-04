@@ -12,6 +12,7 @@ type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import { MlirGlue } from "./mlir-glue";
+import { PUSH_SCALAR_FN } from "./runtime-ir";
 import { MAIN_BODY_FN as MAIN_BODY, PROCESS_INIT_FN } from "./startup";
 
 export interface MlirEmitCtx {
@@ -1457,7 +1458,7 @@ class FnEmitter {
     } else if (v.ty === "f64" || v.ty === "f32" || v.ty === "i1" || v.ty === PTR) {
       kind = v.ty === "i1" ? "bool" : v.ty === PTR ? "ptr" : v.ty;
     } else throw new MlirUnsupported(`text of a ${v.ty}`);
-    this.allocCheck(this.rtCall(`milo.string.push_${kind}`, [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
+    this.allocCheck(this.rtCall(PUSH_SCALAR_FN[kind], [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
   }
 
   /**
@@ -2675,19 +2676,19 @@ class FnEmitter {
         const keep = this.def(`milo.mul ${l.ref}, ${size.ref} wrapping : si64`, "si64");
         return this.allocCheck(this.rtCall(this.cx.mlirVecGrow(es), [d, keep, c, size], PTR), e.span);
       }
-      // std/string's intrinsics: runtime sections (src/runtime/str.ll) and range checks.
+      // std/string's intrinsics: runtime helpers (std/rt.milo) and range checks.
       case "StrReserve": {
         if (scalar(e.type, "reserved buffer") !== PTR) throw new MlirUnsupported("string reserve type");
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
         const n = this.expr(e.extra);
         if (n.ty !== "si64") throw new MlirUnsupported("string reserve size type");
-        return this.allocCheck(this.rtCall("milo.string.reserve", [{ ref: str, ty: `!milo.ref<${STR}>` }, n], PTR), e.span);
+        return this.allocCheck(this.rtCall("rtStringReserve", [{ ref: str, ty: `!milo.ref<${STR}>` }, n], PTR), e.span);
       }
       case "StrAlloc": {
         if (scalar(e.type, "string buffer") !== PTR) throw new MlirUnsupported("string alloc type");
         const n = this.expr(e.size);
         if (n.ty !== "si64") throw new MlirUnsupported("string alloc size type");
-        return this.allocCheck(this.rtCall("milo.str.alloc", [n], PTR), e.span);
+        return this.allocCheck(this.rtCall("rtStrAlloc", [n], PTR), e.span);
       }
       case "StrRangeCheck": {
         const str = this.place(e.str, `!milo.ref<${STR}>`, false).ref;
@@ -2699,7 +2700,7 @@ class FnEmitter {
       }
       case "StrUnique": {
         const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
-        return this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
+        return this.rtCall("rtStrUnique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
       }
       case "MapHash": {
         const kt = stripRefs(e.key.type);
@@ -2723,7 +2724,7 @@ class FnEmitter {
         // order, floats ordered (NaN is never less), ints by signedness, false < true.
         const ty = this.value(kt, "compared key");
         if (ty === STR) {
-          const c = this.rtCall("milo.string.cmp", [{ ref: a, ty: rt }, { ref: b, ty: rt }], "si32");
+          const c = this.rtCall("rtStringCmp", [{ ref: a, ty: rt }, { ref: b, ty: rt }], "si32");
           return this.def(`milo.cmp lt, ${c.ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
         }
         if (!isScalarTy(ty)) throw new MlirUnsupported(`ordering of ${ty}`);
@@ -2738,7 +2739,7 @@ class FnEmitter {
         const n = this.expr(e.count), z = this.expr(e.size);
         if (n.ty !== "si64" || z.ty !== "si64") throw new MlirUnsupported("map alloc operand types");
         if (scalar(e.type, "map buffer") !== PTR) throw new MlirUnsupported("map buffer type");
-        return this.allocCheck(this.rtCall("milo.map.alloc", [n, z], PTR), e.span);
+        return this.allocCheck(this.rtCall("rtMapAlloc", [n, z], PTR), e.span);
       }
       case "MapCopyOut": {
         // `_vecCopyOut(place)`: the structural deep copy of what the place holds
@@ -2753,7 +2754,7 @@ class FnEmitter {
         // C may write through the bytes: a string owned outright here is made the only
         // handle to its buffer first (the helper sees only a reference).
         if (this.ownedLocal(e.object)) {
-          this.rtCall("milo.str.unique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
+          this.rtCall("rtStrUnique", [{ ref: str, ty: `!milo.ref<${STR}>` }], null);
         }
         return this.def(`milo.string.data ${this.def(`milo.load ${str} : !milo.ref<${STR}>`, STR).ref}`, PTR);
       }
@@ -3329,7 +3330,7 @@ class FnEmitter {
         const mark = this.pending.length;
         const vals = placeOnly ? [] : e.elements.map(x => this.pend(this.operand(x, ety, "Vec literal element"), x.type));
         this.pending.length = mark;
-        const buf = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def(`milo.const ${n} : si64`, "si64"), this.def(`milo.const ${es} : si64`, "si64")], PTR), e.span);
+        const buf = this.allocCheck(this.rtCall("rtBufAlloc", [this.def(`milo.const ${n} : si64`, "si64"), this.def(`milo.const ${es} : si64`, "si64")], PTR), e.span);
         const at = (k: number) => k === 0 ? buf.ref : this.def(`milo.ptr.elem ${buf.ref}[${this.def(`milo.const ${k} : si64`, "si64").ref}] : ${pty}`, PTR).ref;
         if (placeOnly) {
           slots.forEach((sl, k) => this.emit(`milo.copy ${sl.ref}, ${at(k)} : !milo.ref<${pty}>, ${PTR} of ${pty}`));
@@ -3480,7 +3481,7 @@ class FnEmitter {
     let at = table;
     for (const c of e.captures) { offs.push(at); at += align(this.cx.typeSizeOf(c.type)); }
     const flagOffs = own.map(() => { const o = at; at += 8; return o; });
-    const env = this.allocCheck(this.rtCall("milo.buf.alloc", [this.def("milo.const 1 : si64", "si64"), this.def(`milo.const ${at} : si64`, "si64")], PTR), e.span);
+    const env = this.allocCheck(this.rtCall("rtBufAlloc", [this.def("milo.const 1 : si64", "si64"), this.def(`milo.const ${at} : si64`, "si64")], PTR), e.span);
     const off = (o: number) => o === 0 ? env.ref : this.def(`milo.ptr.elem ${env.ref}[${this.def(`milo.const ${o} : si64`, "si64").ref}] : ui8`, PTR).ref;
     this.emit(`milo.ptr.store ${this.def(`milo.fn.addr @${quote(`${name}$envdrop`)}`, PTR).ref}, ${env.ref} : ${PTR}`);
     [...offs, ...flagOffs].forEach((o, k) => this.emit(`milo.ptr.store ${off(o)}, ${off(pb * (1 + k))} : ${PTR}`));
@@ -4424,9 +4425,9 @@ class FnEmitter {
       return ref;
     };
     const [a, b] = [slot(l), slot(r)];
-    // Runtime sections (src/runtime/str.ll): equality, and a three-way compare for order.
+    // Runtime sections (std/rt.milo): equality, and a three-way compare for order.
     const eq = op === "eq" || op === "ne";
-    const name = eq ? "milo.string.eq" : "milo.string.cmp";
+    const name = eq ? "rtStringEq" : "rtStringCmp";
     const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> ${eq ? "i1" : "si32"}`;
     this.callees.set(name, fnTy);
     const c = this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, eq ? "i1" : "si32");
@@ -4842,7 +4843,7 @@ class FnEmitter {
         const i = arg(0, "si64");
         const argv = this.def(`milo.ptr.load ${this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("argv"))}`, PTR).ref} : ${PTR}`, PTR);
         const p = this.def(`milo.ptr.load ${this.def(`milo.ptr.elem ${argv.ref}[${i.ref}] : ${PTR}`, PTR).ref} : ${PTR}`, PTR);
-        return { ...this.rtCall("milo.str.from", [p, this.libcCall("strlen", [p], "si64")], STR), own: "owned" };
+        return { ...this.rtCall("rtStrFrom", [p, this.libcCall("strlen", [p], "si64")], STR), own: "owned" };
       }
       case "_schedulerGet":
         return this.def(`milo.ptr.load ${this.def(`milo.global.addr ${quote(this.cx.mlirProcessGlobal("scheduler"))}`, PTR).ref} : ${PTR}`, PTR);
@@ -4862,7 +4863,7 @@ class FnEmitter {
         // A fresh NUL-terminated copy, so the string can go back to C without another.
         const p = arg(0, PTR);
         const n = e.func === "_bytesToString" ? arg(1, "si64") : this.libcCall("strlen", [p], "si64");
-        return { ...this.rtCall("milo.str.from", [p, n], STR), own: "owned" };
+        return { ...this.rtCall("rtStrFrom", [p, n], STR), own: "owned" };
       }
       case "_strDataPtr": {
         const s = this.place(e.args[0].expr, `!milo.ref<${STR}>`, false).ref;
@@ -4985,11 +4986,11 @@ class FnEmitter {
           this.emit(`milo.store ${v.ref}, ${ref}${keep ? "" : " init"} : !milo.ref<${STR}>`);
         }
         // C may write through the bytes: a string owned outright here is made unique first.
-        if (local || (a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")) this.rtCall("milo.str.unique", [{ ref, ty: `!milo.ref<${STR}>` }], null);
+        if (local || (a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")) this.rtCall("rtStrUnique", [{ ref, ty: `!milo.ref<${STR}>` }], null);
         const copy = keep ? this.fresh() : this.tempSlot("cstr.copy", STR, { tag: "string" });
         if (keep) this.vars.push(`  ${copy} = milo.var "cstr.copy" : !milo.ref<${STR}>`);
         this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${copy} init : !milo.ref<${STR}>`);
-        vals.push(this.rtCall("milo.string.cstr", [{ ref, ty: `!milo.ref<${STR}>` }, { ref: copy, ty: `!milo.ref<${STR}>` }], PTR));
+        vals.push(this.rtCall("rtStringCstr", [{ ref, ty: `!milo.ref<${STR}>` }, { ref: copy, ty: `!milo.ref<${STR}>` }], PTR));
       } else if (t.tag === "array") {
         vals.push(this.decay(a.expr));
       } else {

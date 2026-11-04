@@ -238,8 +238,8 @@ splice. `MlirPlan.compile` (src/mlir-backend.ts) prints one MLIR module:
   declaration after `milo-merge-scaffold` (mlir/Link.cpp) folds it in, after
   convert-milo-to-llvm. Scaffold symbols are on demand: whatever nothing uses is deleted.
 - **Module attributes** milo-opt applies after translation (mlir/Link.cpp `finishModule`):
-  `milo.runtime_ir`, the runtime sections of src/runtime/*.ll for the target
-  (src/runtime-ir.ts), parsed and linked with `llvm::Linker` (names promoted for the link
+  `milo.runtime_ir`, the atomics of src/runtime/atomic.ll (single LLVM atomic
+  instructions with a memory order Milo cannot spell; src/runtime-ir.ts), parsed and linked with `llvm::Linker` (names promoted for the link
   and made internal again); `milo.link_names`, per-module extern views of one C symbol;
   `milo.sanitize`, the `sanitize_*` attribute on every defined function; and
   `milo.replay_heap`, std/replay's allocator family on every allocation call.
@@ -252,9 +252,12 @@ Types are the identified LLVM structs mlir/Scalar.cpp's converter builds from sr
 names; the scaffold spells the ones it needs the same way (src/mlir-ctx.ts dialectType), and
 the converter's `setBody` refuses a body that differs.
 
-The runtime sections stay LLVM IR text: they are fixed per target, need no Milo layout
-beyond `%String`, and a typed builder would add lines, not checks. Linking them in milo-opt
-keeps them inlinable into the program (one module), which a separate object would not.
+The runtime helpers are Milo, not IR: std/rt.milo holds the string buffer's reference count,
+concat/append/compare, int and float formatting, map and Vec buffer allocation, FNV hashing and
+the closure/interface drops, as ordinary std functions over raw pointers. The prelude imports
+it, so every program carries them as plain module functions (unused ones are dropped), inlinable
+like any other code. The backend calls them by symbol (`rtStringAppend`, `rtStrShare`, ...:
+src/emit-mlir.ts, src/mlir-glue.ts, mlir/Drops.cpp). Only the atomics stay IR text.
 
 ## Gates
 

@@ -8,6 +8,8 @@
 from "std/hashmap" import {}
 // The same for std/vec's `impl Vec` methods.
 from "std/vec" import {}
+// The runtime routines the backend calls by name (std/rt); exports nothing a program uses.
+from "std/rt" import {}
 
 from "std/string" import {
     asciiIsWhitespace, asciiIsDigit, asciiIsAlpha, asciiIsAlphanumeric,

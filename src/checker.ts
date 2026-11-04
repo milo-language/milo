@@ -169,9 +169,9 @@ export function isVecModule(file: string | undefined): boolean {
 // std/string's `_strRangeCheck(s, start, end)`: the builtin substr's range panic,
 // "substr range out of bounds: a..b (len n) at file:line:col".
 // `_strReserve(&mut s, extra): *u8` is s's data pointer with room for `extra` more bytes and
-// the NUL, held by s alone (the builtin push's inline fast path, else @milo.str.reserve);
-// `_strUnique(&mut s)` makes s the only handle to its buffer (@milo.str.unique), so the
-// count logic stays in the str.ll runtime; `_strAlloc(n): *u8` is a checked n-byte buffer
+// the NUL, held by s alone (the builtin push's inline fast path, else rtStrReserveSlow);
+// `_strUnique(&mut s)` makes s the only handle to its buffer (rtStrUnique), so the
+// count logic stays in std/rt.milo; `_strAlloc(n): *u8` is a checked n-byte buffer
 // with its count word; `_strPanic("head", n, "tail")` is truncate's formatted panic.
 export const STR_INTRINSICS: ReadonlySet<string> = new Set(["_strRangeCheck", "_strReserve", "_strUnique", "_strAlloc", "_strPanic"]);
 export function isStringModule(file: string | undefined): boolean {
@@ -186,7 +186,7 @@ const VEC_CALLBACK_METHODS: ReadonlySet<string> = new Set(["each", "enumerate", 
 // The std modules that hold builtin collections' method bodies. They replaced code codegen
 // emitted inline and may use the std-only machinery that implies (`@inline`, the `@pure`
 // exemption). Anchored on a separator like isForeignModule, so "notstd/vec.milo" is not one.
-const STD_COLLECTION_MODULES: readonly string[] = ["std/hashmap.milo", "std/vec.milo", "std/string.milo"];
+const STD_COLLECTION_MODULES: readonly string[] = ["std/hashmap.milo", "std/vec.milo", "std/string.milo", "std/rt.milo"];
 export function isStdCollectionModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");

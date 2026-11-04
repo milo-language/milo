@@ -14,7 +14,6 @@ import type { ModuleCtx } from "./mlir-ctx";
 import { processGlobalNames } from "./mlir-ctx";
 import { GLOBAL_INIT_FN, GREEN_RUN_MAIN_FN, MAIN_BODY_FN, PROCESS_INIT_FN } from "./startup";
 import { LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
-import { RUNTIME_NEEDS } from "./runtime-ir";
 import { display } from "./mangle";
 
 export const HASH_SEED_FN = "__milo_hash_seed";
@@ -270,9 +269,8 @@ class Scaffold {
   // ── panics and writes ──
 
   private panicRoutines(): void {
-    const keep = (name: string) => RUNTIME_NEEDS.includes(name);
     const routine = (name: string, params: LTy[], fmt: (f: LlvmFn) => LVal, args: (f: LlvmFn) => LVal[]) => {
-      const f = this.m.fn(name, params.map(ty => ({ ty })), null, { passthrough: PANIC_FN, keep: keep(name) });
+      const f = this.m.fn(name, params.map(ty => ({ ty })), null, { passthrough: PANIC_FN });
       this.fdPrintf(f, 2, fmt(f), args(f));
       this.panicTail(f);
       f.unreachable();
@@ -311,7 +309,7 @@ class Scaffold {
       const free = f.block("free"), done = f.block("done");
       f.condBr(f.icmp("sgt", c, f.int(I64, 0)), free, done);
       f.at(free);
-      f.call(this.m.extern("milo.str.free", [PTR], null), [d]);
+      f.call(this.m.extern("rtStrFree", [PTR], null), [d]);
       f.br(done);
       f.at(done);
       f.ret();

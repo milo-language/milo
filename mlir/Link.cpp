@@ -1,7 +1,7 @@
 // The module-level steps of a milo build that no single function sees: milo-merge-scaffold
 // folds the process scaffold (src/scaffold.ts: main, panic routines, lazy globals, stdio and
-// C ABI helpers) into the lowered program, and finishModule links the fixed runtime sections
-// (src/runtime/*.ll) into the translated LLVM module and sets the attributes every function
+// C ABI helpers) into the lowered program, and finishModule links the fixed runtime atomics
+// (src/runtime/atomic.ll) into the translated LLVM module and sets the attributes every function
 // of the module gets (sanitize, the record/replay heap's allocator family).
 #include "Milo.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"

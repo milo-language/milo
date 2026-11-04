@@ -1,0 +1,947 @@
+// std/rt: the runtime routines the compiler calls by name, written in Milo.
+//
+// They used to be hand-written LLVM IR (src/runtime/*.ll). Nothing here is public API: the
+// backend (src/emit-mlir.ts, src/mlir-glue.ts, mlir/Drops.cpp) emits calls to these symbols
+// for string concat/append/compare/format, the string buffer's reference count, map and Vec
+// buffers and drop glue. The prelude imports this module so every program carries them; the
+// ones nothing calls are dropped as dead code.
+//
+// A heap string buffer is `[count: i64][bytes...]` and the handle points at the bytes. The
+// count is atomic (seq_cst) except on bare-metal targets (@targetOs() == "none"), which have
+// no threads and, on 32-bit cores, no 64-bit atomics. Allocating routines return null when
+// malloc fails or a size overflows, so the caller reports it at its own line; the ones that
+// cannot (concat, append, str.from) end the program as a failed allocation does.
+
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8): void
+
+extern fn realloc(p: *u8, n: i64): *u8
+
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+
+extern fn memcmp(a: *u8, b: *u8, n: i64): i32
+
+extern fn memset(dst: *u8, c: i32, n: i64): *u8
+
+extern fn snprintf(buf: *u8, size: i64, fmt: *u8, ...): i32
+
+extern fn strtod(s: *u8, end: *u8): f64
+
+extern fn strtof(s: *u8, end: *u8): f32
+
+// The scaffold's overflow panic; the file and line it prints are the allocation's.
+extern fn __milo_overflow_fail(where: *u8, line: i32): void
+
+// Mirrors the %String layout.
+struct RtStr {
+    _data: *u8,
+    _len: i64,
+    _cap: i64,
+}
+
+// Below this many live bytes a grow is malloc + memcpy + free rather than realloc. A small
+// block cannot be remapped, so realloc saves no memory there, and macOS's realloc first
+// looks the pointer's zone and size up: respond's string building (buffers of a few hundred
+// bytes) ran 13% slower on realloc than on the copy. At a page and above the remap is what
+// keeps peak RSS at the new size (vec_grow: 132 MB -> 68 MB).
+fn rtReallocMin(): i64 {
+    return 4096
+}
+
+// Cortex-M's bump heap has no block headers, so it cannot implement realloc.
+fn rtHasRealloc(): bool {
+    return @targetOs() != "none"
+}
+
+fn rtHead(s: &string): *RtStr {
+    unsafe {
+        return (s.addrOf() as *u8) as *RtStr
+    }
+}
+
+fn rtMulOverflows(n: i64, size: i64): bool {
+    if size == 0 {
+        return false
+    }
+    return (n as u64) > (18446744073709551615 / (size as u64))
+}
+
+// Nothing to report a source line against from inside the runtime; the failed size is what
+// matters and the message says it was an allocation.
+fn rtOom() {
+    unsafe {
+        __milo_overflow_fail("<string allocation>", 0)
+    }
+}
+
+// ── reference count ──
+
+@inline
+fn rtRcLoad(h: *u8): i64 {
+    unsafe {
+        if @targetOs() == "none" {
+            return (h as *i64) [0]
+        }
+        return _atomicLoadI64(h)
+    }
+}
+
+@inline
+fn rtRcAdd(h: *u8, d: i64): i64 {
+    unsafe {
+        if @targetOs() == "none" {
+            let old = (h as *i64) [0]
+            (h as *i64) [0] = old.wrappingAdd(d)
+            return old
+        }
+        return _atomicAddI64(h, d)
+    }
+}
+
+// ── string buffers ──
+
+// @internal
+// n bytes of text after a fresh count of 1; null when malloc fails (or n is so large that
+// n + 8 wraps), so the caller's own null check reports it.
+pub fn rtStrAlloc(n: i64): *u8 {
+    unsafe {
+        if (n as u64) > 18446744073709551607 {
+            return 0 as *u8
+        }
+        let p = malloc(n.wrappingAdd(8))
+        if (p as i64) == 0 {
+            return p
+        }
+        (p as *i64) [0] = 1
+        return p[8].addrOf()
+    }
+}
+
+// @internal
+// Frees a buffer this handle is known to hold alone (after rtStrUnique).
+pub fn rtStrFree(d: *u8) {
+    unsafe {
+        free(d[-8].addrOf())
+    }
+}
+
+// @internal
+// Drops one handle to a heap buffer (the caller has checked cap > 0).
+pub fn rtStrRelease(d: *u8) {
+    unsafe {
+        let h = d[-8].addrOf()
+        if rtRcLoad(h) == 1 {
+            free(h)
+            return
+        }
+        if rtRcAdd(h, -1) == 1 {
+            free(h)
+        }
+    }
+}
+
+fn rtMake(b: *u8, len: i64, cap: i64): string {
+    var s = ""
+    unsafe {
+        var head = (s.addrOf() as *u8) as *RtStr
+        head[0]._data = b
+        head[0]._len = len
+        head[0]._cap = cap
+    }
+    return s
+}
+
+// @internal
+// A fresh unique copy of `len` bytes, NUL-terminated. Aborts when out of memory.
+pub fn rtStrFrom(src: *u8, len: i64): string {
+    unsafe {
+        let cap = len.wrappingAdd(1)
+        let b = rtStrAlloc(cap)
+        if (b as i64) == 0 {
+            rtOom()
+        }
+        memcpy(b, src, len)
+        b[len] = 0
+        return rtMake(b, len, cap)
+    }
+}
+
+// @internal
+// A second owning handle to the same text. A heap buffer is shared by count. A cap-0
+// string is copied: it may be a view into a buffer someone else owns, and a literal costs
+// no more to copy than it does today.
+pub fn rtStrShare(s: string): string {
+    unsafe {
+        let head = rtHead(s)
+        if head[0]._cap > 0 {
+            rtRcAdd(head[0]._data[-8].addrOf(), 1)
+            return s
+        }
+        return rtStrFrom(head[0]._data, head[0]._len)
+    }
+}
+
+// @internal
+// Make the string at `s` the only handle to its buffer before a write. A cap-0 string is
+// left alone (every writer already copies a literal out first); a shared heap buffer is
+// copied with the same capacity and this handle's count released.
+pub fn rtStrUnique(s: &mut string) {
+    unsafe {
+        var head = rtHead(s)
+        let cap = head[0]._cap
+        if cap == 0 {
+            return
+        }
+        let d = head[0]._data
+        if rtRcLoad(d[-8].addrOf()) == 1 {
+            return
+        }
+        let len = head[0]._len
+        let need = len.wrappingAdd(1)
+        var nc = cap
+        if (cap as u64) < (need as u64) {
+            nc = need
+        }
+        let b = rtStrAlloc(nc)
+        if (b as i64) == 0 {
+            rtOom()
+        }
+        memcpy(b, d, len)
+        b[len] = 0
+        head[0]._data = b
+        head[0]._cap = nc
+        rtStrRelease(d)
+    }
+}
+
+// Resize a buffer this handle holds alone; the count (1) moves with the block.
+fn rtStrRealloc(d: *u8, n: i64): *u8 {
+    unsafe {
+        if (n as u64) > 18446744073709551607 {
+            return 0 as *u8
+        }
+        let p = realloc(d[-8].addrOf(), n.wrappingAdd(8))
+        if (p as i64) == 0 {
+            return p
+        }
+        return p[8].addrOf()
+    }
+}
+
+// Unique first, then room for `extra` more bytes and the NUL; null when growing fails. The
+// buffer at least doubles (16 bytes at the least).
+fn rtStrReserveSlow(s: &mut string, extra: i64): *u8 {
+    unsafe {
+        rtStrUnique(&mut s)
+        var head = rtHead(s)
+        let len = head[0]._len
+        let cap = head[0]._cap
+        let old = head[0]._data
+        let need = len.wrappingAdd(extra).wrappingAdd(1)
+        if (need as u64) <= (cap as u64) {
+            return old
+        }
+        let dbl = cap << 1
+        var nc = dbl
+        if (dbl as u64) < (need as u64) {
+            nc = need
+        }
+        if (nc as u64) < 16 {
+            nc = 16
+        }
+        let owned = cap > 0
+        var nb = 0 as *u8
+        if owned && (len as u64) >= (rtReallocMin() as u64) && rtHasRealloc() {
+            nb = rtStrRealloc(old, nc)
+        } else {
+            nb = rtStrAlloc(nc)
+            if (old as i64) != 0 && (nb as i64) != 0 {
+                memcpy(nb, old, len)
+                if owned {
+                    rtStrFree(old)
+                }
+            }
+        }
+        if (nb as i64) == 0 {
+            return nb
+        }
+        head[0]._data = nb
+        head[0]._cap = nc
+        return nb
+    }
+}
+
+// @internal
+// `_strReserve(&mut s, extra)`: s's data pointer with room for `extra` more bytes and the
+// NUL, in a buffer s holds alone; null when growing fails. The fast path (room, and a count
+// of 1, which a heap buffer with room implies is safe to write) is small enough to inline;
+// anything else copies or grows.
+@inline
+pub fn rtStringReserve(s: &mut string, extra: i64): *u8 {
+    unsafe {
+        let head = rtHead(s)
+        let need = head[0]._len.wrappingAdd(extra)
+        if (need as u64) < (head[0]._cap as u64) {
+            let data = head[0]._data
+            if rtRcLoad(data[-8].addrOf()) == 1 {
+                return data
+            }
+        }
+        return rtStrReserveSlow(&mut s, extra)
+    }
+}
+
+// @internal
+// Drops the string at `s`: one handle fewer on a heap buffer (cap > 0); a literal or an
+// empty string holds none.
+pub fn rtStringDrop(s: *u8) {
+    unsafe {
+        let head = s as *RtStr
+        if head[0]._cap > 0 {
+            rtStrRelease(head[0]._data)
+        }
+    }
+}
+
+// ── string operations ──
+
+// @internal
+// `a + b`: a fresh string of both (count 1, NUL-terminated).
+pub fn rtStringConcat(a: &string, b: &string): string {
+    unsafe {
+        let ha = rtHead(a)
+        let hb = rtHead(b)
+        let al = ha[0]._len
+        let bl = hb[0]._len
+        let len = al.wrappingAdd(bl)
+        let cap = len.wrappingAdd(1)
+        let buf = rtStrAlloc(cap)
+        if (buf as i64) == 0 {
+            rtOom()
+        }
+        memcpy(buf, ha[0]._data, al)
+        memcpy(buf[al].addrOf(), hb[0]._data, bl)
+        buf[len] = 0
+        return rtMake(buf, len, cap)
+    }
+}
+
+// @internal
+// `s.pushStr(x)`: x's bytes appended to s in place. x may point into s's own buffer
+// (`s.pushStr(s)`): its data pointer is re-based onto the buffer reserve returns.
+pub fn rtStringAppend(s: &mut string, x: &string) {
+    unsafe {
+        let hx = rtHead(x)
+        let xd = hx[0]._data
+        let xl = hx[0]._len
+        var hs = rtHead(s)
+        let len = hs[0]._len
+        let oldi = hs[0]._data as i64
+        let buf = rtStringReserve(&mut s, xl)
+        if (buf as i64) == 0 {
+            rtOom()
+        }
+        let off = (xd as i64).wrappingSub(oldi)
+        var src = xd
+        if (off as u64) < (len as u64) {
+            src = buf[off].addrOf()
+        }
+        memcpy(buf[len].addrOf(), src, xl)
+        let nlen = len.wrappingAdd(xl)
+        hs[0]._len = nlen
+        buf[nlen] = 0
+    }
+}
+
+// @internal
+// `a == b` on strings: equal lengths, then equal bytes.
+pub fn rtStringEq(a: &string, b: &string): bool {
+    unsafe {
+        let ha = rtHead(a)
+        let hb = rtHead(b)
+        if ha[0]._len != hb[0]._len {
+            return false
+        }
+        return memcmp(ha[0]._data, hb[0]._data, ha[0]._len) == 0
+    }
+}
+
+// @internal
+// String ordering, three-way: negative, zero or positive as a sorts before, with or after
+// b. Bytes compare unsigned over the shorter length (memcmp); a prefix sorts first.
+pub fn rtStringCmp(a: &string, b: &string): i32 {
+    unsafe {
+        let ha = rtHead(a)
+        let hb = rtHead(b)
+        let al = ha[0]._len
+        let bl = hb[0]._len
+        var n = bl
+        if (al as u64) < (bl as u64) {
+            n = al
+        }
+        let c = memcmp(ha[0]._data, hb[0]._data, n)
+        if c != 0 {
+            return c
+        }
+        if (al as u64) > (bl as u64) {
+            return 1
+        }
+        if (al as u64) < (bl as u64) {
+            return -1
+        }
+        return 0
+    }
+}
+
+// @internal
+// The bytes of the string at `s` as a C string for one call: an owned string (cap > 0)
+// keeps its NUL at [len] and is passed as is. A cap-0 one (a literal held in a variable, or
+// a view, which has no NUL of its own) is copied into a NUL-terminated string stored at
+// `tmp` (which holds an empty string otherwise), for the caller to drop after the call.
+pub fn rtStringCstr(s: &string, tmp: &mut string): *u8 {
+    unsafe {
+        let hs = rtHead(s)
+        if hs[0]._cap != 0 {
+            return hs[0]._data
+        }
+        let len = hs[0]._len
+        let cap = len.wrappingAdd(1)
+        let b = rtStrAlloc(cap)
+        if (b as i64) == 0 {
+            rtOom()
+        }
+        memcpy(b, hs[0]._data, len)
+        b[len] = 0
+        var ht = rtHead(tmp)
+        ht[0]._data = b
+        ht[0]._len = len
+        ht[0]._cap = cap
+        return b
+    }
+}
+
+// The first index at or after `from` where `n` occurs in `h`, or -1. A needle longer than
+// the haystack makes the limit negative, so the first comparison fails and the search
+// misses without a special case.
+fn rtStrFind(h: *u8, hlen: i64, n: *u8, nlen: i64, from: i64): i64 {
+    unsafe {
+        let limit = hlen.wrappingSub(nlen)
+        var i = from
+        while i <= limit {
+            if memcmp(h[i].addrOf(), n, nlen) == 0 {
+                return i
+            }
+            i = i.wrappingAdd(1)
+        }
+        return -1
+    }
+}
+
+// @internal
+// One step of `for v in s.lines()` / `s.splitView(sep)`: false when the pieces ran out; else
+// the next piece, a view into s's buffer (cap 0), in *out and the next start in *posp.
+// Lines pass sep = "\n", split = false.
+@wrapping
+pub fn rtStrViewStep(s: &string, sep: &string, split: bool, posp: &mut i64, out: &mut string): bool {
+    unsafe {
+        let hs = rtHead(s)
+        let hp = rtHead(sep)
+        let data = hs[0]._data
+        let len = hs[0]._len
+        let sdata = hp[0]._data
+        let slen = hp[0]._len
+        let pos = posp
+        // A trailing newline ends the last line; `pos == len` still yields the piece after
+        // a trailing separator, except for an empty one, which runs out one step earlier.
+        let sepEmpty = slen == 0
+        var more = pos < len
+        if split {
+            more = pos <= len && (!sepEmpty || pos < len)
+        }
+        if !more {
+            return false
+        }
+        var sepIdx = rtStrFind(data, len, sdata, slen, pos)
+        // An empty needle matches at pos and would never advance: the next byte is the separator.
+        if split && sepEmpty {
+            sepIdx = pos + 1
+        }
+        let hasSep = sepIdx >= 0
+        var pieceEnd = len
+        if hasSep {
+            pieceEnd = sepIdx
+        }
+        var viewEnd = pieceEnd
+        // CRLF: the '\r' belongs to the line ending.
+        if !split && pieceEnd > pos && data[pieceEnd - 1] == 13 {
+            viewEnd = pieceEnd - 1
+        }
+        var ho = rtHead(out)
+        ho[0]._data = data[pos].addrOf()
+        ho[0]._len = viewEnd - pos
+        ho[0]._cap = 0
+        if hasSep {
+            posp = pieceEnd + slen
+        } else {
+            posp = len + 1
+        }
+        return true
+    }
+}
+
+// ── number formatting ──
+
+fn rtDigitPairs(): string {
+    return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+}
+
+// Writes v's decimal digits at dst (up to 20 bytes) and returns how many.
+@wrapping
+fn rtFmtU64(dst: *u8, v: u64): i64 {
+    unsafe {
+        let tbl = rtDigitPairs().cstr()
+        var n: i64 = 1
+        var p: u64 = 10
+        while n < 20 && v >= p {
+            n += 1
+            p = p * 10
+        }
+        var t = v
+        var i = n
+        while t >= 100 {
+            let q = t / 100
+            let r = (t - q * 100) as i64
+            i -= 2
+            dst[i] = tbl[r * 2]
+            dst[i + 1] = tbl[r * 2 + 1]
+            t = q
+        }
+        if t < 10 {
+            dst[0] = (t as u8) + 48
+        } else {
+            let r = t as i64
+            dst[0] = tbl[r * 2]
+            dst[1] = tbl[r * 2 + 1]
+        }
+        return n
+    }
+}
+
+@wrapping
+fn rtFmtI64(dst: *u8, v: i64): i64 {
+    unsafe {
+        if v >= 0 {
+            return rtFmtU64(dst, v as u64)
+        }
+        dst[0] = 45
+        // 0 - MIN wraps back to MIN, whose unsigned reading is exactly |MIN| = 2^63.
+        return rtFmtU64(dst[1].addrOf(), (0 - v) as u64) + 1
+    }
+}
+
+// A double as the shortest %.*g that strtod reads back exactly (at most 17 digits), written
+// to buf (32 bytes); returns its length. -0.0 prints as "-0".
+fn rtFmtF64(v: f64, buf: *u8): i64 {
+    unsafe {
+        var av = v
+        if v < 0.0 {
+            av = -v
+        }
+        var dig: i32 = 1
+        var pow: f64 = 10.0
+        while dig < 17 && av >= pow {
+            dig += 1
+            pow = pow * 10.0
+        }
+        // From 1e17 up every %.*g with at most 17 digits is in exponent form, so the search
+        // starts at 1 digit (1e300 is "1e+300", not the 17-digit "1.0000000000000001e+300").
+        var p = dig
+        if av >= 1e17 {
+            p = 1
+        }
+        while true {
+            let n = snprintf(buf, 32, "%.*g", p, v)
+            if strtod(buf, 0 as *u8) == v || p >= 17 {
+                return n as i64
+            }
+            p += 1
+        }
+        return 0
+    }
+}
+
+// rtFmtF64 for a float: at most 9 digits, read back with strtof.
+fn rtFmtF32(v: f32, buf: *u8): i64 {
+    unsafe {
+        let d = v as f64
+        var av = d
+        if d < 0.0 {
+            av = -d
+        }
+        var dig: i32 = 1
+        var pow: f64 = 10.0
+        while dig < 9 && av >= pow {
+            dig += 1
+            pow = pow * 10.0
+        }
+        var p = dig
+        if av >= 1e9 {
+            p = 1
+        }
+        while true {
+            let n = snprintf(buf, 32, "%.*g", p, d)
+            if strtof(buf, 0 as *u8) == v || p >= 9 {
+                return n as i64
+            }
+            p += 1
+        }
+        return 0
+    }
+}
+
+// @internal
+// Appends v's decimal digits to s in place (unique first). Returns s's buffer, or null when
+// growing fails, so the caller's check reports it at its site.
+pub fn rtStringPushI64(s: &mut string, v: i64): *u8 {
+    unsafe {
+        let buf = rtStringReserve(&mut s, 20)
+        if (buf as i64) == 0 {
+            return buf
+        }
+        var head = rtHead(s)
+        let len = head[0]._len
+        let nlen = len.wrappingAdd(rtFmtI64(buf[len].addrOf(), v))
+        head[0]._len = nlen
+        buf[nlen] = 0
+        return buf
+    }
+}
+
+// @internal
+// rtStringPushI64 for an unsigned value.
+pub fn rtStringPushU64(s: &mut string, v: u64): *u8 {
+    unsafe {
+        let buf = rtStringReserve(&mut s, 20)
+        if (buf as i64) == 0 {
+            return buf
+        }
+        var head = rtHead(s)
+        let len = head[0]._len
+        let nlen = len.wrappingAdd(rtFmtU64(buf[len].addrOf(), v))
+        head[0]._len = nlen
+        buf[nlen] = 0
+        return buf
+    }
+}
+
+// Appends the n bytes at src to s; null when growing fails.
+fn rtPushBytes(s: &mut string, src: *u8, n: i64): *u8 {
+    unsafe {
+        let buf = rtStringReserve(&mut s, n)
+        if (buf as i64) == 0 {
+            return buf
+        }
+        var head = rtHead(s)
+        let len = head[0]._len
+        memcpy(buf[len].addrOf(), src, n)
+        let nlen = len.wrappingAdd(n)
+        head[0]._len = nlen
+        buf[nlen] = 0
+        return buf
+    }
+}
+
+// @internal
+// Appends v as rtFmtF64 writes it (the shortest round-tripping digits).
+pub fn rtStringPushF64(s: &mut string, v: f64): *u8 {
+    unsafe {
+        let tmp: [u8; 32] = [0; 32]
+        let n = rtFmtF64(v, tmp as *u8)
+        return rtPushBytes(&mut s, tmp as *u8, n)
+    }
+}
+
+// @internal
+// rtStringPushF64 for an f32, through rtFmtF32 (the shortest f32 digits).
+pub fn rtStringPushF32(s: &mut string, v: f32): *u8 {
+    unsafe {
+        let tmp: [u8; 32] = [0; 32]
+        let n = rtFmtF32(v, tmp as *u8)
+        return rtPushBytes(&mut s, tmp as *u8, n)
+    }
+}
+
+// @internal
+// Appends "true" or "false" to s in place; null when growing fails.
+pub fn rtStringPushBool(s: &mut string, v: bool): *u8 {
+    unsafe {
+        let tmp: [u8; 8] = [0; 8]
+        let t = tmp as *u8
+        var n: i64 = 5
+        if v {
+            t[0] = 116
+            t[1] = 114
+            t[2] = 117
+            t[3] = 101
+            n = 4
+        } else {
+            t[0] = 102
+            t[1] = 97
+            t[2] = 108
+            t[3] = 115
+            t[4] = 101
+        }
+        return rtPushBytes(&mut s, t, n)
+    }
+}
+
+// @internal
+// Appends a pointer as `0x` and lowercase hex digits (`0x0` for null), the same text on
+// every target.
+pub fn rtStringPushPtr(s: &mut string, p: *u8): *u8 {
+    unsafe {
+        let v = p as u64
+        let tmp: [u8; 18] = [0; 18]
+        let t = tmp as *u8
+        var last: i64 = 0
+        var rest = v
+        while rest > 15 {
+            rest = rest >> 4
+            last += 1
+        }
+        t[0] = 48
+        t[1] = 120
+        var k: i64 = 0
+        while k <= last {
+            let nib = ((v >> (((last - k) * 4) as u64)) & 15) as u8
+            if nib > 9 {
+                t[k + 2] = nib + 87
+            } else {
+                t[k + 2] = nib + 48
+            }
+            k += 1
+        }
+        return rtPushBytes(&mut s, t, last + 3)
+    }
+}
+
+// @internal
+// Appends the n bytes at d to s JSON-escaped (RFC 8259, as std/json's jsonEscapeStr): "
+// \ newline tab return as two-byte escapes, any other byte below 0x20 as \u00xx. Null when
+// growing fails.
+@wrapping
+pub fn rtStringPushJson(s: &mut string, d: *u8, n: i64): *u8 {
+    unsafe {
+        let buf = rtStringReserve(&mut s, n * 6)
+        if (buf as i64) == 0 {
+            return buf
+        }
+        var head = rtHead(s)
+        var o = head[0]._len
+        var i: i64 = 0
+        while i < n {
+            let c = d[i]
+            if c == 34 || c == 92 || c == 10 || c == 9 || c == 13 {
+                var e = c
+                if c == 10 {
+                    e = 110
+                }
+                if c == 9 {
+                    e = 116
+                }
+                if c == 13 {
+                    e = 114
+                }
+                buf[o] = 92
+                buf[o + 1] = e
+                o += 2
+            } else if c < 32 {
+                buf[o] = 92
+                buf[o + 1] = 117
+                buf[o + 2] = 48
+                buf[o + 3] = 48
+                buf[o + 4] = (c >> 4) + 48
+                let lo = c & 15
+                if lo < 10 {
+                    buf[o + 5] = lo + 48
+                } else {
+                    buf[o + 5] = lo + 87
+                }
+                o += 6
+            } else {
+                buf[o] = c
+                o += 1
+            }
+            i += 1
+        }
+        head[0]._len = o
+        buf[o] = 0
+        return buf
+    }
+}
+
+// ── drop glue helpers ──
+
+// @internal
+// Drops the owning closure { fn, env } at c: an env's first word is its drop function, null
+// for a by-reference closure (its env is a frame's slot); a closure that captured nothing
+// has no env at all.
+pub fn rtClosureDrop(c: *u8) {
+    unsafe {
+        let env = (c as *i64) [1] as *u8
+        if (env as i64) == 0 {
+            return
+        }
+        let f = (env as *i64) [0] as *u8
+        if (f as i64) != 0 {
+            _callClosureVoid(f, env)
+        }
+    }
+}
+
+// @internal
+// Drops the Heap<Interface> { data, itable } at h: the concrete type's destructor from the
+// itable's slot `slot` (after the methods; null when the type has none), then the box.
+pub fn rtIfaceDrop(h: *u8, slot: i64) {
+    unsafe {
+        let data = (h as *i64) [0] as *u8
+        if (data as i64) == 0 {
+            return
+        }
+        let itable = (h as *i64) [1] as *u8
+        let f = (itable as *i64) [slot] as *u8
+        if (f as i64) != 0 {
+            _callClosureVoid(f, data)
+        }
+        free(data)
+    }
+}
+
+// ── buffers ──
+
+// @internal
+// `n * size` zeroed bytes from malloc; null when the product overflows or malloc fails, so
+// the caller's own check reports it at its site.
+pub fn rtMapAlloc(n: i64, size: i64): *u8 {
+    unsafe {
+        if rtMulOverflows(n, size) {
+            return 0 as *u8
+        }
+        let bytes = n.wrappingMul(size)
+        let p = malloc(bytes)
+        if (p as i64) == 0 {
+            return p
+        }
+        memset(p, 0, bytes)
+        return p
+    }
+}
+
+// @internal
+// A clone's buffer: `n * size` bytes from malloc with the `n * size` bytes at src copied in
+// (the clone's glue then re-clones whatever in them owns something). Null for n = 0. Out of
+// memory, or a size that overflows, ends the program as a failed allocation does.
+pub fn rtBufClone(src: *u8, n: i64, size: i64): *u8 {
+    unsafe {
+        if n == 0 {
+            return 0 as *u8
+        }
+        if rtMulOverflows(n, size) {
+            rtOom()
+        }
+        let bytes = n.wrappingMul(size)
+        let p = malloc(bytes)
+        if (p as i64) == 0 {
+            rtOom()
+        }
+        memcpy(p, src, bytes)
+        return p
+    }
+}
+
+// @internal
+// `n * size` uninitialized bytes from malloc (a Vec literal's buffer, exactly its
+// elements); null when the product overflows or malloc fails, so the caller reports it.
+pub fn rtBufAlloc(n: i64, size: i64): *u8 {
+    unsafe {
+        if rtMulOverflows(n, size) {
+            return 0 as *u8
+        }
+        return malloc(n.wrappingMul(size))
+    }
+}
+
+// @internal
+// std's `_vecGrowBuf(data, len, cap)`: the buffer of `keep` used bytes moved to one of
+// `count * size` bytes. At least rtReallocMin() kept bytes go through realloc, a smaller
+// buffer to a fresh block (copy, then free). Null when the size overflows or allocation
+// fails, the old buffer then untouched; the caller reports it at its site.
+pub fn rtVecGrowRealloc(old: *u8, keep: i64, count: i64, size: i64): *u8 {
+    unsafe {
+        if rtMulOverflows(count, size) {
+            return 0 as *u8
+        }
+        let bytes = count.wrappingMul(size)
+        if (keep as u64) >= (rtReallocMin() as u64) {
+            return realloc(old, bytes)
+        }
+        return rtVecGrowCopy(old, keep, count, size)
+    }
+}
+
+// @internal
+// rtVecGrowRealloc where realloc is not an option (Cortex-M's bump heap, or a zero-size
+// element, since realloc(p, 0) may free p): always a fresh block.
+pub fn rtVecGrowCopy(old: *u8, keep: i64, count: i64, size: i64): *u8 {
+    unsafe {
+        if rtMulOverflows(count, size) {
+            return 0 as *u8
+        }
+        let f = malloc(count.wrappingMul(size))
+        if (f as i64) != 0 && (old as i64) != 0 {
+            memcpy(f, old, keep)
+            free(old)
+        }
+        return f
+    }
+}
+
+// ── map hashing (FNV-1a) ──
+
+// @internal
+// One round: the hash of a bool key is its one byte.
+@wrapping
+pub fn rtHashByte(h: i64, b: i64): i64 {
+    return (h ^ b) * 1099511628211
+}
+
+// @internal
+// Over an int key's 8 bytes, least significant first (narrow ints are widened by their
+// signedness first).
+@wrapping
+pub fn rtHashU64(h: i64, v: i64): i64 {
+    var acc = h
+    let u = v as u64
+    var i: u64 = 0
+    while i < 8 {
+        acc = (acc ^ (((u >> (i * 8)) & 255) as i64)) * 1099511628211
+        i += 1
+    }
+    return acc
+}
+
+// @internal
+// Over a string key's bytes.
+@wrapping
+pub fn rtHashBytes(h: i64, d: *u8, n: i64): i64 {
+    unsafe {
+        var acc = h
+        var i: i64 = 0
+        while i < n {
+            acc = (acc ^ (d[i] as i64)) * 1099511628211
+            i += 1
+        }
+        return acc
+    }
+}

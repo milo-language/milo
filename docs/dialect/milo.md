@@ -2596,7 +2596,7 @@ operation ::= `milo.string.concat` $lhs `,` $rhs attr-dict
 ```
 
 `a + b` on strings: a new owned string, made by the runtime's concatenation
-(`milo.string.concat`, src/runtime/str.ll, the operands through slots). Allocates, so two are
+(`milo.string.concat`, std/rt.milo, the operands through slots). Allocates, so two are
 never merged: each result is an owner of its own.
 
 Interfaces: `InferTypeOpInterface`, `MemoryEffectOpInterface (MemoryEffectOpInterface)`
@@ -3583,7 +3583,7 @@ _Milo's string value_
 Syntax: `!milo.string`
 
 Milo's `string` value: `%String = { ptr data, i64 len, i64 cap }`, the same
-bytes the runtime sections (src/runtime/str.ll) read. A literal has cap 0: its buffer is static, so its
+bytes the runtime helpers (std/rt.milo) read. A literal has cap 0: its buffer is static, so its
 drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
 
 
