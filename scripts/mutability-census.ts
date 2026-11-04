@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-// Corpus census for `var-never-reassigned` and `unwritten-mut-param`: how many hits each
-// has over examples/**, tests/fixtures and std, and whether `milo fix` leaves every file
-// that checked before still checking. A fix that breaks a file is a false positive in the
-// rule (the gate that cannot be gamed: the checker itself re-judges the fixed text).
+// Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule.
+// It also checks that `milo fix` leaves every file that checked before still checking: over examples/**,
+// tests/fixtures and std. A fix that breaks a file is a false positive in the rule (the gate that
+// cannot be gamed: the checker itself re-judges the fixed text).
 //
 //   bun scripts/mutability-census.ts                # counts per kind (entries only)
 //   bun scripts/mutability-census.ts --fix          # + fix on a COPY, re-check every file
