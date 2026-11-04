@@ -9,8 +9,9 @@
 import type { Expr } from "./ast";
 import type { InterpCo, Task } from "./interp-co";
 import type { Interp } from "./interp";
-import { staticStr, type ClosureV, type HandleV, type Ref, type Value } from "./interp-values";
+import { staticStr, type ClosureV, type HandleV, type Ref, type Str, type Value } from "./interp-values";
 import type { Native } from "./interp-natives";
+import { fdReady, netWaiters } from "./interp-net";
 
 type CoNative = (it: InterpCo, args: Value[], e?: Expr) => Generator<unknown, Value, unknown>;
 
@@ -77,6 +78,12 @@ plain("TaskScope$spawn", (it, [self, f]) => {
 plain("TaskScope$live", (it, [self]) => BigInt(objOf<ScopeObj>(it, self).live));
 
 // ── scheduler entry points std exposes ──
+// R-TASK-PANIC: a connection task that panics answers its client first: `reply` is written to `fd`, which is then closed
+plain("taskOnPanicReply", (it, [fd, reply]) => {
+  (it as InterpCo).cur.panicReply = { fd: Number(fd as bigint), bytes: Uint8Array.from((it.deref(reply!) as Str).b.bytes) };
+  return undefined;
+});
+plain("taskOnPanicNote", () => undefined);
 // R-TASK-MAIN: a task pointer is the task's number; main is a task whenever the program can spawn.
 plain("schedulerCurrent", it => BigInt((it as InterpCo).cur.id));
 plain("schedulerExists", () => true);
@@ -176,6 +183,65 @@ const CHAN_CO: Record<string, CoNative> = {
     wake(it, c.sendW);
     return ok(it, e, v);
   },
+};
+
+// ── Select ──
+// R-SELECT: arms are armed in order; wait returns the index of the first ready one and parks until some arm is. A recv arm is
+// ready when its channel has a value or is closed, a send arm when it has room or is closed, an fd arm when a read (write)
+// would not block, a timer arm when the virtual clock reaches its deadline. The value itself is fetched afterwards, per arm.
+interface Arm { kind: "recv" | "send" | "read" | "write" | "timer"; chan?: ChanObj; fd?: number; at?: number }
+class SelObj {
+  arms: Arm[] = [];
+  constructor(public blocks: number[]) {}
+  // R-SELECT
+  release(it: Interp): void {
+    for (const a of this.arms) a.chan?.release(it);
+    this.arms = [];
+    for (const b of this.blocks) it.free(b);
+    this.blocks = [];
+  }
+}
+const sel = (it: Interp, self: Value) => objOf<SelObj>(it, self);
+// R-SELECT
+const armReady = (it: InterpCo, a: Arm): boolean => {
+  switch (a.kind) {
+    case "recv": return a.chan!.q.length > 0 || a.chan!.closed;
+    case "send": return a.chan!.q.length < a.chan!.cap || a.chan!.closed;
+    case "read": case "write": return fdReady(it, a.fd!, a.kind === "write");
+    case "timer": return it.clock >= a.at!;
+  }
+};
+const SELECT_NATIVES: Record<string, Native> = {
+  new: it => handle("select", new SelObj(count(it, 2))), // the select state and the node array
+  onRecv: (it, [self, ch]) => { const c = chan(it, ch); c.rc++; sel(it, self).arms.push({ kind: "recv", chan: c }); return undefined; },
+  onSend: (it, [self, ch]) => { const c = chan(it, ch); c.rc++; sel(it, self).arms.push({ kind: "send", chan: c }); return undefined; },
+  onTimeout: (it, [self, ms]) => { sel(it, self).arms.push({ kind: "timer", at: (it as InterpCo).clock + Math.max(0, Number(ms as bigint)) }); return undefined; },
+};
+// onRead and onWrite are generic over AsFd: the descriptor is what the instantiated type's own rawFd method returns
+const fdArm = (kind: "read" | "write", ty: string | undefined): Native => (it, [self, h]) => {
+  const fn = it.fns.has(`${ty}$AsFd$rawFd`) ? `${ty}$AsFd$rawFd` : `${ty}$rawFd`;
+  sel(it, self).arms.push({ kind, fd: Number(it.callNamed(fn, [h!]) as bigint) });
+  return undefined;
+};
+const SELECT_WAIT: CoNative = function* (it, [self]) {
+  const o = sel(it, self);
+  for (;;) {
+    for (let i = 0; i < o.arms.length; i++) if (armReady(it, o.arms[i]!)) return BigInt(i);
+    const me = it.cur, net = netWaiters(it);
+    let at = Infinity, onNet = false;
+    for (const a of o.arms) {
+      if (a.kind === "recv") a.chan!.recvW.push(me);
+      else if (a.kind === "send") a.chan!.sendW.push(me);
+      else if (a.kind === "timer") at = Math.min(at, a.at!);
+      else if (!onNet) { net.ts.push(me); onNet = true; }
+    }
+    const entry = at < Infinity ? { t: me, at } : undefined;
+    if (entry) it.sleepers.push(entry);
+    yield* it.park("Select.wait");
+    for (const a of o.arms) { if (a.chan) { a.chan.recvW = a.chan.recvW.filter(t => t !== me); a.chan.sendW = a.chan.sendW.filter(t => t !== me); } }
+    if (onNet) net.ts = net.ts.filter(t => t !== me);
+    if (entry) { const k = it.sleepers.indexOf(entry); if (k >= 0) it.sleepers.splice(k, 1); }
+  }
 };
 
 // ── WaitGroup ──
@@ -279,6 +345,14 @@ function lookup(name: string): Native | undefined {
     if (g) { const n = g as unknown as Native; n.co = true; return n; }
     return undefined;
   }
+  m = /^Select\$([A-Za-z]+)(?:_(.+))?$/.exec(name);
+  if (m) {
+    if (m[1] === "onRead" || m[1] === "onWrite") return fdArm(m[1] === "onRead" ? "read" : "write", m[2]);
+    if (m[1] === "wait") { const n = SELECT_WAIT as unknown as Native; n.co = true; return n; }
+    return SELECT_NATIVES[m[1]!];
+  }
+  if (name === "Select$Drop$drop") return () => undefined;
+  if (name === "ensureTimersLive") return () => undefined; // a scheduler always exists under the task interpreter
   if (/^Channel_.+?\$Drop\$drop$/.test(name) || /^(WaitGroup|Once|Atomic\w+)\$Drop\$drop$/.test(name)) return () => undefined;
   m = WG.exec(name);
   if (m) {

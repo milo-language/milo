@@ -12,9 +12,10 @@ import type { Function as AstFn, Program } from "./ast";
 import type { CheckResult } from "./checker";
 import { Interp, type Frame, type RunResult } from "./interp";
 import { InterpGen, type Gen } from "./interp-gen";
-import { NeedTasks, Panic, type ClosureV, type Slot, type Value } from "./interp-values";
+import { ExitProgram, NeedTasks, Panic, type ClosureV, type Slot, type Value } from "./interp-values";
 import type { Native } from "./interp-natives";
 import type { SysOptions } from "./interp-sys";
+import { replyAndClose } from "./interp-net";
 
 interface Ctx { frames: Frame[]; temps: Slot[]; depth: number; pend: Slot[] }
 export interface Task {
@@ -28,6 +29,7 @@ export interface Task {
   scope: { live: number; waiter: Task | null } | null;
   cacheable: boolean; // spawned with the default stack size
   why: string; // what a parked task waits for, for the deadlock report
+  panicReply?: { fd: number; bytes: Uint8Array }; // R-TASK-PANIC: sent on fd if the task panics
 }
 
 // The scheduler runs this many tasks before it moves the front of the queue to the back (std/runtime
@@ -50,6 +52,8 @@ export class InterpCo extends InterpGen {
   // through spawnRaw and does not count. Approximated by whether either of those natives ran.
   greenMain = false;
   scopeSpawned = false;
+  // a task waited on a descriptor: the scheduler allocated its table of fd waiters, one more block it leaves behind (R-TASK-ABANDON)
+  fdWaited = false;
 
   // R-TASK-PICK: the scheduling decision. Takes the ready tasks, front of the queue first, and returns
   // the index to run. FIFO by default, as the library's run queue is.
@@ -182,7 +186,7 @@ export class InterpCo extends InterpGen {
     // No task left: a green main tears the scheduler down; a plain main (scope-only programs) never does.
     if (this.tasks.size === 0 && (this.greenMain || !this.scopeSpawned)) return;
     const asleep = new Set(this.sleepers.map(x => x.t));
-    let n = 5 + this.cachedContexts;
+    let n = 5 + this.cachedContexts + (this.fdWaited ? 1 : 0);
     for (const t of this.tasks.values()) n += asleep.has(t) ? 6 : 3;
     for (let i = 0; i < n; i++) this.alloc();
   }
@@ -208,9 +212,12 @@ export class InterpCo extends InterpGen {
       let r: IteratorResult<unknown, Value>;
       try { r = task.gen!.next(); }
       catch (e) {
+        // R-TASK-ABANDON: exit from a task leaves the scheduler up and the other tasks where they stand, as main returning does
+        if (e instanceof ExitProgram && !e.killed) this.leakRuntime();
         // R-TASK-PANIC: a panic in a task that is not main and has no open scope retires that task, not the program
         if (!(e instanceof Panic) || task.isMain || task.scopesOpen > 0) throw e;
         this.err.push(...new TextEncoder().encode(e.message + "\n"));
+        if (task.panicReply) replyAndClose(this, task.panicReply.fd, task.panicReply.bytes);
         this.taskPanics.push(e.message);
         this.aborted = false;
         r = { done: true, value: undefined };

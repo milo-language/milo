@@ -489,7 +489,7 @@ export class Interp {
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held, false) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) this.enterContracts(fn);
@@ -901,6 +901,7 @@ export class Interp {
     if (to.tag === "bool" && typeof v === "boolean") return v;
     // R-MEM-ADDR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
     if (to.tag === "ptr") return this.mem.castToPtr(v, from, to);
+    if (to.tag === "cfn" && (isPtr(v) || v === 0n)) return this.mem.castToCfn(v, from); // R-FNPTR
     if (to.tag === "string" && isStr(v)) return this.share(v, "cast");
     return this.unsupported(`cast ${from.tag} -> ${to.tag} of ${describe(v)}`);
   }
@@ -1088,8 +1089,7 @@ export class Interp {
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
       case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
     }
-    if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
-    if (this.cr.closureCalls.has(e)) {
+    if (this.cr.closureCalls.has(e) || this.cr.cfnCalls.has(e)) { // R-FNPTR: a C function pointer held in a variable is called like a closure
       const mark = this.temps.length;
       const r = this.callValue(this.peek({ kind: "Ident", name: e.func } as Expr), this.evalArgs(e.args));
       this.dropTemps(mark);
@@ -1158,7 +1158,7 @@ export class Interp {
       if (this.cr.heapMethodReceivers.has(e)) recv = { kind: "UnaryOp", op: "*", operand: e.object } as Expr; // h.m() means (*h).m()
       return this.callResolved(resolved, e.args, e, undefined, recv);
     }
-    if (this.cr.fnFieldCalls.has(e)) {
+    if (this.cr.fnFieldCalls.has(e) || this.cr.cfnFieldCalls.has(e)) { // R-FNPTR: a C function pointer in a field is called like a closure
       const callee = this.peek({ kind: "FieldAccess", object: e.object, field: m } as Expr);
       return this.callValue(callee, this.evalArgs(e.args));
     }

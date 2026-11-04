@@ -69,7 +69,7 @@ export class Sys {
     this.cwd = o.cwd ?? "/";
     this.env = new Map(Object.entries(o.env ?? {}));
     for (const d of ["/", "/tmp", "/var", "/var/tmp"]) this.files.set(d, { dir: true, data: new Uint8Array(0), size: 0, mode: d === "/tmp" ? 0o777 : 0o755, mtimeMs: 0 });
-    this.files.set("/dev", { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
+    for (const d of ["/dev", "/dev/fd", "/proc", "/proc/self", "/proc/self/fd"]) this.files.set(d, { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
     for (const [name, dev] of [["null", "null"], ["zero", "zero"], ["urandom", "random"], ["random", "random"]] as const) {
       this.files.set("/dev/" + name, { dir: false, data: new Uint8Array(0), size: 0, mode: 0o666, mtimeMs: 0, dev });
     }
@@ -100,6 +100,8 @@ export class Sys {
   }
   // R-SYS-FS
   list(p: string): { name: string; dir: boolean }[] {
+    // R-NET-FD: the directory of open descriptors lists this run's table (a leak shows as growth)
+    if (p === "/dev/fd" || p === "/proc/self/fd") return [...this.fds.keys()].map(k => ({ name: String(k), dir: false }));
     const out = new Map<string, boolean>();
     if (this.hostAllowed(p)) for (const e of this.o.hostFs!.readdir(p) ?? []) if (!this.gone.has(norm(p, e.name))) out.set(e.name, e.dir);
     for (const [k, n] of this.files) if (k !== p && parentOf(k) === p) out.set(k.slice(p === "/" ? 1 : p.length + 1), n.dir);
@@ -450,7 +452,9 @@ function unmodelled(sym: string): string {
 
 // The extern `fn` as a native, so a call that blocks (a pipe read, accept, pthread_join) parks its task
 // through runNative. The value is the result, or a generator the task interpreter drives.
+// R-NET-BLOCK
 const externNatives = new WeakMap<AstFn, Native>();
+// R-NET-BLOCK
 export function externNative(fn: AstFn): Native {
   let nat = externNatives.get(fn);
   if (!nat) {

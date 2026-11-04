@@ -75,7 +75,7 @@ export class InterpGen extends Interp {
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
       const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held, false) : args[i]!));
       held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) (yield* this.enterContracts$g(fn));
@@ -478,8 +478,7 @@ export class InterpGen extends Interp {
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
       case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
     }
-    if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
-    if (this.cr.closureCalls.has(e)) {
+    if (this.cr.closureCalls.has(e) || this.cr.cfnCalls.has(e)) { // R-FNPTR: a C function pointer held in a variable is called like a closure
       const mark = this.temps.length;
       const r = (yield* this.callValue$g((yield* this.peek$g({ kind: "Ident", name: e.func } as Expr)), (yield* this.evalArgs$g(e.args))));
       this.dropTemps(mark);
@@ -525,7 +524,7 @@ export class InterpGen extends Interp {
       if (this.cr.heapMethodReceivers.has(e)) recv = { kind: "UnaryOp", op: "*", operand: e.object } as Expr; // h.m() means (*h).m()
       return (yield* this.callResolved$g(resolved, e.args, e, undefined, recv));
     }
-    if (this.cr.fnFieldCalls.has(e)) {
+    if (this.cr.fnFieldCalls.has(e) || this.cr.cfnFieldCalls.has(e)) { // R-FNPTR: a C function pointer in a field is called like a closure
       const callee = (yield* this.peek$g({ kind: "FieldAccess", object: e.object, field: m } as Expr));
       return (yield* this.callValue$g(callee, (yield* this.evalArgs$g(e.args))));
     }

@@ -46,6 +46,7 @@ class ByteQ {
   eof = false; // the writing end is gone: a read of an empty queue returns 0
   broken = false; // the reading end is gone: a write is EPIPE
   push(b: Uint8Array): void { this.chunks.push(b); this.len += b.length; }
+  // R-NET-IO
   take(k: number): Uint8Array {
     const out = new Uint8Array(Math.min(k, this.len));
     let at = 0;
@@ -94,6 +95,9 @@ const nets = new WeakMap<Sys, Net>();
 function netOf(s: Sys): Net { let x = nets.get(s); if (!x) nets.set(s, (x = new Net())); return x; }
 const coOf = (s: Sys): InterpCo | null => ((s.it as Partial<InterpCo>).coMode ? (s.it as InterpCo) : null);
 const fail = (s: Sys, e: number): bigint => s.setErrno(e);
+// the function a callback argument names: a function pointer, or (for a parameter of function type) the function itself
+// R-FNPTR
+const calleeName = (s: Sys, v: Value): string | undefined => (v && typeof v === "object" && v.k === "fn" ? v.name : s.it.mem.fnName(v));
 
 // R-NET-BLOCK: park the calling task until `kick` wakes the list or the timeout (virtual ms) passes; true when it timed out.
 // Without a scheduler nothing can ever wake the caller: that is a stuck state, or, with a timeout, the clock moving on.
@@ -168,13 +172,14 @@ function putAddr(s: Sys, buf: Value, lenp: Value, a: Addr): void {
 // R-NET-ADDR: only the loopback interface and the wildcard exist in this world
 const isLocalIp = (a: Addr): boolean => a.fam === AF().UNIX || isZero(a.ip) || (a.ip.length === 4 ? a.ip[0] === 127 : sameBytes(a.ip, LOOP6));
 const loopFor = (fam: number): Addr => ({ fam, ip: fam === AF().INET ? LOOP4 : LOOP6, port: 0, path: "" });
-// does a bound listener address accept a connect to `to`?
+// does a bound listener address accept a connect to `to`? R-NET-ADDR
 function addrAccepts(bound: Addr, to: Addr): boolean {
   if (bound.fam === AF().UNIX) return to.fam === bound.fam && bound.path === to.path;
   if (bound.port !== to.port) return false;
   if (bound.fam === to.fam) return isZero(bound.ip) || sameBytes(bound.ip, to.ip) || (isZero(to.ip) && sameBytes(bound.ip, loopFor(to.fam).ip));
   return bound.fam === AF().INET6 && to.fam === AF().INET && isZero(bound.ip); // an IPv6 wildcard also takes IPv4, the OS default
 }
+// R-NET-ADDR
 function parseIp(text: string, fam: number): Uint8Array | null {
   if (fam === AF().INET) {
     const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
@@ -206,9 +211,11 @@ function parseIp(text: string, fam: number): Uint8Array | null {
 function newSock(dom: number, type: number): Sock {
   return { k: "sock", dom, type, nb: false, refs: 1, local: null, peer: null, rx: new ByteQ(), tx: null, dgrams: [], listening: false, backlog: [], backlogMax: 0, peerSock: null, error: 0, opts: new Map(), shutRd: false, closed: false };
 }
+// R-NET-FD
 function fdOf(s: Sys, fd: Value): Fd | undefined { return s.fds.get(n(fd)); }
+// R-NET-FD
 function objFd(s: Sys, o: FdObj): bigint { return BigInt(s.allocFd({ node: null, path: "", pos: 0, read: true, write: true, append: false, obj: o })); }
-// the socket behind a descriptor: sets errno when it is none
+// the socket behind a descriptor: sets errno when it is none. R-NET-SOCK
 function sockOf(s: Sys, fd: Value): Sock | null {
   const f = fdOf(s, fd);
   if (!f) { fail(s, E().EBADF); return null; }
@@ -301,7 +308,7 @@ function* sendDgram(s: Sys, o: Sock, buf: Value, count: number, to: Addr | null)
   const dest = to ?? o.peer;
   if (!dest) return fail(s, E().ENOTCONN);
   const bytes = s.it.mem.readBytes(buf, count, "sendto");
-  const target = [...netOf(s).socks].find(x => x.type === 2 && x.local && addrAccepts(x.local, dest));
+  const target = o.peerSock ?? [...netOf(s).socks].find(x => x.type === 2 && x.local && addrAccepts(x.local, dest));
   if (target) {
     target.dgrams.push({ from: o.local ?? { ...loopFor(dest.fam), port: autoPort(s, o) }, data: bytes });
     kick(s, netOf(s).q);
@@ -321,6 +328,7 @@ function* recvDgram(s: Sys, o: Sock, buf: Value, count: number, from: Value, fro
     yield* waitOn(s, netOf(s).q, "recvfrom with no datagram");
   }
 }
+// R-NET-DGRAM: a datagram socket that sends before binding gets a port
 function autoPort(s: Sys, o: Sock): number {
   if (!o.local) o.local = { ...loopFor(o.dom), port: allocPort(s) };
   return o.local.port;
@@ -409,7 +417,8 @@ function* acceptSock(s: Sys, o: Sock, addr: Value, lenp: Value): Gen<bigint> {
 function socketPair(s: Sys, dom: number, type: number, out: Value): bigint {
   if (dom !== AF().UNIX) return fail(s, E().EAFNOSUPPORT);
   const a = newSock(dom, type), b = newSock(dom, type);
-  a.tx = b.rx; b.tx = a.rx; a.peerSock = b; b.peerSock = a;
+  if (type === 1) { a.tx = b.rx; b.tx = a.rx; }
+  a.peerSock = b; b.peerSock = a;
   const un = { fam: dom, ip: new Uint8Array(0), port: 0, path: "" };
   a.peer = un; b.peer = un;
   const m = s.it.mem, x = objFd(s, a), y = objFd(s, b);
@@ -476,7 +485,7 @@ function* raiseSignal(s: Sys, sig: number): Gen<void> {
   const h = net.handlers.get(sig) ?? 0n;
   if (h === 1n && canBlock) return; // SIG_IGN
   if (h !== 0n && h !== 1n && canBlock) {
-    const name = s.it.mem.fnName(h);
+    const name = calleeName(s, h);
     if (!name) return s.it.stuck("R-NET-SIG", "a signal handler that is not a function pointer");
     const it = coOf(s);
     if (it) yield* it.callNamed$g(name, [BigInt(sig)]); else s.it.callNamed(name, [BigInt(sig)]);
@@ -529,7 +538,7 @@ function pthreadCreate(s: Sys, a: Value[]): bigint {
   if (!it) throw new NeedTasks();
   const net = netOf(s);
   net.usedThreads = true;
-  const name = s.it.mem.fnName(a[2]!);
+  const name = calleeName(s, a[2]!);
   if (!name) return s.it.stuck("R-NET-THREAD", "pthread_create with a start routine that is not a function pointer");
   const th: Thread = { id: 0, done: false, ret: 0n, detached: false, q: new WaitQ() };
   const t = it.spawnThread(name, [a[3]!], r => { th.done = true; th.ret = r; kick(s, th.q); });
@@ -735,6 +744,19 @@ export const NET: Record<string, NetFn> = {
   pthread_rwlock_wrlock: (s, a) => (function* (): Gen<Value> { const l = objAt<RwLock>(s, a[0]!, newRw); while (l.writer || l.readers > 0) yield* waitOn(s, l.q, "pthread_rwlock_wrlock"); l.writer = true; return 0n; })(),
   pthread_rwlock_unlock: (s, a) => { const l = objAt<RwLock>(s, a[0]!, newRw); if (l.writer) l.writer = false; else if (l.readers > 0) l.readers--; kick(s, l.q); return 0n; },
 
+  // R-FNPTR: the comparator is a function pointer; it sees two scratch copies of the elements being compared
+  qsort: (s, [base, nmemb, size, cmp]) => {
+    const m = s.it.mem, name = calleeName(s, cmp!), k = n(nmemb!), w = n(size!);
+    if (!name) return s.it.stuck("R-FNPTR", "qsort with a comparator that is not a function pointer");
+    if (k < 2 || w === 0) return undefined;
+    const all = m.readBytes(base!, k * w, "qsort");
+    const elems = Array.from({ length: k }, (_, i) => all.slice(i * w, (i + 1) * w));
+    const a = m.staticBytes(new Uint8Array(w)), b = m.staticBytes(new Uint8Array(w));
+    elems.sort((x, y) => { m.writeBytes(a, x); m.writeBytes(b, y); return Number(s.it.callNamed(name, [a, b]) as bigint); });
+    m.writeBytes(base!, Uint8Array.from(elems.flatMap(e => [...e])), "qsort");
+    return undefined;
+  },
+
   // ── sleeping with threads around ──
   usleep: (s, a, base) => sleepFor(s, n(a[0]!) / 1000, base!, a),
   sleep: (s, a, base) => sleepFor(s, n(a[0]!) * 1000, base!, a),
@@ -790,6 +812,7 @@ function* pollCall(s: Sys, fds: Value, nfds: number, timeout: number): Gen<bigin
 // ── natives the green IO path calls ──
 // R-NET-BLOCK: a green task waiting for a descriptor to be readable or writable parks until it is
 function* waitFd(it: Interp, fd: number, want: number): Gen<Value> {
+  (it as InterpCo).fdWaited = true;
   const s = (it.sys ??= new Sys(it, it.sysOptions));
   const net = netOf(s);
   for (;;) {
@@ -803,5 +826,28 @@ const NATIVES: Record<string, Native> = {
   schedulerWaitWrite: ((it: Interp, [fd]: Value[]) => waitFd(it, n(fd!), POLLOUT)) as unknown as Native,
 };
 for (const k of Object.keys(NATIVES)) NATIVES[k]!.co = true;
-/** The native for a std function that waits on a descriptor, or undefined. */
+/** The native for a std function that waits on a descriptor, or undefined. R-NET-BLOCK */
 export function netNativeFor(name: string): Native | undefined { return NATIVES[name]; }
+
+// R-NET-POLL: can a read (or write) on the descriptor go ahead now? For Select's fd arms
+export function fdReady(it: Interp, fd: number, write: boolean): boolean {
+  const s = (it.sys ??= new Sys(it, it.sysOptions));
+  const f = s.fds.get(fd);
+  return !f || (readiness(f.obj) & ((write ? POLLOUT : POLLIN) | POLLERR | POLLHUP)) !== 0;
+}
+// the list every task blocked on a descriptor waits on (a Select with an fd arm joins it). R-SELECT
+export function netWaiters(it: Interp): { ts: Task[] } {
+  return netOf((it.sys ??= new Sys(it, it.sysOptions))).q;
+}
+
+// R-TASK-PANIC: the reply a panicking connection task leaves for its client, written and closed without blocking
+export function replyAndClose(it: Interp, fd: number, bytes: Uint8Array): void {
+  const s = (it.sys ??= new Sys(it, it.sysOptions));
+  const f = s.fds.get(fd);
+  if (!f?.obj) return;
+  const o = f.obj;
+  const q = o.k === "pipe" ? (o.read ? null : o.q) : o.tx;
+  if (q && !q.broken) q.push(bytes.slice(0, Math.max(0, BUF_CAP - q.len)));
+  s.fds.delete(fd);
+  release(s, o);
+}
