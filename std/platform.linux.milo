@@ -142,6 +142,12 @@ pub fn soReuseaddr(): i32 {
     return 2
 }
 
+// SO_REUSEPORT: several listeners on one port, the kernel spreading connections over them.
+// -1 on a target where that is not available.
+pub fn soReuseport(): i32 {
+    return 15
+}
+
 pub fn mapPrivateAnon(): i32 {
     return 34
 }

@@ -175,6 +175,10 @@ pub fn soReuseaddr(): i32 {
     return 4
 }
 
+pub fn soReuseport(): i32 {
+    return -1
+}
+
 pub fn mapPrivateAnon(): i32 {
     return 4098
 }

@@ -40,6 +40,7 @@ from "std/platform" import {
     makeSockaddr,
     solSocket,
     soReuseaddr,
+    soReuseport,
     makeSockaddr6,
     afInet6,
     ensureNetInit,
@@ -648,6 +649,20 @@ impl TcpListener {
     // Binds exactly `addr`:`port`. Started under systemd socket activation for this
     // process, it errs naming `inheritedOr`, the constructor that adopts the passed socket.
     fn bindAddr(addr: u32, port: u16): Result<TcpListener, NetError> {
+        return TcpListener.bindAddrWith(addr, port, false)
+    }
+
+    // bindAddr with SO_REUSEPORT: several listeners may bind the same address and port, and the
+    // kernel spreads incoming connections across them (Linux; std/http gives each worker one).
+    // Errs where the target has no SO_REUSEPORT.
+    fn bindAddrReusePort(addr: u32, port: u16): Result<TcpListener, NetError> {
+        if soReuseport() < 0 {
+            return Result.Err(NetError.Other("SO_REUSEPORT is not available on this target"))
+        }
+        return TcpListener.bindAddrWith(addr, port, true)
+    }
+
+    fn bindAddrWith(addr: u32, port: u16, reusePort: bool): Result<TcpListener, NetError> {
         if activationPending() {
             return Result.Err(activationRefusal("TcpListener.bindAddr"))
         }
@@ -665,6 +680,9 @@ impl TcpListener {
 
             let one: i32 = 1
             unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
+            if reusePort {
+                unsafe { setsockopt(fd, solSocket(), soReuseport(), one, 4) }
+            }
 
             let sa = makeSockaddr(port, addr)
             if bindIn(fd, sa) < 0 {

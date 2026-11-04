@@ -159,6 +159,12 @@ pub fn soReuseaddr(): i32 {
     return 4
 }
 
+// SO_REUSEPORT: several listeners on one port. Darwin lets them bind but sends the traffic to
+// one of them rather than spreading it, so std/http does not use it here.
+pub fn soReuseport(): i32 {
+    return 512
+}
+
 pub fn mapPrivateAnon(): i32 {
     return 4098
 }

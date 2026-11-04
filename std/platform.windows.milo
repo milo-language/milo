@@ -142,6 +142,10 @@ pub fn soReuseaddr(): i32 {
     return 4
 }
 
+pub fn soReuseport(): i32 {
+    return -1
+}
+
 // _O_BINARY (0x8000) is in both: without it the UCRT translates every \n written through
 // a CRT fd into \r\n, so a file written by Milo would not match its own bytes.
 // _O_RDONLY|_O_BINARY
