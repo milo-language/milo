@@ -955,7 +955,7 @@ export class TypeChecker {
   // the statement after its if/match, so its moves are recorded here instead: a move
   // before `break` reaches the code after the loop, one before `continue` reaches the
   // next-iteration check.
-  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[]; reachable: boolean }[] = [];
+  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[]; reachable: boolean; stringMoves: Map<VarInfo, number> }[] = [];
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
@@ -3262,8 +3262,13 @@ export class TypeChecker {
   }
 
   private beginLoopMoves(): Map<VarInfo, MoveSnapshot> {
-    this.loopFrames.push({ breaks: [], continues: [], reachable: this.reachable });
-    return this.snapshotMoveState();
+    // A string already moved at loop entry is only provisionally moved (the move is a recorded site that a
+    // later use turns into a share). Remember how many sites each has, to notice the body adding its own.
+    const stringMoves = new Map<VarInfo, number>();
+    const pre = this.snapshotMoveState();
+    for (const [info, snap] of pre) if (snap.moved && info.type.tag === "string") stringMoves.set(info, this.stringSiteCount(info));
+    this.loopFrames.push({ breaks: [], continues: [], reachable: this.reachable, stringMoves });
+    return pre;
   }
 
   // Leaves the current state at the loop's exit. The next iteration starts from the
@@ -3280,7 +3285,7 @@ export class TypeChecker {
     const exits = [...frame.breaks];
     if (reentry.length > 0) {
       this.joinMoveStates(reentry);
-      this.checkLoopMoves(pre, sp);
+      this.checkLoopMoves(pre, sp, frame.stringMoves);
       if (condCanExit) exits.unshift(this.snapshotMoveState());
     }
     if (condCanExit) exits.unshift(pre);
@@ -3313,7 +3318,13 @@ export class TypeChecker {
   // After a loop body: a move inside it would run a second time on the next iteration,
   // so it is an error unless the only path that moved also left the loop. Applies one
   // level down too — a field moved out in the body is just as gone on iteration two.
-  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined) {
+  private stringSiteCount(info: VarInfo): number {
+    let n = 0;
+    for (const sites of this.stringMoveSites.get(info)?.values() ?? []) n += sites.length;
+    return n;
+  }
+
+  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined, stringMoves: Map<VarInfo, number>) {
     const partialGlobals = this.partialMoveSnaps.get(pre);
     for (const scope of this.scopes) {
       const leftOut = partialGlobals !== undefined && scope === this.globalScope;
@@ -3324,6 +3335,9 @@ export class TypeChecker {
         const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
         if (!before.moved && info.moved && !this.shareStringMoves(info, "")) this.error(`cannot move '${name}' out of a loop`, sp);
+        // Moved before the loop, revived by a use in the body (that turned the earlier move into a share) and
+        // moved again there: the next iteration reads it, so every move of it is a share.
+        else if (before.moved && info.moved && stringMoves.has(info) && this.stringSiteCount(info) > stringMoves.get(info)!) this.shareStringMoves(info, "");
         for (const p of [...info.movedPlaces ?? []]) {
           if (before.places.includes(p) || this.shareStringMoves(info, p)) continue;
           this.error(`cannot move '${name}${p}' out of a loop`, sp);
@@ -7322,7 +7336,7 @@ export class TypeChecker {
               // Moves are judged by the per-instantiation re-check; the frame only gives
               // this body's break/continue somewhere to record into.
               const loopReachable = this.reachable;
-              this.loopFrames.push({ breaks: [], continues: [], reachable: loopReachable });
+              this.loopFrames.push({ breaks: [], continues: [], reachable: loopReachable, stringMoves: new Map() });
               this.loopDepth++;
               for (const s of stmt.body) this.checkStmt(s, fnRetType);
               this.loopDepth--;

@@ -1,0 +1,29 @@
+// A string captured by a `move` closure before a loop is only provisionally moved (the
+// checker records the capture as a move it can turn into a share). A by-value use of it in
+// the loop body revived it and moved it again, and the loop-move check took the first move
+// for the second: iteration two read an emptied slot (the interpreter got stuck, the
+// backend verifier rejected the program). Found by scripts/gen-programs.ts.
+// @expect: 5
+// @expect: 5
+// @expect: 5
+// @expect: 10
+// @expect: 10
+fn take(a: string): i64 {
+    return a.len
+}
+
+fn take2(a: string, b: string): i64 {
+    return a.len + b.len
+}
+
+fn main(): i32 {
+    let e = "hello"
+    let g = move(k: i64): i64 => k + e.len
+    for i in 0..3 {
+        print(take(e))
+    }
+    for i in 0..2 {
+        print(take2(e, e))
+    }
+    return 0
+}
