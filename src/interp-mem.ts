@@ -290,6 +290,21 @@ export class Mem {
     if (v.k === "arr") return this.castToPtr(v, { tag: "array", element: param.inner, size: v.e.length }, param);
     return v;
   }
+  // R-FNPTR: a function used as a pointer value is a read-only 8-byte allocation of its own, one per function, so the
+  // address is stable, compares equal to itself and can be handed to C (signal, pthread_create, qsort); calling it goes back by name.
+  private fnPtrs = new Map<string, PtrV>();
+  private fnNames = new Map<Alloc, string>();
+  fnPtr(name: string): PtrV {
+    let p = this.fnPtrs.get(name);
+    if (!p) {
+      p = this.staticBytes(new Uint8Array(8), true);
+      this.fnPtrs.set(name, p);
+      this.fnNames.set(p.a, name);
+    }
+    return p;
+  }
+  // R-FNPTR
+  fnName(p: Value): string | undefined { return p && typeof p === "object" && p.k === "ptr" && p.off === 0 ? this.fnNames.get(p.a) : undefined; }
   // R-MEM-ADDR
   castToPtr(v: Value, from: TypeKind, to: TypeKind): Value {
     if (isPtr(v)) return v;
@@ -302,6 +317,7 @@ export class Mem {
       }
       if (v.k === "vec") return this.vecPtr(v, from.tag === "vec" || from.tag === "array" ? from.element : U8);
       if (v.k === "str") return this.strPtr(v);
+      if (v.k === "fn") return this.fnPtr(v.name);
     }
     return this.it.unsupported(`cast ${from.tag} -> ${to.tag}`);
   }

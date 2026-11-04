@@ -86,6 +86,21 @@ export class InterpCo extends InterpGen {
     this.runq.push(t);
     return t;
   }
+  // R-NET-THREAD: pthread_create's start routine, by function name, as one more task. A panic in it ends the program (it is no green
+  // task: scopesOpen > 0), and `done` gets the routine's return value for pthread_join.
+  spawnThread(name: string, args: Value[], done: (ret: Value) => void): Task {
+    const t = this.spawnTask({ k: "closure", params: [], paramRefs: [], body: [], env: [], owning: false, ret: { tag: "void" } }, null, false);
+    t.scopesOpen = 1;
+    t.gen = this.threadBody(name, args, done);
+    return t;
+  }
+  // R-NET-THREAD
+  *threadBody(name: string, args: Value[], done: (ret: Value) => void): Gen {
+    const r = yield* this.callNamed$g(name, args);
+    this.dropTemps(0);
+    done(r);
+    return undefined;
+  }
   // R-TASK-PANIC R-TASK-MAIN
   *taskBody(f: ClosureV): Gen {
     yield* this.callValue$g(f, []);

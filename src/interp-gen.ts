@@ -3,7 +3,7 @@
 import { type Contract, type Expr, type Function as AstFn, type Pattern, type Stmt, floatNamespaceConst } from "./ast";
 import { relative } from "path";
 import { type TypeKind, ARRAY_COMBINATORS, SLICE_COMBINATORS } from "./types";
-import { callExtern } from "./interp-sys";
+import { externNative } from "./interp-sys";
 
 import { Interp } from "./interp";
 import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
@@ -69,7 +69,7 @@ export class InterpGen extends Interp {
     return v;
   }
   *callFn$g(fn: AstFn, args: Value[]): Gen {
-    if (fn.isExtern) return callExtern(this, fn, args);
+    if (fn.isExtern) return (yield* this.runNative$g(externNative(fn), args));
     if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {

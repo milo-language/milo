@@ -20,7 +20,7 @@ import {
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
 import { Mem, isPtr, memSlot } from "./interp-mem";
-import { callExtern, type Sys, type SysOptions } from "./interp-sys";
+import { externNative, type Sys, type SysOptions } from "./interp-sys";
 import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
@@ -483,7 +483,7 @@ export class Interp {
   }
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
-    if (fn.isExtern) return callExtern(this, fn, args);
+    if (fn.isExtern) return this.runNative(externNative(fn), args);
     if (++this.depth > 3000) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
@@ -1120,9 +1120,9 @@ export class Interp {
   // generator that yields to the scheduler; only the task interpreter can run one.
   // E-CALL
   runNative(nat: Native, args: Value[], e?: Expr): Value {
-    if (!nat.co) return nat(this, args, e);
+    if (!nat.co && !nat.maybeCo) return nat(this, args, e);
     // a task operation needs the scheduler: from the plain interpreter, ask for a rerun with tasks
-    if (!this.coMode) throw new NeedTasks();
+    if (nat.co && !this.coMode) throw new NeedTasks();
     // Reached from plain code (a global's initializer, a closure a library call runs): it can run only
     // as far as it goes without parking.
     const r = nat(this, args, e) as Value | Generator<unknown, Value, unknown>;
