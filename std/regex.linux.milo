@@ -41,11 +41,12 @@ var _regexLocaleSet: bool = false
 // Category 0 is LC_CTYPE on glibc. "C.UTF-8" is the locale that is always present;
 // "en_US.UTF-8" needs locales to be generated and is absent from most containers.
 fn regexEnsureUtf8Ctype(): void {
-    if _regexLocaleSet {
-        return
-    }
-    _regexLocaleSet = true
+    // One winner per process: regex runs on every scheduler thread of a multi-worker server.
     unsafe {
+        // The CAS returns the value that was there: true means another caller claimed it.
+        if _atomicCasBool(_regexLocaleSet.addrOf() as *u8, false, true) {
+            return
+        }
         let want = "C.UTF-8"
         setlocale(0, want.cstr())
     }

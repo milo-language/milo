@@ -83,10 +83,15 @@ var gSinkOwned: bool = false
 // systemd sets it when stderr is the journal, which stamps every line itself, so ours
 // would be a second, redundant time on each record.
 fn logTimestampsOn(): bool {
-    if gTimestamps < 0 {
-        gTimestamps = if Env.get("JOURNAL_STREAM").isSome() { 0 } else { 1 }
+    // Atomic because handlers on every scheduler thread of a multi-worker server reach this;
+    // two threads deciding at once store the same answer.
+    unsafe {
+        let word = gTimestamps.addrOf() as *u8
+        if _atomicLoadI32(word) < 0 {
+            _atomicStoreI32(word, if Env.get("JOURNAL_STREAM").isSome() { 0 } else { 1 })
+        }
+        return _atomicLoadI32(word) == 1
     }
-    return gTimestamps == 1
 }
 
 fn logLevelName(level: LogLevel): string {

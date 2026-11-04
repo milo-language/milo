@@ -58,11 +58,12 @@ var _regexLocaleSet: bool = false
 
 // Category 2 is LC_CTYPE on darwin.
 fn regexEnsureUtf8Ctype(): void {
-    if _regexLocaleSet {
-        return
-    }
-    _regexLocaleSet = true
+    // One winner per process: regex runs on every scheduler thread of a multi-worker server.
     unsafe {
+        // The CAS returns the value that was there: true means another caller claimed it.
+        if _atomicCasBool(_regexLocaleSet.addrOf() as *u8, false, true) {
+            return
+        }
         let want = "UTF-8"
         setlocale(2, want.cstr())
     }

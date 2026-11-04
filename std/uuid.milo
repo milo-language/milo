@@ -40,11 +40,10 @@ fn hexNibble(ch: u8): i32 {
 // Monotonic counter for v7 (RFC 9562 §6.2, "monotonic random" method): ids minted
 // inside the same millisecond still sort in creation order. Reseeded randomly with
 // headroom on each new millisecond so it is not a predictable sequence. Per
-// process, and not synchronized across threads — a racing thread can reuse a
-// counter value, which costs ordering but not uniqueness (the random tail still
-// separates the ids).
-var _v7LastMs: i64 = 0
-var _v7Seq: i64 = 0
+// process and shared by every thread: one word holding (millisecond << 12 | counter),
+// advanced with a compare-and-swap so ids stay ordered across the schedulers of a
+// multi-worker server. Only ever touched through atomics.
+var _v7State: i64 = 0
 
 // Uuid — 16 bytes in big-endian (network) order. `bytes` is the canonical
 // representation: read it for binary interop, and build a Uuid from foreign bytes
@@ -80,27 +79,38 @@ impl Uuid {
     // database keys.
     //
     // Ids minted inside the same millisecond still sort in creation order. The counter
-    // is per process and not synchronized across threads: a racing thread can reuse a
-    // counter value, which costs ordering but not uniqueness.
+    // is per process and shared by all threads (one atomic word), so ids are ordered
+    // across threads too.
     fn v7(): Uuid {
-        var ms = epochMillis()
-        // Counter exhausted inside this millisecond: waiting for the next tick is
-        // the only way to stay ordered without borrowing bits from the future.
-        if ms == _v7LastMs && _v7Seq >= 4095 {
-            while epochMillis() == ms {
-                sleepMs(1)
-            }
-            ms = epochMillis()
-        }
+        var ms: i64 = 0
         var seq: i64 = 0
-        if ms == _v7LastMs {
-            _v7Seq += 1
-            seq = _v7Seq
-        } else {
-            _v7LastMs = ms
-            // 11 random bits: leaves 2048 increments of headroom in this millisecond.
-            _v7Seq = (Random.u32() as i64) & 0x7ff
-            seq = _v7Seq
+        unsafe {
+            let word = _v7State.addrOf() as *u8
+            while true {
+                ms = epochMillis()
+                let cur = _atomicLoadI64(word)
+                let curMs = cur >> 12
+                let curSeq = cur & 0xfff
+                var next: i64 = 0
+                if ms > curMs {
+                    // A new millisecond: 11 random bits leave 2048 increments of headroom.
+                    next = (ms << 12) | ((Random.u32() as i64) & 0x7ff)
+                } else if curSeq >= 4095 {
+                    // Counter exhausted inside this millisecond: waiting for the next tick is
+                    // the only way to stay ordered without borrowing bits from the future.
+                    sleepMs(1)
+                    continue
+                } else {
+                    // Same millisecond (or the clock went back): keep counting from the last
+                    // id any thread minted, so ids stay ordered across threads.
+                    next = cur + 1
+                }
+                if _atomicCasI64(word, cur, next) == cur {
+                    ms = next >> 12
+                    seq = next & 0xfff
+                    break
+                }
+            }
         }
 
         var b: [u8; 16] = [0; 16]
