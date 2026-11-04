@@ -12,7 +12,7 @@
   "src/checker-mutability.ts": 172,
   "src/checker-program-passes.ts": 2288,
   "src/checker-sql.ts": 360,
-  "src/checker.ts": 15574,
+  "src/checker.ts": 15588,
   "src/cli-help.ts": 301,
   "src/const-fold.ts": 167,
   "src/contract-tests.ts": 706,
