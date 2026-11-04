@@ -30,9 +30,6 @@ const GENERATORS = [
 
 // The allocators that take a count and an element size. Each multiplies them itself.
 const COUNTED = ["rtBufAlloc", "rtBufClone", "rtMapAlloc", "rtVecGrowRealloc", "rtVecGrowCopy"];
-
-const MALLOC_LL = /call ptr @(malloc|realloc)\(/;
-// A plain multiply; `@llvm.umul.with.overflow` does not match.
 const MUL_LL = /= mul (nuw |nsw )*i64/;
 // Every spelling of a multiply in the generators: IR text, the typed builder, the milo
 // dialect, and an MLIR builder op.
@@ -57,7 +54,7 @@ describe("allocation choke point", () => {
 
   test("the counted allocators check the multiply and the allocation", () => {
     for (const key of COUNTED) {
-      const text = rtFn(key);
+      const text = rtFn(key).slice(rtFn(key).indexOf("{"));
       // Both halves must survive; a refactor that drops either one re-opens the hole this
       // file exists to keep closed. The overflow test must come before the allocation.
       expect(text, key).toContain("rtMulOverflows(");
