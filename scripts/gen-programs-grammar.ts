@@ -7,7 +7,7 @@
 // Loop bodies never move an outer variable unless they reassign it straight away, and every
 // loop is bounded, so every program terminates.
 
-export type Ty = "int" | "str" | "vi" | "vs" | "res" | "vr" | "rec" | "os" | "mv";
+export type Ty = "int" | "str" | "vi" | "vs" | "res" | "vr" | "rec" | "os" | "mv" | "pk" | "op";
 type Field = "vals" | "tags" | "res";
 interface Var { name: string; ty: Ty; mut: boolean; moved: boolean; partial: Set<Field> }
 type Env = Var[];
@@ -26,9 +26,9 @@ export function rngOf(seed: number): () => number {
 }
 
 const TYPE_TEXT: Record<Ty, string> = {
-  int: "i64", str: "string", vi: "Vec<i64>", vs: "Vec<string>", res: "Res", vr: "Vec<Res>", rec: "Rec", os: "Option<string>", mv: "move (i64) => i64",
+  int: "i64", str: "string", vi: "Vec<i64>", vs: "Vec<string>", res: "Res", vr: "Vec<Res>", rec: "Rec", os: "Option<string>", mv: "move (i64) => i64", pk: "Pkt", op: "Option<Res>",
 };
-const OWNED: Ty[] = ["vi", "vs", "res", "vr", "rec", "os", "mv"];
+const OWNED: Ty[] = ["vi", "vs", "res", "vr", "rec", "os", "mv", "pk", "op"];
 const WORDS = ["a", "bc", "hello", "x y", "q"];
 
 // Prelude pieces, emitted only when a statement used them (so reduced programs stay small).
@@ -42,6 +42,9 @@ const PRELUDE: Record<string, { text: string; needs?: string[] }> = {
   eatRes: { text: `fn eatRes(r: Res): i64 {\n    return r.id\n}`, needs: ["Res"] },
   eatVr: { text: `fn eatVr(v: Vec<Res>): i64 {\n    var t: i64 = 0\n    for r in v {\n        t += r.id\n    }\n    return t\n}`, needs: ["Res"] },
   eatRec: { text: `fn eatRec(r: Rec): i64 {\n    return r.n + r.res.id\n}`, needs: ["Rec"] },
+  Pkt: { text: `enum Pkt { A(Res), B(Vec<i64>), C }`, needs: ["Res"] },
+  mkRes: { text: `fn mkRes(n: i64): Res {\n    return Res { id: n }\n}`, needs: ["Res"] },
+  mkRec: { text: `fn mkRec(n: i64): Rec {\n    return Rec { name: "r", vals: [n], tags: ["t"], res: Res { id: n }, n: n }\n}`, needs: ["Rec"] },
   mk: { text: `fn mk(v: Vec<i64>): move (i64) => i64 {\n    return move (k: i64): i64 => k + sumv(v)\n}`, needs: ["sumv"] },
   callMv: { text: `fn callMv(f: move (i64) => i64, x: i64): i64 {\n    return f(x)\n}` },
   tryA: { text: `fn tryA(x: i64): Result<i64, string> {\n    if x > 5 {\n        return Result.Err($"big {x}")\n    }\n    return Result.Ok(x * 2)\n}` },
@@ -146,6 +149,8 @@ class Gen {
           if (st.length) opts.push(() => `${this.pick(st).name}.len`);
           const recs = env.filter(v => v.ty === "rec" && !v.moved);
           if (recs.length) opts.push(() => `${this.pick(recs).name}.n`);
+          if (this.chance(0.15)) { this.need("mkRec"); opts.push(() => `mkRec(${++this.resId}).res.id`); }
+          if (this.chance(0.15)) { this.need("mkRes"); opts.push(() => `mkRes(${++this.resId}).id`); }
           const rs = this.readable(env, "res");
           if (rs.length) opts.push(() => `${this.pick(rs).name}.id`);
           const mvs = env.filter(v => v.ty === "mv" && !v.moved);
@@ -180,6 +185,7 @@ class Gen {
         const vars = this.movable(env, ctx, "res");
         if (vars.length && this.chance(0.4)) { const v = this.pick(vars); v.moved = true; return v.name; }
         this.need("Res");
+        if (this.chance(0.25)) { this.need("mkRes"); return `mkRes(${++this.resId})`; }
         return `Res { id: ${++this.resId} }`;
       }
       case "rec": {
@@ -193,6 +199,19 @@ class Gen {
         const vars = this.movable(env, ctx, "os");
         if (vars.length && this.chance(0.4)) { const v = this.pick(vars); v.moved = true; return v.name; }
         return this.chance(0.3) ? "Option.None" : `Option.Some(${this.fresh(env, ctx, "str", d + 1)})`;
+      }
+      case "pk": {
+        const vars = this.movable(env, ctx, "pk");
+        if (vars.length && this.chance(0.4)) { const v = this.pick(vars); v.moved = true; return v.name; }
+        this.need("Pkt");
+        const k = this.int(0, 2);
+        return k === 0 ? `Pkt.A(${this.fresh(env, ctx, "res", d + 1)})` : k === 1 ? `Pkt.B(${this.fresh(env, ctx, "vi", d + 1)})` : "Pkt.C";
+      }
+      case "op": {
+        const vars = this.movable(env, ctx, "op");
+        if (vars.length && this.chance(0.4)) { const v = this.pick(vars); v.moved = true; return v.name; }
+        this.need("Res");
+        return this.chance(0.3) ? "Option.None" : `Option.Some(${this.fresh(env, ctx, "res", d + 1)})`;
       }
       case "mv": {
         const vars = this.movable(env, ctx, "mv");
@@ -236,7 +255,7 @@ class Gen {
         if (!v.partial.has("res")) parts.push(`${v.name}.res.id`);
         return `${ind}print(${tag}, ${parts.join(`, " ", `)})`;
       }
-      case "os": return null;
+      case "os": case "pk": case "op": return null;
     }
   }
 
@@ -252,7 +271,7 @@ class Gen {
     for (const p of parent) {
       const c = child.find(v => v.name === p.name)!;
       if (!c.mut || ctx.frozen.has(c.name) && false) continue;
-      if (c.moved && !p.moved && c.ty !== "mv" && c.ty !== "os" && this.chance(0.5)) {
+      if (c.moved && !p.moved && c.ty !== "mv" && c.ty !== "os" && c.ty !== "pk" && c.ty !== "op" && this.chance(0.5)) {
         this.mutated.add(c.name);
         out.push(`${ind}${c.name} = ${this.fresh(child, ctx, c.ty, 1)}`);
         c.moved = false;
@@ -280,7 +299,7 @@ class Gen {
     const deep = ctx.depth >= 3;
     const kinds: [number, () => boolean][] = [
       [5, () => {
-        const ty = this.pick<Ty>(["int", "str", "vi", "vs", "res", "vr", "rec", "os", "mv"]);
+        const ty = this.pick<Ty>(["int", "str", "vi", "vs", "res", "vr", "rec", "os", "mv", "pk", "op"]);
         const mut = ty !== "mv" && this.chance(0.5);
         const name = this.name(ty === "int" ? "n" : ty === "str" ? "s" : "v");
         this.touchType(ty);
@@ -348,7 +367,7 @@ class Gen {
         return true;
       }],
       [3, () => { // assign a whole place (revives a moved one)
-        const vars = env.filter(v => v.mut && v.ty !== "mv" && v.ty !== "os" && !(v.partial.size && v.ty === "rec" && false));
+        const vars = env.filter(v => v.mut && v.ty !== "mv" && v.ty !== "os" && v.ty !== "op" && v.ty !== "pk" && !(v.partial.size && v.ty === "rec" && false));
         if (!vars.length) return false;
         const v = this.pick(vars);
         this.mutated.add(v.name);
@@ -443,6 +462,84 @@ class Gen {
         const frozen = new Set([...ctx.frozen, ...env.map(w => w.name)]);
         this.sub(env, ctx, out, indent + 1, e => this.declare(e, x, el, false), true, frozen);
         out.push(`${ind}}`);
+        return true;
+      }],
+      [deep ? 0 : 2, () => { // match on a user enum with owned payloads (consumes it)
+        const vars = this.movable(env, ctx, "pk");
+        if (!vars.length) return false;
+        const o = this.pick(vars);
+        o.moved = true;
+        const r = this.name("r"), w = this.name("w");
+        out.push(`${ind}match ${o.name} {`, `${ind}    Pkt.A(${r}) => {`);
+        const a = this.sub(env, ctx, out, indent + 2, e => this.declare(e, r, "res", false));
+        out.push(`${ind}    }`, `${ind}    Pkt.B(${w}) => {`);
+        const b = this.sub(env, ctx, out, indent + 2, e => this.declare(e, w, "vi", false));
+        out.push(`${ind}    }`, `${ind}    Pkt.C => {`);
+        const c = this.sub(env, ctx, out, indent + 2);
+        out.push(`${ind}    }`, `${ind}}`);
+        this.adopt(env, a);
+        this.adopt(env, b);
+        this.adopt(env, c);
+        return true;
+      }],
+      [deep ? 0 : 2, () => { // match on an Option<Res>, or on a pop from a Vec<Res>
+        const popFrom = this.readable(env, "vr").filter(v => v.mut && !ctx.frozen.has(v.name) || v.mut);
+        let scrut: string;
+        if (popFrom.length && this.chance(0.5)) { const v = this.pick(popFrom); this.mutated.add(v.name); scrut = `${v.name}.pop()`; }
+        else {
+          const vars = this.movable(env, ctx, "op");
+          if (!vars.length) return false;
+          const o = this.pick(vars);
+          o.moved = true;
+          scrut = o.name;
+        }
+        const r = this.name("r");
+        out.push(`${ind}match ${scrut} {`, `${ind}    Option.Some(${r}) => {`);
+        const a = this.sub(env, ctx, out, indent + 2, e => this.declare(e, r, "res", false));
+        out.push(`${ind}    }`, `${ind}    Option.None => {`);
+        const b = this.sub(env, ctx, out, indent + 2);
+        out.push(`${ind}    }`, `${ind}}`);
+        this.adopt(env, a);
+        this.adopt(env, b);
+        return true;
+      }],
+      [2, () => { // an if-expression whose branches each move something
+        const ty = this.pick<Ty>(["vi", "vs", "res", "rec", "str", "pk"]);
+        this.touchType(ty);
+        const cond = this.cond(env, ctx);
+        const ea = this.cl(env), eb = this.cl(env);
+        const va = this.fresh(ea, ctx, ty, 1), vb = this.fresh(eb, ctx, ty, 1);
+        this.adopt(env, ea);
+        this.adopt(env, eb);
+        const name = this.name("x");
+        out.push(`${ind}let ${name}: ${TYPE_TEXT[ty]} = if ${cond} { ${va} } else { ${vb} }`);
+        this.declare(env, name, ty, false);
+        return true;
+      }],
+      [2, () => { // replace / swap a place, or assign through an index: the old value drops there
+        const vr = this.readable(env, "vr").filter(v => v.mut);
+        if (vr.length && this.chance(0.4)) {
+          const v = this.pick(vr);
+          this.mutated.add(v.name);
+          out.push(`${ind}if ${v.name}.len > 0 {`, `${ind}    let ${this.name("old")} = replace(${v.name}[0], ${this.fresh(env, ctx, "res", 2)})`, `${ind}}`);
+          return true;
+        }
+        const ty = this.pick<Ty>(["vi", "vs", "res", "rec"]);
+        const vars = this.readable(env, ty).filter(v => v.mut);
+        if (!vars.length) return false;
+        const v = this.pick(vars);
+        this.mutated.add(v.name);
+        const name = this.name("old");
+        out.push(`${ind}let ${name} = replace(${v.name}, ${this.fresh(env, ctx, ty, 1)})`);
+        this.declare(env, name, ty, false);
+        return true;
+      }],
+      [deep ? 0 : 1, () => { // while true with a counted break: owned locals live across it
+        const i = this.name("i");
+        out.push(`${ind}var ${i}: i64 = 0`, `${ind}while true {`, `${ind}    ${i} += 1`);
+        const frozen = new Set([...ctx.frozen, ...env.map(v => v.name)]);
+        this.sub(env, ctx, out, indent + 1, e => this.declare(e, i, "int", false), true, frozen);
+        out.push(`${ind}    if ${i} >= ${this.int(1, 3)} {`, `${ind}        break`, `${ind}    }`, `${ind}}`);
         return true;
       }],
       [2, () => { // closure borrowing a Vec / mutating a captured local, scoped so it dies before the next use

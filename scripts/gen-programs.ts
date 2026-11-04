@@ -8,6 +8,10 @@
 //
 //   bun scripts/gen-programs.ts --n 200 --seed 1 [--jobs 2] [--save] [--keep DIR] [--time-s N]
 //   bun scripts/gen-programs.ts --print 7        # the program for seed 7, nothing else
+//   bun scripts/gen-programs.ts --check-only --n 300   # accept rate only (checker, no runs)
+//   bun scripts/gen-programs.ts --reduce FILE [--key stdout:o0]   # reduce one saved program
+// Needs mlir/build/milo-opt (or MILO_OPT=<path>). On a loaded machine the guard may kill a child on
+// memory pressure; one retry covers it, and a divergence that does not reproduce standalone is that.
 //
 // Programs the checker rejects are dropped before any run; the accept rate is reported. Every
 // child runs under scripts/guard.ts (memory and wall-clock caps); --jobs is capped at 4.
