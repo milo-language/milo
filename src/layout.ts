@@ -1,9 +1,9 @@
 // Type layout: struct and enum registration, sizes, alignments, field offsets, niches and
-// which types need drop glue. Pure functions of the HIRModule's types, the one source of
+// which types need drop glue. Pure functions of the program's types (BackendProgram), the one source of
 // truth for them: emit-mlir spells the dialect's types from it, and mlir/Scalar.cpp's type
 // converter must build the same bodies (src/mlir-ctx.ts dialectType).
 
-import type { HIRModule } from "./hir";
+import type { BackendProgram } from "./backend-program";
 import { type TypeKind, needsDrop } from "./types";
 
 import { must } from "./must";
@@ -62,7 +62,7 @@ export class Layout {
   public hasVecType = false;
   public hasHashMapType = false;
 
-  build(module: HIRModule) {
+  build(module: Pick<BackendProgram, "structs" | "enums" | "dropImpls">) {
     // register struct layouts
     for (const s of module.structs) {
       const layout: StructLayout = {

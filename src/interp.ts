@@ -1124,7 +1124,7 @@ export class Interp {
       case "swap": if (!shadow("swap")) return this.memSwap(e.args[0]!, e.args[1]!); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone(this.peek(e.args[0]!)); break; // the structural copy std/vec's clone and filter use; capacity = length
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
-      case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
+      case "targetOs": /* E-TARGET: the host is the target here */ return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
       // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)
@@ -1328,7 +1328,7 @@ export class Interp {
     return undefined;
   }
   // `if let P = a && cond && let Q = b { then } else { else }`: clauses nest left to right, each
-  // inside the scope of the ones before it; the else runs once, after every clause scope is gone.
+  // inside the scope of the ones before it; the else runs once, after every clause scope is gone. [S-IF-CHAIN]
   // S-SCOPE-END
   ifChain(s: Stmt & { kind: "IfChainStmt" }): Completion {
     const r = this.ifChainFrom(s, 0);
@@ -1360,7 +1360,7 @@ export class Interp {
     } finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
   // for-in: the loop variable is a reference to the element, or (consuming) the element moved out
-  // E-NEW-ITER
+  // E-NEW-ITER, E-FOR-IN (a Vec, slice, array or string: its length read once, each element bound in index order)
   forIn(s: Stmt & { kind: "ForInStmt" }): Completion {
     const fin = (r: Completion | "next"): Completion | "next" => (r === "next" ? "next" : r?.k === "break" ? undefined : r);
     if (s.iterable.kind === "RangeExpr") {

@@ -28,7 +28,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`check <file>`](#check) | Type-check only, no codegen. |
 | [`fix <file>`](#fix) | Apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches. |
 | [`emit-ast <file>`](#emit-ast) | Emit the parsed AST as JSON. |
-| [`emit-hir <file>`](#emit-hir) | Emit the typed HIR as JSON. |
+| [`emit-mlir <file>`](#emit-mlir) | Emit the milo dialect module before milo-opt (the source-faithful top layer). |
 | [`interp <file>`](#interp) | Run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck. |
 | [`emit-ir <file>`](#emit-ir) | Emit LLVM IR. |
 | [`emit-obj <file>`](#emit-obj) | Compile to object file (.o). |
@@ -125,18 +125,17 @@ Emit the parsed AST as JSON.
 | `--all` | Include imported modules. |
 | `--spans` | Keep source spans. |
 
-### emit-hir
+### emit-mlir
 
 ```sh
-milo emit-hir <file>
+milo emit-mlir <file>
 ```
 
-Emit the typed HIR as JSON.
+Emit the milo dialect module before milo-opt (the source-faithful top layer).
 
 | Flag | Effect |
 |---|---|
-| `--all` | The full module, imports included. |
-| `--spans` | Keep source spans. |
+| `--all` | The whole module: imported functions, glue, scaffold. |
 
 ### interp
 

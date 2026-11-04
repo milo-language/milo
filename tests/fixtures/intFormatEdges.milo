@@ -107,3 +107,4 @@ fn main(): i32 {
     print($"{wide.len} {head == "5000:"} {tail}")
     return 0
 }
+// @rule: E-INTERP

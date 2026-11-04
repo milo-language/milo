@@ -18,7 +18,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
-import { lower } from "./lower";
+import { backendProgram } from "./backend-program";
 import { runInterp, interpOptions } from "./interp-run";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -124,7 +124,7 @@ function verifyBinary(bin: string, level: SafetyLevel, json: boolean, all = fals
 // A compile that reported diagnostics, raised instead of exiting. The CLI's one-file
 // commands want `process.exit(1)` right where the diagnostic is rendered; a sweep that
 // compiles many files (`milo test`) must survive one bad file and report it as a single
-// failure. `withThrowingDiagnostics` flips frontendToHIR between the two.
+// failure. `withThrowingDiagnostics` flips frontendToProgram between the two.
 class CompileFailure extends Error {}
 let diagnosticsThrow = false;
 function withThrowingDiagnostics<T>(fn: () => T): T {
@@ -141,8 +141,8 @@ function failCompile(what: string): never {
 let lastResolvedFiles: string[] = [];
 
 // `checkedOnly`: stop after the checker and hand back its result (the reference interpreter
-// runs the AST on the checker's facts, never on the HIR).
-function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, checkedOnly?: (program: Program, result: import("./checker").CheckResult) => void) {
+// runs the AST on the checker's facts).
+function frontendToProgram(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, checkedOnly?: (program: Program, result: import("./checker").CheckResult) => void) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let program: Program | undefined;
   try {
@@ -182,11 +182,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   }
 
   if (checkedOnly) { checkedOnly(program!, result); return undefined as never; }
-  const hir = phase("lower", () => lower(program!, result, sourceDir, target.os, target.arch));
-  // Attached here rather than inside `lower`: the map is a resolver fact codegen renders
-  // through (print text, DWARF names), not anything lowering computes or reads.
-  hir.displayNames = program.displayNames;
-  return hir;
+  return phase("lower", () => backendProgram(program!, result, sourceDir, target.os, target.arch));
 }
 
 // `milo check <file> [--json]` — parse + resolve + type-check, report, stop. No codegen.
@@ -500,17 +496,17 @@ function parseAndCheck(src: string, target: TargetInfo, filePath: string, warnin
 // neither), see ModuleCtx.cDeclGuards. It rides alongside the IR because only the layout
 // that built the module knows the field offsets and return widths it asserts.
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
-  const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  const plan = new MlirPlan(hirModule, target, { filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize });
+  const prog = frontendToProgram(source, target, filePath, warningConfig);
+  const plan = new MlirPlan(prog, target, { filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize });
   const ir = phase("mlir", () => plan.compile());
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
-  // emit-obj / emit-hir on a module with no main are all legitimate.
-  const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
-  return { ir, cGuards: plan.cx.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [], hasMain,
+  // emit-obj / emit-mlir on a module with no main are all legitimate.
+  const hasMain = prog.functions.some(f => f.name === "main" && !f.isExtern);
+  return { ir, cGuards: plan.cx.cDeclGuards(), linkLibs: prog.linkLibs, hasMain,
            // Only the ones that still run at startup: a global something reads is
            // initialized at that first read, which needs no entry point.
            nonConstGlobals: plan.startupGlobals,
-           varGlobals: hirModule.globals.filter(g => g.mutable).map(g => g.name) };
+           varGlobals: prog.globals.filter(g => g.mutable).map(g => g.name) };
 }
 
 // Compile the @cLayout/@cSig guard TU against the real system headers and fail the build
@@ -690,7 +686,7 @@ function emitText(text: string, outputPath: string | null) {
   }
 }
 
-// JSON replacer shared by emit-ast/emit-hir. Spans are dropped by default (they dominate
+// JSON replacer for emit-ast. Spans are dropped by default (they dominate
 // the output and rarely matter); Set/Map (dropImpls, userFnNames) and bigint int-literal
 // values are not JSON-native, so serialize them explicitly rather than emit `{}`/throw.
 function dumpReplacer(includeSpans: boolean) {
@@ -731,28 +727,20 @@ function emitAst(sourcePath: string, outputPath: string | null, target: TargetIn
   emitText(dumpJson(program, spans), outputPath);
 }
 
-// Emit the typed HIR as JSON — the lowered form codegen consumes, with a TypeKind on every
-// expression. Runs the full frontend (parse + resolve + check + lower), so a type error
-// stops it exactly as a real build would. Default: only functions defined in the entry file
-// (the rest is stdlib + monomorphized instantiations); --all dumps the whole module. Structs/
-// enums/globals carry no source stamp, so they only appear under --all.
-function emitHir(sourcePath: string, outputPath: string | null, target: TargetInfo, all: boolean, spans: boolean, warningConfig?: WarningConfig) {
+// Emit the milo dialect module codegen hands milo-opt: the source-faithful top layer
+// (milo.for_in, milo.try, milo.interp, ...) before any pass runs. Runs the full frontend,
+// so a type error stops it exactly as a real build would. Default: only the functions
+// defined in the entry file; --all prints the whole module (scaffold, glue, globals).
+function emitMlir(sourcePath: string, outputPath: string | null, target: TargetInfo, all: boolean, warningConfig?: WarningConfig) {
   const source = readFileSync(sourcePath, "utf-8");
-  const mod = frontendToHIR(source, target, sourcePath, warningConfig);
-  if (all) {
-    emitText(dumpJson(mod, spans), outputPath);
-    return;
-  }
+  const prog = frontendToProgram(source, target, sourcePath, warningConfig);
+  const plan = new MlirPlan(prog, target, { filePath: sourcePath, trapOnOverflow: false, emitDebug: false, contractChecks: false, stripPanicLocations: false, sanitize: false });
+  if (all) { emitText(plan.moduleText(), outputPath); return; }
   // Entry-file functions are stamped with the entry path by the resolver; injected libc
-  // externs (memchr/memcmp/…) carry no stamp, so require an exact match rather than treating
-  // "unstamped" as "belongs to the entry file".
+  // externs carry no stamp, so require an exact match.
   const entry = resolve(sourcePath);
-  const fns = mod.functions.filter(f => f.sourceFile && resolve(f.sourceFile) === entry);
-  const view = { ...mod, functions: fns, structs: [], enums: [], globals: [] };
-  if (!outputPath) {
-    console.error(`hir: ${fns.length} function(s) from ${sourcePath} (use --all for the full module: stdlib + monomorphized instantiations, structs, enums, globals)`);
-  }
-  emitText(dumpJson(view, spans), outputPath);
+  const mine = new Set(prog.functions.filter(f => f.sourceFile && resolve(f.sourceFile) === entry).map(f => f.name));
+  emitText(plan.functionTexts(mine).join("\n") + "\n", outputPath);
 }
 
 // The clang that compiles every build is the one of milo-opt's LLVM (mlirClang).
@@ -1195,13 +1183,13 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
 }
 
 // Emit a C header (declaring exported functions + extern structs) next to a build
-// artifact. Recomputes the frontend to reach the HIR (compileToObj discards it) — the
+// artifact. Recomputes the frontend to reach the declarations (compileToObj discards them) — the
 // cheapest path that keeps codegen untouched.
 function writeHeader(sourcePath: string, headerPath: string, target: TargetInfo, warningConfig?: WarningConfig) {
   const source = readFileSync(sourcePath, "utf-8");
-  const hir = frontendToHIR(source, target, sourcePath, warningConfig);
+  const prog = frontendToProgram(source, target, sourcePath, warningConfig);
   const headerName = basename(headerPath).replace(/\.h$/, "");
-  writeFileSync(headerPath, generateHeader(hir, headerName));
+  writeFileSync(headerPath, generateHeader(prog, headerName));
   console.log(`wrote ${headerPath}`);
 }
 
@@ -1953,7 +1941,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let overflowChecks: boolean | null = null;
   let contractChecks: boolean | null = null;
   let stripPanicLocations = false;
-  // emit-ast / emit-hir dump controls. Parsed here (not left to fall through) because an
+  // emit-ast / emit-mlir dump controls. Parsed here (not left to fall through) because an
   // unrecognized `--flag` would otherwise be swallowed as the source-file positional below.
   let emitAll = false;
   let emitSpans = false;
@@ -1996,8 +1984,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--contract-checks") { contractChecks = true; }
     else if (args[i] === "--no-contract-checks") { contractChecks = false; }
     else if (args[i] === "--emit-header") { emitHeader = true; }
-    else if (args[i] === "--all") { emitAll = true; }        // emit-ast/emit-hir: include imported modules
-    else if (args[i] === "--spans") { emitSpans = true; }    // emit-ast/emit-hir: keep source spans in the dump
+    else if (args[i] === "--all") { emitAll = true; }        // emit-ast/emit-mlir: include imported modules
+    else if (args[i] === "--spans") { emitSpans = true; }    // emit-ast: keep source spans in the dump
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -2476,14 +2464,14 @@ async function main() {
     runFix(source!, target, warningConfig);
   } else if (cmd === "emit-ast") {
     emitAst(source!, output, target, emitAll, emitSpans);
-  } else if (cmd === "emit-hir") {
-    emitHir(source!, output, target, emitAll, emitSpans, warningConfig);
+  } else if (cmd === "emit-mlir") {
+    emitMlir(source!, output, target, emitAll, warningConfig);
   } else if (cmd === "interp") {
     // --explore / --schedule: R-EXPLORE-* in docs/semantics/milo.md section 5
-    // The reference interpreter (src/interp.ts): runs the typed HIR, no codegen. Exit 3 means
+    // The reference interpreter (src/interp.ts): runs the checked AST, no codegen. Exit 3 means
     // the program uses something it does not model; exit 4 means a rule did not apply (stuck).
     let code = 0;
-    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), interpOptions(args, source!, contractChecks)); });
+    frontendToProgram(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), interpOptions(args, source!, contractChecks)); });
     process.exit(code);
   } else if (cmd === "emit-ir") {
     const trapOnOverflow = overflowChecks ?? true;

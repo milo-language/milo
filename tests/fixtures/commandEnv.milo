@@ -1,3 +1,4 @@
+// @rule: E-TARGET
 // @expect: envset
 // @expect: inherited
 // @expect: second

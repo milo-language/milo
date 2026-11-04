@@ -82,8 +82,8 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     flags: [{ flag: "--all", help: "include imported modules" }, { flag: "--spans", help: "keep source spans" }],
   },
   {
-    name: "emit-hir", usage: "emit-hir <file>", summary: "emit the typed HIR as JSON",
-    flags: [{ flag: "--all", help: "the full module, imports included" }, { flag: "--spans", help: "keep source spans" }],
+    name: "emit-mlir", usage: "emit-mlir <file>", summary: "emit the milo dialect module before milo-opt (the source-faithful top layer)",
+    flags: [{ flag: "--all", help: "the whole module: imported functions, glue, scaffold" }],
   },
   {
     name: "interp", usage: "interp <file>", summary: "run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck",

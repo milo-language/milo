@@ -75,15 +75,15 @@ Without `-g` the compiler emits zero debug metadata, so there is no size or spee
 
 ## Inspecting the compiler's intermediate forms
 
-To see how a program looks at each stage of the pipeline (`Source → AST → HIR → LLVM IR`):
+To see how a program looks at each stage of the pipeline (`Source → AST → milo dialect → LLVM IR`):
 
 | Command | Stage | What it shows |
 |---------|-------|---------------|
-| `emit-ast app.milo` | Parsed AST (JSON) | The parser's output, **before types exist** — a `BinOp` here has no type field. |
-| `emit-hir app.milo` | Typed HIR (JSON) | The lowered form codegen consumes — **every expression carries its `type`**, and sugar (`??`, `?`, string interpolation) is desugared. |
+| `emit-ast app.milo` | Parsed AST (JSON) | The parser's output, **before types exist**: a `BinOp` here has no type field. |
+| `emit-mlir app.milo` | milo dialect (MLIR text) | What codegen hands `milo-opt`: one op per source construct (`milo.for_in` for a for-in, `milo.try` for `?`, `milo.interp` for `$"..."`), every value typed, before any pass desugars them. |
 | `emit-ir app.milo` | LLVM IR | The final text handed to `clang`. |
 
-`emit-ast` and `emit-hir` default to the **entry file only** so the stdlib doesn't drown your code; add `--all` for the full merged module (imports, monomorphized instantiations, structs, enums, globals). Spans are stripped by default — pass `--spans` to keep them. Diffing `emit-ast` against `emit-hir` for the same function is the quickest way to see exactly what type-checking and lowering added.
+`emit-ast` and `emit-mlir` default to the **entry file only** so the stdlib doesn't drown your code; add `--all` for the whole module (imports, monomorphized instantiations, glue, globals). `emit-ast` strips spans by default; pass `--spans` to keep them.
 
 Prefer `-g --debug` for stepping. At `-O0` every local lives in an `alloca` that the debug metadata binds to by name; at higher optimization levels LLVM promotes those to registers and `frame variable` reports them as unavailable.
 

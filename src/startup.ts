@@ -1,12 +1,13 @@
-// What runs before and around `main`, decided on the HIR: which module globals are filled
-// at startup or on first read (the init functions the build compiles like any other), and
-// whether main runs on a green task of its own. src/scaffold.ts emits the entry point and
-// the lazy-global machinery from this plan.
-import type { HIRFunction, HIRGlobal, HIRModule } from "./hir";
+// What runs before and around `main`: which module globals are filled at startup or on first
+// read (the init functions the build compiles like any other), and whether main runs on a
+// green task of its own. src/scaffold.ts emits the entry point and the lazy-global
+// machinery from this plan.
+import type { BackendProgram, FnDecl, GlobalDecl } from "./backend-program";
 import type { TargetInfo } from "./target";
 import { isFullyConstInit } from "./const-fold";
-import { guardLazyGlobals, LAZY_INIT_PREFIX } from "./lazy-globals";
+import { lazyMentions, LAZY_INIT_PREFIX } from "./lazy-globals";
 import type { Layout } from "./layout";
+import { directCallee, walkAst } from "./emit-forms";
 
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
 export const GLOBAL_INIT_FN = "__milo.global_init";
@@ -19,9 +20,9 @@ export const GREEN_RUN_MAIN_FN = "schedulerRunMainRaw";
 
 export interface StartupPlan {
   /** The init functions to compile: one per lazy global, then GLOBAL_INIT_FN if any global is filled at startup. */
-  initFns: HIRFunction[];
+  initFns: FnDecl[];
   /** Globals filled on first read, by `__milo.lazyinit.<G>` behind the guard `__milo.lazy.<G>`. */
-  lazyGlobals: Map<string, HIRGlobal>;
+  lazyGlobals: Map<string, GlobalDecl>;
   /** Runtime-initialized globals nothing reads, filled before main by GLOBAL_INIT_FN. */
   startupGlobals: string[];
   /** main runs as a green task (schedulerRunMainRaw) behind a wrapper entry point. */
@@ -35,53 +36,32 @@ export interface StartupPlan {
 // guard at all.
 //
 // A global that nothing reads exists for what its initializer does (std/replay boots
-// record/replay that way), so that initializer still runs before main, in `module.globals`
-// order, which the checker sorted by dependency.
-export function planStartup(module: HIRModule, layout: Layout, target: TargetInfo): StartupPlan {
+// record/replay that way), so that initializer still runs before main, in `globals` order,
+// which the checker sorted by dependency.
+export function planStartup(module: BackendProgram, layout: Layout, target: TargetInfo): StartupPlan {
+  const fx = module.facts;
   const functions = module.functions.filter(f => !f.isExtern);
-  const runtimeInit = module.globals.filter(g => !isFullyConstInit(g, layout.structLayouts));
-  const initFns: HIRFunction[] = runtimeInit.map(g => ({
-    name: `${LAZY_INIT_PREFIX}${g.name}`,
-    params: [],
-    retType: { tag: "void" },
-    body: [{
-      kind: "Assign" as const,
-      target: { kind: "Ident" as const, name: g.name, type: g.type },
-      value: g.value,
-      isInit: true,
-    }],
-    isExtern: false,
-    isVariadic: false,
-    ...(g.sourceFile && { sourceFile: g.sourceFile }),
-  }));
-  const read = guardLazyGlobals([...functions, ...initFns], new Set(runtimeInit.map(g => g.name)));
-  const lazyInit = initFns.filter((_f, i) => read.has(runtimeInit[i]!.name));
-  const eager = initFns.filter((_f, i) => !read.has(runtimeInit[i]!.name));
-  const startupFns = eager.length === 0 ? lazyInit : [...lazyInit, {
-    name: GLOBAL_INIT_FN,
-    params: [],
-    retType: { tag: "void" as const },
-    body: eager.flatMap(f => f.body),
-    isExtern: false,
-    isVariadic: false,
-  }];
+  const runtimeInit = module.globals.filter(g => !isFullyConstInit(g, layout.structLayouts, fx));
+  const lazy = new Set(runtimeInit.map(g => g.name));
+  // The globals something reads: a mention anywhere in a body, a contract or another
+  // global's initializer (the initializer's own `G = value` target is no read of G).
+  const read = new Set<string>();
+  for (const f of functions) {
+    if (f.ast) lazyMentions([f.ast.body, f.ast.contracts.filter(c => c.kind === "requires" || c.kind === "ensures" || c.kind === "invariant")], lazy, read, true);
+  }
+  for (const g of runtimeInit) lazyMentions(g.value, lazy, read, true);
+  const initFn = (name: string, inits: GlobalDecl[], sourceFile?: string): FnDecl => ({
+    name, params: [], retType: { tag: "void" }, isExtern: false, isVariadic: false, inits, ...(sourceFile && { sourceFile }),
+  });
+  const lazyInit = runtimeInit.filter(g => read.has(g.name)).map(g => initFn(`${LAZY_INIT_PREFIX}${g.name}`, [g], g.sourceFile));
+  const eager = runtimeInit.filter(g => !read.has(g.name));
+  const startupFns = eager.length === 0 ? lazyInit : [...lazyInit, initFn(GLOBAL_INIT_FN, eager)];
   return {
     initFns: startupFns,
     lazyGlobals: new Map(runtimeInit.filter(g => read.has(g.name)).map(g => [g.name, g])),
-    startupGlobals: runtimeInit.filter(g => !read.has(g.name)).map(g => g.name),
-    greenMain: mainCanSpawnGreenTasks(target, functions, startupFns),
+    startupGlobals: eager.map(g => g.name),
+    greenMain: mainCanSpawnGreenTasks(target, module, functions, startupFns),
   };
-}
-
-function collectCallees(node: unknown, out: Set<string>): void {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const child of node) collectCallees(child, out);
-    return;
-  }
-  const n = node as Record<string, unknown>;
-  if (n.kind === "Call" && typeof n.func === "string") out.add(n.func);
-  for (const v of Object.values(n)) collectCallees(v, out);
 }
 
 // Every blocking std call picks its strategy from `schedulerCurrent()`, and `main` was never
@@ -98,7 +78,7 @@ function collectCallees(node: unknown, out: Set<string>): void {
 // The walk over-approximates on purpose (any call in a reachable body is an edge, closures
 // included), but it is not total: a spawn reached only through a function pointer would
 // leave the program unwrapped, i.e. a hang, never a miscompile.
-function mainCanSpawnGreenTasks(target: TargetInfo, functions: HIRFunction[], initFns: HIRFunction[]): boolean {
+function mainCanSpawnGreenTasks(target: TargetInfo, module: BackendProgram, functions: FnDecl[], initFns: FnDecl[]): boolean {
   // wasm's makecontext is an abort stub and bare metal has no scheduler at all: a program
   // targeting them that spawns is already broken, and wrapping would break the ones that don't.
   if (target.os !== "darwin" && target.os !== "linux" && target.os !== "windows") return false;
@@ -117,9 +97,12 @@ function mainCanSpawnGreenTasks(target: TargetInfo, functions: HIRFunction[], in
     if (name === GREEN_SPAWN_FN) return true;
     const fn = byName.get(name);
     if (!fn) continue;
-    const callees = new Set<string>();
-    collectCallees(fn.body, callees);
-    for (const c of callees) if (!seen.has(c)) stack.push(c);
+    const callees = module.callees.get(fn.name);
+    walkAst(fn.ast ? fn.ast.body : (fn.inits ?? []).map(g => g.value), n => {
+      const c = directCallee(module.facts, n as never, { ret: fn.retType });
+      const to = c === null ? null : callees?.get(n as never) ?? c;
+      if (to !== null && !seen.has(to)) stack.push(to);
+    });
   }
   return false;
 }

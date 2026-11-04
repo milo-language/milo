@@ -133,3 +133,4 @@ pub fn main() {
     }
     print($"{g[0][0]} {g[0][1]} {g[1][0]}")
 }
+// @rule: E-FOR-IN

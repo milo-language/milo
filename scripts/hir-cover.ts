@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Which fixtures exercise which HIR expression kinds?
+// Which fixtures exercise which ops of the milo dialect's top layer?
 //
 //   bun scripts/hir-cover.ts                       # (re)generate tests/hir-cover.json
 //   bun scripts/hir-cover.ts --for Ident FieldAccess    # list covering fixtures
@@ -12,8 +12,8 @@
 // regressions shipped under green gates in one session. This is the fast substitute: run
 // only the fixtures that actually reach the kind just changed.
 //
-// The index is GENERATED, never hand-maintained. It comes from `milo emit-hir --json`,
-// the compiler's own answer, through the JSON surface rather than by importing src/*.ts
+// The index is GENERATED, never hand-maintained. It comes from `milo emit-mlir` (the ops
+// codegen prints for the fixture's own functions, before any pass), through the CLI rather than by importing src/*.ts
 // (see docs/json-api.md) — so it survives a self-hosted rewrite of the frontend.
 //
 // Two properties this file exists to guarantee, both learned the hard way:
@@ -44,30 +44,19 @@ function fixtureNames(): string[] {
   return readdirSync(FIXTURES_DIR).filter(f => f.endsWith(".milo")).map(f => f.slice(0, -5)).sort();
 }
 
-// Every "kind" field anywhere in the HIR JSON — expressions, statements and patterns alike.
-// Deliberately a blunt walk rather than a schema-aware one: the taxonomy is 120 names and
-// growing, and a walk that knows the schema is a second place to update when it changes.
-function kindsIn(node: unknown, out: Set<string>): void {
-  if (node === null || typeof node !== "object") return;
-  if (Array.isArray(node)) { for (const v of node) kindsIn(v, out); return; }
-  const o = node as Record<string, unknown>;
-  if (typeof o.kind === "string") out.add(o.kind);
-  for (const v of Object.values(o)) kindsIn(v, out);
-}
-
-// Default emit-hir output, NOT --all. --all pulls in the whole stdlib, which makes almost
+// Default emit-mlir output, NOT --all. --all pulls in the whole stdlib, which makes almost
 // every fixture cover almost every kind and destroys the discrimination this index exists
 // for. What matters is which kinds the FIXTURE's own code reaches.
 async function emitKinds(name: string): Promise<Set<string> | null> {
   const src = join(FIXTURES_DIR, `${name}.milo`);
-  const p = Bun.spawn(["bun", "run", join(MILO_ROOT, "src", "main.ts"), "emit-hir", src], {
+  const p = Bun.spawn(["bun", "run", join(MILO_ROOT, "src", "main.ts"), "emit-mlir", src], {
     cwd: MILO_ROOT, stdout: "pipe", stderr: "pipe",
   });
   const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
   if (code !== 0) return null;
   try {
     const set = new Set<string>();
-    kindsIn(JSON.parse(out), set);
+    for (const m of out.matchAll(/\b((?:milo|func|llvm)\.[a-z_.]+)\b/g)) set.add(m[1]!);
     return set;
   } catch { return null; }
 }
@@ -86,8 +75,8 @@ async function generate(): Promise<Index> {
     for (const k of set) (kindMap[k] ??= []).push(names[i]);
   }
   process.stderr.write("\n");
-  if (failed > 0) process.stderr.write(`note: ${failed} fixture(s) produced no HIR (frontend rejected or non-JSON output)\n`);
-  const idx: Index = { generatedFrom: "milo emit-hir (default scope, not --all)", fixtures: names.length, kinds: kindMap };
+  if (failed > 0) process.stderr.write(`note: ${failed} fixture(s) produced no MLIR (frontend rejected it)\n`);
+  const idx: Index = { generatedFrom: "milo emit-mlir (default scope, not --all)", fixtures: names.length, kinds: kindMap };
   writeFileSync(INDEX, JSON.stringify(idx, null, 2) + "\n");
   return idx;
 }

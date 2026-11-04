@@ -26,6 +26,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/api-search.ts` | `milo api <query>` — signature search over the std library for humans and LLMs. |
 | `src/ast.ts` | AST node types: what the parser produces and the checker walks. |
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
+| `src/backend-program.ts` | What the backend compiles, read off the merged AST and the checker's result: the module's declarations (struct and enum layouts, function signatures, globals, itables, the C-facing claims) with each… |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
 | `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
@@ -46,12 +47,12 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/derive-table.ts` | @derive(Table): typed insert / get / update / delete for a `@table("name")` struct, as Milo source over checked SQL. |
 | `src/derive-template.ts` | User-defined `@derive(Trait)` — the template mechanism that lets a derive ship in a package instead of a compiler PR. |
 | `src/diagnostics.ts` | Elm-style error formatting: source context, carets and severity, shared by the CLI and the LSP so a message reads the same in a terminal and an editor. |
-| `src/emit-mlir.ts` | HIR -> the source-level `milo` MLIR dialect (mlir/Milo.td), as text, for the functions the MLIR path compiles through milo-opt (docs/mlir-backend.md). |
+| `src/emit-forms.ts` | How the backend reads the checked AST (docs/plans/top-dialect.md): each expression as the op family src/emit-mlir.ts prints for it, decided on each visit from the merged AST and the checker's facts (… |
+| `src/emit-mlir.ts` | The checked AST -> the source-level `milo` MLIR dialect (mlir/Milo.td), as text, for the functions the MLIR path compiles through milo-opt (docs/mlir-backend.md). |
 | `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |
 | `src/fixes.ts` | Machine-applicable fixes for diagnostics whose hint is mechanical: the edit that makes the diagnostic go away, computed from the diagnostic and the file's text, and nothing else. |
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
-| `src/hir.ts` | Typed HIR — every expression carries its resolved TypeKind. |
 | `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
 | `src/interp-co-natives.ts` | Reference interpreter, tasks and synchronization: the library's Task, TaskScope, Channel, WaitGroup, Once and atomics, replaced by natives because std/runtime.milo and std/sync.milo keep them in raw… |
 | `src/interp-co.ts` | Reference interpreter with tasks: green tasks, a scheduler and the rules of docs/semantics/milo.md section 5 (R-TASK-*). |
@@ -70,23 +71,22 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
 | `src/layout.ts` | Type layout: struct and enum registration, sizes, alignments, field offsets, niches and which types need drop glue. |
-| `src/lazy-globals.ts` | Lazy module globals: the HIR pass that puts a first-use guard in front of every read. |
+| `src/lazy-globals.ts` | Lazy module globals: where the first-use guard goes in front of a read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
-| `src/lower.ts` | AST + CheckResult → HIRModule lowering pass. |
 | `src/lsp.ts` | milod — Milo Language Server Speaks LSP over JSON-RPC/stdio. |
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
-| `src/mlir-backend.ts` | MLIR driver (the build path) (docs/mlir-backend.md): HIR -> milo MLIR (src/emit-mlir.ts), one module holding every function, the module globals and itables, the type-directed glue (src/mlir-glue.ts)… |
+| `src/mlir-backend.ts` | MLIR driver (the build path) (docs/mlir-backend.md): checked AST -> milo MLIR (src/emit-mlir.ts), one module holding every function, the module globals and itables, the type-directed glue (src/mlir-g… |
 | `src/mlir-ctx.ts` | What every part of a build reads about the module as a whole: type layout (src/layout.ts), function signatures and which of them return through an sret pointer, the C ABI class of each extern that pa… |
 | `src/mlir-debug.ts` | -g: the module's DICompileUnit and a DISubprogram per Milo function and closure body, as LLVM-dialect debug attributes fused into their locs. |
 | `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
 | `src/mlir-llvm.ts` | A typed builder for MLIR's LLVM dialect, as text: the scaffold (src/scaffold.ts) writes its functions and globals through it. |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
-| `src/noalias.ts` | `noalias` on `&mut` parameters, decided on the HIR. |
+| `src/noalias.ts` | `noalias` on `&mut` parameters, decided on the function bodies (their forms, src/emit-forms.ts). |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/object-checks.ts` | Profile checks on the linked binary (docs/plans/object-level-assurance.md step 3). |
-| `src/owned-temp.ts` | Ownership facts emit-mlir asks of the HIR: which expressions are owned temporaries (discarding one must drop it), whether an if/match used as a value owns its result, and whether a closure handed to… |
+| `src/owned-temp.ts` | Ownership facts emit-mlir asks of an expression's form (src/emit-forms.ts): which expressions are owned temporaries (discarding one must drop it), whether an if/match used as a value owns its result,… |
 | `src/parser.ts` | Recursive-descent parser: token stream -> AST. |
 | `src/pinned-build.ts` | Pinned build pipeline per safety profile (docs/plans/object-level-assurance.md step 1). |
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
@@ -105,7 +105,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards. |
 | `src/scaffold.ts` | The process scaffold around the program's functions, as an LLVM-dialect module (`milo.scaffold`, folded into the program by milo-opt's milo-merge-scaffold): - the process entry: argc/argv, record/rep… |
 | `src/skill.ts` | `milo skill`: the agent guide. |
-| `src/startup.ts` | What runs before and around `main`, decided on the HIR: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a… |
+| `src/startup.ts` | What runs before and around `main`: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a green task of its ow… |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |
 | `src/suggest.ts` | "Did you mean ...?" hints for the checker. |

@@ -9,45 +9,44 @@
 // runtime-formatted location at each of those sites. The attribute is std-collection-only
 // and its users are `@inline`, which already copies the body into every caller, so the
 // extra copies cost what inlining costs.
-import type { HIRModule, HIRFunction, HIRExpr } from "./hir";
-import type { Span } from "./ast";
+//
+// A copy is the same AST body emitted again under its own name: what differs is its stamp
+// and the callee each of its direct calls names (`callees`, per emitted function name).
+import type { Expr, Span } from "./ast";
+import type { FnDecl } from "./backend-program";
+import { type Facts, directCallee, walkAst } from "./emit-forms";
 
-export function specializeTrackCaller(mod: HIRModule): void {
-  const tracked = new Map(mod.functions.filter(f => f.trackCaller).map(f => [f.name, f]));
-  if (tracked.size === 0) return;
-  const copies = new Map<string, HIRFunction>();
-  const work: HIRFunction[] = [...mod.functions];
+export function trackCallerInstances(fns: FnDecl[], fx: Facts): { copies: FnDecl[]; callees: Map<string, Map<Expr, string>> } {
+  const tracked = new Map(fns.filter(f => f.trackCaller).map(f => [f.name, f]));
+  const callees = new Map<string, Map<Expr, string>>();
+  if (tracked.size === 0) return { copies: [], callees };
+  const copies = new Map<string, FnDecl>();
+  const work: FnDecl[] = [...fns];
   const spanKey = (s: Span | undefined) => `${s?.file ?? ""}:${s?.line ?? 0}:${s?.col ?? 0}`;
-
-  const visit = (node: unknown, stamp: Span | undefined): void => {
-    if (Array.isArray(node)) { for (const n of node) visit(n, stamp); return; }
-    if (!node || typeof node !== "object") return;
-    const n = node as Record<string, unknown>;
-    if (n.kind === "Call" && typeof n.func === "string" && tracked.has(n.func)) {
-      const call = n as unknown as HIRExpr & { kind: "Call" };
-      const at = stamp ?? call.span;
-      const key = `${call.func}@${spanKey(at)}`;
+  for (let i = 0; i < work.length; i++) {
+    const fn = work[i]!;
+    if (!fn.ast) continue;
+    // An uncopied tracked fn still exists for indirect uses; its calls are stamped by their
+    // own spans, so it reports its own lines, as before the attribute.
+    const stamp = fn.trackedCaller;
+    const mine = new Map<Expr, string>();
+    walkAst(fn.ast.body, n => {
+      const e = n as Expr;
+      const callee = directCallee(fx, e, { ret: fn.retType });
+      if (callee === null || !tracked.has(callee)) return;
+      const at = stamp ?? e.span;
+      const key = `${callee}@${spanKey(at)}`;
       let copy = copies.get(key);
       if (!copy) {
-        const original = tracked.get(call.func)!;
-        copy = { ...structuredClone(original), name: `${original.name}$at${copies.size}`, trackedCaller: at ?? { line: 0, col: 0 } };
+        const original = tracked.get(callee)!;
+        copy = { ...original, name: `${original.name}$at${copies.size}`, trackedCaller: at ?? { line: 0, col: 0 } };
         delete copy.trackCaller;
         copies.set(key, copy);
         work.push(copy);
       }
-      call.func = copy.name;
-    }
-    for (const k in n) {
-      if (k === "type" || k === "span") continue;
-      visit(n[k], stamp);
-    }
-  };
-
-  for (let i = 0; i < work.length; i++) {
-    const fn = work[i]!;
-    // An uncopied tracked fn still exists for indirect uses; its calls are stamped by
-    // their own spans, so it reports its own lines, as before the attribute.
-    visit(fn.body, fn.trackedCaller);
+      mine.set(e, copy.name);
+    });
+    if (mine.size) callees.set(fn.name, mine);
   }
-  mod.functions.push(...copies.values());
+  return { copies: [...copies.values()], callees };
 }

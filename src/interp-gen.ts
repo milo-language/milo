@@ -493,7 +493,7 @@ export class InterpGen extends Interp {
       case "swap": if (!shadow("swap")) return (yield* this.memSwap$g(e.args[0]!, e.args[1]!)); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone((yield* this.peek$g(e.args[0]!))); break; // the structural copy std/vec's clone and filter use; capacity = length
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
-      case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
+      case "targetOs": /* E-TARGET: the host is the target here */ return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
       // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)

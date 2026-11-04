@@ -9,7 +9,6 @@
 // `*T` keeps its provenance; an address in no range is not a pointer (R-MEM-PROVENANCE).
 // Undefined behaviour is a stuck state naming the rule, which also makes this a Miri-style
 // checker for the unsafe code in std.
-import type { HIRModule } from "./hir";
 import type { Interp } from "./interp";
 import { Layout } from "./layout";
 import type { TypeKind } from "./types";
@@ -110,7 +109,7 @@ export class Mem {
       structs: [...cr.structs].map(([name, s]) => ({ name, fields: s.fields.map(f => ({ name: f.name, type: f.type })) })),
       enums: [...cr.enums].map(([name, e]) => ({ name, variants: [...e.variants].map(([vn, v]) => ({ name: vn, tag: v.tag, fields: v.fields })) })),
       dropImpls: new Set<string>(),
-    } as unknown as HIRModule;
+    };
     const l = new Layout();
     l.build(mod);
     return (this.layoutCache = l);

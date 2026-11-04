@@ -1,4 +1,4 @@
-// `noalias` on `&mut` parameters, decided on the HIR.
+// `noalias` on `&mut` parameters, decided on the function bodies (their forms, src/emit-forms.ts).
 //
 // `noalias` on a `&mut` parameter promises LLVM that, for the whole call, the pointee is
 // reached only through that parameter. The checker's call-site exclusivity check (every
@@ -22,9 +22,12 @@
 // is assumed to call back. Raw pointers built in unsafe code are not tracked: an aliasing
 // `*T` is the user's responsibility, as it is everywhere else.
 import { resolve } from "path";
-import type { HIRArg, HIRExpr, HIRFunction } from "./hir";
+import type { Expr } from "./ast";
+import type { FnDecl } from "./backend-program";
+import { type Arg, type Facts, type Form, type FormCtx, type Node as FNode, walkForms } from "./emit-forms";
 import type { TypeKind } from "./types";
 import { STDLIB_DIR } from "./stdlibBundle";
+import { LAZY_INIT_PREFIX } from "./lazy-globals";
 
 const CALLBACK_LIBC = new Set([
   "pthread_create", "pthread_once", "makecontext", "swapcontext", "setcontext", "atexit",
@@ -51,8 +54,13 @@ export const noaliasEnabled = (): boolean => process.env.MILO_NOALIAS !== "0";
 
 export interface NoaliasInput {
   /** Every compiled function, init functions included. */
-  functions: HIRFunction[];
-  externs: ReadonlyMap<string, HIRFunction>;
+  functions: FnDecl[];
+  externs: ReadonlyMap<string, FnDecl>;
+  facts: Facts;
+  /** @trackCaller copies' callees (BackendProgram.callees). */
+  callees: ReadonlyMap<string, ReadonlyMap<Expr, string>>;
+  /** Globals filled on first read: a read calls the initializer. */
+  lazyGlobals: ReadonlySet<string>;
   mutableGlobals: ReadonlySet<string>;
   exported: ReadonlySet<string>;
   /** Globals a replay-engine function touches on entry and exit (emit-mlir milo.replay.*). */
@@ -64,7 +72,7 @@ export interface NoaliasInput {
 type Node = {
   byRefClosure: boolean;
   callees: Set<string>;
-  sites: { callee: string; args: HIRArg[]; extern: boolean }[];
+  sites: { callee: string; args: Arg[]; extern: boolean }[];
   indirect: boolean;
   callsC: boolean;
   touches: Set<string>;
@@ -104,62 +112,69 @@ export function noaliasGrants(input: NoaliasInput, candidates: ReadonlyMap<strin
     params.forEach((p, i) => { if (p.isRef || p.isRefMut) n.params.set(p.name, i); else n.fresh.add(p.name); });
     if (replay) for (const g of input.replayGlobals) if (input.mutableGlobals.has(g)) n.touches.add(g);
     nodes.set(name, n);
+    const fx = input.facts;
+    const cx: FormCtx = { ret: { tag: "void" }, callee: (e, c) => input.callees.get(name)?.get(e) ?? c };
     const seenTypes = new WeakSet<object>();
-    const walk = (v: unknown): void => {
-      if (!v || typeof v !== "object") return;
-      if (Array.isArray(v)) { for (const x of v) walk(x); return; }
-      const o = v as Record<string, unknown> & { kind?: string };
-      // A TypeKind: the drops of a value of it may run user code.
-      if (typeof o.tag === "string" && o.kind === undefined) {
-        if (seenTypes.has(o)) return;
-        seenTypes.add(o);
-        const d = input.dropRuns(o as unknown as TypeKind);
-        if (d.unknown) n.indirect = true;
-        if (d.user) for (const f of dropFns) n.callees.add(f);
+    // The drops of a value of `t` may run user code.
+    const dropsOf = (t: TypeKind | undefined) => {
+      if (!t || seenTypes.has(t)) return;
+      seenTypes.add(t);
+      const d = input.dropRuns(t);
+      if (d.unknown) n.indirect = true;
+      if (d.user) for (const f of dropFns) n.callees.add(f);
+    };
+    walkForms(body, fx, cx, x => {
+      if (x.kind === "LetDecl" || x.kind === "VarDecl") { n.fresh.add(x.name); return; }
+      if (x.kind === "ForInStmt") {
+        // A `next()` for-in calls the iterator's method by name.
+        const next = fx.c.iteratorForIns.get(x)?.nextMethod;
+        if (next && fns.has(next)) n.callees.add(next);
         return;
       }
-      if (o.kind === "Closure") {
-        const c = o as unknown as HIRExpr & { kind: "Closure" };
+      if (!("node" in x)) return;
+      const f = x as Form;
+      dropsOf(fx.ty(f.node));
+      if (f.kind === "Closure") {
         const cname = `${name}#closure${closures++}`;
         addrTaken.add(cname);
-        build(cname, c.params, c.body, !c.isMove, false);
-        if (c.type) walk(c.type);
-        return;
+        build(cname, f.params.map(p => ({ name: p.name })), f.body, !f.isMove, false);
+        return "skip";
       }
-      if (o.kind === "Let" && typeof o.name === "string") n.fresh.add(o.name);
-      if (o.kind === "Ident" && typeof o.name === "string") {
-        if (input.mutableGlobals.has(o.name)) n.touches.add(o.name);
-        if (fns.has(o.name)) addrTaken.add(o.name);
+      if (f.kind === "Ident") {
+        if (input.mutableGlobals.has(f.name)) n.touches.add(f.name);
+        if (fns.has(f.name)) addrTaken.add(f.name);
+        // A read of a lazy global runs its initializer first (the emitter's milo.global.init).
+        if (input.lazyGlobals.has(f.name)) n.callees.add(`${LAZY_INIT_PREFIX}${f.name}`);
       }
-      if (o.kind && INDIRECT_KINDS.has(o.kind)) n.indirect = true;
-      if (o.kind === "OptionOp" && CALLBACK_OPS.has(o.op as string)) n.indirect = true;
-      if (o.kind === "LazyGlobalInit" && typeof o.name === "string") n.callees.add(`__milo.lazyinit.${o.name}`);
-      if (o.kind === "Call" && typeof o.func === "string") {
-        const args = (o.args ?? []) as HIRArg[];
-        if (o.func === "_callClosureVoid") n.indirect = true;
-        else if (o.func === "_panicHookSet") {
-          let e: HIRExpr | undefined = args[0]?.expr;
-          while (e?.kind === "Cast") e = e.operand;
+      if (INDIRECT_KINDS.has(f.kind)) n.indirect = true;
+      if (f.kind === "OptionOp" && CALLBACK_OPS.has(f.op)) n.indirect = true;
+      // Helpers the emitter calls by name: direct calls.
+      if (f.kind === "Propagate" && f.messageFn && fns.has(f.messageFn.fn)) n.callees.add(f.messageFn.fn);
+      if (f.kind === "ArrayRepeat" && f.cloneFn && fns.has(f.cloneFn)) n.callees.add(f.cloneFn);
+      if (f.kind === "Call") {
+        const args = f.args;
+        if (f.func === "_callClosureVoid") n.indirect = true;
+        else if (f.func === "_panicHookSet") {
+          let e: Form | undefined = args[0] ? fx.form(args[0].expr, cx) : undefined;
+          while (e?.kind === "Cast") e = fx.form(e.operand, cx);
           if (e?.kind === "Ident" && fns.has(e.name)) hookTargets.add(e.name);
           else hookOpaque = true;
-        } else if (fns.has(o.func)) {
-          n.callees.add(o.func);
-          n.sites.push({ callee: o.func, args, extern: false });
-        } else if (input.externs.has(o.func)) {
-          if (callsBack(o.func)) n.callsC = true;
-          n.sites.push({ callee: o.func, args, extern: true });
+        } else if (fns.has(f.func)) {
+          n.callees.add(f.func);
+          n.sites.push({ callee: f.func, args, extern: false });
+        } else if (input.externs.has(f.func)) {
+          if (callsBack(f.func)) n.callsC = true;
+          n.sites.push({ callee: f.func, args, extern: true });
         }
       }
-      for (const [k, x] of Object.entries(o)) {
-        if (k === "span") continue;
-        // A helper the lowering calls by name (`messageFn`, `cloneFn`): a direct call.
-        if (typeof x === "string" && k !== "name" && k !== "func" && fns.has(x)) n.callees.add(x);
-        else walk(x);
-      }
-    };
-    walk(body);
+    });
   };
-  for (const f of input.functions) build(f.name, f.params, [f.body, f.contracts, f.oldSnapshots], false, !!f.replayEngine);
+  for (const f of input.functions) {
+    // An init function fills its globals: each `G = value` writes G.
+    const body = f.ast ? [f.ast.body, f.ast.contracts] : (f.inits ?? []).map(g => g.value);
+    build(f.name, f.params, body, false, !!f.replayEngine);
+    for (const g of f.inits ?? []) if (input.mutableGlobals.has(g.name)) nodes.get(f.name)!.touches.add(g.name);
+  }
   // A param's drop at the function's exit runs its type's glue.
   for (const f of input.functions) {
     const n = nodes.get(f.name)!;
@@ -179,17 +194,17 @@ export function noaliasGrants(input: NoaliasInput, candidates: ReadonlyMap<strin
 
   // Reach: which mutable globals a by-ref argument's place may be part of.
   const wild = new Set<string>();
-  const rootOf = (e: HIRExpr): HIRExpr => {
-    let cur = e;
+  const rootOf = (e: FNode): Form => {
+    let cur = input.facts.form(e, { ret: { tag: "void" } });
     for (;;) {
       if (!PLACE_KINDS.has(cur.kind)) return cur;
-      const c = cur as HIRExpr & { object?: HIRExpr; operand?: HIRExpr };
+      const c = cur as Form & { object?: FNode; operand?: FNode };
       const next = c.object ?? c.operand;
       if (!next) return cur;
-      cur = next;
+      cur = input.facts.form(next, { ret: { tag: "void" } });
     }
   };
-  const reachOf = (n: Node, a: HIRArg): Set<string> => {
+  const reachOf = (n: Node, a: Arg): Set<string> => {
     if (!a.passByRef) return new Set();
     const root = rootOf(a.expr);
     if (root.kind !== "Ident") return new Set();

@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: mlir-backend
-purpose: design reference for the backend: HIR -> milo MLIR dialect -> LLVM, the only backend (the legacy LLVM-text codegen is deleted)
-key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, mlir/Link.cpp, src/emit-mlir.ts, src/mlir-backend.ts, src/scaffold.ts, scripts/mlir-same.ts, docs/collections-in-std.md
+purpose: design reference for the backend: checked AST -> the milo dialect (top layer, then core) -> LLVM, the only backend (the legacy LLVM-text codegen is deleted)
+key-files: mlir/Milo.td, mlir/Desugar.cpp, src/emit-forms.ts, src/backend-program.ts, mlir/Scalar.cpp, mlir/Drops.cpp, mlir/Passes.cpp, mlir/Link.cpp, src/emit-mlir.ts, src/mlir-backend.ts, src/scaffold.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: the pass pipeline, the gates or the dialect's design rules change
-last-verified: 2026-11-03 (scaffold moved into MLIR, codegen.ts deleted; pipeline checked against src/mlir-backend.ts)
+last-verified: 2026-11-04 (HIR deleted, emitter reads AST + CheckResult; milo-desugar first; pipeline checked against src/mlir-backend.ts)
 -->
 
 # MLIR backend
@@ -16,17 +16,26 @@ axpy ran 2.9x faster.
 ## Shape
 
 ```
-Source -> Lexer -> Parser -> Resolver -> Checker -> HIR  (TypeScript)
-HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
-    -> milo-opt (C++, mlir/): the passes below
+Source -> Lexer -> Parser -> Resolver -> Checker  (TypeScript)
+checked AST + CheckResult -> the milo dialect's top layer (src/emit-mlir.ts: a printer, textual MLIR)
+    -> milo-opt (C++, mlir/): milo-desugar, then the passes below
     -> LLVM IR (--emit-llvmir)
     -> the runtime sections linked in (mlir/Link.cpp) -> clang
 ```
 
 - **The TypeScript side is a thin printer** of a high-level `milo` dialect that mirrors the
-  language; every transformation is a C++ pass. The emitter reads HIR (`src/lower.ts`,
-  `src/hir.ts`). Moving the desugaring in `src/lower.ts` into passes, so the emitter reads
-  the checker's output directly, is future work.
+  language; every transformation is a C++ pass. The emitter reads the merged AST and the
+  checker's facts directly: `src/emit-forms.ts` says, per visit, which op family each
+  expression lowers to (no second tree, every type the checker's), and
+  `src/backend-program.ts` holds the declarations (layouts, signatures, globals, itables).
+- **The top layer** is one op per source construct the emitter used to expand itself:
+  `milo.for_in` (a for-in over a Vec, slice, string or fixed array), `milo.try` (`e?`) and
+  `milo.interp` (an interpolated string). `milo-desugar` (mlir/Desugar.cpp) lowers them to
+  the core ops first, citing the rule of docs/semantics/milo.md each lowering implements
+  (E-FOR-IN, E-PROPAGATE, E-MATCH, E-INTERP). `milo emit-mlir <file>` prints the module
+  before it runs. A `?` whose subject or payload lives in memory (128+ bytes), an iterator,
+  HashMap or consumed for-in, `??`, the Option/Result combinators and let-chains are still
+  expanded to core ops by the emitter.
 - **Source-level ops** (`mlir/Milo.td`): structured control flow as region ops (`milo.if`,
   `milo.while`, `milo.loop` with `milo.break`/`milo.continue`/`milo.return`), mutable locals
   as `milo.var` slots with `milo.load`/`milo.store`, Milo's checked arithmetic as one op per
@@ -56,32 +65,35 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
 In `milo-opt` pipeline order (`MLIR_PIPELINE` in `src/mlir-backend.ts`). The passes under
 `func.func(...)` see one function at a time, so MLIR's pass manager runs them in parallel.
 
-1. `milo-verify` (`mlir/Scalar.cpp`): checks the rules of the source-level dialect that span ops.
-2. `milo-append-in-place` (`mlir/Drops.cpp`): rewrites `s = s + x` on strings to an in-place
+1. `milo-desugar` (`mlir/Desugar.cpp`): lowers the top layer (`milo.for_in`, `milo.try`, `milo.interp`,
+   one op per source construct) to the core ops, citing the docs/semantics/milo.md rule per
+   decision. It runs first, so no other pass sees a top-layer op.
+2. `milo-verify` (`mlir/Scalar.cpp`): checks the rules of the source-level dialect that span ops.
+3. `milo-append-in-place` (`mlir/Drops.cpp`): rewrites `s = s + x` on strings to an in-place
    append. It runs before scope-drops, whose drop of the old value would name the place and
    stop the rewrite.
-3. `milo-scope-drops` (`mlir/Drops.cpp`): drops owned slots where control leaves their scope,
+4. `milo-scope-drops` (`mlir/Drops.cpp`): drops owned slots where control leaves their scope,
    and old values before stores, while scopes are still regions. Which drops run is decided later.
-4. `milo-expand-index` (`mlir/Scalar.cpp`): lowers source-level Vec indexing to `len`,
+5. `milo-expand-index` (`mlir/Scalar.cpp`): lowers source-level Vec indexing to `len`,
    `bounds_check` and `vec.load`/`vec.store`.
-5. `milo-raise-to-scf` (`mlir/Scalar.cpp`): raises `milo.for` loops without early exits (and
+6. `milo-raise-to-scf` (`mlir/Scalar.cpp`): raises `milo.for` loops without early exits (and
    their ifs) to `scf`, where the Vec passes work.
-6. `milo-lower-structured-cf` (`mlir/Scalar.cpp`): lowers the remaining `milo.if`/`while`/`loop`/`for`
+7. `milo-lower-structured-cf` (`mlir/Scalar.cpp`): lowers the remaining `milo.if`/`while`/`loop`/`for`
    and their jumps to `cf` branches, before any generic pass. Break, continue and return are
    not region-branch terminators, so CSE would otherwise reuse a load from before a
    `milo.while` inside its body.
-7. `milo-elaborate-drops` (`mlir/Drops.cpp`): keeps, erases or flags each drop of an owned
+8. `milo-elaborate-drops` (`mlir/Drops.cpp`): keeps, erases or flags each drop of an owned
    slot by whether it is initialized (dense dataflow over the CFG), before any generic pass
    can move a store or a drop.
-8. `canonicalize`, with `SelectToExtUI` disabled: it would turn a select with Milo's si32 type
+9. `canonicalize`, with `SelectToExtUI` disabled: it would turn a select with Milo's si32 type
    into a signless-only op that fails to verify.
-9. `milo-hoist-vec-reads` (`mlir/Passes.cpp`): hoists `vec.len` out of loops that never write a Vec header.
-10. `loop-invariant-code-motion`.
-11. `milo-version-bounds-checks` (`mlir/Passes.cpp`): runs a copy of a loop without bounds
+10. `milo-hoist-vec-reads` (`mlir/Passes.cpp`): hoists `vec.len` out of loops that never write a Vec header.
+11. `loop-invariant-code-motion`.
+12. `milo-version-bounds-checks` (`mlir/Passes.cpp`): runs a copy of a loop without bounds
     checks when one up-front range test proves every check passes, the original otherwise.
-12. `cse`, `canonicalize`, `convert-scf-to-cf`.
-13. `convert-milo-to-llvm` (`mlir/Passes.cpp`): lowers milo, func, arith and cf to the LLVM dialect.
-14. `reconcile-unrealized-casts`, then `llvm.func(mem2reg, canonicalize)`.
+13. `cse`, `canonicalize`, `convert-scf-to-cf`.
+14. `convert-milo-to-llvm` (`mlir/Passes.cpp`): lowers milo, func, arith and cf to the LLVM dialect.
+15. `reconcile-unrealized-casts`, then `llvm.func(mem2reg, canonicalize)`.
 
 `milo-expand-checks` (`mlir/Passes.cpp`: `bounds_check` to a compare and a call to the panic
 routine) is defined and exercised by `mlir/run.sh`, but is not in the driver pipeline.
@@ -136,7 +148,7 @@ frontend. JSIR's defining trait is that it round-trips: source goes up into the 
 passes transform it, and it prints back as source. Milo gets the same:
 
 - The top layer stays source-faithful (for-in, `?`, interpolation kept as ops; desugaring is
-  a pass), and the emitter reads the checker's output rather than desugared HIR.
+  a pass), and the emitter reads the checker's output (done: 2026-11-04, HIR deleted).
 - A dialect-to-Milo printer plus `milo fmt`; edits are minimal so comments survive.
 - Proof gate per rewrite: the printed source re-parses to the identical top-layer dialect,
   and a pure refactor lowers to identical normalized IR.
@@ -224,13 +236,13 @@ splice. `MlirPlan.compile` (src/mlir-backend.ts) prints one MLIR module:
   them (`__milo.global_init` for globals nothing reads, `__milo.lazyinit.G` for the
   rest). A function's linkage (internal unless exported or `main`), `alwaysinline`, and
   its by-ref params' `nonnull dereferenceable align` and `noalias` are func.func and
-  argument attributes (src/mlir-ctx.ts). `noalias` is decided on the HIR (src/noalias.ts).
+  argument attributes (src/mlir-ctx.ts). `noalias` is decided on the function bodies' forms (src/noalias.ts).
 - **The glue**: display, eq, clone, drop and hash per type, in the dialect.
 - **The scaffold**, `module @milo.scaffold` in the LLVM dialect (src/scaffold.ts, through
   the typed builder src/mlir-llvm.ts): process globals, `__milo_process_init` (argc/argv,
   record/replay start, MILO_LINE_BUFFERED, the hash seed's replay mode, global init), the
   real `main` when main runs as a green task (`schedulerRunMainRaw` + `__milo_main_task`;
-  the analysis is src/startup.ts's, on the HIR), the panic routines and panic tail, string
+  the analysis is src/startup.ts's, on the bodies' forms), the panic routines and panic tail, string
   writes, the hash seed source, the lazy-global machinery, and a `milo.cabi.<f>` shim per
   extern passing a struct by value (byval/sret/coerce from src/abi.ts). It is a module of
   its own so each side verifies alone: a C symbol a user extern also declares is one

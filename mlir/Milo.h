@@ -46,6 +46,7 @@ void registerPasses();
 void registerScalarPasses();
 void registerDropPasses();
 void registerLinkPasses();
+void registerDesugarPasses();
 // What src/mlir-backend.ts says about the module as a whole, on milo.* module attributes
 // (Link.cpp): taken off before translation, applied to the LLVM module after it.
 struct ModuleConfig {

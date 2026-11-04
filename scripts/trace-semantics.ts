@@ -40,7 +40,6 @@ export const ALLOW: Record<string, string> = {
   "interp-natives.ts:natSort": "NaN-safe stable sort helper behind Vec.sort",
   "interp-natives.ts:natCmp": "ordering of two values for sort and min/max natives",
   "interp-natives.ts:nativeFor": "native table lookup by name",
-  "interp-natives.ts:renderParts": "formats print arguments into text, no rule beyond the output order",
   "interp-co.ts:swapIn": "switches the shared interpreter's frame stacks to a task, host plumbing",
   "interp-co.ts:swapOut": "switches the shared interpreter's frame stacks out of a task, host plumbing",
   "interp-co-natives.ts:taskNativeFor": "task native table lookup by name",

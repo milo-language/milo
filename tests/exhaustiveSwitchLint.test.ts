@@ -48,12 +48,19 @@ function unionKinds(file: string, name: string): Set<string> {
   return kinds;
 }
 
+// The kinds of src/emit-forms.ts's Form union, each member spelled `F<"Kind" | ..., {...}>`.
+function formKinds(): Set<string> {
+  const txt = readFileSync(join(SRC, "emit-forms.ts"), "utf-8");
+  const body = txt.match(/^export type Form =(.*?);\n/ms);
+  expect(body).not.toBeNull();
+  return new Set([...body![1].matchAll(/F<((?:"[A-Za-z]+"\s*\|?\s*)+),/g)].flatMap(m => [...m[1]!.matchAll(/"([A-Za-z]+)"/g)].map(x => x[1]!)));
+}
+
 test("no switch over a node union falls through silently", () => {
   const unions: Record<string, Set<string>> = {
     Expr: unionKinds("ast.ts", "Expr"),
     Stmt: unionKinds("ast.ts", "Stmt"),
-    HIRExpr: unionKinds("hir.ts", "HIRExpr"),
-    HIRStmt: unionKinds("hir.ts", "HIRStmt"),
+    Form: formKinds(),
   };
   for (const [name, k] of Object.entries(unions)) {
     expect(k.size, `${name} kinds failed to parse`).toBeGreaterThan(10);

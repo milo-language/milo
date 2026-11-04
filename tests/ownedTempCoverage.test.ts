@@ -1,4 +1,4 @@
-// Every HIR expression kind must have a stated answer to "does discarding this result
+// Every form kind (src/emit-forms.ts) must have a stated answer to "does discarding this result
 // leak?".
 //
 // `isOwnedTempExpr` decides whether a discarded expression owns something that nothing
@@ -8,11 +8,11 @@
 // destroyed nothing — the element's destructor never ran and its heap went with it, while
 // the identical `v.pop()` was correct.
 //
-// The bug was not that someone chose wrong. It is that a newly added HIR node inherits
+// The bug was not that someone chose wrong. It is that a newly added form inherits
 // `false` by falling off the bottom of a switch, so nobody ever had to choose at all. This
 // gate removes the implicit answer: a kind must appear either in `isOwnedTempExpr` (owned,
 // so drop it) or in `NOT_OWNED_TEMP` (a scalar, a void, a view, or a place someone else
-// owns). Adding a node to `hir.ts` without deciding fails here.
+// owns). Adding a form to `emit-forms.ts` without deciding fails here.
 //
 // Same medicine as tests/placeRuleCoverage.test.ts, applied outside the checker.
 import { test, expect } from "bun:test";
@@ -22,18 +22,20 @@ import { NOT_OWNED_TEMP } from "../src/owned-temp";
 
 const ROOT = join(import.meta.dir, "..");
 
-function hirExprKinds(): string[] {
-  const src = readFileSync(join(ROOT, "src", "hir.ts"), "utf8");
-  const m = /export type HIRExpr\s*=(.*?);\n/s.exec(src);
-  if (!m) throw new Error("could not find the HIRExpr union in src/hir.ts");
-  return [...new Set([...m[1].matchAll(/kind: "([A-Za-z]+)"/g)].map(x => x[1]))].sort();
+// The kinds of the Form union, each member spelled `F<"Kind" | ..., {...}>`.
+function formKinds(): string[] {
+  const src = readFileSync(join(ROOT, "src", "emit-forms.ts"), "utf8");
+  const m = /^export type Form =(.*?);\n/ms.exec(src);
+  if (!m) throw new Error("could not find the Form union in src/emit-forms.ts");
+  return [...new Set([...m[1].matchAll(/F<((?:"[A-Za-z]+"\s*\|?\s*)+),/g)].flatMap(x => [...x[1].matchAll(/"([A-Za-z]+)"/g)].map(y => y[1])))].sort();
 }
+
 
 function classified(): { owned: Set<string>; neutral: Set<string> } {
   const src = readFileSync(join(ROOT, "src", "owned-temp.ts"), "utf8");
   // Anchored on the signature, not a visibility keyword: the method went public when
   // codegen-match.ts started calling it, and a "private ..." anchor then matched nothing.
-  const start = src.indexOf("isOwnedTempExpr(expr: HIRExpr): boolean {");
+  const start = src.indexOf("isOwnedTempExpr(n: Node): boolean {");
   if (start < 0) throw new Error("could not find isOwnedTempExpr in src/owned-temp.ts");
   // Brace-matched to the method's real end rather than sliced at a fixed width. The
   // window was 4200 characters against a body already 3834 long: the first case label
@@ -58,8 +60,8 @@ function classified(): { owned: Set<string>; neutral: Set<string> } {
   return { owned, neutral: new Set(NOT_OWNED_TEMP) };
 }
 
-test("every HIRExpr kind is classified as owned-temp or not", () => {
-  const kinds = hirExprKinds();
+test("every Form kind is classified as owned-temp or not", () => {
+  const kinds = formKinds();
   const { owned, neutral } = classified();
 
   const unclassified = kinds.filter(k => !owned.has(k) && !neutral.has(k));
