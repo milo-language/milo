@@ -13,7 +13,7 @@
 //
 // std is checked like user code: it has to stay clean, because every user program compiles
 // the std modules it imports.
-import type { Program, Expr, Span } from "./ast";
+import type { Program, Expr, Span, MiloType } from "./ast";
 import type { ProgramPassHost, ProgramView } from "./checker-program-passes";
 
 const WALK_SKIP = new Set(["span", "type", "targetType", "retType", "methodSpan"]);
@@ -56,7 +56,9 @@ function writtenNames(host: ProgramPassHost, view: ProgramView, body: unknown, w
       }
       case "UnaryOp": if (n.op === "&mut") mark(n.operand); break;
       // A raw address can be written through anywhere.
-      case "MethodCall": if (n.method === "addrOf") mark(n.object); break;
+      case "MethodCall": if (n.method === "addrOf" || n.method === "ptr") mark(n.object); break;
+      // `arr as *T` hands out the array's own storage: C or a raw store may write it.
+      case "CastExpr": if (host.exprTypes.get(n.operand as Expr)?.tag === "array" && (n.targetType as MiloType).isPtr) mark(n.operand); break;
       case "Call":
         if (n.func === "swap" || n.func === "replace" || n.func === "take") for (const a of n.args as Expr[]) mark(a);
         break;

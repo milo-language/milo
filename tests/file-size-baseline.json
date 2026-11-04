@@ -12,7 +12,7 @@
   "src/checker-mutability.ts": 172,
   "src/checker-program-passes.ts": 2288,
   "src/checker-sql.ts": 360,
-  "src/checker.ts": 15569,
+  "src/checker.ts": 15574,
   "src/cli-help.ts": 296,
   "src/const-fold.ts": 167,
   "src/contract-tests.ts": 706,
@@ -40,7 +40,7 @@
   "src/interp-values.ts": 103,
   "src/interp.ts": 1353,
   "src/keyword-docs.ts": 158,
-  "src/lang-info.ts": 216,
+  "src/lang-info.ts": 217,
   "src/layout.ts": 406,
   "src/lazy-globals.ts": 92,
   "src/lexer.ts": 378,
@@ -89,7 +89,7 @@
   "src/verify.ts": 3526,
   "src/version.ts": 35,
   "src/visibility.ts": 344,
-  "src/warnings.ts": 514,
+  "src/warnings.ts": 519,
   "src/wcet-cycles.ts": 143,
   "src/wcet.ts": 157
 }
