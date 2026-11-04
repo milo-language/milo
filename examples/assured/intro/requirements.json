@@ -1,7 +1,8 @@
 {
+  "$schema": "../../../docs/schema/requirements.schema.json",
   "requirements": [
     { "id": "R-1", "text": "The heater command is always between 0 and 100 percent." },
     { "id": "R-2", "text": "A reading at or above the target turns the heater off." },
-    { "id": "D-1", "text": "Derived: a demo entry point prints one heater command. Not part of the controller." }
+    { "id": "D-1", "derived": true, "text": "Derived: a demo entry point prints one heater command. Not part of the controller." }
   ]
 }

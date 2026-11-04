@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-type Req = { id: string; text: string; parent?: string };
+type Req = { id: string; text: string; parent?: string; source: string };
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "docs", "semantics", "requirements.json");
 const RULE = /^(?:[EST]|R)-[A-Z][A-Za-z0-9-]*$/;
@@ -31,44 +31,47 @@ export function generate(semantics: string, spec: string): Req[] {
   const seen = new Set<string>();
   const add = (r: Req) => { if (!seen.has(r.id)) { seen.add(r.id); reqs.push(r); } };
   let section: string | undefined;
+  let sectionTitle = "";
+  const src = () => `docs/semantics/milo.md §${sectionTitle}`;
   let n = 0;
   for (const line of semantics.split("\n")) {
     const h = /^#{2,3} (.+)$/.exec(line);
     if (h) {
       section = `SEM-${String(++n).padStart(2, "0")}`;
-      add({ id: section, text: `Milo semantics: ${h[1]!.replace(/^\d+\.\s*/, "")} (docs/semantics/milo.md)` });
+      sectionTitle = h[1]!.replace(/^\d+\.\s*/, "");
+      add({ id: section, text: `Milo semantics: ${h[1]!.replace(/^\d+\.\s*/, "")} (docs/semantics/milo.md)`, source: src() });
       continue;
     }
     // A rule in a derivation block: `[E-MOVE]   ────   reading an owned value moves it out`.
     const b = /^\[([^\]]+)\]\s*(.*)$/.exec(line);
     if (b && RULE.test(b[1]!)) {
       const desc = b[2]!.split(/\s{3,}/).map(s => s.trim()).filter(s => /[a-z]{3}/.test(s) && !/[─⟨⇓→]/.test(s)).pop();
-      add({ id: b[1]!, text: desc ?? `Rule ${b[1]} as defined in docs/semantics/milo.md`, parent: section });
+      add({ id: b[1]!, text: desc ?? `Rule ${b[1]} as defined in docs/semantics/milo.md`, parent: section, source: src() });
       continue;
     }
     // A rule in a table: `| T-EXCL | in one call, ... | prevents ... |`.
     if (line.startsWith("| ")) {
       const cells = tableCells(line);
       for (const id of (cells[0] ?? "").split(", ").map(s => s.trim())) {
-        if (RULE.test(id)) add({ id, text: (cells[1] ?? "").replace(/\\\|/g, "|"), parent: section });
+        if (RULE.test(id)) add({ id, text: (cells[1] ?? "").replace(/\\\|/g, "|"), parent: section, source: src() });
       }
     }
   }
-  add({ id: "OWN", text: "Ownership rules pinned to test programs (docs/spec.md, MILO-O)" });
+  add({ id: "OWN", text: "Ownership rules pinned to test programs (docs/spec.md, MILO-O)", source: "docs/spec.md §MILO-O" });
   const lines = spec.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const m = /^### (MILO-O-\S+)/.exec(lines[i]!);
     if (!m) continue;
     let j = i + 1;
     while (j < lines.length && !lines[j]!.trim()) j++;
-    add({ id: m[1]!, text: (lines[j] ?? "").trim(), parent: "OWN" });
+    add({ id: m[1]!, text: (lines[j] ?? "").trim(), parent: "OWN", source: `docs/spec.md §${m[1]}` });
   }
   return reqs;
 }
 
 if (import.meta.main) {
   const reqs = generate(readFileSync(join(ROOT, "docs/semantics/milo.md"), "utf-8"), readFileSync(join(ROOT, "docs/spec.md"), "utf-8"));
-  const text = JSON.stringify({ requirements: reqs }, null, 2) + "\n";
+  const text = JSON.stringify({ $schema: "../schema/requirements.schema.json", requirements: reqs }, null, 2) + "\n";
   if (process.argv.includes("--check")) {
     let cur = "";
     try { cur = readFileSync(OUT, "utf-8"); } catch {}

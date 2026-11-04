@@ -1,1 +1,1 @@
-{"requirements":[{"id":"R-1","text":"read the table"},{"id":"R-2","text":"sum the readings"}]}
+{"$schema":"../../docs/schema/requirements.schema.json","requirements":[{"id":"R-1","text":"read the table"},{"id":"R-2","text":"sum the readings"}]}

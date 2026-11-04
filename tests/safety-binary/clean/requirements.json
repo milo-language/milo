@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../docs/schema/requirements.schema.json",
   "requirements": [
     { "id": "HLR-1", "text": "The program shall return a value within [0, 1000]." },
     { "id": "LLR-1", "parent": "HLR-1", "text": "clamp shall return a value within the given bounds." }

@@ -52,6 +52,10 @@ fn testInc(): void {
 }
 `;
 
+// A derived requirement (@derived(D-1) on code, @req(D-1) on its test) for the tests that exempt a fn with @derived.
+const DREQS = JSON.stringify({ requirements: [...JSON.parse(REQS).requirements, { id: "D-1", derived: true, text: "a helper the design needs" }] });
+const DTEST = TEST + `\n@req(D-1)\nfn testHelper(): void {\n    assertEq(1, 1)\n}\n`;
+
 // --no-run: most checks here are about the matrix, not the tests; the run has its own test below.
 const trace = (p: Project, ...extra: string[]) => milo(["trace", p.entry, "--json", "--no-run", ...extra]);
 const failures = (p: Project) => JSON.parse(trace(p, "--strict").out).strictFailures as string[];
@@ -150,8 +154,12 @@ test("trace is a report without a profile; strict fails on each gap and each fix
     expect((await_(failures(p))).some(m => m.includes("fn 'helper' has no @req"))).toBe(true);
     expect(trace(p).code).toBe(0); // a report run does not fail on it
     expect(trace(p, "--strict").code).toBe(1);
-    p.write("a.milo", CODE + `\n@derived(LLR-1)\nfn helper(): i64 {\n    return 1\n}\n`);
+    p.write("requirements.json", DREQS);
+    p.write("a_test.milo", DTEST);
+    p.write("a.milo", CODE + `\n@derived(D-1)\nfn helper(): i64 {\n    return 1\n}\n`);
     expect(trace(p, "--strict").code).toBe(0);
+    p.write("requirements.json", REQS);
+    p.write("a_test.milo", TEST);
     p.write("a.milo", CODE + `\n@deactivated("flight-test hook")\nfn helper(): i64 {\n    return 1\n}\n`);
     expect(trace(p, "--strict").code).toBe(0);
 
@@ -362,14 +370,14 @@ ensures result == 1
     return 1
 }
 
-@derived(LLR-1)
+@derived(D-1)
 pub fn main(): i32 {
     return inc(1) as i32
 }
 `;
 
 test.each(["iso26262-d", "iec61508-4"])("%s: traceability is strict, so an untraced fn fails trace and a --strict build", level => {
-  const p = project({ "a.milo": LIB, "a_test.milo": TEST, "requirements.json": REQS });
+  const p = project({ "a.milo": LIB, "a_test.milo": DTEST, "requirements.json": DREQS });
   try {
     const t = milo(["trace", p.entry, "--no-run", `--safety=${level}`]);
     expect(t.code).toBe(1);
@@ -387,7 +395,7 @@ test("milo safety --list names the traceability and coverage fields", () => {
 });
 
 test("a dev build warns about a traceability gap and succeeds; --strict fails; a baseline keeps it a warning", () => {
-  const p = project({ "a.milo": LIB, "a_test.milo": TEST, "requirements.json": REQS });
+  const p = project({ "a.milo": LIB, "a_test.milo": DTEST, "requirements.json": DREQS });
   const build = (...extra: string[]) => milo(["build", p.entry, "--safety=iec62304-b", "-o", join(p.dir, "out"), ...extra]);
   try {
     const dev = build();
@@ -419,7 +427,7 @@ test("a dev build warns about a traceability gap and succeeds; --strict fails; a
     expect(grow.code).toBe(1);
     expect(grow.out).toContain("a baseline can only shrink");
     // ...and a fixed gap that is still listed is reported stale
-    p.write("a.milo", LIB.replace("fn helper(): i64\nensures", "@derived(LLR-1)\nfn helper(): i64\nensures"));
+    p.write("a.milo", LIB.replace("fn helper(): i64\nensures", "@derived(D-1)\nfn helper(): i64\nensures"));
     const stale = build("--strict", "--baseline", base);
     expect(stale.code).toBe(0);
     expect(stale.out).toContain("baseline lists a gap that is fixed, remove it: untraced:helper");
@@ -515,6 +523,52 @@ test("strict: a requirement with no formalizing clause needs a verifying test th
     p.write("a_test.milo", noAssert);
     // (the parent HLR-1 has no clause, so its assertion-free test is still flagged)
     expect(failures(p).filter(m => m.includes("cannot fail")).map(m => m.split(" ")[1])).toEqual(["HLR-1"]);
+  } finally { p.done(); }
+}, 120000);
+
+// ── requirements.json schema: fixed fields, derived, verification ──
+
+const reqs = (...rs: object[]) => JSON.stringify({ requirements: rs });
+const errorsOf = (p: Project) => JSON.parse(trace(p).out).errors as string[];
+
+test("schema: an unknown field is an error naming the file and the requirement", () => {
+  const p = project({ "a.milo": CODE, "requirements.json": reqs({ id: "HLR-1", text: "t", priority: "high" }) });
+  try {
+    const errs = errorsOf(p);
+    expect(errs.some(e => e.includes("requirements.json") && e.includes("'HLR-1'") && e.includes("unknown field 'priority'"))).toBe(true);
+    p.write("requirements.json", reqs({ id: "HLR-1", text: "t", kind: "timing", source: "RFC 1" }));
+    expect(errorsOf(p).filter(e => e.includes("unknown field"))).toEqual([]);
+    p.write("requirements.json", reqs({ id: "HLR-1", text: "t", kind: "speedy" }));
+    expect(errorsOf(p).some(e => e.includes('"kind" must be one of'))).toBe(true);
+    p.write("requirements.json", reqs({ id: "D-1", text: "t", derived: true, parent: "HLR-1" }, { id: "HLR-1", text: "t" }));
+    expect(errorsOf(p).some(e => e.includes("derived requirement may not have a parent"))).toBe(true);
+  } finally { p.done(); }
+});
+
+test("derived: @derived needs a derived requirement and @req rejects one", () => {
+  const plain = reqs({ id: "R-1", text: "t" });
+  const derived = reqs({ id: "R-1", text: "t", derived: true });
+  const p = project({ "a.milo": "@derived(R-1)\nfn f(): i64 {\n    return 1\n}\n", "requirements.json": plain });
+  try {
+    expect(errorsOf(p).some(e => e.includes("@derived(R-1)") && e.includes('not "derived": true'))).toBe(true);
+    p.write("requirements.json", derived);
+    expect(errorsOf(p)).toEqual([]);
+    p.write("a.milo", "@req(R-1)\nfn f(): i64 {\n    return 1\n}\n");
+    expect(errorsOf(p).some(e => e.includes("@req(R-1)") && e.includes("derived requirement"))).toBe(true);
+  } finally { p.done(); }
+});
+
+test("verification: [\"analysis\"] needs a PROVEN clause under --strict; absent keeps the default rules", () => {
+  const noClause = "@req(LLR-1)\npub fn inc(x: i64): i64 {\n    return x + 1\n}\n";
+  const decl = (verification?: object[]) => reqs({ id: "HLR-1", text: "t" }, { id: "LLR-1", parent: "HLR-1", text: "t", ...(verification ? { verification } : {}) });
+  const p = project({ "a.milo": noClause, "a_test.milo": TEST, "requirements.json": decl([{ method: "analysis" }]) });
+  try {
+    expect(failures(p).some(m => m.includes("LLR-1") && m.includes('"analysis"'))).toBe(true);
+    p.write("requirements.json", decl());
+    expect(failures(p).filter(m => m.includes('"analysis"'))).toEqual([]);
+    p.write("a.milo", CODE);
+    p.write("requirements.json", decl([{ method: "analysis" }]));
+    expect(failures(p).filter(m => m.includes('"analysis"'))).toEqual([]);
   } finally { p.done(); }
 }, 120000);
 

@@ -38,6 +38,11 @@ export type Coverage = "statement" | "branch" | "mcdc";
 
 interface SafetyConstraints {
   traceability: Traceability;
+  // How many levels of requirements the standard wants between the system and the code: a requirement
+  // at this depth or deeper (root = 1) may be verified by a PROVEN clause alone; a shallower one needs
+  // a passing test, because a proof checks code against the spec, not that the spec is right.
+  // DO-178C A/B ask for high-level and low-level requirements (2); the others accept one level.
+  minTraceDepth: number;
   coverage: Coverage;
   noRecursion: boolean;
   requireBoundedLoops: boolean;       // all loops must have invariant or compile-time-bounded iteration
@@ -60,6 +65,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // DO-178C — avionics
   "do178c-a": {
     traceability: "strict",
+    minTraceDepth: 2,
     coverage: "mcdc",
     noRecursion: true,
     requireUsedResults: true,
@@ -76,6 +82,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "do178c-b": {
     traceability: "strict",
+    minTraceDepth: 2,
     coverage: "branch",
     noRecursion: true,
     requireUsedResults: true,
@@ -92,6 +99,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "do178c-c": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "statement",
     noRecursion: true,
     requireUsedResults: true,
@@ -109,6 +117,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // ISO 26262 — automotive
   "iso26262-a": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
@@ -123,6 +132,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iso26262-b": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "branch",
     noRecursion: false,
     requireBoundedLoops: false,
@@ -137,6 +147,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iso26262-c": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
@@ -151,6 +162,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iso26262-d": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "mcdc",
     noRecursion: true,
     requireBoundedLoops: true,
@@ -168,6 +180,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // NASA software classification
   "nasa-a": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "mcdc",
     noRecursion: true,
     requireUsedResults: true,
@@ -184,6 +197,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "nasa-b": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "branch",
     noRecursion: true,
     requireUsedResults: true,
@@ -201,6 +215,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // IEC 61508 — industrial/nuclear/rail
   "iec61508-4": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "mcdc",
     noRecursion: true,
     requireBoundedLoops: true,
@@ -216,6 +231,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iec61508-3": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
@@ -233,6 +249,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   // IEC 62304 — medical device software
   "iec62304-a": {
     traceability: "report",
+    minTraceDepth: 1,
     coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
@@ -247,6 +264,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iec62304-b": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "statement",
     noRecursion: false,
     requireBoundedLoops: false,
@@ -261,6 +279,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
   },
   "iec62304-c": {
     traceability: "strict",
+    minTraceDepth: 1,
     coverage: "branch",
     noRecursion: true,
     requireBoundedLoops: true,
@@ -301,6 +320,10 @@ export function objectPolicy(level: SafetyLevel): { noDynamicAllocation: boolean
 
 export function traceabilityOf(level: SafetyLevel): Traceability {
   return PROFILES[level].traceability;
+}
+
+export function minTraceDepthOf(level: SafetyLevel): number {
+  return PROFILES[level].minTraceDepth;
 }
 
 export function coverageOf(level: SafetyLevel): Coverage {

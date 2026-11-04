@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://milo-language.dev/schema/requirements.schema.json",
+  "title": "Milo requirements.json",
+  "description": "The requirements a Milo project traces with @req / @derived. `milo trace` and the checker validate against these rules (src/requirements.ts loadRequirements) and reject any other field.",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string" },
+    "requirements": { "type": "array", "items": { "$ref": "#/$defs/requirement" } }
+  },
+  "required": ["requirements"],
+  "additionalProperties": false,
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_.\\-]+$" },
+    "requirement": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "text": { "type": "string" },
+        "parent": { "$ref": "#/$defs/id", "description": "The requirement this one refines. Must exist; no cycles." },
+        "derived": { "type": "boolean", "description": "Comes from a design choice, not from a parent. Traced with @derived(ID), never @req(ID) on code; may not have a parent." },
+        "source": { "type": "string", "description": "Where it came from, e.g. \"RFC 8259 §7\"." },
+        "kind": { "enum": ["functional", "timing", "resource", "performance", "security", "interface"], "default": "functional" },
+        "verification": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": { "enum": ["test", "analysis", "inspection", "demonstration", "review"] },
+              "env": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "description": "static, unit, integration, sil, hil, target, or any other lowercase token (a named rig)." }
+            },
+            "required": ["method"],
+            "additionalProperties": false
+          },
+          "description": "Under --strict, analysis (any env) needs a PROVEN formalizing clause and test with env absent or unit a passing @req test; every other method/env pair needs evidence, which is a gap until evidence records exist. Absent: the profile's depth rules."
+        }
+      },
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "if": { "properties": { "derived": { "const": true } }, "required": ["derived"] },
+      "then": { "not": { "required": ["parent"] } }
+    }
+  }
+}

@@ -79,7 +79,7 @@ ensures result >= -1000000 && result <= 1000000
     return clampI32(integral + (error >> 8), -1000000, 1000000)
 }
 
-@derived(LLR-3)
+@req(LLR-3)
 pub fn clampInput(raw: i32): i32
 ensures result >= -32767 && result <= 32767
 {

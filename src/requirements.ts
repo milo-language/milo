@@ -17,10 +17,10 @@
 // tags every obligation with the clause it came from) is the evidence, so a green row means
 // a solver discharged exactly that clause, and a `requires` clause is judged at every call site.
 //
-// Verification follows DO-333 (formal methods supplement): a low-level requirement (one with a
-// parent) is verified by a PROVEN formalizing clause alone or by a passing test; a high-level
-// requirement (no parent), and any requirement with no formalizing clause, needs a passing test
-// of its own, because a proof checks code against the spec, not that the spec is right or that
+// Verification follows DO-333 (formal methods supplement): a requirement at or below the profile's
+// minTraceDepth (root = 1; default 2, DO-178C A/B 2, others 1) is verified by a PROVEN formalizing
+// clause alone or by a passing test; a shallower one, and any requirement with no formalizing
+// clause, needs a passing test of its own, because a proof checks code against the spec, not that the spec is right or that
 // the binary behaves on target. The matrix says which one verified each requirement.
 //
 // `@req` tests are RUN (each in its own process, through `milo test`) unless `--no-run`.
@@ -38,7 +38,7 @@ import { walkExprs } from "./safety";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { ProveResult } from "./verify";
-import { parseSafetyLevel, traceabilityOf } from "./safety";
+import { parseSafetyLevel, traceabilityOf, minTraceDepthOf } from "./safety";
 import { projectProfile } from "./pkg";
 import { entryOfBinary, formatObjectTrace, traceObject, type FnSite } from "./object-trace";
 
@@ -65,7 +65,30 @@ export function traceAttrError(attr: Attribute, where: "fn" | "struct" | "clause
 
 // ── requirements.json ──
 
-export interface Requirement { id: string; text: string; parent?: string }
+export const VERIFICATION_METHODS = ["test", "analysis", "inspection", "demonstration", "review"] as const;
+export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
+/** Where the evidence is produced: static, unit, integration, sil, hil, target, or a named rig (any other lowercase token). */
+export const ENV_RE = /^[a-z][a-z0-9_-]*$/;
+export interface VerificationClaim { method: VerificationMethod; env?: string }
+/** Strict mode can check these itself: analysis (any env) by a PROVEN clause, a unit test by a passing @req test. */
+const claimChecked = (c: VerificationClaim) => c.method === "analysis" || (c.method === "test" && (c.env === undefined || c.env === "unit"));
+const claimName = (c: VerificationClaim) => c.env ? `${c.method}@${c.env}` : c.method;
+export const REQUIREMENT_KINDS = ["functional", "timing", "resource", "performance", "security", "interface"] as const;
+export type RequirementKind = (typeof REQUIREMENT_KINDS)[number];
+/** The fields a requirement may have: docs/schema/requirements.schema.json says the same. */
+const REQUIREMENT_FIELDS = new Set(["id", "text", "parent", "derived", "source", "kind", "verification"]);
+
+export interface Requirement {
+  id: string;
+  text: string;
+  parent?: string;
+  /** Not traceable to a parent: it comes from a design choice and feeds back to the system level. */
+  derived?: boolean;
+  /** Where it came from, e.g. "RFC 8259 §7". */
+  source?: string;
+  kind?: RequirementKind;
+  verification?: VerificationClaim[];
+}
 
 export interface RequirementsFile { path: string; reqs: Requirement[]; errors: string[] }
 
@@ -108,17 +131,46 @@ export function loadRequirements(path: string): RequirementsFile {
   } catch (e: any) {
     return { path, reqs, errors: [`cannot read ${path}: ${e.message}`] };
   }
-  if (!doc || !Array.isArray(doc.requirements)) {
-    return { path, reqs, errors: [`${path}: expected {"requirements": [{"id", "text", "parent"?}]}`] };
+  if (!doc || typeof doc !== "object" || !Array.isArray(doc.requirements)) {
+    return { path, reqs, errors: [`${path}: expected {"requirements": [{"id", "text", ...}]}; see docs/schema/requirements.schema.json`] };
   }
+  for (const k of Object.keys(doc)) {
+    if (k !== "$schema" && k !== "requirements") errors.push(`${path}: unknown top-level field '${k}'`);
+  }
+  if (doc.$schema !== undefined && typeof doc.$schema !== "string") errors.push(`${path}: "$schema" must be a string`);
   const seen = new Set<string>();
   for (const [i, r] of doc.requirements.entries()) {
     if (!r || typeof r.id !== "string" || !ID_RE.test(r.id)) { errors.push(`requirements[${i}]: missing or malformed "id"`); continue; }
     if (typeof r.text !== "string") { errors.push(`requirement '${r.id}': missing "text"`); continue; }
     if (r.parent !== undefined && typeof r.parent !== "string") { errors.push(`requirement '${r.id}': "parent" must be an id string`); continue; }
+    const bad = (m: string) => { errors.push(`${path}: requirement '${r.id}': ${m}`); return true; };
+    let invalid = false;
+    for (const k of Object.keys(r)) if (!REQUIREMENT_FIELDS.has(k)) invalid = bad(`unknown field '${k}' (allowed: ${[...REQUIREMENT_FIELDS].join(", ")})`) || invalid;
+    if (r.derived !== undefined && typeof r.derived !== "boolean") invalid = bad(`"derived" must be true or false`) || invalid;
+    if (r.source !== undefined && typeof r.source !== "string") invalid = bad(`"source" must be a string`) || invalid;
+    if (r.kind !== undefined && !REQUIREMENT_KINDS.includes(r.kind)) invalid = bad(`"kind" must be one of ${REQUIREMENT_KINDS.join(", ")}`) || invalid;
+    if (r.verification !== undefined) {
+      if (!Array.isArray(r.verification)) invalid = bad(`"verification" must be an array of {"method", "env"?}`) || invalid;
+      else for (const [j, c] of r.verification.entries()) {
+        const ctx = `"verification"[${j}]`;
+        if (!c || typeof c !== "object" || Array.isArray(c)) { invalid = bad(`${ctx} must be {"method", "env"?}`) || invalid; continue; }
+        for (const k of Object.keys(c)) if (k !== "method" && k !== "env") invalid = bad(`${ctx}: unknown field '${k}' (allowed: method, env)`) || invalid;
+        if (!VERIFICATION_METHODS.includes(c.method)) invalid = bad(`${ctx}: "method" must be one of ${VERIFICATION_METHODS.join(", ")}`) || invalid;
+        if (c.env !== undefined && (typeof c.env !== "string" || !ENV_RE.test(c.env))) invalid = bad(`${ctx}: "env" must be a lowercase token (static, unit, integration, sil, hil, target or a named rig)`) || invalid;
+      }
+    }
+    if (r.derived === true && r.parent !== undefined) invalid = bad(`a derived requirement may not have a parent`) || invalid;
+    if (invalid) continue;
     if (seen.has(r.id)) { errors.push(`duplicate requirement id '${r.id}'`); continue; }
     seen.add(r.id);
-    reqs.push({ id: r.id, text: r.text, ...(r.parent !== undefined ? { parent: r.parent } : {}) });
+    reqs.push({
+      id: r.id, text: r.text,
+      ...(r.parent !== undefined ? { parent: r.parent } : {}),
+      ...(r.derived === true ? { derived: true } : {}),
+      ...(r.source !== undefined ? { source: r.source } : {}),
+      ...(r.kind !== undefined ? { kind: r.kind } : {}),
+      ...(r.verification !== undefined ? { verification: r.verification } : {}),
+    });
   }
   for (const r of reqs) {
     if (r.parent !== undefined && !seen.has(r.parent)) errors.push(`requirement '${r.id}': parent '${r.parent}' does not exist`);
@@ -309,6 +361,11 @@ export interface RequirementRow {
   id: string;
   text: string;
   parent?: string;
+  derived?: true;
+  source?: string;
+  kind: RequirementKind;
+  /** Methods the requirement file declares; absent = the default rules. */
+  declaredVerification?: VerificationClaim[];
   children: string[];
   implementedBy: (SiteRow & { derived?: true })[];
   formalizedBy: ClauseRow[];
@@ -390,6 +447,8 @@ export interface TraceOptions {
   strict: boolean;
   /** Gap keys that stay warnings under strict. */
   baseline?: Set<string>;
+  /** The profile's minTraceDepth (safety.ts); default 2, where only a child requirement can be verified by proof alone. */
+  minTraceDepth?: number;
   /** Provably dead branches (dead.ts); absent = not analysed. */
   dead?: DeadBranch[];
   /** Verdict per "<abs file>:<test name>" when the tests were run; absent = not run. */
@@ -430,21 +489,29 @@ export function buildTrace(o: TraceOptions): TraceReport {
 
   // Every id the source uses must exist.
   const unknownIds = new Set<string>();
-  const checkId = (id: string, l: Loc, what: string) => {
-    if (reqPath && !known.has(id)) {
-      const key = `${where(l)}:${id}`;
-      if (!unknownIds.has(key)) { unknownIds.add(key); errors.push(`${where(l)}: ${what} refers to unknown requirement '${id}'`); }
-    }
+  const derivedIds = new Set(reqs.filter(r => r.derived).map(r => r.id));
+  // @derived names only derived requirements and @req only non-derived ones. A test may @req a derived
+  // one: it verifies it, it does not implement it.
+  const checkId = (id: string, l: Loc, what: string, use?: "req" | "derived") => {
+    if (!reqPath) return;
+    const key = `${where(l)}:${what}:${id}`;
+    if (unknownIds.has(key)) return;
+    const fail = (m: string) => { unknownIds.add(key); errors.push(`${where(l)}: ${what} ${m}`); };
+    if (!known.has(id)) fail(`refers to unknown requirement '${id}'`);
+    else if (use === "derived" && !derivedIds.has(id)) fail(`uses @derived(${id}) but '${id}' is not "derived": true; use @req`);
+    else if (use === "req" && derivedIds.has(id)) fail(`uses @req(${id}) but '${id}' is a derived requirement; use @derived`);
   };
   for (const d of decls) {
-    for (const id of d.implements) checkId(id, d.loc, `${d.isTest ? "test" : d.decl} '${d.name}'`);
-    for (const id of d.derived) checkId(id, d.loc, `${d.decl} '${d.name}' (@derived)`);
+    for (const id of d.implements) checkId(id, d.loc, `${d.isTest ? "test" : d.decl} '${d.name}'`, d.isTest ? undefined : "req");
+    for (const id of d.derived) checkId(id, d.loc, `${d.decl} '${d.name}' (@derived)`, "derived");
     for (const id of d.assumes) checkId(id, d.loc, `fn '${d.name}' (@assume)`);
-    for (const c of d.clauses) for (const id of c.ids) checkId(id, c.loc, `${c.kind} clause of '${d.name}'`);
+    for (const c of d.clauses) for (const id of c.ids) checkId(id, c.loc, `${c.kind} clause of '${d.name}'`, d.isTest ? undefined : "req");
   }
 
   const rows = new Map<string, RequirementRow>(reqs.map(r => [r.id, {
-    id: r.id, text: r.text, ...(r.parent ? { parent: r.parent } : {}), children: [],
+    id: r.id, text: r.text, ...(r.parent ? { parent: r.parent } : {}), ...(r.derived ? { derived: true as const } : {}),
+    ...(r.source !== undefined ? { source: r.source } : {}), kind: r.kind ?? "functional",
+    ...(r.verification ? { declaredVerification: r.verification } : {}), children: [],
     implementedBy: [], formalizedBy: [], verifiedBy: [], assumedBy: [], implemented: false, verification: "none" as Verification, verified: false,
   }]));
   for (const r of reqs) if (r.parent && rows.has(r.parent)) rows.get(r.parent)!.children.push(r.id);
@@ -493,10 +560,18 @@ export function buildTrace(o: TraceOptions): TraceReport {
     return pick(r) || r.children.some(c => subtreeHas(c, pick, seen));
   };
   const passingTests = (r: RequirementRow) => r.verifiedBy.filter(t => t.result !== "FAIL").length;
+  const minDepth = o.minTraceDepth ?? 2;
+  const depthOf = (id: string): number => {
+    let n = 1;
+    for (let cur = rows.get(id); cur?.parent && rows.has(cur.parent) && n <= rows.size; cur = rows.get(cur.parent)) n++;
+    return n;
+  };
+  const allProven = (r: RequirementRow) => r.formalizedBy.length > 0 && r.formalizedBy.every(c => c.status === "PROVEN");
   for (const r of rows.values()) {
     r.implemented = subtreeHas(r.id, x => x.implementedBy.length > 0);
-    // DO-333: proof alone verifies only a low-level requirement whose every clause is PROVEN.
-    const byProof = !!r.parent && rows.has(r.parent) && r.formalizedBy.length > 0 && r.formalizedBy.every(c => c.status === "PROVEN");
+    // DO-333: proof alone verifies a requirement deep enough in the tree (the profile's minTraceDepth),
+    // or one that declares "analysis"; every clause must be PROVEN.
+    const byProof = (depthOf(r.id) >= minDepth || !!r.declaredVerification?.some(c => c.method === "analysis")) && allProven(r);
     const byTest = passingTests(r) > 0;
     r.verification = byProof && byTest ? "proof+test" : byProof ? "proof" : byTest ? "test" : "none";
     r.verified = r.verification !== "none";
@@ -529,10 +604,20 @@ export function buildTrace(o: TraceOptions): TraceReport {
     if (r.verified) continue;
     const failing = r.verifiedBy.filter(t => t.result === "FAIL");
     const why = failing.length ? `${failing.length > 1 ? "its verifying tests fail" : "its verifying test fails"} (${failing.map(t => t.fn).join(", ")})`
-      : r.parent && r.formalizedBy.length > 0 ? "its clauses are not all PROVEN and no test passes"
-      : r.parent ? "it has no formalizing clause and no test"
-      : "a high-level requirement needs a passing test of its own";
+      : depthOf(r.id) >= minDepth && r.formalizedBy.length > 0 ? "its clauses are not all PROVEN and no test passes"
+      : depthOf(r.id) >= minDepth ? "it has no formalizing clause and no test"
+      : `a requirement above trace depth ${minDepth} needs a passing test of its own`;
     gap(`no-verifying-test:${r.id}`, `requirement ${r.id} is not verified: ${why}`);
+  }
+  // What a requirement says it is verified by must hold, whatever else would verify it.
+  // TODO(evidence): inspection, review, demonstration and test outside the unit env have no evidence
+  // records yet, so each is a gap until a later task lets a record satisfy it.
+  for (const r of rows.values()) {
+    for (const c of r.declaredVerification ?? []) {
+      if (c.method === "analysis" && !allProven(r)) gap(`verification-analysis:${r.id}`, `requirement ${r.id} lists verification "analysis" but its formalizing clauses are not all PROVEN`);
+      else if (c.method === "test" && claimChecked(c) && passingTests(r) === 0) gap(`verification-test:${r.id}`, `requirement ${r.id} lists verification "test" but no @req test passes`);
+      else if (!claimChecked(c)) gap(`needs-evidence:${r.id}:${claimName(c)}`, `requirement ${r.id} lists verification "${claimName(c)}" which needs evidence: no evidence record can satisfy it yet`);
+    }
   }
   // A dead branch is code no test or proof can ever cover. Exempt only through its function's
   // @deactivated("reason"): the reviewer then sees it in the deactivated list instead.
@@ -621,7 +706,7 @@ export function formatTrace(r: TraceReport): string {
   const show = (row: RequirementRow, depth: number) => {
     const ind = "  ".repeat(depth);
     out.push("");
-    out.push(`${ind}${row.id}  ${row.text}`);
+    out.push(`${ind}${row.id}  ${row.text}${row.source ? `  [${row.source}]` : ""}${row.kind !== "functional" ? `  <${row.kind}>` : ""}${row.derived ? "  (derived)" : ""}`);
     const sub = ind + "  ";
     const via = (own: unknown[], pick: (x: RequirementRow) => boolean, flag: boolean) =>
       own.length === 0 && flag ? `(through ${row.children.filter(c => subtree(byId.get(c)!, pick)).join(", ")})` : "";
@@ -641,6 +726,7 @@ export function formatTrace(r: TraceReport): string {
       }
     }
     for (const a of row.assumedBy) out.push(`${sub}${pad("assumed")}${a.file}:${a.line} ${a.fn}`);
+    for (const c of row.declaredVerification ?? []) if (!claimChecked(c)) out.push(`${sub}${pad("verified")}NEEDS EVIDENCE  ${claimName(c)}`);
     if (row.verification === "proof" || row.verification === "proof+test") {
       out.push(`${sub}${pad("verified")}PROOF     ${row.formalizedBy.length} formalizing clause${row.formalizedBy.length === 1 ? "" : "s"} PROVEN`);
     }
@@ -709,6 +795,8 @@ export interface TraceArgs {
   writeBaseline?: string;
   /** A binary built with -g: adds the object column (--object). */
   object?: string;
+  /** The profile's minTraceDepth. */
+  minTraceDepth?: number;
   /** --safety=<name> was given: milo.json's profile is then not consulted. */
   safetyFlag?: boolean;
 }
@@ -742,6 +830,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
       out.safetyFlag = true;
       const level = parseSafetyLevel(a.slice(9));
       if (level && traceabilityOf(level) === "strict") out.strict = true;
+      if (level) out.minTraceDepth = minTraceDepthOf(level);
     }
     else if (a.startsWith("-")) continue;
     else if (!out.entry) out.entry = a;
@@ -767,7 +856,7 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   // The @req tests, run once: a first pass finds them, a second builds the report with verdicts.
   let testResults: Map<string, { pass: boolean; output?: string }> | undefined;
   if (!a.noRun) {
-    const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, dead });
+    const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, dead });
     const entryDir = dirname(resolve(a.entry));
     const byFile = new Map<string, Set<string>>();
     for (const r of first.requirements) for (const t of r.verifiedBy) {
@@ -784,7 +873,7 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
       }
     }
   }
-  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, strict: a.strict, baseline, testResults, dead });
+  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, baseline, testResults, dead });
 }
 
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
@@ -796,6 +885,7 @@ export function runTraceCommand(args: string[], deps: TraceDeps): number {
   const profile = a.safetyFlag ? null : projectProfile(dirname(resolve(a.entry)));
   const profLevel = profile ? parseSafetyLevel(profile) : null;
   if (profLevel && traceabilityOf(profLevel) === "strict") a.strict = true;
+  if (profLevel && a.minTraceDepth === undefined) a.minTraceDepth = minTraceDepthOf(profLevel);
   const rep = traceEntry(a, deps);
   if (profile) rep.profile = profile;
   let objectText = "";

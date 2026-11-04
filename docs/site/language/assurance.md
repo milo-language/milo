@@ -82,7 +82,7 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 each clause that formalizes it (a `requires` is judged at every call site), and its tests.
 `milo trace` runs the `@req` tests (`--no-run` skips them). `--strict`, or a `--safety` profile whose
 `traceability` field is `strict`, turns an untraced function, a requirement that is not verified
-(DO-333: a proven low-level requirement or a passing test; a high-level one needs a test), a failing
+(DO-333: a requirement at or below the profile's `minTraceDepth` (root = 1; DO-178C A/B 2, others 1) is verified by a proven clause or a passing test; a shallower one needs a test. `requirements.json` follows `docs/schema/requirements.schema.json`: `derived`, `source`, `kind` and `verification` claims such as `{"method": "analysis"}`), a failing
 test and an unproved clause into errors; a dev `build --safety` only warns, and `--baseline` lets an
 existing codebase adopt a profile. Line coverage of the implementing code by the tests is not built yet. See [contracts & proofs](/language/safety#requirements).
 

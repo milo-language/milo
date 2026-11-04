@@ -1,794 +1,957 @@
 {
+  "$schema": "../schema/requirements.schema.json",
   "requirements": [
     {
       "id": "SEM-01",
-      "text": "Milo semantics: Syntax (docs/semantics/milo.md)"
+      "text": "Milo semantics: Syntax (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Syntax"
     },
     {
       "id": "SEM-02",
-      "text": "Milo semantics: How a program runs (docs/semantics/milo.md)"
+      "text": "Milo semantics: How a program runs (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §How a program runs"
     },
     {
       "id": "SEM-03",
-      "text": "Milo semantics: Reading and moving (docs/semantics/milo.md)"
+      "text": "Milo semantics: Reading and moving (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Reading and moving"
     },
     {
       "id": "E-COPY",
       "text": "reading a Copy value leaves it",
-      "parent": "SEM-03"
+      "parent": "SEM-03",
+      "source": "docs/semantics/milo.md §Reading and moving"
     },
     {
       "id": "E-MOVE",
       "text": "reading an owned value moves it out",
-      "parent": "SEM-03"
+      "parent": "SEM-03",
+      "source": "docs/semantics/milo.md §Reading and moving"
     },
     {
       "id": "E-STUCK",
       "text": "a moved slot has no meaning",
-      "parent": "SEM-03"
+      "parent": "SEM-03",
+      "source": "docs/semantics/milo.md §Reading and moving"
     },
     {
       "id": "E-FIELD-MOVE",
       "text": "MILO-O-fieldMove",
-      "parent": "SEM-03"
+      "parent": "SEM-03",
+      "source": "docs/semantics/milo.md §Reading and moving"
     },
     {
       "id": "SEM-04",
-      "text": "Milo semantics: Statements (docs/semantics/milo.md)"
+      "text": "Milo semantics: Statements (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Statements"
     },
     {
       "id": "S-LET",
       "text": "Rule S-LET as defined in docs/semantics/milo.md",
-      "parent": "SEM-04"
+      "parent": "SEM-04",
+      "source": "docs/semantics/milo.md §Statements"
     },
     {
       "id": "S-VAR",
       "text": "Rule S-VAR as defined in docs/semantics/milo.md",
-      "parent": "SEM-04"
+      "parent": "SEM-04",
+      "source": "docs/semantics/milo.md §Statements"
     },
     {
       "id": "S-ASSIGN",
       "text": "Rule S-ASSIGN as defined in docs/semantics/milo.md",
-      "parent": "SEM-04"
+      "parent": "SEM-04",
+      "source": "docs/semantics/milo.md §Statements"
     },
     {
       "id": "SEM-05",
-      "text": "Milo semantics: Drops (docs/semantics/milo.md)"
+      "text": "Milo semantics: Drops (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Drops"
     },
     {
       "id": "S-SCOPE-END",
       "text": "Leaving a scope drops its variables in reverse declaration order, skipping",
-      "parent": "SEM-05"
+      "parent": "SEM-05",
+      "source": "docs/semantics/milo.md §Drops"
     },
     {
       "id": "S-TEMP",
       "text": "A temporary that owns something lives until the end of the statement that",
-      "parent": "SEM-05"
+      "parent": "SEM-05",
+      "source": "docs/semantics/milo.md §Drops"
     },
     {
       "id": "SEM-06",
-      "text": "Milo semantics: Calls (docs/semantics/milo.md)"
+      "text": "Milo semantics: Calls (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Calls"
     },
     {
       "id": "E-CALL",
       "text": "Rule E-CALL as defined in docs/semantics/milo.md",
-      "parent": "SEM-06"
+      "parent": "SEM-06",
+      "source": "docs/semantics/milo.md §Calls"
     },
     {
       "id": "S-ASSIGN-REF",
       "text": "Rule S-ASSIGN-REF as defined in docs/semantics/milo.md",
-      "parent": "SEM-06"
+      "parent": "SEM-06",
+      "source": "docs/semantics/milo.md §Calls"
     },
     {
       "id": "SEM-07",
-      "text": "Milo semantics: Which programs are accepted (docs/semantics/milo.md)"
+      "text": "Milo semantics: Which programs are accepted (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-REF-PARAM",
       "text": "`&τ` and `&mut τ` appear only as parameter types: no variable, field or return value has one",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-NO-MOVE-OUT",
       "text": "an owned value cannot be moved out through a reference (read by value from `ref`/`mut`)",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-SHARED-READONLY",
       "text": "no assignment through a `&τ` parameter",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-EXCL",
       "text": "in one call, a place passed `&mut p` overlaps no other argument (`p` and `p.f` overlap; `p.f` and `p.g` do not)",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-MOVED",
       "text": "a variable or field that is moved on *some* path into a point is not read there (flow-sensitive)",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-LET",
       "text": "a `let` variable is never assigned",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "T-ASSIGN-MOVED-OK",
       "text": "assigning a moved place is allowed and makes it owned again",
-      "parent": "SEM-07"
+      "parent": "SEM-07",
+      "source": "docs/semantics/milo.md §Which programs are accepted"
     },
     {
       "id": "SEM-08",
-      "text": "Milo semantics: The theorem (docs/semantics/milo.md)"
+      "text": "Milo semantics: The theorem (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §The theorem"
     },
     {
       "id": "SEM-09",
-      "text": "Milo semantics: Extensions to the core (docs/semantics/milo.md)"
+      "text": "Milo semantics: Extensions to the core (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Extensions to the core"
     },
     {
       "id": "SEM-10",
-      "text": "Milo semantics: Rules the interpreter added (docs/semantics/milo.md)"
+      "text": "Milo semantics: Rules the interpreter added (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "S-TEMP-CALL",
       "text": "A call is a scope of its own: a temporary lent to a by-ref parameter (or made while evaluating the arguments) is dropped, last first, when the call returns, before the result is used. Refines S-TEMP.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "S-TEMP-FIELD",
       "text": "Reading an owned field out of a temporary moves the field out and drops the rest of the temporary at once, before the statement goes on (MILO-O-tempFieldRead).",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "S-PENDING",
       "text": "An owned operand evaluated before its siblings (call argument, struct field, array element, enum payload) is held until the op takes them all; a `return`, `break`, `continue` or `?` out of a later operand drops the held ones, last first.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-FORK-VIEW",
       "text": "An `if`/`match` expression whose arms all name unmoved places yields a view of the chosen one (dropping it does nothing). If some arm yields an owned value, the fork owns its result and a place arm is deep-copied (MILO-O-forkOwnership).",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-FORK-OWN",
       "text": "An `if`/`match` expression whose arms all name unmoved places yields a view of the chosen one (dropping it does nothing). If some arm yields an owned value, the fork owns its result and a place arm is deep-copied (MILO-O-forkOwnership).",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-INDEX-COPY",
       "text": "Reading a Vec or array element by value copies it (a deep copy if it owns); it never moves out of the container. `get(i)` yields a view.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-STRING-SHARE",
       "text": "A string is a counted buffer. A copy out of a borrow shares it (count + 1), a drop decrements it and the last one frees it; a push on a shared buffer first copies it. A literal, a slice and an empty string own no buffer.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-ARRAY-DROP",
       "text": "The elements of an array or Vec drop first to last; the fields of a struct last to first.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-VEC",
       "text": "A Vec is a header (buffer, start, len, cap) over a heap buffer of its elements; a Vec with cap 0 owns no block. A slice is a header marked view.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-PROPAGATE",
       "text": "`e?` on `Some(x)`/`Ok(x)` evaluates to x; on `None`/`Err(c)` it returns `None`/`Err(conv(c))` from the enclosing fn or closure after the usual scope drops.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-MATCH",
       "text": "An owned, moved subject goes into a holder the match owns, and an arm's bindings move their payloads out of it (a Copy payload is copied). A borrowed subject binds references (`&mut` when the checker says so). The first arm that matches wins; a binding marked escaping (let-else) is declared in the enclosing scope.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-CLOSURE",
       "text": "A closure value holds an environment: a reference to each lent capture, the moved or shared value for a `move`, consumed or shared-string capture. Dropping an owning closure drops the moved captures.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-IFACE",
       "text": "An interface value is the concrete value with its type name, and a method call dispatches on that name. A `&T` given to `&Interface` makes a view pair borrowing the place.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-MATCH-INDEX",
       "text": "A `match` on a container element (`w[i]`) matches a view of the element, so an arm may overwrite the element and its bindings stay valid.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-GLOBAL",
       "text": "A module global with a non-constant initializer runs at its first mention; one no function mentions runs before `main`, in declaration order.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-HASHMAP",
       "text": "A HashMap owns one table block while non-empty and its entries (key, then value, dropped in that order). Iteration order is unspecified; `get`/`m[k]` yield copies.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-FOR-IN",
       "text": "`for x in c` over a Vec, slice, fixed array or string reads the length once, then binds `x` at each index 0..len-1 in order to a view of that element (a byte, for a string); the container is borrowed for the whole loop.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "S-IF-CHAIN",
       "text": "`if let P = a && c && let Q = b { T } else { E }`: the clauses run left to right, each inside the scopes (and with the bindings) of the ones before it, and stop at the first that fails; `T` runs inside all of them. `E` runs at most once, when some clause failed, after every clause's scope has ended, so none of their bindings is live in it.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-TARGET",
       "text": "`@targetOs()` and `@targetArch()` are the build target's names (`\"darwin\"`, `\"linux\"`, `\"windows\"`; `\"aarch64\"`, `\"x86_64\"`, ...), constants of the build. An `if` whose condition is made only of them, literals, `==`, `!=`, `!`, `&&` and `||` has a value known at build time: only the taken arm is compiled, so the other may name what this target lacks (both are still type-checked).",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-INTERP",
       "text": "An interpolated string `$\"...\"` evaluates its parts left to right, then appends each part's text in order to a fresh string: an int in decimal, a float as its shortest round-trip digits, a bool as true/false, a string as its bytes, a struct or enum through its display. The result is owned.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "E-NEW-ITER",
       "text": "The iterator temporary of a `next()` for-in (`for x in gen()`) is dropped once, when the scope around the loop ends.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "S-PANIC-ABORT",
       "text": "A panic, failed assert, `exit` or trap stops the run at once: no drops run and no live count is reported. Every runtime failure ends the process the way the compiled runtime does (`panicTail` in `src/scaffold.ts`): the message goes to stderr, stdout is flushed, then `abort()`. The process dies of SIGABRT, which a shell reports as status 134 (128 + 6) and which `milo interp` exits with. Nothing in the runtime exits with status 1 for a failure; a driver that reports 1 for a signal death (as `scripts/guard.ts` does when it has no exit code) is reporting its own default, so a comparison maps a signal to 128 + its number first. `exit(n)` is the one failure-free stop: status `n & 255`, stdout flushed, and the live count still reported. The table below gives the message per kind.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "T-STUCK",
       "text": "Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed.",
-      "parent": "SEM-10"
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
       "id": "SEM-11",
-      "text": "Milo semantics: Tasks, channels and atomics (docs/semantics/milo.md)"
+      "text": "Milo semantics: Tasks, channels and atomics (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-MAIN",
       "text": "`main` is the first task. The program ends when it returns and every other task is abandoned where it stands: no drops run for it.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-ABANDON",
       "text": "Tasks left when main returns, or when `exit` is called in any task, keep the library's own blocks allocated, because it leaves its scheduler up: four for the scheduler, three per task still there (main too when it is the one that called `exit`; a main that returned is gone), four more for one asleep (the Select behind `sleepMs`), one per idle stack context in its cache (at most 64; every finished default-stack task leaves one), one for the environment of each task whose closure captured something (freed when the task ends), one per open `Task.scope`, and one for the table of fd waiters once a task has waited on a descriptor. With no task left the scheduler is torn down and none remain, but only when the compiled `main` is a green task (`Task.spawn` reachable from it); a program that only uses `Task.scope` keeps its four scheduler blocks, plus the idle stack contexts. Counted (against allocation traces of compiled programs) so the live-block comparison holds.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-SPAWN",
       "text": "A spawned task is ready at the back of the run queue. It does not run until the spawner parks, yields or ends.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-PICK",
       "text": "Which ready task runs next is one method, `pickNext(ready)`, the hook for exploring schedules. The default is the front of the queue (FIFO, as std/runtime's run queue). Like the library's scheduler, the front task moves to the back after 32 task turns in a row.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-YIELD",
       "text": "`schedulerYield` puts the caller at the back of the queue.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-PARK",
       "text": "`schedulerPark` takes the caller off the queue; `schedulerUnpark` puts a parked task at the back. Unparking a task that is not parked does nothing (the library calls that a bug).",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-UNPARK",
       "text": "`schedulerPark` takes the caller off the queue; `schedulerUnpark` puts a parked task at the back. Unparking a task that is not parked does nothing (the library calls that a bug).",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-JOIN",
       "text": "`join` parks the caller until the task has ended; a task already ended returns at once.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-SCOPE",
       "text": "`Task.scope` runs its body, then parks the caller until every task spawned on the scope has ended.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-DRAIN",
       "text": "`schedulerRunToCompletion` parks the caller until it is the only task left.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-PANIC",
       "text": "A panic in a task that is not main and is inside no `Task.scope` retires that task (its message goes to stderr, its frames are abandoned) and the program goes on; any other panic aborts the program.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TASK-BLOCKING",
       "text": "A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-TIME",
       "text": "Time is a virtual clock in milliseconds. `sleepMs` parks the task until the clock reaches now + ms; the clock moves only when no task is ready, to the earliest wake time. `sleepMs(0)` yields.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "S-DEADLOCK",
       "text": "If no task is ready and none sleeps, the run stops with a stuck error naming each parked task and what it waits for.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-CHAN",
       "text": "A Channel is a queue of at most `capacity` values. `send` on a full channel parks the sender, `recv` on an empty one parks the receiver. A task that parks joins the head of its wait list and a wake takes the head (the library's lists are stacks), so the latest waiter wakes first. A wake only readies the waiter, which rechecks its condition when it runs; `send` does not switch tasks. `close` wakes every waiter; queued values are still delivered, then `recv` returns Err. The last owner to drop destroys the queued values.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-WG",
       "text": "`add` and `done` move a counter; `done` leaving it at zero or below wakes every waiter; `wait` parks while it is positive.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-ONCE",
       "text": "The first `run` calls its closure; a caller that arrives meanwhile parks until it finishes.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-ATOMIC",
       "text": "An atomic operation is a plain read-modify-write, since one task runs at a time. `add` and `sub` wrap at the width. The `_atomic*` intrinsics do the same through a pointer.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-CHOICE",
       "text": "A choice point is a `pickNext` call with two or more tasks ready. A schedule is the list of indices taken at the choice points, in order; a run past the end of the list picks the front (FIFO). A run is a pure function of the program and its schedule.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-REPLAY",
       "text": "`milo interp --schedule a,b,c` runs under the task interpreter with exactly that schedule (contract checks on). An index that does not fit the ready list picks the front.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-FAIL",
       "text": "`milo interp --explore` runs the program under many schedules (a fresh run each, contract checks on) and reports, per kind, the first schedule that ends in: S-DEADLOCK, a panic (including one that only retires a task, R-TASK-PANIC), an assertion failure, a contract failure, any other stuck error, or, for a run that ends normally, stdout different from the FIFO run (`nondeterministic-output`, accepted by `--allow-nondeterministic-output`). Each report carries the schedule, the task and source line of every switch, and the replay command. Exit code 5 when anything is reported. A run longer than 200000 scheduling steps, or with one step that makes over 500000 shared accesses without switching (a spin-wait on an atomic for a task that cannot run: nothing preempts), is cut and counts as neither good nor bad.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-DFS",
       "text": "The default search is depth-first over choice sequences from the FIFO run, bounded by `--max-schedules N` (default 1000; the FIFO run counts). A run reached by a prefix owns the choice points past it and adds one prefix per alternative task, except where R-EXPLORE-INDEP lets it skip.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-RANDOM",
       "text": "`--random N --seed S` runs N schedules by probabilistic concurrency testing: every task gets a random priority, the highest-priority ready task runs, and at two random steps within the FIFO run's length the running task drops to the lowest priority. The seed fixes the report.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-EXPLORE-INDEP",
       "text": "Choosing task B at a choice point where the run chose A is skipped when B's next step (its first step after the choice point in the run) shares nothing with the steps that ran from the choice point up to it: the swapped run is then an equivalent reordering. A step's footprint is the set of channels, WaitGroups, Onces, atomics, task handles and scopes its natives touched, non-const globals it read or wrote, heap blocks it loaded from or stored to through a pointer, the clock (`sleepMs`), standard output or error if it wrote any, task creation, and the end of main. An alternative that never runs again in the run (the program ended first) is never skipped. This is a reduction, not a proof: it assumes those are the only shared things.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "R-REPLAY-OFF",
       "text": "Record/replay is off, as in a binary run with neither MILO_RECORD nor MILO_REPLAY set.",
-      "parent": "SEM-11"
+      "parent": "SEM-11",
+      "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
     {
       "id": "SEM-12",
-      "text": "Milo semantics: Contracts (docs/semantics/milo.md)"
+      "text": "Milo semantics: Contracts (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "R-CONTRACT-ENTRY",
       "text": "With contract checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order.",
-      "parent": "SEM-12"
+      "parent": "SEM-12",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "R-CONTRACT-EXIT",
       "text": "At every return, with `result` naming the value returned and before the frame's variables drop, each `ensures` clause is checked.",
-      "parent": "SEM-12"
+      "parent": "SEM-12",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "R-CONTRACT-LOOP",
       "text": "A `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only.",
-      "parent": "SEM-12"
+      "parent": "SEM-12",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "R-CONTRACT-FAIL",
       "text": "A failed clause is a panic that prints `runtime error: <kind> clause violated at file:line` (the clause's own line, the path relative to the working directory) and aborts like any panic.",
-      "parent": "SEM-12"
+      "parent": "SEM-12",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "R-CONTRACT-IMPLIES",
       "text": "`a ==> b` (contracts and `assert` only) evaluates `a`; when it is false the result is true and `b` is not evaluated, otherwise the result is `b`. It is `!a || b`.",
-      "parent": "SEM-12"
+      "parent": "SEM-12",
+      "source": "docs/semantics/milo.md §Contracts"
     },
     {
       "id": "SEM-13",
-      "text": "Milo semantics: Raw memory (docs/semantics/milo.md)"
+      "text": "Milo semantics: Raw memory (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-ALLOC",
       "text": "`malloc(n)` makes a zeroed allocation of n bytes and counts as one live block, as in a compiled run; `calloc` is `malloc(c*n)`.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-REALLOC",
       "text": "`realloc(p, n)` always moves: a new allocation holds the first min(n, old size) bytes and the old one is freed. `realloc(null, n)` is `malloc(n)`.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-FREE",
       "text": "`free(null)` does nothing. `free(p)` frees an allocation that `malloc` made, when p is its start.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-LOAD",
       "text": "`*p`, `p[i]` (at p + i * sizeOf T) read or write a value of type T at the pointer. Scalars, pointers, structs of those and fixed arrays of those have bytes; a field written through `p.f` is read-modified-written.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-STORE",
       "text": "`*p`, `p[i]` (at p + i * sizeOf T) read or write a value of type T at the pointer. Scalars, pointers, structs of those and fixed arrays of those have bytes; a field written through `p.f` is read-modified-written.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-ADDROF",
       "text": "`x.addrOf()` is a pointer to the bytes of the place x (a fixed array is its elements). Taking it twice gives equal pointers. A place with no byte layout (a string, Vec, enum) is unsupported.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-VECPTR",
       "text": "`v.ptr()` points at element 0 of a slice; an empty Vec, owning no block, gives null. A string's `_strDataPtr` points at its bytes.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-CSTR",
       "text": "`s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (string and array decay), and so does a fixed array for a `*T` parameter, as a pointer to the array itself.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-ADDR",
       "text": "`p as i64` is the allocation's base + offset; `n as *T` is the allocation whose range holds n, with that offset, or null for 0. Comparing pointers compares addresses. An address no allocation of this run owns can be held and compared but not followed.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-COPY",
       "text": "`memcpy`, `memmove` and `memset` act on bytes, with the bounds of R-MEM-OOB at both ends. `sizeOf<T>()`, `offsetOf<T>(\"f\")` and `zeroed<T>()` use the compiled layout.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-OOB",
       "text": "stuck: an access of n bytes at offset o of an allocation of size s with o < 0 or o + n > s (a view's size is its element count times the element size).",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-UAF",
       "text": "stuck: any access, `realloc` or view access to an allocation that was freed (a Vec buffer or string buffer is freed when its owner drops).",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-DOUBLE-FREE",
       "text": "stuck: `free` of an allocation already freed.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-FREE-INVALID",
       "text": "stuck: `free` or `realloc` of a pointer that is not the start of a `malloc` block (a view, a `cstr`, an interior pointer).",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-NULL",
       "text": "stuck: a load, store or C-string read through null.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-ALIGN",
       "text": "stuck: a load or store of a scalar of size k (at most 8) at an address that is not a multiple of k. The compiled program emits aligned accesses, so a misaligned one is undefined there.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-OVERLAP",
       "text": "stuck: `memcpy` whose source and destination ranges overlap (`memmove` allows it).",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-WRITE-RO",
       "text": "stuck: a store into a read-only allocation (a string literal's bytes, a `strerror` message).",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-PROVENANCE",
       "text": "stuck: following an address no allocation owns, or asking the address of something that is not a pointer.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "R-MEM-LAYOUT",
       "text": "stuck: `offsetOf` of a field that does not exist.",
-      "parent": "SEM-13"
+      "parent": "SEM-13",
+      "source": "docs/semantics/milo.md §Raw memory"
     },
     {
       "id": "SEM-14",
-      "text": "Milo semantics: The C layer (docs/semantics/milo.md)"
+      "text": "Milo semantics: The C layer (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-FD",
       "text": "Descriptors 0, 1 and 2 are stdin (empty, or the host's under `milo interp`), stdout and stderr, which append to the same buffers `print` and `eprint` use, so the order of mixed output holds. `open` returns the lowest free descriptor ≥ 3, with the host OS's flag values (std's platform arm chose them). A failed call returns -1 and sets errno (read through `__error` / `__errno_location`, a pointer into memory).",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-FS",
       "text": "Files live in an in-memory filesystem: a path is made absolute against the working directory, `..` and `.` fold, a file is a growable byte array. `struct stat` and `struct dirent` are filled at the offsets std's own `statSizeOffset`, `direntNameOffset` and the like report. The host filesystem is reachable only through a read-only `HostFs` handed in by the driver: `milo interp` seeds the in-memory filesystem lazily, read-only, from the program's own directory (the working directory starts there), or from all of `/` with `--host-fs`. A host file is copied in when first touched, writes go to the copy and never reach the host, and an `unlink` hides the host file for the rest of the run. The browser playground passes no `HostFs`.",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-CLOCK",
       "text": "The wall clock is the host's, plus the time the program has slept: `usleep`, `sleep` and `nanosleep` advance the clock and return at once, so a sleep costs nothing and a busy-wait on the clock still ends. (The task scheduler's own clock, R-TIME, is separate.)",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-ENV",
       "text": "`getenv` reads the environment the driver passed in (the host's under `milo interp`); `setenv` and `unsetenv` change the program's copy only.",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-RANDOM",
       "text": "Entropy calls return host random bytes (a run is not reproducible through them).",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "R-SYS-EXIT",
       "text": "`exit` and `_exit` stop the run at once like the `exit` builtin (S-PANIC-ABORT's no-drops rule).",
-      "parent": "SEM-14"
+      "parent": "SEM-14",
+      "source": "docs/semantics/milo.md §The C layer"
     },
     {
       "id": "SEM-15",
-      "text": "Milo semantics: Interpreter gaps: library behaviour and the C layer, continued (docs/semantics/milo.md)"
+      "text": "Milo semantics: Interpreter gaps: library behaviour and the C layer, continued (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Interpreter gaps: library behaviour and the C layer, continued"
     },
     {
       "id": "R-INT-BITS",
       "text": "`x.rotateLeft(n)` and `x.rotateRight(n)` rotate the bits of the integer's width by n mod width. `x.reverseBits()` reverses them. `x.checkedNeg()` is `Some(-x)`, or `None` when -x does not fit (any non-zero unsigned value, or the minimum of a signed width).",
-      "parent": "SEM-15"
+      "parent": "SEM-15",
+      "source": "docs/semantics/milo.md §Interpreter gaps: library behaviour and the C layer, continued"
     },
     {
       "id": "R-JSON-STRINGIFY",
       "text": "`jsonStringify(s)` of a struct whose fields are strings, integers, floats and bools is `{\"field\":value,...}` in field order: a string is escaped as RFC 8259 (`\"`, `\\`, newline, tab, return, other bytes below 0x20 as `\\u00xx`), numbers print as `print` shows them. A struct given to a `json(body: string)` method parameter is its `toJson()` when it has one, else the same text.",
-      "parent": "SEM-15"
+      "parent": "SEM-15",
+      "source": "docs/semantics/milo.md §Interpreter gaps: library behaviour and the C layer, continued"
     },
     {
       "id": "R-EMBED-FILE",
       "text": "`@embedFile(\"p\")` is the bytes of the file `p`, relative to the source file that names it, read when the call runs. Only a driver that hands in a host file reader (`milo interp`) can run it; elsewhere it is unsupported. A file that cannot be opened is stuck.",
-      "parent": "SEM-15"
+      "parent": "SEM-15",
+      "source": "docs/semantics/milo.md §Interpreter gaps: library behaviour and the C layer, continued"
     },
     {
       "id": "SEM-16",
-      "text": "Milo semantics: Interpreter gaps: memory and C layer additions (docs/semantics/milo.md)"
+      "text": "Milo semantics: Interpreter gaps: memory and C layer additions (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-MEM-ADOPT",
       "text": "`h.ptr()` of a `Heap<T>` is a pointer to the box's contents, a block of its own that `free` or `adopt` accepts. `h.addrOf()` is the address of the slot that holds the box: reading `*slot` gives `h.ptr()`. `adopt(p)` of a pointer a Heap gave out is that same box taken back; of a `malloc` block it is a box whose contents are the memory at p and whose drop frees the block. `adoptSlice(p, n)` of a pointer a Vec gave out is that Vec cut to n elements (capacity n); of a `malloc` block it is a Vec over the memory whose drop frees it. Any other pointer is R-MEM-FREE-INVALID. A user method named `ptr` on T wins over `Heap.ptr()`.",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-MEM-NULLREF",
       "text": "`let g = p else { ... }` over a `?&T` or `?&mut T` parameter runs the else block when p is null, and otherwise binds g to a reference to the memory p names (a Milo caller's reference is bound as it is).",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-SYS-LIBC",
       "text": "`strtoll`, `strtol` (64-bit), `strtoul`, `strtoull` skip leading space, take a sign, a `0x` prefix for base 16 (or 0) and digits of the base, set `*endptr` to the first byte not used (the start when there is no number) and saturate with errno ERANGE. `strtod` reads a decimal, `inf`, `nan` or `0x` integer prefix the same way. `setlocale` succeeds for the names \"C\", \"POSIX\", \"\" and any UTF-8 name and returns that name (the locale itself is always C); any other name returns null. `uname` fills `struct utsname` (256-byte fields on darwin, 65 on linux) with the host OS name, \"milo\", \"0.0\", \"milo interpreter\" and the architecture. `ioctl` fails with ENOTTY, since no descriptor is a terminal (`isatty` is 0). `proc_pidpath` writes the absolute path of the program file the driver was given.",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-SYS-TIME",
       "text": "`localtime_r`, `gmtime_r`, `mktime` and `strftime` use a time zone that is UTC unless the program's `TZ` (its own environment, R-SYS-ENV) names another: \"UTC\", a POSIX `NAMEhh[:mm]` (hours west of Greenwich; a DST rule after it is ignored, there is no DST) or an IANA name resolved by the host's `Intl`. `struct tm` is the nine leading ints, `tm_gmtoff` at offset 40 and `tm_zone` at 48. `strftime` implements `%Y %y %C %m %d %e %H %I %M %S %j %a %A %b %B %h %p %u %w %Z %z %s %F %T %R %D %c %x %X %n %t %%` in the C locale, and returns 0 when the result and its NUL do not fit.",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-SYS-PRINTF",
       "text": "`printf` writes to the stdout buffer (R-SYS-FD) and `snprintf` / `sprintf` to memory, with the conversions `d i u x X o c s p f F e E g G %`, flags `- + space # 0`, width, precision (both may be `*`) and the length modifiers `hh h l ll z j t`. A string passed where C takes `char *` (also as a variadic argument) is its NUL-terminated bytes. The result is the number of bytes the full output has.",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "R-SYS-SYMLINK",
       "text": "The in-memory filesystem has symbolic links: `symlink(target, path)` makes a node holding the target path, `readlink` reads it back (EINVAL for anything else), `lstat` reports `S_IFLNK` and `readdir` reports `DT_LNK` for it, `unlink` removes the link itself. `stat`, `open`, `access`, `opendir`, `chdir` and `chmod` follow a chain of up to 8 links, a relative target being relative to the link's directory. `chmod(path, mode)` sets the permission bits `stat` reports.",
-      "parent": "SEM-16"
+      "parent": "SEM-16",
+      "source": "docs/semantics/milo.md §Interpreter gaps: memory and C layer additions"
     },
     {
       "id": "SEM-17",
-      "text": "Milo semantics: Foreign code (CLI only) (docs/semantics/milo.md)"
+      "text": "Milo semantics: Foreign code (CLI only) (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Foreign code (CLI only)"
     },
     {
       "id": "R-FFI-LIB",
       "text": "The foreign layer handles `sqlite3_*` (the system libsqlite3), `CC_*` / `CCCrypt*` (libSystem, darwin) and, when a `foo.c` sits beside the program, every other extern symbol, looked up in that file compiled to a shared library with the system C compiler the first time one of its functions is called. A symbol the library does not have is unsupported.",
-      "parent": "SEM-17"
+      "parent": "SEM-17",
+      "source": "docs/semantics/milo.md §Foreign code (CLI only)"
     },
     {
       "id": "R-FFI-CALL",
       "text": "A foreign call passes integers, floats and bools by value. A pointer argument that is an interpreter pointer is copied, from the pointer to the end of its allocation, into a native buffer for the call and copied back afterwards when the library changed it (an out-parameter, a context struct); a null pointer or an address no allocation owns (a `sqlite3*`, a statement, `SQLITE_TRANSIENT`) goes through as the integer it is. A pointer result that points into an argument's buffer is a pointer into that argument; a C string result (`sqlite3_column_text`, `sqlite3_errmsg`, `sqlite3_column_name`) is a read-only interpreter copy, as long as `sqlite3_column_bytes` says for text; any other pointer result is an opaque address, held and compared but never followed (R-MEM-PROVENANCE). `sqlite3_bind_text` and `_blob` are always told the value is transient.",
-      "parent": "SEM-17"
+      "parent": "SEM-17",
+      "source": "docs/semantics/milo.md §Foreign code (CLI only)"
     },
     {
       "id": "R-FFI-SQLITE-PATH",
       "text": "The interpreter's filesystem is in memory, so a database file that `sqlite3_open*`, `ATTACH` or `VACUUM INTO` names by a path of it is made at the same path under a private directory of the host's temp directory, removed when the process exits. The file shows in the interpreter's filesystem (`stat`, read) once it exists, and deleting it there deletes it. `:memory:`, the empty name and `file:` URIs go to sqlite unchanged.",
-      "parent": "SEM-17"
+      "parent": "SEM-17",
+      "source": "docs/semantics/milo.md §Foreign code (CLI only)"
     },
     {
       "id": "R-FFI-COMPANION",
       "text": "The companion C file is compiled with `xcrun clang` (darwin) or `cc` to a shared library in a fresh temp directory; a compile error is reported as the run's failure.",
-      "parent": "SEM-17"
+      "parent": "SEM-17",
+      "source": "docs/semantics/milo.md §Foreign code (CLI only)"
     },
     {
       "id": "SEM-18",
-      "text": "Milo semantics: Regular expressions (docs/semantics/milo.md)"
+      "text": "Milo semantics: Regular expressions (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §Regular expressions"
     },
     {
       "id": "R-SYS-REGEX",
       "text": "`regcomp` translates a POSIX extended regular expression to a JavaScript one in unicode mode (a character is a code point, as in the UTF-8 locale std/regex asks for; bracket classes such as `[[:alpha:]]`, `\\<` and `\\>`, `{n,m}`, REG_ICASE and REG_NEWLINE are translated), keeps it under an id written into the first 8 bytes of the `regex_t` (so a copy of the `regex_t` still works), and answers REG_BADPAT (2) for a pattern it cannot translate. `regexec` searches the byte range in `pmatch[0]` when REG_STARTEND is set and the bytes up to the NUL otherwise, with REG_NOTBOL keeping `^` from matching at the start of the range; it fills `pmatch` with byte offsets (-1 for a group that did not take part) and answers REG_NOMATCH (1) when nothing matches. JavaScript tries alternatives left to right where POSIX takes the longest match, so a pattern whose alternatives overlap can match shorter here. `regfree` forgets the expression.",
-      "parent": "SEM-18"
+      "parent": "SEM-18",
+      "source": "docs/semantics/milo.md §Regular expressions"
     },
     {
       "id": "SEM-19",
-      "text": "Milo semantics: The network, pipes, signals and threads (docs/semantics/milo.md)"
+      "text": "Milo semantics: The network, pipes, signals and threads (docs/semantics/milo.md)",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-FNPTR",
       "text": "A function used as a value of pointer type (`f as *u8`) is a read-only 8-byte allocation, one per function, so its address is stable and equal to itself; C-layer calls that take a callback (`signal`, `pthread_create`, `qsort`) find the function from the pointer, or take the function value itself when the parameter has a function type, and call it by name. `p as extern (..) => R` gives back the function a pointer was made from (a pointer that is no function's is unsupported), and a C function pointer in a variable or field is called like a closure. The pointer of a closure (`f as *u8`) is one allocation per lambda and is not callable from C. `a[i].addrOf()` of an array element is a pointer into the array, not to a lone cell.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-FD",
       "text": "A pipe end or a socket is a descriptor in the same table as files, lowest free number from 3; `/dev/fd` and `/proc/self/fd` list the table. The object behind it (an open file description) is shared by `dup`, `dup2` and `fcntl(F_DUPFD)`; the last `close` of it ends the endpoint, which every task waiting on the network then rechecks. `O_NONBLOCK` is a flag of the object.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-PIPE",
       "text": "`pipe` and `pipe2` make a read end and a write end over one bounded byte queue (64 KiB). A read of an empty queue returns 0 once no write end is open; a write after the last read end closed is EPIPE and raises SIGPIPE (R-NET-SIG).",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-SOCK",
       "text": "`socket` accepts AF_UNIX, AF_INET, AF_INET6 with SOCK_STREAM or SOCK_DGRAM. `bind` records the address (port 0 takes the next free port from 49152; EADDRINUSE when another socket of the same type holds an overlapping address, unless both set SO_REUSEADDR and neither listens; AF_UNIX binds create an entry in the in-memory filesystem, EADDRINUSE if the path exists). `listen` readies the socket (an unbound one gets a wildcard address and a port). `connect` to an address a listening socket of the run accepts makes the connected pair at once and queues the server end for `accept`; with the backlog full a blocking connect parks and a non-blocking one fails ECONNREFUSED. An accepted socket has the listener's local address and inherits `O_NONBLOCK` as BSD does. `socketpair` makes two connected AF_UNIX sockets. `getsockopt(SO_ERROR)` reports and clears a pending error; other options read back what `setsockopt` stored.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-ADDR",
       "text": "The world is closed: the loopback interface (127.0.0.0/8, ::1) and the wildcard addresses are all that exist. A bind to any other address is EADDRNOTAVAIL; a connect to a loopback or wildcard address nobody listens on is ECONNREFUSED, to any other address ENETUNREACH. A listener bound to an IPv4 or IPv6 wildcard accepts a connect to any local address of its family, and an IPv6 wildcard also accepts IPv4. `getaddrinfo` knows `localhost` (`::1` then `127.0.0.1`) and numeric addresses; any other name is EAI_NONAME. `sockaddr` bytes use the host OS's layout (std chose the platform arm).",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-IO",
       "text": "A stream socket is two bounded byte queues (64 KiB each). A read returns what is queued, up to the count, never waiting for more; 0 when the queue is empty and the peer has closed or shut down its write side; a write queues as much as fits and, on a blocking socket, goes on after each wake until all of it is queued, on a non-blocking one returns the part written or EAGAIN. A write when the peer's end is closed is EPIPE (R-NET-SIG). `shutdown` ends one direction.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-DGRAM",
       "text": "A datagram socket delivers each `sendto` whole to the datagram socket bound to the destination, or drops it when there is none; `recvfrom` returns the oldest datagram, cut to the buffer, with the sender's address.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-BLOCK",
       "text": "A call that cannot finish (an empty read, a full write, `accept` with nothing queued, `poll` with nothing ready, `pthread_join` of a running thread, a held mutex, a condition wait, a sleep once the program has threads) parks the calling task (R-TASK-PARK) on the network's wait list and is woken by any change to a descriptor, then rechecks. A non-blocking descriptor returns EAGAIN instead. The std functions green IO calls to wait (`schedulerWaitRead`, `schedulerWaitWrite`) park the same way until the descriptor is ready; the first such wait makes the scheduler allocate its table of fd waiters, one more block it leaves behind when main returns or exits with tasks left (R-TASK-ABANDON), and `exit` from a task leaves the scheduler and the other tasks as main returning does. Without the task interpreter the call is S-DEADLOCK, except one with a timeout, which moves the clock by it and times out.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-POLL",
       "text": "A descriptor is readable when it has queued bytes, is at end of file, has a pending connection (a listener) or a datagram; writable when its outgoing queue has room (a pipe or socket whose reader is gone is an error, and writable); a file is always ready. `poll` reports these in `revents` (POLLIN 1, POLLOUT 4, POLLERR 8, POLLHUP 16, POLLNVAL 32) and, with nothing ready, parks until some descriptor changes or the timeout (virtual milliseconds, R-TIME) ends.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-SIG",
       "text": "`signal` records a handler (a function pointer, SIG_DFL 0 or SIG_IGN 1) and returns the previous one; SIGKILL and SIGSTOP cannot be set. `raise` and `kill` to this process (pid 4242, 0 or its negative) run the handler at once, in the sending task, with the signal number; with SIG_IGN or a default that ignores (SIGCHLD, SIGURG, SIGWINCH, SIGCONT) nothing happens; any other default ends the program as killed by the signal, exit status 128 + the signal, with no drops (S-PANIC-ABORT). `kill` of another pid is ESRCH. `sigprocmask` keeps a mask; a masked signal waits and is delivered when it is unmasked.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-THREAD",
       "text": "`pthread_create` runs the start routine, called by name with its argument, as one more task (R-TASK-BLOCKING): it does not run until the creator parks, yields or ends (R-TASK-SPAWN), and a panic in it ends the program. The `pthread_t` is the task's number. `pthread_join` parks until it has ended and stores its return value; a thread nobody joins is abandoned when main returns. Under the plain interpreter `pthread_create` asks for the task interpreter.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-MUTEX",
       "text": "A `pthread_mutex_t` is an interpreter object keyed by the address of the memory the program gave (a zeroed one is an unlocked mutex). `lock` takes it or parks while another task holds it; `unlock` releases and wakes the waiters, who recheck in the order they parked; `trylock` returns EBUSY. `pthread_rwlock_*` is the same with many readers or one writer.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-COND",
       "text": "`pthread_cond_wait` releases the mutex, parks until a signal or broadcast reaches it (`signal` wakes the longest waiter, `broadcast` all), then takes the mutex again. The timed forms give up after the span (darwin: relative `timespec`; linux: absolute against the wall clock, R-SYS-CLOCK) and return ETIMEDOUT, still holding the mutex.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-SLEEP",
       "text": "`usleep`, `sleep` and `nanosleep` park the task for that many virtual milliseconds (R-TIME) once the program has created a thread, so others run meanwhile; before that they advance the clock and return (R-SYS-CLOCK).",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-NET-KQUEUE",
       "text": "`kqueue` makes a descriptor holding a set of watches; `kevent` applies its change list (EV_ADD, EV_DELETE, EV_CLEAR, EV_ONESHOT) and returns up to `nevents` watches that are ready: EVFILT_READ and EVFILT_WRITE by the readiness of R-NET-POLL (level-triggered), EVFILT_USER once NOTE_TRIGGER has fired it (reset on delivery). With none ready it parks as R-NET-BLOCK until a change or the timeout; `ident` and `udata` come back as given.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "R-SELECT",
       "text": "`Select` is a native. Arms are kept in the order armed. `wait` returns the index of the first ready arm and parks until one is: a recv arm is ready when its channel holds a value or is closed, a send arm when it has room or is closed, an fd arm when a read (write) would not block (R-NET-POLL), a timer arm when the virtual clock has reached its deadline (set when armed, R-TIME). The value is fetched afterwards by the caller; an arm keeps its channel alive until the Select is dropped. A Select owns four heap blocks (three for its state, one for its nodes) and each channel arm one more, as in a compiled run (R-TASK-ABANDON counts them when a task is left in one). `ensureTimersLive` does nothing: the task interpreter always has a scheduler.",
-      "parent": "SEM-19"
+      "parent": "SEM-19",
+      "source": "docs/semantics/milo.md §The network, pipes, signals and threads"
     },
     {
       "id": "OWN",
-      "text": "Ownership rules pinned to test programs (docs/spec.md, MILO-O)"
+      "text": "Ownership rules pinned to test programs (docs/spec.md, MILO-O)",
+      "source": "docs/spec.md §MILO-O"
     },
     {
       "id": "MILO-O-tempStatement",
       "text": "A temporary that owns something lives until the end of the statement that made it, and is dropped there.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-tempStatement"
     },
     {
       "id": "MILO-O-tempFieldRead",
       "text": "An owning field read out of a temporary (a call result, a fork, a box nobody owns) is cloned, and the temporary is dropped right after the read, before the rest of the statement runs.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-tempFieldRead"
     },
     {
       "id": "MILO-O-forkOwnership",
       "text": "An if or match expression owns its result exactly when some arm yields an owned value; a place arm of such a fork is cloned (a type with a user Drop is consumed instead). A fork whose arms are only places and literals is a view and drops nothing.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-forkOwnership"
     },
     {
       "id": "MILO-O-combinatorReceiver",
       "text": "An Option or Result combinator consumes its receiver exactly when it forwards a payload that owns something (`context` always consumes). A receiver it does not consume keeps its payload; a temporary one is dropped after the call.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-combinatorReceiver"
     },
     {
       "id": "MILO-O-lentClosure",
       "text": "A `move` closure passed to a plain `(T) => R` parameter is lent: the caller keeps it and drops its environment once. A temporary one is dropped right after the call, unless the callee may keep the parameter, in which case nothing drops it.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-lentClosure"
     },
     {
       "id": "MILO-O-returnedPlainClosure",
       "text": "A `move` closure that captures anything owns a heap environment, and a plain `(T) => R` is Copy and owns nothing, so storing or returning such a closure under a plain function type is rejected (`plain-closure-env`; the declared type must be `move (T) => R`). A closure that captures nothing stays a plain value.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-returnedPlainClosure"
     },
     {
       "id": "MILO-O-fieldMove",
       "text": "A field moved out of a struct is no longer dropped with it: when the field's type runs a user Drop, the struct's remaining fields drop last-first and the moved one is skipped; reassigning the field or the struct makes it owned again.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-fieldMove"
     },
     {
       "id": "MILO-O-structUpdate",
       "text": "A struct update `S { a: x, ..base }` consumes the base: its listed fields are dropped, its unlisted fields move into the result, so each field the base owned ends with one owner.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-structUpdate"
     },
     {
       "id": "MILO-O-consumedForIn",
       "text": "A `for` over a temporary or moved collection owns it: each iteration moves one element into the binding, and whichever way the loop ends drops exactly the elements no iteration took.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-consumedForIn"
     },
     {
       "id": "MILO-O-propagate",
       "text": "`?` into a `Result<T, string>` function calls the error's `message()` and drops the error; into a `Result<T, Heap<Error>>` function it boxes the error (a string as `ErrorMessage`).",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-propagate"
     },
     {
       "id": "MILO-O-arrayRepeat",
       "text": "`[v; n]` of an owning value clones it into the first n-1 slots and moves it into the last; `[v; 0]` drops it.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-arrayRepeat"
     },
     {
       "id": "MILO-O-replaceSwap",
       "text": "`replace(p, v)` moves the old value out as its result and stores v with nothing dropped; `swap(a, b)` exchanges the two with nothing dropped.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-replaceSwap"
     },
     {
       "id": "MILO-O-viewVar",
       "text": "A `var` of a view type (`&string`, `&[T]`) holds a view and owns nothing: assigning it replaces the view and drops nothing.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-viewVar"
     },
     {
       "id": "MILO-O-keyExtractor",
       "text": "A `sortByKey` extractor may return a field of the element it borrows; the sort reads that key and never stores or drops it. A string key the extractor builds is owned by the sort, which drops it after its comparison. An extractor that returns the field on one path and a built string on another is rejected.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-keyExtractor"
     },
     {
       "id": "MILO-O-globalClosureEnv",
       "text": "A by-reference closure built by a global's initializer has a static environment: the initializer's frame is gone before the global is called.",
-      "parent": "OWN"
+      "parent": "OWN",
+      "source": "docs/spec.md §MILO-O-globalClosureEnv"
     }
   ]
 }
