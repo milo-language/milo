@@ -53,6 +53,80 @@ call. That reads well and is fine for configuration-sized input; on a large docu
 navigated in a loop, use indexing or the cursor methods (`curRoot`, `curField`,
 `curChild`, `curStr`, `strAt`, ...) instead.
 
+## Conformance to RFC 8259
+
+`std/json` is a traced implementation of [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259).
+`std/json/requirements.json` holds one requirement per normative rule (grammar, numbers,
+strings, UTF-8, duplicate names, range limits, the serializer, JSONC, the streaming
+tokenizer); `@req(ID)` on the functions and contract clauses in `std/json.milo` says what
+implements it, and the tests in `std/json/json_test.milo` say what verifies it. Run
+`milo trace std/json.milo` to print the matrix (a single-file module keeps its requirements
+file and tests in the directory named after it, so the rest of `std/` is not part of the trace).
+`milo trace std/json.milo --strict` is `ok`: no untraced fn, every requirement implemented and
+verified, no failing test, no dead branch.
+
+The suite behind it is [JSONTestSuite](https://github.com/nst/JSONTestSuite) (MIT,
+`tests/vendor/JSONTestSuite`): all 95 `y_` cases are accepted, all 188 `n_` cases are rejected,
+and the 35 `i_` cases (left to the implementation by the suite) are decided as follows.
+
+| Case family | Choice | Requirement |
+|---|---|---|
+| numbers past the range (`1e999`, 20-digit integers, huge exponents), 10 cases | accepted; the f64 is the correctly rounded value, infinity past the range, 0 below it; the integer accessors answer `None` past i64 / u64 | `JSON-NUM-RANGE` |
+| lone, reversed and unpaired `\uD800`-style escapes, 10 cases | accepted, decoded to U+FFFD | `JSON-STR-SURROGATE` |
+| ill-formed UTF-8 in a string (Latin-1, overlong, truncated, encoded surrogate, 5/6-byte forms), 10 cases | rejected | `JSON-UTF8` |
+| UTF-16 text, 3 cases, and a leading UTF-8 byte order mark | rejected (RFC 8259 s8.1 lets a parser ignore a BOM; this one does not) | `JSON-BOM` |
+| 500 nested arrays | accepted (the limit is 512 levels) | `JSON-DEPTH` |
+
+Duplicate names are accepted: every member is kept in source order, and a lookup by name
+returns the first (`JSON-DUP-NAMES`).
+
+The matrix, as `milo trace std/json.milo` prints it (condensed to one row per requirement;
+`JSON-API` is the module-wide `@!req` that covers the accessors, cursors and builders):
+
+| Requirement | Implemented by | Clauses | Verified by |
+|---|---|---|---|
+| `JSON-API` | every fn (`@!req`) |  | test, 1 test |
+| `JSON-PARSE` | jsonParse, Json.parse |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-TEXT` | jsonParse, JsonParser.parseValue |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-WS` | jsonSkipWs |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-LITERALS` | jsonLitAt, JsonParser.litAt, JsonParser.parseValue |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-OBJECT` | JsonParser.parseObject |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-DUP-NAMES` | jsonKeyEq, Json.get, Json.str, Json.i64, ... |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-ARRAY` | JsonParser.parseArray |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-NUM-GRAMMAR` | jsonScanNumber, JsonParser.parseNumber |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-NUM-RANGE` | jsonNodeInt, jsonNodeUint, Json.i64, Json.f64, ... |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-STR-CHARS` | jsonScanString, JsonParser.parseString, JsonParser.scanStringRange |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-STR-ESC` | jsonMaterializeStr |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-STR-UESC` | jsonIsHex, jsonHexVal, jsonMaterializeStr | 2/2 proven | proof+test, 2 tests |
+| &nbsp;&nbsp;`JSON-STR-SURROGATE` | jsonMaterializeStr |  | test, 3 tests |
+| &nbsp;&nbsp;`JSON-UTF8` | jsonUtf8SeqLen | 2/2 proven | proof+test, 3 tests |
+| &nbsp;&nbsp;`JSON-BOM` | jsonParse |  | test, 3 tests |
+| &nbsp;&nbsp;`JSON-DEPTH` | jsonParse, JsonParser.parseValue |  | test, 2 tests |
+| `JSON-SER` | (through children) |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-SER-ESCAPE` | jsonEscapeStr |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-SER-GRAMMAR` | jsonSer |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-SER-NUM` | jsonSer, jsonFloatStr |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-SER-ROUNDTRIP` | jsonMaterializeStr, jsonEscapeStr, jsonSer, jsonFloatStr |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-SER-PRETTY` | jsonPretty |  | test, 1 test |
+| `JSON-JSONC` | jsoncParse, Json.parseJsonc |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-JSONC-COMMENTS` | jsonStripJsonc |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-JSONC-TRAILING` | jsonStripJsonc |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-JSONC-STRICT` | jsoncParse |  | test, 1 test |
+| `JSON-PULL` | (through children) |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-PULL-EVENTS` | jsonPull, JsonPull.next |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-PULL-TOKENS` | JsonPull.next |  | test, 1 test |
+| &nbsp;&nbsp;`JSON-PULL-STRUCTURE` | jsonPull |  | test, 1 test |
+| `JSON-SAFE` | (through children) |  | test, 2 tests |
+| &nbsp;&nbsp;`JSON-SAFE-BOUNDS` | jsonNodeInt, jsonNodeUint, jsonSkipWs, jsonUtf8SeqLen, ... | 6/6 proven | proof+test, 1 test |
+| &nbsp;&nbsp;`JSON-SAFE-ARITH` | jsonNodeInt, jsonNodeUint |  | test, 1 test |
+
+Clauses are the `requires` / `ensures` the prover discharged. `milo prove std/json.milo --rte`
+also proves, for `jsonUtf8SeqLen`, `jsonScanString`, `jsonScanNumber`, `jsonLitAt`,
+`jsonSkipWs`, `jsonKeyEq`, `jsonNodeInt`, `jsonNodeUint` and `jsonHexVal`, that no index is out
+of bounds and no integer overflows (including the digit accumulation in `jsonNodeInt` and
+`jsonNodeUint`): 741 obligations, all proven. The rest of the module (the parser methods that
+index the node pool, the builders) is not yet provable by `--rte`; the tests cover it.
+
 <!-- generated:api -->
 <!-- Do not edit between these markers: generated by scripts/gen-std-docs.ts from 'milo api --json'. Edit the doc comments in std/json*.milo. -->
 

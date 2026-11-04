@@ -36,7 +36,7 @@ export const EXPECTED: Record<string, Expected> = {
   "std/arena.milo": { proven: 9, unknown: 2, errors: 0 },
   "std/crypto.milo": { proven: 10, unknown: 0, errors: 0 },
   "std/inflate.milo": { proven: 64, unknown: 11, errors: 0 },
-  "std/json.milo": { proven: 282, unknown: 0, errors: 0 },
+  "std/json.milo": { proven: 286, unknown: 0, errors: 0 },
   "std/math.milo": { proven: 4, unknown: 1, errors: 0 },
   "std/mem.milo": { proven: 4, unknown: 2, errors: 0 },
   "std/pool.milo": { proven: 16, unknown: 1, errors: 0 },

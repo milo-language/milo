@@ -3,6 +3,8 @@
 // String values stored as offsets into source — zero allocation during parse.
 // ~6 allocations total for any document size.
 
+@!req("JSON-API")
+
 // kind: 0=null 1=bool 2=number 3=string 4=array 5=object
 //
 // 24 bytes, down from 56 with one named field per kind: the pool is the parse's
@@ -182,8 +184,14 @@ fn jsonMintDocId(): i64 {
 
 // ── Key comparison (byte-by-byte against source, zero allocation) ──
 
+@req(JSON-DUP-NAMES)
 fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
     if klen != target.len {
+        return false
+    }
+    // The span comes from the parser, which keeps it inside the source; the check is what lets
+    // the prover show the reads below are in bounds without trusting the node pool.
+    if off < 0 || off > source.len || klen > source.len - off {
         return false
     }
     for i in 0..klen {
@@ -196,7 +204,20 @@ fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
 
 // ── String materialization (allocates only when user requests the value) ──
 
-fn jsonHexVal(c: u8): i64 {
+// Is `c` an ASCII hex digit (RFC 8259 HEXDIG).
+@req(JSON-STR-UESC)
+fn jsonIsHex(c: u8): bool
+@req(JSON-STR-UESC)
+ensures result == ((c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102))
+{
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102)
+}
+
+@req(JSON-STR-UESC)
+fn jsonHexVal(c: u8): i64
+@req(JSON-STR-UESC)
+ensures result >= 0 && result <= 15
+{
     if c >= 48 && c <= 57 {
         return (c - 48) as i64
     } // 0-9
@@ -217,12 +238,17 @@ fn jsonHexVal(c: u8): i64 {
 // literal that is an integer AND fits i64 answers Some. Out of range, fractional
 // and exponent forms answer None, which the caller already has to handle.
 // (i64::MIN reads as None — its magnitude is one past what this accumulates.)
+@req(JSON-NUM-RANGE)
+@req(JSON-SAFE-ARITH)
+@req(JSON-SAFE-BOUNDS)
 fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
-    if jsonNodeStrLen(n) <= 0 {
+    let start = jsonNodeStrStart(n)
+    let len = jsonNodeStrLen(n)
+    if len <= 0 || start < 0 || start > source.len || len > source.len - start {
         return Option.None
     }
-    var i: i64 = jsonNodeStrStart(n)
-    let end = jsonNodeStrStart(n) + jsonNodeStrLen(n)
+    var i: i64 = start
+    let end = start + len
     var neg: bool = false
     if i < end && source[i] == '-' {
         neg = true
@@ -232,7 +258,10 @@ fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
         return Option.None
     }
     var acc: i64 = 0
-    while i < end {
+    while i < end
+    invariant i >= start && i <= end
+    invariant acc >= 0
+    {
         let c = source[i]
         if c < '0' || c > '9' {
             return Option.None
@@ -256,20 +285,24 @@ fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
 
 // Same rules as jsonNodeInt, for the half of u64 that i64 cannot hold. A `u64`
 // field would otherwise be writable but not readable.
+@req(JSON-NUM-RANGE)
+@req(JSON-SAFE-ARITH)
+@req(JSON-SAFE-BOUNDS)
 fn jsonNodeUint(source: &string, n: &JsonNode): Option<u64> {
-    if jsonNodeStrLen(n) <= 0 {
+    let start = jsonNodeStrStart(n)
+    let len = jsonNodeStrLen(n)
+    if len <= 0 || start < 0 || start > source.len || len > source.len - start {
         return Option.None
     }
-    var i: i64 = jsonNodeStrStart(n)
-    let end = jsonNodeStrStart(n) + jsonNodeStrLen(n)
+    var i: i64 = start
+    let end = start + len
     if i < end && source[i] == '-' {
         return Option.None
     }
-    if i >= end {
-        return Option.None
-    }
     var acc: u64 = 0
-    while i < end {
+    while i < end
+    invariant i >= start && i <= end
+    {
         let c = source[i]
         if c < '0' || c > '9' {
             return Option.None
@@ -288,6 +321,10 @@ fn jsonNodeUint(source: &string, n: &JsonNode): Option<u64> {
     return Option.Some(acc)
 }
 
+@req(JSON-STR-ESC)
+@req(JSON-STR-UESC)
+@req(JSON-STR-SURROGATE)
+@req(JSON-SER-ROUNDTRIP)
 fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
     var hasEscape: bool = false
     var i: i64 = 0
@@ -393,12 +430,14 @@ impl Json {
     // Takes a borrow because most callers hold the text in a buffer they still need;
     // the document owns its source, so this copies once. A caller done with its owned
     // buffer can hand it to `jsonParse` and skip the copy.
+    @req(JSON-PARSE)
     fn parse(s: &string): Result<Json> {
         return jsonParse(s.clone())
     }
 
     // Parse JSON with JSONC extensions (comments, trailing commas). Borrows like `parse`;
     // `jsoncParse` is the owned form.
+    @req(JSON-JSONC)
     fn parseJsonc(s: &string): Result<Json> {
         return jsoncParse(s.clone())
     }
@@ -418,6 +457,7 @@ impl Json {
     // The value of object key `key` as its own `Json`, or None if this is not an object
     // or has no such key. Deep-clones the subtree on every call; for hot navigation use
     // the cursor API (`curRoot`, `curField`, ...).
+    @req(JSON-DUP-NAMES)
     fn get(self: &Self, key: &string): Option<Json> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -433,6 +473,7 @@ impl Json {
     }
 
     // The string value of object key `key`, or None if absent or not a string.
+    @req(JSON-DUP-NAMES)
     fn str(self: &Self, key: &string): Option<string> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -453,6 +494,8 @@ impl Json {
     // The integer value of object key `key`, or None if absent or not an integer. Only
     // a literal that is an integer and fits i64 answers Some: `1.5`, `1e3` and
     // out-of-range values are None, never a truncation.
+    @req(JSON-DUP-NAMES)
+    @req(JSON-NUM-RANGE)
     fn i64(self: &Self, key: &string): Option<i64> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -472,6 +515,8 @@ impl Json {
 
     // The numeric value of object key `key` as a float, or None if absent or not a
     // number.
+    @req(JSON-DUP-NAMES)
+    @req(JSON-NUM-RANGE)
     fn f64(self: &Self, key: &string): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -490,6 +535,7 @@ impl Json {
     }
 
     // The boolean value of object key `key`, or None if absent or not a boolean.
+    @req(JSON-DUP-NAMES)
     fn bool(self: &Self, key: &string): Option<bool> {
         let node = self.nodes[self.root]
         if node.kind != 5 {
@@ -562,6 +608,7 @@ impl Json {
         return jsonCurPack(self._docId, self.childIdx[jsonNodeChildStart(node) + index])
     }
 
+    @req(JSON-DUP-NAMES)
     fn curField(self: &Self, cur: i64, key: &string): i64 {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -614,6 +661,7 @@ impl Json {
         return (cur & 0xFFFFFFFF) < self.nodes.len()
     }
 
+    @req(JSON-NUM-RANGE)
     fn curInt(self: &Self, cur: i64): Option<i64> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -627,6 +675,7 @@ impl Json {
     }
 
     // Unsigned read, for values above i64::MAX that `curInt` must reject.
+    @req(JSON-NUM-RANGE)
     fn curUint(self: &Self, cur: i64): Option<u64> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -639,6 +688,7 @@ impl Json {
         return Option.None
     }
 
+    @req(JSON-NUM-RANGE)
     fn curFloat(self: &Self, cur: i64): Option<f64> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {
@@ -777,6 +827,7 @@ impl Json {
     }
 
     // The raw JSON text of this node.
+    @req(JSON-NUM-RANGE)
     fn rawStr(self: &Self): string {
         return jsonNodeRawStr(self, self.root)
     }
@@ -1207,6 +1258,10 @@ struct JsonParser {
 // near 512, and 512 frames fit every task stack std hands out.
 pub let JSON_MAX_DEPTH: i64 = 512
 
+@req(JSON-PARSE)
+@req(JSON-TEXT)
+@req(JSON-DEPTH)
+@req(JSON-BOM)
 pub fn jsonParse(s: string): Result<Json> {
     if s.len == 0 {
         return Result.Err("empty json input at byte 0")
@@ -1267,6 +1322,8 @@ pub fn jsonParse(s: string): Result<Json> {
 // string-aware preprocessor that emits strict JSON, so everything else inherits jsonParse's
 // exact RFC-8259 validation — JSONC is strictly a superset of comments + trailing commas, not
 // a second, looser parser.
+@req(JSON-JSONC-COMMENTS)
+@req(JSON-JSONC-TRAILING)
 fn jsonStripJsonc(s: &string): string {
     // Pass 1: remove comments outside of string literals (string contents copied verbatim,
     // tracking backslash escapes so a \" inside a string never ends it).
@@ -1291,11 +1348,14 @@ fn jsonStripJsonc(s: &string): string {
             nc.push(c)
             i += 1
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '/' {
+            // A comment is whitespace, not nothing: `1/**/2` must not fuse into 12.
+            nc.push(' ')
             i += 2
             while i < s.len && s[i] != '\n' {
                 i += 1
             }
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '*' {
+            nc.push(' ')
             i += 2
             while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') {
                 i += 1
@@ -1306,7 +1366,9 @@ fn jsonStripJsonc(s: &string): string {
             i += 1
         }
     }
-    // Pass 2: drop any comma whose next non-whitespace char is ] or } (trailing comma).
+    // Pass 2: drop a comma whose next non-whitespace char is ] or } (trailing comma), but only
+    // one that follows a value: `[,]` and `[1,,]` stay errors, as in jsonc-parser.
+    var prev: u8 = 0
     var out: string = ""
     var j: i64 = 0
     var inStr2: bool = false
@@ -1326,52 +1388,152 @@ fn jsonStripJsonc(s: &string): string {
         } else if c == '"' {
             inStr2 = true
             out.push(c)
+            prev = c
             j += 1
         } else if c == ',' {
             var k: i64 = j + 1
             while k < nc.len && (nc[k] == ' ' || nc[k] == '\t' || nc[k] == '\n' || nc[k] == '\r') {
                 k += 1
             }
-            if k < nc.len && (nc[k] == '}' || nc[k] == ']') {
+            if k < nc.len && (nc[k] == '}' || nc[k] == ']') && prev != '[' && prev != '{' && prev != ',' {
                 j += 1
             } else {
                 out.push(c)
+                prev = c
                 j += 1
             }
         } else {
             out.push(c)
+            if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+                prev = c
+            }
             j += 1
         }
     }
     return out
 }
 
+@req(JSON-JSONC)
+@req(JSON-JSONC-STRICT)
 pub fn jsoncParse(s: string): Result<Json> {
     let stripped = jsonStripJsonc(s)
     return jsonParse(stripped)
 }
 
 // Shared with JsonPull, which scans the same grammar over its own cursor.
-fn jsonSkipWs(s: &string, pos: &mut i64) {
-    while pos < s.len {
-        let c = s[pos]
+@req(JSON-WS)
+@req(JSON-SAFE-BOUNDS)
+fn jsonSkipWs(s: &string, pos: &mut i64)
+@req(JSON-SAFE-BOUNDS)
+ensures pos >= old(pos)
+@req(JSON-SAFE-BOUNDS)
+ensures pos <= s.len || pos == old(pos)
+{
+    var p: i64 = pos
+    let n = s.len
+    if p < 0 || p > n {
+        return
+    }
+    while p < n
+    invariant p >= 0 && p <= n
+    {
+        let c = s[p]
         if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
             break
         }
-        pos += 1
+        p += 1
     }
+    pos = p
+}
+
+// Length of the well-formed UTF-8 sequence that starts at s[p] (RFC 3629, Unicode Table 3-7:
+// no overlong forms, no surrogates, nothing above U+10FFFF), or 0 when there is none. The
+// guard on p makes the function total, so no caller owes it a precondition.
+@req(JSON-UTF8)
+@req(JSON-SAFE-BOUNDS)
+fn jsonUtf8SeqLen(s: &string, p: i64): i64
+@req(JSON-UTF8)
+ensures result >= 0 && result <= 4
+@req(JSON-UTF8)
+ensures result == 0 || (p >= 0 && p + result <= s.len)
+{
+    if p < 0 || p >= s.len {
+        return 0
+    }
+    let b0 = s[p]
+    if b0 < 0x80 {
+        return 1
+    }
+    if b0 < 0xC2 {
+        return 0
+    }
+    var need: i64 = 0
+    var lo: u8 = 0x80
+    var hi: u8 = 0xBF
+    if b0 < 0xE0 {
+        need = 1
+    } else if b0 < 0xF0 {
+        need = 2
+        if b0 == 0xE0 {
+            lo = 0xA0
+        } else if b0 == 0xED {
+            hi = 0x9F
+        }
+    } else if b0 < 0xF5 {
+        need = 3
+        if b0 == 0xF0 {
+            lo = 0x90
+        } else if b0 == 0xF4 {
+            hi = 0x8F
+        }
+    } else {
+        return 0
+    }
+    if need >= s.len - p {
+        return 0
+    }
+    let b1 = s[p + 1]
+    if b1 < lo || b1 > hi {
+        return 0
+    }
+    var k: i64 = 2
+    while k <= need
+    invariant k >= 2 && k <= need + 1
+    invariant need >= 1 && need <= 3
+    {
+        let b = s[p + k]
+        if b < 0x80 || b > 0xBF {
+            return 0
+        }
+        k += 1
+    }
+    return need + 1
 }
 
 // RFC 8259 §7: a string char is any Unicode scalar except '"', '\' and the C0 controls (< 0x20),
-// which must be escaped. Valid escapes are " \ / b f n r t and \uXXXX. We validate the escape
-// letter but not the 4 hex digits (no fail case exercises bad \u, and over-checking risks false
-// positives on valid \u sequences). Shared with JsonPull.
-fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
+// which must be escaped. Valid escapes are " \ / b f n r t and \uXXXX with exactly four hex
+// digits. §8.1: the text is UTF-8, so a byte >= 0x80 must begin a well-formed sequence
+// (jsonUtf8SeqLen). Every violation sets _err and the scan keeps going one byte at a time, so
+// the position it leaves is still inside the string. Shared with JsonPull.
+@req(JSON-STR-CHARS)
+@req(JSON-SAFE-BOUNDS)
+fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool)
+@req(JSON-SAFE-BOUNDS)
+ensures pos >= old(pos)
+@req(JSON-SAFE-BOUNDS)
+ensures pos <= s.len || pos == old(pos)
+{
     // Local cursor: writing through the &mut i64 every byte defeats LLVM's alias analysis
     // (the store could alias the string header), forcing len/data reloads per char.
     var p: i64 = pos
     let n = s.len
-    while p < n {
+    if p < 0 || p > n {
+        _err = true
+        return
+    }
+    while p < n
+    invariant p >= pos && p <= n
+    {
         let ch = s[p]
         if ch == '"' {
             break
@@ -1380,16 +1542,33 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
             p += 1
             if p < n {
                 let e = s[p]
-                if !(e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't' || e == 'u') {
-                    _err = true
+                if e == 'u' {
+                    if n - p > 4 && jsonIsHex(s[p + 1]) && jsonIsHex(s[p + 2]) && jsonIsHex(s[p + 3]) && jsonIsHex(s[p + 4]) {
+                        p += 5
+                    } else {
+                        _err = true
+                        p += 1
+                    }
+                } else {
+                    if !(e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't') {
+                        _err = true
+                    }
+                    p += 1
                 }
-                p += 1
             } else {
                 _err = true
             }
         } else if ch < ' ' {
             _err = true
             p += 1
+        } else if ch >= 0x80 {
+            let w = jsonUtf8SeqLen(s, p)
+            if w == 0 {
+                _err = true
+                p += 1
+            } else {
+                p += w
+            }
         } else {
             p += 1
         }
@@ -1398,6 +1577,90 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
         _err = true
     }
     pos = p
+}
+
+// Does `lit` appear in s at p? (RFC 8259 §3: the literals are exactly true, false, null.)
+@req(JSON-LITERALS)
+@req(JSON-SAFE-BOUNDS)
+fn jsonLitAt(s: &string, p: i64, lit: &string): bool
+{
+    if p < 0 || p > s.len || lit.len > s.len - p {
+        return false
+    }
+    var i: i64 = 0
+    while i < lit.len
+    invariant i >= 0 && i <= lit.len
+    {
+        if s[p + i] != lit[i] {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+// RFC 8259 §6: number = [ "-" ] int [ frac ] [ exp ]; int = "0" / digit1-9 *digit (no leading
+// zeros); frac = "." 1*digit; exp = ("e"/"E") ["-"/"+"] 1*digit. Advances pos over the
+// longest prefix of that shape and returns whether the whole literal was well formed; the
+// caller reads the value from s[start..pos]. Shared with JsonPull.
+@req(JSON-NUM-GRAMMAR)
+@req(JSON-SAFE-BOUNDS)
+fn jsonScanNumber(s: &string, pos: &mut i64): bool
+@req(JSON-SAFE-BOUNDS)
+ensures pos >= old(pos)
+@req(JSON-SAFE-BOUNDS)
+ensures pos <= s.len || pos == old(pos)
+{
+    let n = s.len
+    var p: i64 = pos
+    if p < 0 || p > n {
+        return false
+    }
+    var ok: bool = true
+    if p < n && s[p] == '-' {
+        p += 1
+    }
+    if p >= n || s[p] < '0' || s[p] > '9' {
+        ok = false
+    } else if s[p] == '0' {
+        p += 1
+        if p < n && s[p] >= '0' && s[p] <= '9' {
+            ok = false
+        }
+    } else {
+        while p < n && s[p] >= '0' && s[p] <= '9'
+        invariant p >= 0 && p <= n
+        {
+            p += 1
+        }
+    }
+    if p < n && s[p] == '.' {
+        p += 1
+        if p >= n || s[p] < '0' || s[p] > '9' {
+            ok = false
+        }
+        while p < n && s[p] >= '0' && s[p] <= '9'
+        invariant p >= 0 && p <= n
+        {
+            p += 1
+        }
+    }
+    if p < n && (s[p] == 'e' || s[p] == 'E') {
+        p += 1
+        if p < n && (s[p] == '-' || s[p] == '+') {
+            p += 1
+        }
+        if p >= n || s[p] < '0' || s[p] > '9' {
+            ok = false
+        }
+        while p < n && s[p] >= '0' && s[p] <= '9'
+        invariant p >= 0 && p <= n
+        {
+            p += 1
+        }
+    }
+    pos = p
+    return ok
 }
 
 impl JsonParser {
@@ -1416,20 +1679,14 @@ impl JsonParser {
     // The three bare literals were previously accepted on their first byte alone, so
     // `nope` parsed as null and `trux` as true; malformed text became a plausible
     // value with no error.
+    @req(JSON-LITERALS)
     fn litAt(self: &Self, lit: &string): bool {
-        if self.pos + lit.len > self.s.len {
-            return false
-        }
-        var i: i64 = 0
-        while i < lit.len {
-            if self.s[self.pos + i] != lit[i] {
-                return false
-            }
-            i += 1
-        }
-        return true
+        return jsonLitAt(self.s, self.pos, lit)
     }
 
+    @req(JSON-TEXT)
+    @req(JSON-LITERALS)
+    @req(JSON-DEPTH)
     fn parseValue(self: &mut Self): i64 {
         self.skipWs()
         if self.pos >= self.s.len {
@@ -1504,6 +1761,7 @@ impl JsonParser {
         jsonScanString(self.s, &mut self.pos, &mut self.err)
     }
 
+    @req(JSON-STR-CHARS)
     fn parseString(self: &mut Self): i64 {
         self.pos += 1
         let start = self.pos
@@ -1517,6 +1775,7 @@ impl JsonParser {
         return idx
     }
 
+    @req(JSON-STR-CHARS)
     fn scanStringRange(self: &mut Self, start: &mut i64, _slen: &mut i64) {
         self.pos += 1
         start = self.pos
@@ -1539,90 +1798,36 @@ impl JsonParser {
         return false
     }
 
+    @req(JSON-NUM-GRAMMAR)
+    @req(JSON-NUM-RANGE)
     fn parseNumber(self: &mut Self): i64 {
         // Record the source span so rawStr can round-trip the literal verbatim;
         // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
         let numStart = self.pos
-        var result: f64 = 0.0
-        var negative: bool = false
-        if self.pos < self.s.len && self.s[self.pos] == '-' {
-            negative = true
-            self.pos += 1
-        }
-        // Integer part: RFC requires at least one digit, and forbids leading zeros (`013`); a single
-        // '0' is the only int that may start with '0'.
-        if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
+        if !jsonScanNumber(self.s, &mut self.pos) {
             self.err = true
-        } else if self.s[self.pos] == '0' {
-            self.pos += 1
-            if self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
-                self.err = true
-            }
-        } else {
-            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
-                result = result * 10.0 + (self.s[self.pos] as i32 - 48) as f64
-                self.pos += 1
-            }
         }
-        if self.pos < self.s.len && self.s[self.pos] == '.' {
-            self.pos += 1
-            if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
-                self.err = true
-            }
-            var frac: f64 = 0.1
-            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
-                result = result + (self.s[self.pos] as i32 - 48) as f64 * frac
-                frac *= 0.1
-                self.pos += 1
-            }
-        }
-        if self.pos < self.s.len && (self.s[self.pos] == 'e' || self.s[self.pos] == 'E') {
-            self.pos += 1
-            var expNeg: bool = false
-            if self.pos < self.s.len && self.s[self.pos] == '-' {
-                expNeg = true
-                self.pos += 1
-            } else if self.pos < self.s.len && self.s[self.pos] == '+' {
-                self.pos += 1
-            }
-            if self.pos >= self.s.len || !(self.s[self.pos] >= '0' && self.s[self.pos] <= '9') {
-                self.err = true
-            }
-            var exp: i64 = 0
-            while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
-                // Past 400 the factor is already inf (or the quotient 0), so stop
-                // counting: an exponent of 20 digits overflowed i64, and a large one
-                // made the loop below spin once per unit of exponent.
-                if exp < 400 {
-                    exp = exp * 10 + (self.s[self.pos] as i32 - 48) as i64
+        // A short plain integer is exact in f64, so a digit loop reads it. Everything
+        // else (a fraction, an exponent, more than 15 digits) goes through strtod, which
+        // rounds once, correctly, as every other JSON parser does; a digit-by-digit sum
+        // rounds at every step (`0.3` came out 0.30000000000000004).
+        var result: f64 = 0.0
+        if !self.err {
+            if self.pos - numStart <= 15 && !self.sawFracOrExp(numStart) {
+                var i = numStart
+                if self.s[i] == '-' {
+                    i += 1
                 }
-                self.pos += 1
-            }
-            if exp > 400 {
-                exp = 400
-            }
-            var factor: f64 = 1.0
-            var e: i64 = 0
-            while e < exp {
-                factor *= 10.0
-                e += 1
-            }
-            if expNeg {
-                result /= factor
+                while i < self.pos {
+                    result = result * 10.0 + (self.s[i] as i32 - 48) as f64
+                    i += 1
+                }
+                if self.s[numStart] == '-' {
+                    result = 0.0 - result
+                }
             } else {
-                result *= factor
+                result = self.s.substr(numStart, self.pos).parseF64() ?? 0.0
             }
-        }
-        if negative {
-            result = 0.0 - result
-        }
-        // The digit-by-digit sum above rounds at every step, so `0.3` came out as
-        // 0.30000000000000004 and `1e23` drifted too. Only an integer of at most 15
-        // digits is exact that way; everything else goes through strtod, which rounds
-        // once, correctly, as every other JSON parser does.
-        let intDigits = self.pos - numStart
-        if !self.err && (self.sawFracOrExp(numStart) || intDigits > 15) {
-            result = self.s.substr(numStart, self.pos).parseF64() ?? result
         }
         let idx = self.nodes.len()
         let numIdx = self.nums.len()
@@ -1635,6 +1840,7 @@ impl JsonParser {
     // interleaved while a container is still open. Children park on the scratch stack until
     // the container closes, then commit as one contiguous block. This replaced a pre-counting
     // scan to the matching close bracket that re-read every container body (73% of parse time).
+    @req(JSON-ARRAY)
     fn parseArray(self: &mut Self): i64 {
         self.pos += 1
         let myIdx = self.nodes.len()
@@ -1684,6 +1890,8 @@ impl JsonParser {
         return myIdx
     }
 
+    @req(JSON-OBJECT)
+    @req(JSON-DUP-NAMES)
     fn parseObject(self: &mut Self): i64 {
         self.pos += 1
         let myIdx = self.nodes.len()
@@ -1771,6 +1979,8 @@ impl JsonParser {
     }
 }
 
+@req(JSON-SER-ESCAPE)
+@req(JSON-SER-ROUNDTRIP)
 pub fn jsonEscapeStr(s: &string): string {
     var result: string = ""
     var i: i64 = 0
@@ -1818,7 +2028,15 @@ fn jsonFmtIsSpace(c: u8): bool {
 // Index of the next non-whitespace byte at or after `i` (src.len if none).
 fn jsonFmtSkipSpace(src: &string, i: i64): i64 {
     var j = i
-    while j < src.len && jsonFmtIsSpace(src[j]) {
+    if j < 0 {
+        j = 0
+    }
+    while j < src.len
+    invariant j >= 0
+    {
+        if !jsonFmtIsSpace(src[j]) {
+            break
+        }
         j += 1
     }
     return j
@@ -1861,6 +2079,7 @@ fn jsonFmtCopyString(src: &string, i: i64, out: &mut string): i64 {
 // Text that does not start with '{' or '[' comes back unchanged: a bare scalar
 // has nothing to indent, and text that is not JSON at all (a plain-text error
 // line, an empty body) is not this function's to mangle.
+@req(JSON-SER-PRETTY)
 pub fn jsonPretty(src: &string, indent: i64): string {
     let start = jsonFmtSkipSpace(src, 0)
     if start >= src.len {
@@ -1956,6 +2175,9 @@ impl JsonVal {
     }
 }
 
+@req(JSON-SER-GRAMMAR)
+@req(JSON-SER-NUM)
+@req(JSON-SER-ROUNDTRIP)
 pub fn jsonSer(v: &JsonVal): string {
     match v {
         JsonVal.JNull => {
@@ -2286,67 +2508,17 @@ pub struct JsonPull {
     stack: Vec<i64>,
 }
 
+@req(JSON-PULL-EVENTS)
+@req(JSON-PULL-STRUCTURE)
 pub fn jsonPull(src: string): JsonPull {
     return JsonPull {
         src: src, pos: 0, stack: Vec.new()
     }
 }
 
-// Standalone number → f64 (int . frac e exp), advancing pos past the literal.
-// The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
-fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
-    var result: f64 = 0.0
-    var negative: bool = false
-    if pos < s.len && s[pos] == '-' {
-        negative = true
-        pos += 1
-    }
-    while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-        result = result * 10.0 + (s[pos] as i32 - 48) as f64
-        pos += 1
-    }
-    if pos < s.len && s[pos] == '.' {
-        pos += 1
-        var frac: f64 = 0.1
-        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result + (s[pos] as i32 - 48) as f64 * frac
-            frac *= 0.1
-            pos += 1
-        }
-    }
-    if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
-        pos += 1
-        var expNeg: bool = false
-        if pos < s.len && s[pos] == '+' {
-            pos += 1
-        } else if pos < s.len && s[pos] == '-' {
-            expNeg = true
-            pos += 1
-        }
-        var exp: i64 = 0
-        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            exp = exp * 10 + (s[pos] as i32 - 48) as i64
-            pos += 1
-        }
-        var scale: f64 = 1.0
-        var i: i64 = 0
-        while i < exp {
-            scale *= 10.0
-            i += 1
-        }
-        if expNeg {
-            result /= scale
-        } else {
-            result *= scale
-        }
-    }
-    if negative {
-        result = 0.0 - result
-    }
-    return result
-}
-
 impl JsonPull {
+    @req(JSON-PULL-EVENTS)
+    @req(JSON-PULL-TOKENS)
     fn next(self: &mut Self): JsonToken {
         while true {
             jsonSkipWs(self.src, &mut self.pos)
@@ -2401,6 +2573,9 @@ impl JsonPull {
                 if self.pos < self.src.len {
                     self.pos += 1
                 }
+                if strErr {
+                    return jsonTok(JsonEvent.Error)
+                }
                 var t = jsonTok(JsonEvent.Str)
                 // in an object at a key slot (state 1) the string is the key
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
@@ -2409,25 +2584,31 @@ impl JsonPull {
                 t.text = jsonMaterializeStr(self.src, strStart, strLen)
                 return t
             }
-            if c == 't' {
-                self.pos += 4
+            if c == 't' || c == 'f' || c == 'n' {
+                var lit: string = "null"
+                if c == 't' {
+                    lit = "true"
+                } else if c == 'f' {
+                    lit = "false"
+                }
+                if !jsonLitAt(self.src, self.pos, lit) {
+                    return jsonTok(JsonEvent.Error)
+                }
+                self.pos += lit.len
+                if c == 'n' {
+                    return jsonTok(JsonEvent.Null)
+                }
                 var t = jsonTok(JsonEvent.Bool)
-                t.flag = true
+                t.flag = c == 't'
                 return t
-            }
-            if c == 'f' {
-                self.pos += 5
-                var t = jsonTok(JsonEvent.Bool)
-                t.flag = false
-                return t
-            }
-            if c == 'n' {
-                self.pos += 4
-                return jsonTok(JsonEvent.Null)
             }
             if c == '-' || (c >= '0' && c <= '9') {
+                let numStart = self.pos
+                if !jsonScanNumber(self.src, &mut self.pos) {
+                    return jsonTok(JsonEvent.Error)
+                }
                 var t = jsonTok(JsonEvent.Num)
-                t.num = jsonPullNumber(self.src, &mut self.pos)
+                t.num = self.src.substr(numStart, self.pos).parseF64() ?? 0.0
                 return t
             }
             return jsonTok(JsonEvent.Error)
@@ -2559,6 +2740,8 @@ pub fn jsonQuote(s: &string): string {
 // A float as JSON text. JSON has no NaN or Infinity (RFC 8259 6), so a non-finite
 // value encodes as null, as JSON.stringify and serde_json do; printing it would emit
 // `nan`/`inf`, which no parser (this one included) reads back.
+@req(JSON-SER-NUM)
+@req(JSON-SER-ROUNDTRIP)
 pub fn jsonFloatStr(f: f64): string {
     // x - x is NaN exactly when x is NaN or infinite
     let d = f - f

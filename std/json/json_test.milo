@@ -1,0 +1,895 @@
+// Tests that verify the requirements in std/json/requirements.json. `milo trace std/json.milo`
+// finds them by the @req on each test; `milo test std/json/json_test.milo` runs them.
+//
+// The JSONTestSuite cases (tests/vendor/JSONTestSuite, MIT) are read from disk, relative to the
+// repository root (or one or two levels below it). Every y_ case must be accepted, every n_
+// case rejected, and each i_ case (the suite leaves them to the implementation) must match the
+// choice recorded in implDefinedRejects, which is also stated in the requirements.
+from "std/testing" import { assertTrue, assertFalse, assertStrEqual, assertEqual64, assertNear }
+from "std/fs" import { readDir, readFile, isDir }
+from "std/json" import { Json, JsonEvent, JsonToken, JsonVal, jsonPull, jsoncParse, jsonSer, jsonEscapeStr, jsonFloatStr, jsonPretty, JSON_MAX_DEPTH }
+
+fn accepts(text: string): bool {
+    var ok: bool = false
+    match Json.parse(text) {
+        Result.Ok(_j) => {
+            ok = true
+        }
+        Result.Err(_e) => {
+            ok = false
+        }
+    }
+    return ok
+}
+
+fn acceptsJsonc(text: string): bool {
+    var ok: bool = false
+    match jsoncParse(text) {
+        Result.Ok(_j) => {
+            ok = true
+        }
+        Result.Err(_e) => {
+            ok = false
+        }
+    }
+    return ok
+}
+
+fn errOf(text: string): string {
+    var msg: string = ""
+    match Json.parse(text) {
+        Result.Ok(_j) => {
+            msg = "ok"
+        }
+        Result.Err(e) => {
+            msg = e
+        }
+    }
+    return msg
+}
+
+// Parsed document, or `null` when the text is rejected (callers only use it after accepts()).
+fn rootStr(text: string): string {
+    var out: string = "<rejected>"
+    match Json.parse(text) {
+        Result.Ok(j) => {
+            out = j.asStr() ?? "<not a string>"
+        }
+        Result.Err(_e) => {
+            out = "<rejected>"
+        }
+    }
+    return out
+}
+
+fn rootF64(text: string): f64 {
+    var out: f64 = -1.0
+    match Json.parse(text) {
+        Result.Ok(j) => {
+            out = j.asF64() ?? -2.0
+        }
+        Result.Err(_e) => {
+            out = -3.0
+        }
+    }
+    return out
+}
+
+// Fails (with the offending text in the message) when `text` is not accepted / not rejected.
+fn mustAccept(text: string) {
+    assertTrue(accepts(text.clone()))
+}
+
+fn mustReject(text: string) {
+    assertFalse(accepts(text.clone()))
+}
+
+// ── JSONTestSuite ──
+
+fn suiteDir(): string {
+    var d: string = "tests/vendor/JSONTestSuite/test_parsing"
+    if isDir(d) {
+        return d
+    }
+    d = "../tests/vendor/JSONTestSuite/test_parsing"
+    if isDir(d) {
+        return d
+    }
+    return "../../tests/vendor/JSONTestSuite/test_parsing"
+}
+
+// The i_ cases this parser rejects. Everything else in i_ is accepted. The reasons:
+// ill-formed UTF-8 (JSON-UTF8), UTF-16 text and a leading BOM (JSON-BOM). Accepted: all ten
+// number-range cases (JSON-NUM-RANGE), lone and inverted surrogate escapes, which decode to
+// U+FFFD (JSON-STR-SURROGATE), and 500 nested arrays (JSON-DEPTH, limit 512).
+fn implDefinedRejects(name: &string): bool {
+    return name == "i_string_invalid_utf-8.json" || name == "i_string_iso_latin_1.json"
+    || name == "i_string_lone_utf8_continuation_byte.json" || name == "i_string_not_in_unicode_range.json"
+    || name == "i_string_overlong_sequence_2_bytes.json" || name == "i_string_overlong_sequence_6_bytes_null.json"
+    || name == "i_string_overlong_sequence_6_bytes.json" || name == "i_string_truncated-utf-8.json"
+    || name == "i_string_UTF-16LE_with_BOM.json" || name == "i_string_UTF-8_invalid_sequence.json"
+    || name == "i_string_utf16BE_no_BOM.json" || name == "i_string_utf16LE_no_BOM.json"
+    || name == "i_string_UTF8_surrogate_U+D800.json" || name == "i_structure_UTF-8_BOM_empty_object.json"
+}
+
+// Runs every case whose file name starts with `prefix`. `want` 1 = must accept, 0 = must
+// reject, 2 = implementation-defined (checked against implDefinedRejects). Returns the names
+// of the cases that disagree, space separated, and counts the cases it ran into `checked`.
+fn runCases(prefix: string, want: i32, checked: &mut i64): string {
+    let dir = suiteDir()
+    let ents = readDir(dir) ?? Vec.new()
+    var bad: string = ""
+    for e in ents {
+        if !e.name.startsWith(prefix) {
+            continue
+        }
+        var text: string = ""
+        match readFile(dir + "/" + e.name) {
+            Result.Ok(t) => {
+                text = t
+            }
+            Result.Err(_e) => {
+                bad = bad + " unreadable:" + e.name
+                continue
+            }
+        }
+        checked += 1
+        let got = accepts(text)
+        var expect: bool = want == 1
+        if want == 2 {
+            expect = !implDefinedRejects(e.name)
+        }
+        if got != expect {
+            bad = bad + " " + e.name
+        }
+    }
+    return bad
+}
+
+@req(JSON-ARRAY)
+fn testSuiteArrays(): void {
+    var n: i64 = 0
+    let bad = runCases("y_array", 1, &mut n) + runCases("n_array", 0, &mut n)
+    assertEqual64(n, 37)
+    assertStrEqual(bad, "")
+}
+
+@req(JSON-OBJECT)
+@req(JSON-DUP-NAMES)
+fn testSuiteObjects(): void {
+    var n: i64 = 0
+    let bad = runCases("y_object", 1, &mut n) + runCases("n_object", 0, &mut n)
+    assertEqual64(n, 40)
+    assertStrEqual(bad, "")
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testSuiteNumbers(): void {
+    var n: i64 = 0
+    let bad = runCases("y_number", 1, &mut n) + runCases("n_number", 0, &mut n)
+    assertEqual64(n, 70)
+    assertStrEqual(bad, "")
+}
+
+@req(JSON-STR-CHARS)
+@req(JSON-STR-ESC)
+@req(JSON-STR-UESC)
+@req(JSON-STR-SURROGATE)
+@req(JSON-UTF8)
+fn testSuiteStrings(): void {
+    var n: i64 = 0
+    let bad = runCases("y_string", 1, &mut n) + runCases("n_string", 0, &mut n)
+    assertEqual64(n, 72)
+    assertStrEqual(bad, "")
+}
+
+@req(JSON-TEXT)
+@req(JSON-WS)
+@req(JSON-LITERALS)
+@req(JSON-BOM)
+fn testSuiteStructure(): void {
+    var n: i64 = 0
+    let bad = runCases("y_structure", 1, &mut n) + runCases("n_structure", 0, &mut n)
+    + runCases("n_incomplete", 0, &mut n) + runCases("n_multidigit", 0, &mut n) + runCases("n_single", 0, &mut n)
+    assertEqual64(n, 64)
+    assertStrEqual(bad, "")
+}
+
+// All 95 y_ cases accepted, all 188 n_ cases rejected: the headline requirement.
+@req(JSON-PARSE)
+fn testSuiteEveryYAcceptedEveryNRejected(): void {
+    var ny: i64 = 0
+    var nn: i64 = 0
+    let bad = runCases("y_", 1, &mut ny) + runCases("n_", 0, &mut nn)
+    assertEqual64(ny, 95)
+    assertEqual64(nn, 188)
+    assertStrEqual(bad, "")
+}
+
+@req(JSON-NUM-RANGE)
+@req(JSON-STR-SURROGATE)
+@req(JSON-UTF8)
+@req(JSON-BOM)
+@req(JSON-DEPTH)
+fn testSuiteImplementationDefined(): void {
+    var n: i64 = 0
+    let bad = runCases("i_", 2, &mut n)
+    assertEqual64(n, 35)
+    assertStrEqual(bad, "")
+}
+
+// ── grammar ──
+
+@req(JSON-TEXT)
+fn testTopLevelAndTrailing(): void {
+    mustAccept("1")
+    mustAccept("\"a\"")
+    mustAccept("null")
+    mustAccept("true")
+    mustAccept(" \t\n\r[] \r\n")
+    mustReject("")
+    mustReject("   ")
+    mustReject("[] []")
+    mustReject("1 2")
+    mustReject("{} x")
+    mustReject("[]]")
+}
+
+@req(JSON-WS)
+fn testWhitespaceSet(): void {
+    mustAccept("\t[\n1\r,\r\n2 ]")
+    mustReject("[1,\x0b2]")
+    mustReject("[1,\x0c2]")
+    mustReject("[1,\u{a0}2]")
+    mustReject("[1,\u{2028}2]")
+    mustReject("[1,\x002]")
+    mustReject("\x00[]")
+}
+
+@req(JSON-LITERALS)
+fn testLiterals(): void {
+    mustAccept("[true,false,null]")
+    mustReject("True")
+    mustReject("NULL")
+    mustReject("tru")
+    mustReject("truee")
+    mustReject("nul")
+    mustReject("nullx")
+    mustReject("[true false]")
+    mustReject("[fals]")
+}
+
+@req(JSON-OBJECT)
+fn testObjects(): void {
+    mustAccept("{}")
+    mustAccept("{ \"a\" : 1 , \"b\" : [ ] , \"c\" : { } }")
+    mustReject("{a:1}")
+    mustReject("{\"a\" 1}")
+    mustReject("{\"a\":}")
+    mustReject("{\"a\":1,}")
+    mustReject("{,}")
+    mustReject("{\"a\":1,,\"b\":2}")
+    mustReject("{\"a\":1")
+    mustReject("{\"a\":1]")
+    mustReject("{1:2}")
+    mustReject("{\"a\":1 \"b\":2}")
+    mustReject("{'a':1}")
+}
+
+@req(JSON-DUP-NAMES)
+fn testDuplicateNames(): void {
+    match Json.parse("{\"a\":1,\"b\":0,\"a\":2}") {
+        Result.Ok(j) => {
+            assertEqual64(j.i64("a") ?? -1, 1)
+            assertEqual64(j.len(), 3)
+            let ks = j.keys()
+            assertStrEqual(ks[0], "a")
+            assertStrEqual(ks[1], "b")
+            assertStrEqual(ks[2], "a")
+        }
+        Result.Err(_e) => {
+            assertTrue(false)
+        }
+    }
+}
+
+@req(JSON-ARRAY)
+fn testArrays(): void {
+    mustAccept("[]")
+    mustAccept("[ 1 , [ ] , [ [ 2 ] ] ]")
+    mustReject("[1,]")
+    mustReject("[,1]")
+    mustReject("[1,,2]")
+    mustReject("[1:2]")
+    mustReject("[1")
+    mustReject("[1}")
+    mustReject("[,]")
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumberGrammar(): void {
+    mustAccept("[0,-0,1,-1,10,0.5,-0.5,1e5,1E5,1e+5,1e-5,1.5e3,0e0,0.0e-0,123456789012345678901234567890]")
+    mustReject("01")
+    mustReject("-01")
+    mustReject("00")
+    mustReject("+1")
+    mustReject(".5")
+    mustReject("5.")
+    mustReject("1.e3")
+    mustReject("1e")
+    mustReject("1e+")
+    mustReject("-")
+    mustReject("--1")
+    mustReject("0x10")
+    mustReject("1.5.5")
+    mustReject("NaN")
+    mustReject("Infinity")
+    mustReject("-Infinity")
+    mustReject("[1 e5]")
+    mustReject("[1_0]")
+    mustReject("[0e]")
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumberRange(): void {
+    // f64: correctly rounded, +/-infinity past the range, zero below it
+    assertTrue(rootF64("1e999") > 1.7976931348623157e308)
+    assertTrue(rootF64("-1e999") < -1.7976931348623157e308)
+    assertNear(rootF64("1e-999"), 0.0, 1e-300)
+    assertTrue(rootF64("0.3") == 0.3)
+    assertTrue(rootF64("1e23") == 1e23)
+    assertTrue(rootF64("123456789012345678901234567890") == 1.2345678901234568e29)
+    // a very long literal and a very large exponent are accepted
+    var big: string = "1"
+    for _i in 0..5000 {
+        big.push('0')
+    }
+    mustAccept(big)
+    mustAccept("1e99999999999999999999999999")
+    // integer accessors answer only for an exact i64 / u64
+    match Json.parse("[9223372036854775807, 9223372036854775808, 1.5, 1e3, -42, 18446744073709551615, -5]") {
+        Result.Ok(j) => {
+            assertEqual64(j.at(0)!.asI64() ?? -1, 9223372036854775807)
+            assertTrue(j.at(1)!.asI64() == Option.None)
+            assertTrue(j.at(2)!.asI64() == Option.None)
+            assertTrue(j.at(3)!.asI64() == Option.None)
+            assertEqual64(j.at(4)!.asI64() ?? 0, -42)
+            assertTrue(j.at(5)!.asI64() == Option.None)
+            assertStrEqual(j.at(5)!.rawStr(), "18446744073709551615")
+            let cur = j.curChild(j.curRoot(), 5)
+            assertTrue((j.curUint(cur) ?? 7) == 18446744073709551615)
+            assertTrue((j.curUint(j.curChild(j.curRoot(), 6)) ?? 7) == 7)
+        }
+        Result.Err(_e) => {
+            assertTrue(false)
+        }
+    }
+}
+
+@req(JSON-SAFE-ARITH)
+fn testIntegerReadsNeverWrap(): void {
+    let lits = ["9223372036854775808", "99999999999999999999", "-9223372036854775809", "184467440737095516150"]
+    for l in lits {
+        match Json.parse(l) {
+            Result.Ok(j) => {
+                assertTrue(j.asI64() == Option.None)
+            }
+            Result.Err(_e) => {
+                assertTrue(false)
+            }
+        }
+    }
+    let hi = Json.parse("9223372036854775807")!
+    assertEqual64(hi.asI64() ?? 0, 9223372036854775807)
+    let lo = Json.parse("-9223372036854775807")!
+    assertEqual64(lo.asI64() ?? 0, -9223372036854775807)
+}
+
+@req(JSON-STR-CHARS)
+fn testStringChars(): void {
+    mustAccept("\"\"")
+    mustAccept("\"abc\"")
+    mustAccept("\" \"")
+    mustAccept("\"\x7f\"")
+    mustAccept("\"\u{e9}\u{20ac}\u{1F600}\"")
+    mustReject("\"abc")
+    mustReject("\"")
+    mustReject("\"a\tb\"")
+    mustReject("\"a\nb\"")
+    mustReject("\"a\rb\"")
+    mustReject("\"a\x00b\"")
+    mustReject("\"a\x1fb\"")
+    mustReject("'abc'")
+    mustReject("[\"a\" \"b\"]")
+}
+
+@req(JSON-STR-ESC)
+fn testStringEscapes(): void {
+    assertStrEqual(rootStr("\"\\\"\\\\\\/\\b\\f\\n\\r\\t\""), "\"\\/\x08\x0c\n\r\t")
+    mustReject("\"\\x\"")
+    mustReject("\"\\a\"")
+    mustReject("\"\\'\"")
+    mustReject("\"\\")
+    mustReject("\"\\\"")
+    mustReject("\"\\\n\"")
+    mustReject("\"\\0\"")
+    mustReject("\"\\U0041\"")
+}
+
+@req(JSON-STR-UESC)
+fn testUnicodeEscapes(): void {
+    assertStrEqual(rootStr("\"\\u0041\""), "A")
+    assertStrEqual(rootStr("\"\\u00e9\""), "\u{e9}")
+    assertStrEqual(rootStr("\"\\u00E9\""), "\u{e9}")
+    assertStrEqual(rootStr("\"\\u20AC\""), "\u{20ac}")
+    assertStrEqual(rootStr("\"\\u0000\""), "\x00")
+    mustReject("\"\\u\"")
+    mustReject("\"\\u1\"")
+    mustReject("\"\\u12\"")
+    mustReject("\"\\u123\"")
+    mustReject("\"\\u12G4\"")
+    mustReject("\"\\uZZZZ\"")
+    mustReject("\"\\u 123\"")
+    mustReject("\"\\u123")
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogates(): void {
+    assertStrEqual(rootStr("\"\\ud83d\\ude00\""), "\u{1F600}")
+    assertStrEqual(rootStr("\"\\uD834\\uDD1E\""), "\u{1D11E}")
+    assertEqual64(rootStr("\"\\ud83d\\ude00\"").len, 4)
+    // lone and reversed surrogates decode to U+FFFD, never to invalid UTF-8
+    assertStrEqual(rootStr("\"\\ud800\""), "\u{fffd}")
+    assertStrEqual(rootStr("\"\\udc00\""), "\u{fffd}")
+    assertStrEqual(rootStr("\"\\ud800\\u0041\""), "\u{fffd}A")
+    assertStrEqual(rootStr("\"\\ude00\\ud83d\""), "\u{fffd}\u{fffd}")
+}
+
+@req(JSON-UTF8)
+fn testUtf8Validation(): void {
+    mustReject("\"\xff\"")
+    mustReject("\"\xc3\"")
+    mustReject("\"\xc0\x80\"")
+    mustReject("\"\xc1\xbf\"")
+    mustReject("\"\xed\xa0\x80\"")
+    mustReject("\"\xf4\x90\x80\x80\"")
+    mustReject("\"\xf8\x88\x80\x80\x80\"")
+    mustReject("\"\x80\"")
+    mustReject("\"\xe2\x82\"")
+    mustReject("\"\xe0\x80\x80\"")
+    mustReject("\"\xf0\x80\x80\x80\"")
+    mustAccept("\"\xc2\x80\"")
+    mustAccept("\"\xdf\xbf\"")
+    mustAccept("\"\xe0\xa0\x80\"")
+    mustAccept("\"\xed\x9f\xbf\"")
+    mustAccept("\"\xef\xbf\xbf\"")
+    mustAccept("\"\xf0\x90\x80\x80\"")
+    mustAccept("\"\xf4\x8f\xbf\xbf\"")
+    // a name is a string too
+    mustReject("{\"\xff\":1}")
+    // outside a string any non-ASCII byte is already an error
+    mustReject("[\u{e9}]")
+}
+
+@req(JSON-BOM)
+fn testByteOrderMarkAndUtf16(): void {
+    mustReject("\xef\xbb\xbf{}")
+    mustReject("\xef\xbb\xbf[1]")
+    mustReject("\xff\xfe[\x00]\x00")
+    mustReject("\xfe\xff\x00[\x00]")
+    mustReject("[\x00]\x00")
+}
+
+@req(JSON-DEPTH)
+fn testDepthLimit(): void {
+    var ok: string = ""
+    var deep: string = ""
+    for _i in 0..512 {
+        ok.push('[')
+        deep.push('[')
+    }
+    deep.push('[')
+    for _i in 0..512 {
+        ok.push(']')
+        deep.push(']')
+    }
+    deep.push(']')
+    mustAccept(ok)
+    mustReject(deep.clone())
+    assertTrue(errOf(deep).contains("nesting deeper than 512"))
+    assertEqual64(JSON_MAX_DEPTH, 512)
+}
+
+// ── memory safety ──
+
+fn corpus(): string {
+    return "{\"a\":[1,-2.5e+3,true,false,null,\"x\\u00e9\\ud83d\\ude00\\n\"],\"b\":{\"c\":\"\u{e9}\u{1F600}\",\"d\":[]},\"e\":0}"
+}
+
+// Every prefix of a valid document, every single-byte corruption of it, and a few hostile
+// shapes go through the parser, the JSONC parser and the tokenizer: none may crash or hang.
+// Only the whole document may be accepted.
+@req(JSON-SAFE)
+@req(JSON-SAFE-BOUNDS)
+fn testTruncationAndCorruptionNeverCrash(): void {
+    let doc = corpus()
+    var accepted: i64 = 0
+    for n in 0..doc.len + 1 {
+        let cut = doc.substr(0, n)
+        if accepts(cut.clone()) {
+            accepted += 1
+        }
+        if acceptsJsonc(cut.clone()) {
+            accepted += 0
+        }
+        var p = jsonPull(cut.clone())
+        var steps: i64 = 0
+        while steps < doc.len + 8 {
+            let t = p.next()
+            steps += 1
+            if t.kind == JsonEvent.End || t.kind == JsonEvent.Error {
+                break
+            }
+        }
+        assertTrue(steps < doc.len + 8)
+    }
+    assertEqual64(accepted, 1)
+    // flip each byte to a spread of values; the answer is irrelevant, surviving is the test
+    let flips = ["\"", "\\", "[", "}", "0", "\x00", "\xff", "e", "-", ","]
+    for i in 0..doc.len {
+        for f in flips {
+            let mutated = doc.substr(0, i) + f + doc.substr(i + 1, doc.len)
+            if accepts(mutated.clone()) {
+                accepted += 0
+            }
+            var p = jsonPull(mutated.clone())
+            var steps: i64 = 0
+            while steps < doc.len + 16 {
+                let t = p.next()
+                steps += 1
+                if t.kind == JsonEvent.End || t.kind == JsonEvent.Error {
+                    break
+                }
+            }
+            assertTrue(steps < doc.len + 16)
+        }
+    }
+    // 100000 opening brackets: depth limit, not a stack overflow
+    var bomb: string = ""
+    for _i in 0..100000 {
+        bomb.push('[')
+    }
+    mustReject(bomb)
+    // a lone backslash, quote and sign at the very end of input
+    mustReject("[\"\\")
+    mustReject("[-")
+    mustReject("[1e")
+    mustReject("[\"\xe2\x82")
+    mustReject("[tru")
+}
+
+// ── serializer ──
+
+@req(JSON-SER-ESCAPE)
+fn testEscape(): void {
+    assertStrEqual(jsonEscapeStr("a\"b"), "a\\\"b")
+    assertStrEqual(jsonEscapeStr("a\\b"), "a\\\\b")
+    assertStrEqual(jsonEscapeStr("\n\t\r"), "\\n\\t\\r")
+    assertStrEqual(jsonEscapeStr("\x01"), "\\u0001")
+    assertStrEqual(jsonEscapeStr("\x08"), "\\u0008")
+    assertStrEqual(jsonEscapeStr("\x1f"), "\\u001f")
+    assertStrEqual(jsonEscapeStr("\x00"), "\\u0000")
+    assertStrEqual(jsonEscapeStr("\u{e9}\u{1F600}"), "\u{e9}\u{1F600}")
+    assertStrEqual(jsonEscapeStr("\x7f /"), "\x7f /")
+    // no byte below 0x20 survives
+    var all: string = ""
+    for b in 0..32 {
+        all.push(b as u8)
+    }
+    let esc = jsonEscapeStr(all)
+    for i in 0..esc.len {
+        assertTrue(esc[i] >= 32)
+    }
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerializerGrammar(): void {
+    let text = Json.obj().int("a", 1).arr("b", Json.arr().bool(true).nil().str("x")).obj("c", Json.obj()).str("q\"k", "v").build()
+    assertStrEqual(text, "{\"a\":1,\"b\":[true,null,\"x\"],\"c\":{},\"q\\\"k\":\"v\"}")
+    mustAccept(text)
+    mustAccept(Json.arr().build())
+    mustAccept(Json.obj().build())
+    let v = JsonVal.JObj(Vec.new())
+    assertStrEqual(jsonSer(v), "{}")
+}
+
+@req(JSON-SER-NUM)
+fn testSerializerNumbers(): void {
+    assertStrEqual(Json.arr().int(0).int(-1).int(9223372036854775807).int(-9223372036854775807).build(), "[0,-1,9223372036854775807,-9223372036854775807]")
+    let fl = [1.5, 1e22, 1e-7, 0.1, 1.7976931348623157e308, 5e-324, -0.25, 100.0, 123456789.125]
+    for f in fl {
+        let t = jsonFloatStr(f)
+        mustAccept(t.clone())
+        assertTrue(rootF64(t) == f)
+    }
+    let zero: f64 = 0.0
+    let nan = zero / zero
+    let inf = 1.0 / zero
+    assertStrEqual(jsonFloatStr(nan), "null")
+    assertStrEqual(jsonFloatStr(inf), "null")
+    assertStrEqual(jsonFloatStr(0.0 - inf), "null")
+}
+
+@req(JSON-SER)
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundTrip(): void {
+    // every ASCII byte (controls included) plus multi-byte text survives string -> JSON -> string
+    var s: string = ""
+    for b in 0..128 {
+        s.push(b as u8)
+    }
+    s = s + "\u{e9}\u{20ac}\u{1F600}\u{10ffff}\"\\/"
+    let text = jsonSer(JsonVal.JStr(s.clone()))
+    assertStrEqual(rootStr(text), s)
+    // a document: order, duplicate names, integer extremes, nested values
+    let doc = Json.obj().int("z", -9223372036854775807).str("a", "x").int("z", 2).arr("l", Json.arr().int(3).int(1).int(2)).build()
+    match Json.parse(doc.clone()) {
+        Result.Ok(j) => {
+            let ks = j.keys()
+            assertEqual64(ks.len, 4)
+            assertStrEqual(ks[0], "z")
+            assertStrEqual(ks[1], "a")
+            assertStrEqual(ks[2], "z")
+            assertStrEqual(ks[3], "l")
+            assertEqual64(j.i64("z") ?? 0, -9223372036854775807)
+            assertStrEqual(j.rawStr(), doc)
+        }
+        Result.Err(_e) => {
+            assertTrue(false)
+        }
+    }
+}
+
+@req(JSON-SER-PRETTY)
+fn testPretty(): void {
+    let compact = "{\"a\":[1,2,{\"b\":\"x  y\"}],\"c\":\" sp \\\" aced \",\"d\":1.50e+3,\"e\":{},\"f\":[]}"
+    let pretty = jsonPretty(compact, 2)
+    mustAccept(pretty.clone())
+    assertTrue(pretty.contains("\n"))
+    assertStrEqual(jsonPretty(pretty, 0), compact)
+    assertStrEqual(jsonPretty(compact, 0), compact)
+}
+
+// ── JSONC ──
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncComments(): void {
+    assertTrue(acceptsJsonc("// head\n{\"a\": 1 /* mid */, // tail\n\"b\": [2]}\n// end"))
+    assertTrue(acceptsJsonc("/* x */ 1 /* y */"))
+    assertTrue(acceptsJsonc("[\"// not a comment\", \"/* nor this */\"]"))
+    // a comment is whitespace: it must not join two tokens into one
+    assertFalse(acceptsJsonc("[1/**/2]"))
+    assertFalse(acceptsJsonc("[tr/**/ue]"))
+    assertTrue(acceptsJsonc("[1/**/,/**/2]"))
+    match jsoncParse("{\"u\": \"a//b\" // c\n}") {
+        Result.Ok(j) => {
+            assertStrEqual(j.str("u") ?? "", "a//b")
+        }
+        Result.Err(_e) => {
+            assertTrue(false)
+        }
+    }
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommas(): void {
+    assertTrue(acceptsJsonc("[1,2,]"))
+    assertTrue(acceptsJsonc("{\"a\":1,}"))
+    assertTrue(acceptsJsonc("[1,2 , /* c */ ]"))
+    assertTrue(acceptsJsonc("[[1,],{\"a\":[2,],},]"))
+    assertFalse(acceptsJsonc("[,]"))
+    assertFalse(acceptsJsonc("[1,,]"))
+    assertFalse(acceptsJsonc("{,}"))
+    assertFalse(acceptsJsonc("{\"a\":1,,}"))
+    assertFalse(acceptsJsonc("[,1]"))
+    assertFalse(acceptsJsonc("[\"a,\" ,]x"))
+}
+
+@req(JSON-JSONC)
+@req(JSON-JSONC-STRICT)
+fn testJsoncOtherwiseStrict(): void {
+    assertTrue(acceptsJsonc("[1,{\"a\":null}]"))
+    assertFalse(acceptsJsonc("[01]"))
+    assertFalse(acceptsJsonc("{a:1}"))
+    assertFalse(acceptsJsonc("['x']"))
+    assertFalse(acceptsJsonc("[\"\\x\"]"))
+    assertFalse(acceptsJsonc("[\"\\u12\"]"))
+    assertFalse(acceptsJsonc("[\"\xff\"]"))
+    assertFalse(acceptsJsonc("[1] [2]"))
+    assertFalse(acceptsJsonc(""))
+    assertFalse(acceptsJsonc("[1 // unterminated array"))
+}
+
+// ── streaming ──
+
+fn evName(t: &JsonToken): string {
+    match t.kind {
+        JsonEvent.StartObject => {
+            return "{"
+        }
+        JsonEvent.EndObject => {
+            return "}"
+        }
+        JsonEvent.StartArray => {
+            return "["
+        }
+        JsonEvent.EndArray => {
+            return "]"
+        }
+        JsonEvent.Key => {
+            return "K:" + t.text
+        }
+        JsonEvent.Str => {
+            return "S:" + t.text
+        }
+        JsonEvent.Num => {
+            return "N:" + jsonFloatStr(t.num)
+        }
+        JsonEvent.Bool => {
+            if t.flag {
+                return "true"
+            }
+            return "false"
+        }
+        JsonEvent.Null => {
+            return "null"
+        }
+        JsonEvent.End => {
+            return "END"
+        }
+        JsonEvent.Error => {
+            return "ERR"
+        }
+    }
+}
+
+fn events(src: string): string {
+    var p = jsonPull(src)
+    var out: string = ""
+    var steps: i64 = 0
+    while steps < 1000 {
+        let t = p.next()
+        let n = evName(t)
+        out = out + n + " "
+        steps += 1
+        if n == "END" || n == "ERR" {
+            break
+        }
+    }
+    return out
+}
+
+@req(JSON-PULL)
+@req(JSON-PULL-EVENTS)
+fn testPullEvents(): void {
+    assertStrEqual(events("{\"a\":[1,-2.5e1,true,false,null,\"x\\u00e9\\n\"],\"b\":{\"c\":\"d\"}}"), "{ K:a [ N:1 N:-25 true false null S:x\u{e9}\n ] K:b { K:c S:d } } END ")
+    assertStrEqual(events("  7  "), "N:7 END ")
+    assertStrEqual(events("\"top\""), "S:top END ")
+    assertStrEqual(events(""), "END ")
+    assertStrEqual(events("[]"), "[ ] END ")
+    assertStrEqual(events("{\"\\ud83d\\ude00\":0.3}"), "{ K:\u{1F600} N:0.3 } END ")
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokenErrors(): void {
+    assertStrEqual(events("[tru]"), "[ ERR ")
+    assertStrEqual(events("[nul"), "[ ERR ")
+    assertStrEqual(events("[nope]"), "[ ERR ")
+    assertStrEqual(events("[01]"), "[ ERR ")
+    assertStrEqual(events("[1.]"), "[ ERR ")
+    assertStrEqual(events("[1e]"), "[ ERR ")
+    assertStrEqual(events("[-]"), "[ ERR ")
+    assertStrEqual(events("[\"\\x\"]"), "[ ERR ")
+    assertStrEqual(events("[\"\\u12\"]"), "[ ERR ")
+    assertStrEqual(events("[\"a\tb\"]"), "[ ERR ")
+    assertStrEqual(events("[\"\xff\"]"), "[ ERR ")
+    assertStrEqual(events("[\"abc"), "[ ERR ")
+    assertStrEqual(events("[+1]"), "[ ERR ")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullDoesNotCheckStructure(): void {
+    // documented limit: tokens are checked one by one, the shape around them is not
+    assertStrEqual(events("[1 2]"), "[ N:1 N:2 ] END ")
+    assertStrEqual(events("]"), "] END ")
+    assertTrue(accepts("[1 2]") == false)
+}
+
+// ── the module as a whole ──
+
+@req(JSON-API)
+fn testAccessors(): void {
+    match Json.parse("{\"s\":\"v\",\"i\":7,\"f\":2.5,\"b\":true,\"n\":null,\"l\":[10,20],\"o\":{\"k\":\"deep\"}}") {
+        Result.Ok(j) => {
+            assertStrEqual(j.str("s") ?? "", "v")
+            assertEqual64(j.i64("i") ?? 0, 7)
+            assertNear(j.f64("f") ?? 0.0, 2.5, 1e-12)
+            assertTrue(j.bool("b") ?? false)
+            let nn = j.get("n")!
+            assertTrue(nn.isNull())
+            let ll = j.get("l")!
+            assertEqual64(ll.len(), 2)
+            let l1 = ll.at(1)!
+            assertEqual64(l1.asI64() ?? 0, 20)
+            assertStrEqual(j.strPath("o.k") ?? "", "deep")
+            match j.get("missing") {
+                Option.Some(_m) => {
+                    assertTrue(false)
+                }
+                Option.None => {}
+            }
+            assertTrue(j.isObject())
+            let allKeys = j.keys()
+            assertEqual64(allKeys.len, 7)
+        }
+        Result.Err(_e) => {
+            assertTrue(false)
+        }
+    }
+}
+
+@req(JSON-SER)
+fn testSerializersEmitValidJson(): void {
+    mustAccept(jsonSer(JsonVal.JArr(Vec.new())))
+    mustAccept(jsonSer(JsonVal.JStr("\x01\x02\"\\")))
+    mustAccept(jsonSer(JsonVal.JFloat(1.0e300)))
+    mustAccept(Json.obj().str("a", "\n").float("b", 0.5).build())
+}
+
+@req(JSON-JSONC)
+fn testJsoncAcceptsJsonAndExtensions(): void {
+    assertTrue(acceptsJsonc("{\"a\": [1, 2,], /* c */ \"b\": null, // d\n}"))
+    assertFalse(acceptsJsonc("{\"a\": [1, 2,], \"b\" null}"))
+}
+
+@req(JSON-PULL)
+fn testPullStreamsWithoutTree(): void {
+    // a 2000-element array is consumed token by token
+    var s: string = "["
+    for i in 0..2000 {
+        if i > 0 {
+            s.push(',')
+        }
+        s = s + i.toString()
+    }
+    s.push(']')
+    var p = jsonPull(s)
+    var nums: i64 = 0
+    var total: f64 = 0.0
+    while true {
+        let t = p.next()
+        if t.kind == JsonEvent.Num {
+            nums += 1
+            total += t.num
+        }
+        if t.kind == JsonEvent.End || t.kind == JsonEvent.Error {
+            break
+        }
+    }
+    assertEqual64(nums, 2000)
+    assertNear(total, 1999000.0, 1e-9)
+}
+
+@req(JSON-SAFE)
+fn testHostileShapesTerminate(): void {
+    mustReject("{\"a\":")
+    mustReject("[".repeat(1000))
+    mustReject("{\"a\":".repeat(600))
+    mustReject("\"" + "\\".repeat(1001))
+    var longNum: string = "-"
+    for _i in 0..20000 {
+        longNum.push('9')
+    }
+    mustAccept(longNum)
+    mustReject("1" + "e".repeat(10))
+}
