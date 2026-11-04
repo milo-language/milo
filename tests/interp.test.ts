@@ -282,6 +282,37 @@ fn main() {
   expect(require("fs").existsSync(join(process.cwd(), name))).toBe(false);
 });
 
+test("R-SYS-FS: a program reads a file of the host's directory through a read-only HostFs, and its writes stay in memory", () => {
+  const hostFs = {
+    readFile: (p: string) => (p === "/data/in.txt" ? new TextEncoder().encode("from host") : null),
+    readdir: () => null,
+    stat: (p: string) => (p === "/data/in.txt" ? { size: 9, dir: false, mtimeMs: 0 } : p === "/data" ? { size: 0, dir: true, mtimeMs: 0 } : null),
+  };
+  const r = runTasks(`
+from "std/fs" import { readFile, writeFile }
+fn show(path: &string, fallback: &string) {
+    match readFile(path) {
+        Result.Ok(s) => print(s),
+        Result.Err(_) => print(fallback),
+    }
+}
+fn main() {
+    show("in.txt", "missing")
+    let _w = writeFile("in.txt", "changed")
+    show("in.txt", "missing")
+    show("/etc/passwd", "hidden")
+}`, { sys: { hostFs, hostRoots: ["/data"], cwd: "/data" } });
+  expect(r.out).toBe("from host\nchanged\nhidden\n");
+});
+
+test("R-SYS-FS: the memory and C layers import no node module, so the playground bundle needs no host stub for them", () => {
+  for (const f of ["interp-mem.ts", "interp-sys.ts"]) {
+    const src = require("fs").readFileSync(join(import.meta.dir, "..", "src", f), "utf-8") as string;
+    const imports = [...src.matchAll(/^import [^;]*from "([^"]+)";/gm)].map(m => m[1]!);
+    expect(imports.filter(i => !i.startsWith("./"))).toEqual([]);
+  }
+});
+
 // Fixtures the interpreter must run exactly as the compiled golden does (stdout, exit, live blocks).
 const FIXTURES = [
   "arithmetic", "closureCaptureFlexInt", "closureCapture", "closureCaptureDropMatrix", "closureCapturesDropped", "dropOrderFieldsVec",

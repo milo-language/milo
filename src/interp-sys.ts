@@ -402,6 +402,17 @@ export const SYS: Record<string, SysFn> = {
   exit: (s, [c]) => { s.it.aborted = true; throw new ExitProgram(n(c) & 255); },
   _exit: (s, [c]) => SYS.exit!(s, [c]),
 
+  // ── conversion and stdio ──
+  atof: (s, [p]) => {
+    const m = /^\s*([+-]?(?:\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|inf(?:inity)?|nan))/i.exec(cstr(s, p!));
+    if (!m) return 0;
+    const t = m[1]!.toLowerCase().replace(/^([+-]?)inf(inity)?$/, "$1Infinity");
+    return t.endsWith("nan") ? NaN : Number(t);
+  },
+  atoi: (s, [p]) => { const m = /^\s*([+-]?\d+)/.exec(cstr(s, p!)); return m ? BigInt.asIntN(32, BigInt(m[1]!)) : 0n; },
+  abs: (_s, [x]) => { const v = x as bigint; return v < 0n ? -v : v; },
+  puts: (s, [p]) => { for (const b of s.it.mem.cstring(p!, "puts")) s.it.out.push(b); s.it.out.push(10); return 1n; },
+
   // ── libm: JS's Math is the same IEEE-754 results for these ──
   sqrt: (_s, [x]) => Math.sqrt(x as number), fabs: (_s, [x]) => Math.abs(x as number), floor: (_s, [x]) => Math.floor(x as number),
   ceil: (_s, [x]) => Math.ceil(x as number), round: (_s, [x]) => { const v = x as number; return v < 0 ? -Math.round(-v) : Math.round(v); },
@@ -412,10 +423,19 @@ export const SYS: Record<string, SysFn> = {
   fmod: (_s, [x, y]) => (x as number) % (y as number),
 };
 
+// Why an extern has no implementation, when it belongs to a group that is left out on purpose
+function unmodelled(sym: string): string {
+  if (/^(socket|bind|listen|accept|connect|send|recv|setsockopt|getsockopt|getsockname|getaddrinfo|freeaddrinfo|inet_pton|htons|ntohs|epoll_.*|kqueue|kevent|eventfd|pipe|select|poll)$/.test(sym)) return " (sockets and pipes are not modelled)";
+  if (/^(pthread_.*|swapcontext|makecontext|getcontext|sched_.*)$/.test(sym)) return " (threads are not modelled)";
+  if (/^(fork|exec.*|waitpid|posix_spawn.*|system|kill|signal|raise|setsid|dlopen|dlsym|dlclose|dlerror)$/.test(sym)) return " (processes, signals and dynamic loading are not modelled)";
+  if (/^(sqlite3_.*|SSL_.*|TLS_.*|EVP_.*|EC_.*|BN_.*|CC_.*|CCCrypt.*|SHA.*|MD5)$/.test(sym)) return " (wrapped C libraries are not modelled)";
+  return "";
+}
+
 export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
   const sym = fn.linkName ?? fn.name;
   const impl = SYS[sym];
-  if (!impl) return it.unsupported(`extern ${sym}`);
+  if (!impl) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
   const s = (it.sys ??= new Sys(it, it.sysOptions));
   const sig = it.cr.functions.get(fn.name);
   const held: Value[] = [];

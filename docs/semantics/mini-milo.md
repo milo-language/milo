@@ -3,7 +3,7 @@ system: semantics
 purpose: Mini-Milo, the core calculus: operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
-last-verified: 2026-11-03 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules; scripts/interp-vs-golden.ts is its gate)
+last-verified: 2026-11-04 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
 -->
 
 # Mini-Milo: the core calculus
@@ -326,6 +326,13 @@ sockets, threads and locks, process spawning, dynamic loading, terminals, TLS an
 | R-SYS-ENV | `getenv` reads the environment the driver passed in (the host's under `milo interp`); `setenv` and `unsetenv` change the program's copy only. |
 | R-SYS-RANDOM | Entropy calls return host random bytes (a run is not reproducible through them). |
 | R-SYS-EXIT | `exit` and `_exit` stop the run at once like the `exit` builtin (S-PANIC-ABORT's no-drops rule). |
+
+Two Vec and string representations meet here. The interpreter keeps a Vec's buffer as an array of values and a
+string as a counted byte array, so std's own bodies that walk their raw header (`VecHead`, `StrHead`) run only
+as far as the header is a view: `v.addrOf()` as `*VecHead` reads `_data`, `_len` and `_cap` and writes length and
+capacity back, and a pointer to a Vec of strings moves the string values whole. A header whose `_data` is aimed at
+a buffer of raw bytes (what `_vecGrowBuf` and `_strAlloc` make) is not modelled, so the std functions that do it
+stay replaced by the natives in `src/interp-natives.ts`.
 
 Not modelled (reported as `InterpUnsupported`): the extern functions above not in the list, `atexit`,
 `embedFile`, `jsonStringify`, record/replay wrappers, and a raw view of a value with no byte layout

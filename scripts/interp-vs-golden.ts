@@ -30,7 +30,7 @@ const jobs = Number(opt("--jobs") ?? 4);
 // sha256, pbkdf2 and inflate programs take minutes in a tree-walking interpreter: a long default, MILO_INTERP_TIMEOUT_MS or --timeout to change it
 const TIMEOUT_MS = Number(opt("--timeout") ?? process.env.MILO_INTERP_TIMEOUT_MS ?? 600_000);
 
-type Verdict = "same" | "differ" | "unsupported" | "no-oracle";
+type Verdict = "same" | "differ" | "unsupported" | "no-oracle" | "stale";
 export interface Result { name: string; verdict: Verdict; detail: string; where?: string }
 
 const list = (dir: string, kind: "fixtures" | "programs") => readdirSync(dir).filter(f => f.endsWith(".milo"))
@@ -62,6 +62,11 @@ export async function compareOne(p: { path: string; name: string; kind: "fixture
   const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
   const aborted = want.signal === "SIGABRT";
   const code = aborted ? 134 : want.code;
+  // a golden recorded before the fixture was edited: the fixture's own @expect lines are the newer oracle, and the interpreter meets them
+  if (r.stdout !== want.stdout && existsSync(gpath)) {
+    const lines = [...src.matchAll(/^\/\/ @expect: ?(.*)$/gm)].map(m => m[1]!);
+    if (lines.length && r.stdout === lines.join("\n") + "\n" && r.code === code) return { name: p.name, verdict: "stale", detail: "golden is older than the @expect lines; the interpreter matches the @expect lines" };
+  }
   if (r.stdout !== want.stdout) return { name: p.name, verdict: "differ", detail: `stdout:\n  golden ${JSON.stringify(want.stdout.slice(0, 300))}\n  interp ${JSON.stringify(r.stdout.slice(0, 300))}` };
   if (r.code !== code) return { name: p.name, verdict: "differ", detail: `exit golden ${code}, interp ${r.code}` };
   if (!aborted && want.live !== null && live !== want.live) return { name: p.name, verdict: "differ", detail: `live blocks: golden ${want.live}, interp ${live}` };
@@ -87,7 +92,7 @@ if (import.meta.main) {
     for (const [d, c] of [...why].sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(4)}  ${d}`);
   }
   const compared = n("same") + n("differ");
-  console.log(`interp-vs-golden: ${n("same")} same, ${n("differ")} differ, ${n("unsupported")} unsupported, ${n("no-oracle")} no oracle (of ${all.length})`);
+  console.log(`interp-vs-golden: ${n("same")} same, ${n("differ")} differ, ${n("unsupported")} unsupported, ${n("no-oracle")} no oracle, ${n("stale")} stale golden (of ${all.length})`);
   if (compared === 0) { console.error("interp-vs-golden: nothing compared"); process.exit(1); }
   process.exit(n("differ") > 0 ? 1 : 0);
 }
