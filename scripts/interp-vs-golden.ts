@@ -16,7 +16,7 @@
 //
 // It cannot pass vacuously: zero programs compared exits 1.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
-import { basename, join } from "path";
+import { join } from "path";
 import { tmpdir } from "os";
 import { guardedRun } from "./guard";
 

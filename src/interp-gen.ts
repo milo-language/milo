@@ -812,7 +812,11 @@ function* optionMethod$g(it: Interp, e: MethodE, ot: TypeKind & { name: string }
     case "isNone": case "isErr": return ((yield* it.peek$g(e.object)) as EnumV).variant !== okV;
   }
   const arg0 = () => it.ev$g(e.args[0]!);
-  const recv = () => it.ev$g(e.object) as EnumV;
+  // A named receiver the checker did not move is not consumed (it forwards only Copy
+  // payloads, [MILO-O-combinatorReceiver]): the combinator reads a view and the variable
+  // keeps its payload until scope exit, as the compiled match-in-place does.
+  const inPlace = it.isPlaceExpr(e.object) && !it.cr.movedExprs.has(e.object);
+  const recv = () => receiverOf$g(it, e.object, inPlace) as EnumV;
   switch (m) {
     case "unwrapOr": {
       const v = (yield* runThunk(recv())), d = (yield* runThunk(arg0()));
@@ -860,4 +864,7 @@ function* optionMethod$g(it: Interp, e: MethodE, ot: TypeKind & { name: string }
     }
   }
   return NOT_NATIVE;
+}
+function* receiverOf$g(it: Interp, obj: Expr, inPlace: boolean): Gen {
+  return inPlace ? it.viewOf((yield* it.peek$g(obj))) : (yield* it.ev$g(obj));
 }

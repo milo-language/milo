@@ -13,7 +13,6 @@ import { staticStr, type ClosureV, type HandleV, type Ref, type Value } from "./
 import type { Native } from "./interp-natives";
 
 type CoNative = (it: InterpCo, args: Value[], e?: Expr) => Generator<unknown, Value, unknown>;
-type Gen<T = Value> = Generator<unknown, T, unknown>;
 
 const TABLE = new Map<string, Native>();
 // Every native here except the atomics needs the scheduler (`co`), even one that never parks: the plain interpreter

@@ -105,7 +105,6 @@ function generate(): string {
   const byName = new Map<string, Unit>();
   for (const u of units) { if (byName.has(u.name)) throw new Error(`duplicate unit ${u.name}`); byName.set(u.name, u); }
   const callRe = (u: Unit, name: string) => new RegExp(u.kind === "method" && u.file === "interp" ? `\\bthis\\.${name}\\(` : `(?<![.\\w$])${name}\\(|\\bit\\.${name}\\(`);
-  const callsOf = (u: Unit, name: string) => callRe(u, name).test(u.text);
   const suspend = new Set<string>(SEEDS);
   // a seed is any method whose name is a seed; callers of units already in the set join it
   for (let changed = true; changed;) {

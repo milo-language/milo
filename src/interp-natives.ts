@@ -436,7 +436,7 @@ function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, b
   // payloads, [MILO-O-combinatorReceiver]): the combinator reads a view and the variable
   // keeps its payload until scope exit, as the compiled match-in-place does.
   const inPlace = it.isPlaceExpr(e.object) && !it.cr.movedExprs.has(e.object);
-  const recv = () => (inPlace ? it.viewOf(it.peek(e.object)) : it.ev(e.object)) as EnumV;
+  const recv = () => receiverOf(it, e.object, inPlace) as EnumV;
   switch (m) {
     case "unwrapOr": {
       const v = recv(), d = arg0();
@@ -484,4 +484,11 @@ function optionMethod(it: Interp, e: MethodE, ot: TypeKind & { name: string }, b
     }
   }
   return NOT_NATIVE;
+}
+
+// A combinator's receiver: a view when it isn't consumed (MILO-O-combinatorReceiver), else its
+// value. A function of its own so the task twin can suspend inside it (gen-interp-co.ts only
+// rewrites an arrow whose whole body is one call).
+function receiverOf(it: Interp, obj: Expr, inPlace: boolean): Value {
+  return inPlace ? it.viewOf(it.peek(obj)) : it.ev(obj);
 }
