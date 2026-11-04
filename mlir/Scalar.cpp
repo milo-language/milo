@@ -1573,6 +1573,10 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   StringRef getDescription() const final {
     return "Lower source-level Vec indexing to len, bounds_check and vec.load/store";
   }
+  // It builds arith ops; on input with none yet the dialect would not be loaded.
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect>();
+  }
   void runOnOperation() override {
     SmallVector<Operation *> ops;
     getOperation().walk([&](Operation *op) {
