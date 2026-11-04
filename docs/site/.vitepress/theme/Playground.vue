@@ -211,7 +211,8 @@ onBeforeUnmount(() => { worker?.terminate(); worker = null })
   .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; }
   .chip { white-space: normal; text-align: left; border-radius: 8px; padding: 7px 10px; line-height: 1.3; }
   .toolbar { padding: 0 12px; }
-  .editor, .out-bar, .vp-doc .out-pane { border-radius: 0; border-left: 0; border-right: 0; }
+  .pg .editor, .pg .out-bar, .vp-doc .pg .out-pane { border-radius: 0; border-left: 0; border-right: 0; }
+  .hint { display: none; }
 }
 .spacer { flex: 1; }
 .hint { font-size: 12px; color: var(--vp-c-text-3); }
