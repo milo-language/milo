@@ -66,12 +66,46 @@ function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, number] {
 
 // ── Vec ──
 const vecOf = (it: Interp, r: Value) => it.deref(r) as VecV;
-function grow(it: Interp, h: VecV, need: number): void {
-  if (need <= h.cap) return;
-  const cap = Math.max(need, h.cap * 2, 4);
+// size in bytes of a value of type t (the compiled layout), which decides a Vec's first capacity
+function sizeOf(it: Interp, t: TypeKind): number {
+  switch (t.tag) {
+    case "int": case "float": return t.bits / 8;
+    case "bool": return 1;
+    case "string": case "vec": return 24;
+    case "fn": return 16;
+    case "array": return (t.size ?? 0) * sizeOf(it, t.element);
+    case "struct": {
+      let off = 0, align = 1;
+      for (const f of it.cr.structs.get(t.name)?.fields ?? []) { const s = sizeOf(it, f.type), a = Math.min(8, Math.max(1, s)); off = Math.ceil(off / a) * a + s; align = Math.max(align, a); }
+      return Math.ceil(off / align) * align;
+    }
+    case "enum": {
+      let max = 0;
+      for (const v of it.cr.enums.get(t.name)?.variants.values() ?? []) max = Math.max(max, v.fields.reduce((n, f) => Math.ceil(n / 8) * 8 + sizeOf(it, f), 0));
+      return max === 0 ? 4 : 8 + Math.ceil(max / 8) * 8;
+    }
+    default: return 8;
+  }
+}
+const elemSize = (it: Interp, e: Expr | undefined): number => {
+  const obj = !e ? undefined : e.kind === "MethodCall" ? e.object : e.kind === "Call" ? e.args[0] : undefined;
+  const t = obj ? it.T(obj) : undefined;
+  return t && (t.tag === "vec" || t.tag === "array") ? sizeOf(it, t.element) : 8;
+};
+function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
   else h.buf.elems.length = h.start + cap;
   h.cap = cap;
+}
+// std/vec vecGrowOne: the first buffer holds 8 elements (64 bytes' worth when they are bigger), then doubles
+function growOne(it: Interp, h: VecV, size: number): void {
+  if (h.len < h.cap) return;
+  setCap(it, h, h.cap === 0 ? (size > 8 ? Math.max(1, Math.floor(64 / size)) : 8) : h.cap * 2);
+}
+// std/vec vecReserveTotal: room for `need` elements in all, doubling when that suffices
+function reserveTotal(it: Interp, h: VecV, need: number): void {
+  if (h.cap >= need) return;
+  setCap(it, h, h.cap * 2 > need ? h.cap * 2 : need);
 }
 const NONE = Symbol("none");
 const opt = (it: Interp, e: Expr | undefined, v: Value | typeof NONE): Value => {
@@ -83,6 +117,8 @@ const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   if (i < 0n || i > BigInt(n) || (!inclusive && i === BigInt(n))) it.panic(`index out of bounds: ${i} (len ${n})`);
   return Number(i);
 };
+// the Vec header behind a Vec, a slice or a fixed array (a fixed array is viewed whole)
+const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
 export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bigint, hi: bigint): VecV {
   const n = v.k === "arr" ? v.e.length : v.len;
   if (lo < 0n || hi < lo || hi > BigInt(n)) it.panic(`slice ${lo}..${hi} out of bounds (len ${n})`);
@@ -119,14 +155,14 @@ nat("string$substr", (it, [self, a, b]) => {
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
 
 const VEC: Record<string, Native> = {
-  push: (it, [self, x]) => { const h = vecOf(it, self); grow(it, h, h.len + 1); h.buf!.elems[h.start + h.len++] = x; return undefined; },
+  push: (it, [self, x], e) => { const h = vecOf(it, self); growOne(it, h, elemSize(it, e)); h.buf!.elems[h.start + h.len++] = x; return undefined; },
   pop: (it, [self], e) => {
     const h = vecOf(it, self);
     return h.len === 0 ? opt(it, e, NONE) : opt(it, e, h.buf!.elems[h.start + --h.len]!);
   },
-  insert: (it, [self, i, x]) => {
+  insert: (it, [self, i, x], e) => {
     const h = vecOf(it, self); const k = idx(it, i, h.len, true);
-    grow(it, h, h.len + 1);
+    growOne(it, h, elemSize(it, e));
     h.buf!.elems.splice(h.start + k, 0, x); h.buf!.elems.length = h.start + h.cap; h.len++;
     return undefined;
   },
@@ -137,11 +173,12 @@ const VEC: Record<string, Native> = {
   },
   truncate: (it, [self, n]) => {
     const h = vecOf(it, self); const k = Number(n as bigint);
-    while (h.len > Math.max(k, 0)) it.dropValue(h.buf!.elems[h.start + --h.len]!);
+    const keep = Math.max(k, 0);
+    if (keep < h.len) { for (let i = keep; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = keep; } // first to last
     return undefined;
   },
-  clear: (it, [self]) => { const h = vecOf(it, self); while (h.len > 0) it.dropValue(h.buf!.elems[h.start + --h.len]!); return undefined; },
-  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) < 0n) it.panic("negative capacity"); if ((n as bigint) > 0n) grow(it, h, h.len + Number(n)); return undefined; },
+  clear: (it, [self]) => { const h = vecOf(it, self); for (let i = 0; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = 0; return undefined; },
+  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) < 0n) it.panic("negative capacity"); reserveTotal(it, h, h.len + Number(n)); return undefined; },
   swap: (it, [self, a, b]) => {
     const h = vecOf(it, self); const i = idx(it, a, h.len), j = idx(it, b, h.len);
     const el = h.buf!.elems; [el[h.start + i], el[h.start + j]] = [el[h.start + j]!, el[h.start + i]!];
@@ -155,7 +192,7 @@ const VEC: Record<string, Native> = {
   },
   extend: (it, [self, other]) => {
     const h = vecOf(it, self), o = other as VecV;
-    if (o.len) { grow(it, h, h.len + o.len); for (let i = 0; i < o.len; i++) h.buf!.elems[h.start + h.len++] = o.buf!.elems[o.start + i]!; }
+    if (o.len) { reserveTotal(it, h, h.len + o.len); for (let i = 0; i < o.len; i++) h.buf!.elems[h.start + h.len++] = o.buf!.elems[o.start + i]!; }
     if (o.buf && !o.view) it.free(o.buf.id);
     return undefined;
   },
@@ -170,6 +207,8 @@ for (const [m, f] of Object.entries(VEC)) nat(`Vec$${m}`, f);
 
 // Vec_<elem>$method -> Vec$method
 export function nativeFor(name: string): Native | undefined {
+  if (/(^|\$)vecWithCapacity/.test(name)) return (it, [n]) => { const h = it.newVec([]); if ((n as bigint) > 0n) { h.buf = it.newBuf(Number(n)); h.cap = Number(n); } return h; };
+  if (/(^|\$)vecFilled/.test(name)) return (it, [n, x]) => { const h = it.newVec([]); const k = Number(n as bigint); if (k > 0) { h.buf = it.newBuf(k); h.cap = k; for (let i = 0; i < k; i++) h.buf.elems[i] = it.share(x, "filled"); h.len = k; } return h; };
   const m = /^Vec_.+?\$([A-Za-z0-9_]+)$/.exec(name);
   return NATIVES.get(m ? `Vec$${m[1]}` : name);
 }
@@ -283,12 +322,12 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
     const v = it.peek(e.object) as VecV | { k: "arr"; e: Value[] };
     return sliceView(it, v, it.ev(e.args[0]!) as bigint, it.ev(e.args[1]!) as bigint);
   }
-  if (ot.tag === "array" && ot.size === null && m === "len") return BigInt((it.peek(e.object) as VecV).len);
+  if (ot.tag === "array" && ot.size === null && m === "len") return BigInt(asVec(it, it.peek(e.object)).len);
   if (ot.tag === "vec") {
-    if (m === "len") return BigInt((it.peek(e.object) as VecV).len);
-    if (m === "capacity") return BigInt((it.peek(e.object) as VecV).cap);
+    if (m === "len") return BigInt(asVec(it, it.peek(e.object)).len);
+    if (m === "capacity") return BigInt(asVec(it, it.peek(e.object)).cap);
     if (m === "get") {
-      const v = it.peek(e.object) as VecV, i = it.ev(e.args[0]!) as bigint;
+      const v = asVec(it, it.peek(e.object)), i = it.ev(e.args[0]!) as bigint;
       if (i < 0n || i >= BigInt(v.len)) return opt(it, e, NONE);
       return opt(it, e, it.viewOf(v.buf!.elems[v.start + Number(i)]!)); // Option<&T>: a view of the element
     }

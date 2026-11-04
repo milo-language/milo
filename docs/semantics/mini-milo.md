@@ -3,7 +3,7 @@ system: semantics
 purpose: Mini-Milo, the core calculus: operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
-last-verified: 2026-11-03 (draft; no interpreter implements it yet)
+last-verified: 2026-11-03 (src/interp.ts implements §2 and the rules added at the end; scripts/interp-vs-golden.ts is its gate)
 -->
 
 # Mini-Milo: the core calculus
@@ -20,8 +20,9 @@ Three things are defined here:
 3. **The theorem connecting them**: an accepted program never gets stuck, never touches freed
    memory, and frees everything exactly once.
 
-The interpreter (`src/interp.ts`, planned) implements section 2 one function per rule, and each
-function names its rule ID. A difference between the interpreter and a compiled binary is a
+The interpreter (`src/interp.ts`) implements section 2 one function per rule, and each
+function names its rule ID. It runs the merged AST on the checker's facts (types, resolved
+callees, move and borrow marks), never on the HIR. A difference between the interpreter and a compiled binary is a
 compiler bug, or a rule that is wrong.
 
 ## 1. Syntax
@@ -190,3 +191,28 @@ the informal versions:
 | strings | a shared, counted buffer: copy shares, last use moves | (no MILO-O rule yet) |
 | green tasks | a frame stack per task, a scheduler choosing which steps; T-REF-PARAM makes cross-task references impossible | (no MILO-O rule yet) |
 | globals | the thread-global rule: a task may not read a global another task writes | checker thread pass |
+
+### Rules the interpreter added
+
+Each is implemented in `src/interp.ts` under its ID, and was needed to match a recorded golden.
+
+| Rule | Statement |
+|---|---|
+| S-TEMP-CALL | A call is a scope of its own: a temporary lent to a by-ref parameter (or made while evaluating the arguments) is dropped, last first, when the call returns, before the result is used. Refines S-TEMP. |
+| S-TEMP-FIELD | Reading an owned field out of a temporary moves the field out and drops the rest of the temporary at once, before the statement goes on (MILO-O-tempFieldRead). |
+| S-PENDING | An owned operand evaluated before its siblings (call argument, struct field, array element, enum payload) is held until the op takes them all; a `return`, `break`, `continue` or `?` out of a later operand drops the held ones, last first. |
+| E-FORK-VIEW, E-FORK-OWN | An `if`/`match` expression whose arms all name unmoved places yields a view of the chosen one (dropping it does nothing). If some arm yields an owned value, the fork owns its result and a place arm is deep-copied (MILO-O-forkOwnership). |
+| E-INDEX-COPY | Reading a Vec or array element by value copies it (a deep copy if it owns); it never moves out of the container. `get(i)` yields a view. |
+| E-STRING-SHARE | A string is a counted buffer. A copy out of a borrow shares it (count + 1), a drop decrements it and the last one frees it; a push on a shared buffer first copies it. A literal, a slice and an empty string own no buffer. |
+| E-ARRAY-DROP | The elements of an array or Vec drop first to last; the fields of a struct last to first. |
+| E-VEC | A Vec is a header (buffer, start, len, cap) over a heap buffer of its elements; a Vec with cap 0 owns no block. A slice is a header marked view. |
+| E-PROPAGATE | `e?` on `Some(x)`/`Ok(x)` evaluates to x; on `None`/`Err(c)` it returns `None`/`Err(conv(c))` from the enclosing fn or closure after the usual scope drops. |
+| E-MATCH | An owned, moved subject goes into a holder the match owns, and an arm's bindings move their payloads out of it (a Copy payload is copied). A borrowed subject binds references (`&mut` when the checker says so). The first arm that matches wins; a binding marked escaping (let-else) is declared in the enclosing scope. |
+| E-CLOSURE | A closure value holds an environment: a reference to each lent capture, the moved or shared value for a `move`, consumed or shared-string capture. Dropping an owning closure drops the moved captures. |
+| E-IFACE | An interface value is the concrete value with its type name, and a method call dispatches on that name. A `&T` given to `&Interface` makes a view pair borrowing the place. |
+| S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run, no live count is reported, and the exit status is 134 for a panic. |
+| T-STUCK | Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed. |
+
+Not modelled (reported as `InterpUnsupported`): extern and FFI calls, raw pointers and `unsafe`
+memory operations, tasks and async, HashMap, contract checks, `sizeOf`/`zeroed`, record/replay
+wrappers.

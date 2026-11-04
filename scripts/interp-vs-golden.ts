@@ -54,6 +54,8 @@ export async function compareOne(p: { path: string; name: string; kind: "fixture
   const m = /^interp: (unsupported|stuck at)[^\n]*/m.exec(r.stderr);
   if (m?.[1] === "unsupported") return { name: p.name, verdict: "unsupported", detail: m[0].replace(/^interp: unsupported: /, "") };
   if (m) return { name: p.name, verdict: "differ", detail: m[0] };
+  const crash = /^(\w*Error: [^\n]*)/m.exec(r.stderr); // a JS exception: an interpreter bug, never a pass
+  if (crash) return { name: p.name, verdict: "differ", detail: `interpreter crash: ${crash[1]}` };
   if (r.guardKill || r.signal === "SIGKILL" || r.signal === "SIGTERM") return { name: p.name, verdict: "differ", detail: `killed (${r.guardKill ?? r.signal}): timeout or memory` };
   if (r.code === 1 && !r.stdout && /error/.test(r.stderr) && !/live blocks/.test(r.stderr)) return { name: p.name, verdict: "unsupported", detail: `frontend: ${r.stderr.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n")[0]}` };
   const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;

@@ -37,7 +37,7 @@ export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number
 export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true }
 export interface IfaceV { k: "iface"; concrete: string; inner: Value }
 export interface FnRef { k: "fn"; name: string }
-export interface Slot { v: Value; dead?: boolean }
+export interface Slot { v: Value; dead?: boolean; stmt?: boolean }
 export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[] }
 export interface ClosureV {
   k: "closure";

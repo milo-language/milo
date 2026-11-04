@@ -1,4 +1,4 @@
-// `milo interp` driver: run a lowered module in the reference interpreter and mirror what a
+// `milo interp` driver: run a checked program in the reference interpreter and mirror what a
 // compiled binary would do with its stdout, stderr and exit code.
 import { writeSync } from "fs";
 import type { Program } from "./ast";

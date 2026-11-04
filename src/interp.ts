@@ -59,6 +59,16 @@ export class Interp {
     try {
       const main = this.fns.get("main");
       if (!main || main.isExtern) throw new InterpUnsupported("no main");
+      const mentioned = new Set<string>();
+      const walk = (n: unknown): void => {
+        if (!n || typeof n !== "object") return;
+        if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+        const o = n as { kind?: string; name?: string };
+        if (o.kind === "Ident" && o.name) mentioned.add(o.name);
+        for (const [k, v] of Object.entries(n)) if (k !== "span") walk(v);
+      };
+      for (const f of this.fns.values()) walk(f.body);
+      for (const g of this.prog.globals) if (this.cr.nonConstGlobals.includes(g.name) && !mentioned.has(g.name)) this.globalSlot(g.name);
       const r = this.callFn(main, []);
       if (typeof r === "bigint") code = Number(BigInt.asUintN(8, r));
     } catch (e) {
@@ -118,7 +128,7 @@ export class Interp {
     }
     return this.globals.has(name) ? this.globalSlot(name) : undefined;
   }
-  private globalSlot(name: string): Slot {
+  globalSlot(name: string): Slot {
     const g = this.globals.get(name)!;
     if (!g.slot) {
       g.slot = { v: MOVED };
@@ -139,10 +149,17 @@ export class Interp {
     }
   }
   // [S-TEMP] a temporary lives until the end of the statement that made it.
-  tempOwn(v: Value): Slot { const s: Slot = { v }; this.temps.push(s); return s; }
-  dropTemps(mark: number): void {
+  tempOwn(v: Value, stmt = false): Slot { const s: Slot = { v, stmt }; this.temps.push(s); return s; }
+  // atCall: the end of a call, which keeps the temporaries that belong to the whole statement
+  dropTemps(mark: number, atCall = false): void {
     if (this.aborted) { this.temps.length = mark; return; }
-    while (this.temps.length > mark) { const s = this.temps.pop()!; this.dropValue(s.v); s.dead = true; }
+    const keep: Slot[] = [];
+    while (this.temps.length > mark) {
+      const s = this.temps.pop()!;
+      if (atCall && s.stmt) { keep.unshift(s); continue; }
+      this.dropValue(s.v); s.dead = true;
+    }
+    this.temps.push(...keep);
   }
 
   // ── drops ──
@@ -274,10 +291,27 @@ export class Interp {
     this.tempOwn(v);
     return v;
   }
+  // a field / deref chain: its root expression and the steps from the root down to e
+  chain(e: Expr): { root: Expr; steps: Step[] } {
+    const steps: Step[] = [];
+    let x = e;
+    for (;;) {
+      if (x.kind === "FieldAccess" && !this.isLen(x) && !floatNamespaceConst(x)) { steps.unshift(x.field); x = x.object; }
+      else if (x.kind === "UnaryOp" && x.op === "*" && this.T(x.operand).tag !== "ptr") { steps.unshift("*"); x = x.operand; }
+      else return { root: x, steps };
+    }
+  }
   tempRooted(e: Expr): boolean {
-    let root = e;
-    while (root.kind === "FieldAccess" && !this.isLen(root)) root = root.object;
-    return root !== e && !this.isPlaceExpr(root);
+    const c = this.chain(e);
+    return c.steps.length > 0 && !this.isPlaceExpr(c.root);
+  }
+  // [S-TEMP-FIELD] a field (or box payload) read out of a temporary moves out, and the rest of the temporary dies at once
+  readTempRooted(e: Expr): Value {
+    const { root, steps } = this.chain(e);
+    const slot: Slot = { v: this.ev(root) };
+    const v = this.readPlace({ slot, path: steps, ro: false, viaRef: false }, true, describeExpr(e));
+    this.dropValue(slot.v);
+    return v;
   }
 
   // [E-COPY] / [E-MOVE] / [E-FIELD-MOVE]
@@ -319,7 +353,7 @@ export class Interp {
       case "arr": return { k: "arr", e: v.e.map(x => this.share(x, what)) };
       case "vec": if (v.view) return { ...v }; break;
       case "fn": return v;
-      case "closure": if (!v.owning) return v; break;
+      case "closure": return v.owning ? { ...v, owning: false } : v;
       case "ref": case "mut": return v;
     }
     return viaRef
@@ -419,9 +453,15 @@ export class Interp {
         // a value given to a reference parameter (a slice view, a computed value): it lives in a temp
         return { k: "ref", slot: this.tempOwn(this.ev(a)), path: [] } as Ref;
       }
+      if (this.tempRooted(a)) return { k: "ref", slot: this.tempOwn(this.readTempRooted(a)), path: [] } as Ref; // S-TEMP-FIELD
       const pl = this.resolve(a);
       if (mut && pl.ro) this.stuck("T-SHARED-READONLY", `&mut of ${describeExpr(a)}, which is behind a shared reference`);
       places.push({ slot: pl.slot, path: pl.path, mut });
+      const co = this.cr.interfaceCoercions.get(raw);
+      if (co) { // `&T` given to `&Interface`: a view pair that borrows the place
+        const view: Value = { k: "iface", concrete: co.fromType, inner: this.refTo(pl, mut) };
+        return { k: "ref", slot: this.tempOwn(view), path: [] } as Ref;
+      }
       return this.refTo(pl, mut);
     });
     this.settle(pm);
@@ -445,9 +485,11 @@ export class Interp {
     if (optName) return this.mkEnum(optName, "Some", [this.checked(e, this.evRaw(e))]);
     const co = this.cr.interfaceCoercions.get(e);
     if (co) return { k: "iface", concrete: co.fromType, inner: this.evRaw(e) };
-    let v = this.checked(e, this.evRaw(e));
-    if (this.cr.arraySliceArgs.has(e) && v && typeof v === "object" && v.k === "arr") v = sliceView(this, v, 0n, BigInt(v.e.length));
-    return v;
+    if (this.cr.arraySliceArgs.has(e)) { // a fixed array given to a slice parameter: a view of it
+      const a = this.isPlaceExpr(e) ? this.peek(e) : (v => (this.tempOwn(v, true), v))(this.evRaw(e));
+      if (a && typeof a === "object" && a.k === "arr") return sliceView(this, a, 0n, BigInt(a.e.length));
+    }
+    return this.checked(e, this.evRaw(e));
   }
   private checked(e: Expr, v: Value): Value {
     const rc = this.cr.rangeCheckedExprs.get(e);
@@ -499,16 +541,7 @@ export class Interp {
       if (this.T(e.object).tag === "hashmap") return this.unsupported("hashmap len");
       return BigInt(this.seqLen(v));
     }
-    let root: Expr = e;
-    while (root.kind === "FieldAccess") root = root.object;
-    if (this.tempRooted(e)) {
-      const slot: Slot = { v: this.ev(root) };
-      const path: Step[] = [];
-      for (let x: Expr = e; x !== root; x = (x as Expr & { kind: "FieldAccess" }).object) path.unshift((x as Expr & { kind: "FieldAccess" }).field);
-      const v = this.readPlace({ slot, path, ro: false, viaRef: false }, true, describeExpr(e));
-      this.dropValue(slot.v);
-      return v;
-    }
+    if (this.tempRooted(e)) return this.readTempRooted(e);
     return this.readPlace(this.resolve(e), this.cr.movedExprs.has(e), describeExpr(e));
   }
   index(e: Expr & { kind: "IndexAccess" }): Value {
@@ -553,8 +586,10 @@ export class Interp {
     const first = this.ev(e.value);
     const xs: Value[] = [first];
     const clone = this.cr.arrayRepeatClones.get(e);
-    for (let i = 1; i < e.count; i++) xs.push(clone ? this.callNamed(clone, [this.refTo({ slot: this.tempOwn(first), path: [], ro: true, viaRef: false }, false)]) : this.deepClone(first));
-    if (e.count === 0) this.dropValue(first);
+    // the n-1 copies are made first and the original moves into the last slot
+    xs.length = 0;
+    for (let i = 1; i < e.count; i++) xs.push(clone ? this.callNamed(clone, [this.refTo({ slot: { v: first }, path: [], ro: true, viaRef: false }, false)]) : this.deepClone(first));
+    if (e.count === 0) this.dropValue(first); else xs.push(first);
     return this.T(e).tag === "array" ? { k: "arr", e: e.count ? xs : [] } : this.newVec(e.count ? xs : []);
   }
   enumLit(e: Expr & { kind: "EnumLit" }): Value {
@@ -668,6 +703,7 @@ export class Interp {
     if (e.op === "&mut") return this.ev(e.operand);
     if (e.op === "*") {
       if (this.T(e.operand).tag === "ptr") return this.unsupported("raw pointer deref");
+      if (this.tempRooted(e)) return this.readTempRooted(e);
       return this.readPlace(this.resolve(e), this.cr.movedExprs.has(e), "*box");
     }
     const v = this.peek(e.operand);
@@ -770,8 +806,15 @@ export class Interp {
         // a fork arm that names a place without moving it lends the value: the fork yields a view of it
         const x = last.expr;
         if (this.isPlaceExpr(x) && !this.cr.movedExprs.has(x) && !this.cr.sharedStringExprs.has(x)) {
-          const v = this.getPlace(this.resolve(x));
-          if (v && typeof v === "object" && v !== MOVED && !isStr(v) && !this.copyable(v) && v.k !== "ref" && v.k !== "mut") return owns ? this.deepClone(v) : this.viewOf(v);
+          const pl = this.resolve(x);
+          const v = this.getPlace(pl);
+          if (v && typeof v === "object" && v !== MOVED && !isStr(v) && !this.copyable(v) && v.k !== "ref" && v.k !== "mut") {
+            if (!owns) return this.viewOf(v);
+            // E-FORK-OWN: a Drop type's place arm is consumed by the fork, any other type's is cloned
+            const drops = (v.k === "struct" && this.dropImpls.has(v.name)) || (v.k === "enum" && this.dropImpls.has(v.en));
+            if (drops && !pl.viaRef && !pl.ro) { this.setPlace(pl, MOVED); return v; }
+            return this.deepClone(v);
+          }
         }
         return this.ev(x);
       }
@@ -788,10 +831,15 @@ export class Interp {
     const holder: Scope = [];
     this.frame.scopes.push(holder);
     try {
-      const borrowed = this.cr.matchSubjectRef.has(subject) || (this.isPlaceExpr(subject) && !this.cr.movedExprs.has(subject));
+      // E-MATCH-INDEX: an element of a container is matched as a clone, so an arm may overwrite the element
+      const cloned = subject.kind === "IndexAccess" && this.isPlaceExpr(subject) && !this.cr.matchSubjectMut.has(subject);
+      const borrowed = !cloned && (this.cr.matchSubjectRef.has(subject) || (this.isPlaceExpr(subject) && !this.cr.movedExprs.has(subject)));
       const mut = this.cr.matchSubjectMut.has(subject);
       let pl: Place;
-      if (borrowed) pl = this.isPlaceExpr(subject) ? this.resolve(subject) : { slot: this.tempOwn(this.ev(subject)), path: [], ro: false, viaRef: false };
+      if (cloned) {
+        const slot = this.declare("<match subject>", this.viewOf(this.getPlace(this.resolve(subject))), holder);
+        pl = { slot, path: [], ro: false, viaRef: false };
+      } else if (borrowed) pl = this.isPlaceExpr(subject) ? this.resolve(subject) : { slot: this.tempOwn(this.ev(subject)), path: [], ro: false, viaRef: false };
       else {
         const slot = this.declare("<match subject>", this.ev(subject), holder);
         pl = { slot, path: [], ro: false, viaRef: false };
@@ -884,7 +932,7 @@ export class Interp {
     const mark = this.temps.length;
     const argv = this.evalArgs(all, flags);
     const r = nat ? nat(this, argv, e) : this.callFn(fn!, argv);
-    this.dropTemps(mark);
+    this.dropTemps(mark, true);
     return r;
   }
 
@@ -896,11 +944,12 @@ export class Interp {
     if (special !== NOT_NATIVE) return special;
     const ifc = this.cr.interfaceMethodCalls.get(e);
     if (ifc) {
-      const obj = this.peek(e.object) as { k: "iface"; concrete: string };
+      let obj = this.peek(e.object) as { k: "iface"; concrete: string; inner: Value };
+      if (obj && obj.k === "box") obj = (obj as unknown as { cell: { v: Value } }).cell.v as typeof obj; // Heap<Interface>
       if (!obj || obj.k !== "iface") this.stuck("E-IFACE", "method call on a non-interface value");
       const fnName = this.concreteMethodFn(obj.concrete, ifc.methodName);
       const pl = this.resolve(e.object);
-      const self: Ref = { k: "mut", slot: pl.slot, path: [...pl.path, "iface"] as Step[] };
+      const self: Ref = isRef(obj.inner) ? obj.inner : { k: "mut", slot: pl.slot, path: [...pl.path, "iface"] as Step[] };
       return this.callNamed(fnName, [self, ...this.evalArgs(e.args)]);
     }
     const resolved = this.cr.resolvedMethods.get(e);
@@ -1051,7 +1100,8 @@ export class Interp {
       if (view && s.iterable.kind === "MethodCall") return this.unsupported("lines()/splitView() for-in");
       const iter = this.cr.iteratorForIns.get(s);
       if (iter) {
-        const pl = this.isPlaceExpr(s.iterable) ? this.resolve(s.iterable) : { slot: this.declare("<iterator>", this.ev(s.iterable), holder), path: [], ro: false, viaRef: false };
+        // an rvalue iterator dies once, when the scope around the loop ends
+        const pl = this.isPlaceExpr(s.iterable) ? this.resolve(s.iterable) : { slot: this.declare("<iterator>", this.ev(s.iterable), this.frame.scopes[this.frame.scopes.length - 2]!), path: [], ro: false, viaRef: false };
         for (;;) {
           const nx = this.callNamed(iter.nextMethod, [this.refTo(pl, true)]) as EnumV;
           if (nx.variant !== "Some") return undefined;
@@ -1102,7 +1152,10 @@ export function cmpBytes(a: number[], b: number[]): number {
 const normName = (n: string) => n.replace(/\$at\d+$/, "");
 function litEq(lit: bigint | number | string | boolean, kind: string, v: Value): boolean {
   if (kind === "string") return isStr(v) && cmpBytes(v.b.bytes, [...new TextEncoder().encode(lit as string)]) === 0;
-  if (kind === "int" || kind === "char") return typeof v === "bigint" && v === BigInt(lit as number | bigint);
+  if (kind === "int" || kind === "char") {
+    if (typeof v === "number") return v === Number(lit); // an int pattern on a float subject
+    return typeof v === "bigint" && v === BigInt(lit as number | bigint);
+  }
   return v === lit;
 }
 function describe(v: Value): string {
