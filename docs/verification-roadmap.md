@@ -178,6 +178,45 @@ Goal: let users state properties (bounds, ranges, invariants) and have the compi
 
 Refinement discharge is undecidable in general; SMT solvers (Z3) are the proven pragmatic answer (Dafny, F\*, Flux all do this). Building a bespoke theory solver is a research project with worse coverage. Reuse the solver.
 
+## Next: silver, gold, then whole-program invariants (decided 2026-11-03)
+
+The order, each step building on the last:
+
+1. **Silver, default on.** `--rte` already generates overflow, bounds, division and unwrap
+   obligations (909 proven sites across std and examples). It becomes the default once its
+   unknowns stop dominating the report. Triage of the first run on real code is in
+   [plans/rte-triage-2026-11.md](plans/rte-triage-2026-11.md).
+2. **A small trusted checker.** std/smt returns a Farkas certificate when it refutes a linear
+   system; a checker of about 50 lines verifies it, so trust rests on that checker rather than
+   the solver. z3 answers are cross-checked or marked provisional.
+3. **Gold: functional correctness.** `forall`/`exists`, ghost sequence and map types for
+   specifications, and lemma functions (ghost, erased before codegen, with `decreases`).
+   Quantified obligations go to z3. This reverses the "no quantifiers" call above: agents now
+   write the triggers and lemmas, so the annotation-burden argument against them is gone. Proof
+   terms stay a non-goal (see [proofs-vs-contracts.md](proofs-vs-contracts.md)).
+4. **Whole-program invariants.** A module-level `invariant` (reusing the existing keyword) over
+   many values, and temporal forms for concurrent code:
+   ```
+   invariant noOverdraft: forall a in bank.accounts: a.balance >= 0
+   invariant always(queue.len <= CAPACITY)
+   invariant eventually(job.done)
+   ```
+   Single-lock invariants are proved by induction over critical sections (see
+   [plans/parallelism.md](plans/parallelism.md)). `always`/`eventually` are checked first by
+   exploring task schedules in the reference interpreter (`milo interp`, whose scheduler choice
+   is one function for this reason), then proved by inductive invariants where it matters.
+5. **Spec lock.** For each changed contract, the solver checks whether the new one only
+   strengthens the old (old `requires` implies new, new `ensures` implies old). A strengthening
+   merges on its own; a weakening needs a human. `milo spec --diff <base>` prints the intent
+   surface a reviewer reads.
+
+### Prior art
+
+Design by contract comes from Eiffel; temporal invariants and `always`/`eventually` from TLA+;
+proving the absence of runtime errors from SPARK and Astrée; reference interpreters as oracles
+from the WebAssembly spec and Rust's Miri; executable semantics from the K framework. The
+framing of invariants as rules an AI agent can't break comes from Bend's `LAWS.bend`.
+
 ## Open Questions
 
 - **Sequencing:** A fully before B? (Assumed yes.)
@@ -205,5 +244,5 @@ Refinement discharge is undecidable in general; SMT solvers (Z3) are the proven 
 ## Non-Goals
 
 - Dependent types / hand-written proof terms (Tier 3). Out of scope by design, and re-examined with evidence on 2026-09-01: see [proofs-vs-contracts.md](proofs-vs-contracts.md) for what was measured, the one-sentence rule for users, and the four triggers that would reopen it.
-- Full functional-correctness specs. Milo proves *safety and simple contracts*, not arbitrary program logic.
+- Full functional-correctness specs: reversed on 2026-11-03, see "Next" above (gold).
 - Proving the compiler itself correct.
