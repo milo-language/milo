@@ -209,8 +209,9 @@ The order, each step building on the last:
 (src/requirements.ts): the matrix pairs each requirement with its implementing fns, the
 `milo prove` verdict of each formalizing clause (a `requires` is judged per call site) and its
 tests. `--strict`, or a `--safety` profile whose `traceability` field is `strict` (on `verify --profile`, or `build --strict`), fails on gaps.
-Worked example: examples/assured/pid. Not yet: line/branch coverage of the implementing fns by
-the verifying tests (the `@req` tests are run, not yet measured), and a requirements.json importer.
+Worked example: examples/assured/pid. `--coverage` reports line coverage of the
+implementing fns by the verifying tests (strict fails on an uncovered line). Not yet: branch and MC/DC
+coverage, and a requirements.json importer.
 
 ### Prior art
 

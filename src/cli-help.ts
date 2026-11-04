@@ -67,6 +67,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       { flag: "-t <pattern>", help: "run only tests matching (substring or regex)" },
       { flag: "--test-name-pattern <pattern>", help: "long form of -t" },
       { flag: "--json", help: "machine-readable results" },
+      { flag: "--coverage <dir>", help: "build -O0 with gcov counters; every test process adds to the .gcda files under <dir> (read by milo trace --coverage)" },
     ],
   },
   {
@@ -157,6 +158,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
       { flag: "--json", help: "(.milo) the matrix as data; (trace file) {version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
       { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
       { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
+      { flag: "--coverage", help: "(.milo) run the @req tests with line counters and report covered/total lines of each fn body; with --strict an uncovered line fails (statement coverage only; needs llvm-cov)" },
       { flag: "--object <binary>", help: "(.milo) add the address ranges of a binary built with -g that implement each requirement" },
     ],
   },

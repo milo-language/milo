@@ -163,6 +163,28 @@ The bugs got fixed, the requirement corrected, and the tests kept in
 [`json_cleanroom_test.milo`](../../../std/json/json_cleanroom_test.milo). That's one module, and the
 author was an AI agent.
 
+## 8. Check the tests reach the code
+
+A passing test says nothing about the lines it never ran. `--coverage` runs the `@req` tests with
+line counters (needs `llvm-cov`) and reports each function body, contract clauses excluded:
+
+```text
+$ milo trace examples/assured/intro/heater.milo --coverage --strict
+line coverage of fn bodies by the @req tests:
+  heater.milo:6 heaterPercent: 6/6
+  heater.milo:24 demoCommand: 1/1
+  heater.milo:29 main: 0/2
+    uncovered heater.milo:30 main
+    uncovered heater.milo:31 main
+line coverage: 77.8% (7/9)
+strict: 2 failures
+  error: line not covered by any requirement test: heater.milo:30 main
+```
+
+`main` cannot be imported by a test, so its two lines are never run. Under `--strict` that fails; list
+it in a `--baseline` to accept it, or put the logic in a function a test can call. Statement coverage
+only: branch and MC/DC are not built.
+
 ## Where to go next
 
 - Without `--strict`, gaps are warnings: use that while developing.

@@ -84,7 +84,7 @@ each clause that formalizes it (a `requires` is judged at every call site), and 
 `traceability` field is `strict`, turns an untraced function, a requirement that is not verified
 (DO-333: a requirement at or below the profile's `minTraceDepth` (root = 1; DO-178C A/B 2, others 1) is verified by a proven clause or a passing test; a shallower one needs a test. `requirements.json` follows `docs/schema/requirements.schema.json`: `derived`, `source`, `kind` and `verification` claims such as `{"method": "analysis"}`), a failing
 test and an unproved clause into errors; a dev `build --safety` only warns, and `--baseline` lets an
-existing codebase adopt a profile. Line coverage of the implementing code by the tests is not built yet. See [contracts & proofs](/language/safety#requirements).
+existing codebase adopt a profile. `--coverage` reports line coverage of the implementing code by the tests, and `--strict` fails on an uncovered line; branch and MC/DC coverage are not built. See [contracts & proofs](/language/safety#requirements).
 
 ### Runtime-error proofs, with no annotations
 

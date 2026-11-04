@@ -29,9 +29,12 @@
 // traceability field is "strict") turns the gaps into errors, except those listed in a baseline
 // (`--baseline <file>`, written by `--write-baseline`), which stay warnings so an existing
 // codebase can adopt a profile; a baseline entry that is no longer a gap is reported stale.
-// TODO(coverage): line/branch coverage of the implementing fns by the verifying tests.
+// `--coverage` adds statement coverage of the implementing fn bodies by those tests (src/coverage.ts);
+// under strict each uncovered line is a gap. Branch and MC/DC coverage are not built.
 import type { DeadBranch } from "./dead";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { coverageOf, coverageToolsError, readCoverage, type CoverageReport, type CoverageSite } from "./coverage";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
 import { walkExprs } from "./safety";
@@ -401,6 +404,8 @@ export interface TraceReport {
   deactivated: (SiteRow & { reason: string })[];
   /** DO-178C dead code: branches and loop bodies proved unreachable. Empty when the prover did not look. */
   deadBranches: DeadRow[];
+  /** Statement coverage of the implementing fn bodies by the @req tests (--coverage); absent otherwise. */
+  coverage?: CoverageReport;
   assumptions: SiteRow[];
   noImplementation: string[];
   noVerifyingTest: string[];
@@ -452,6 +457,8 @@ export interface TraceOptions {
   minTraceDepth?: number;
   /** Provably dead branches (dead.ts); absent = not analysed. */
   dead?: DeadBranch[];
+  /** Line coverage of the fn bodies (coverage.ts, files absolute); each uncovered line is a gap. */
+  coverage?: CoverageReport;
   /** Verdict per "<abs file>:<test name>" when the tests were run; absent = not run. */
   testResults?: Map<string, { pass: boolean; output?: string }>;
 }
@@ -630,6 +637,13 @@ export function buildTrace(o: TraceOptions): TraceReport {
   for (const d of deadBranches) {
     if (d.reason === undefined) gap(`dead:${d.file}:${d.fn}:${d.line}`, `${d.file}:${d.line}: dead code in '${d.fn}': ${d.what} can never run (${d.why.join(" AND ")}); remove it or mark the fn @deactivated("reason")`);
   }
+  const coverage: CoverageReport | undefined = o.coverage && {
+    ...o.coverage,
+    fns: o.coverage.fns.map(f => ({ ...f, file: rel(f.file) })),
+  };
+  for (const f of coverage?.fns ?? []) {
+    for (const l of f.uncovered) gap(`coverage:${f.file}:${l}`, `line not covered by any requirement test: ${f.file}:${l} ${f.fn}`);
+  }
   const failedSeen = new Set<string>();
   for (const r of rows.values()) {
     for (const t of r.verifiedBy) {
@@ -669,6 +683,7 @@ export function buildTrace(o: TraceOptions): TraceReport {
     derived: derivedFns,
     deactivated,
     deadBranches,
+    ...(coverage ? { coverage } : {}),
     assumptions,
     noImplementation,
     noVerifyingTest,
@@ -756,6 +771,16 @@ export function formatTrace(r: TraceReport): string {
     out.push(`dead branches: ${r.deadBranches.length === 0 ? "none" : `${live}${off ? ` (+${off} in @deactivated fns)` : ""}`}`);
     for (const d of r.deadBranches) out.push(`  ${d.file}:${d.line} ${d.fn}: ${d.what}; ${d.why.join(" AND ")}${d.reason !== undefined ? `  [deactivated: ${d.reason}]` : ""}`);
   }
+  if (r.coverage) {
+    const c = r.coverage;
+    out.push("");
+    out.push("line coverage of fn bodies by the @req tests:");
+    for (const f of c.fns) {
+      out.push(`  ${f.file}:${f.line} ${f.fn}: ${f.covered}/${f.total}`);
+      for (const l of f.uncovered) out.push(`    uncovered ${f.file}:${l} ${f.fn}`);
+    }
+    out.push(`line coverage: ${c.percent.toFixed(1)}% (${c.covered}/${c.total})`);
+  }
   out.push(`unknown: ${r.unknown}`);
   for (const m of r.baselined) out.push(`warning: baselined gap: ${m}`);
   for (const k of r.staleBaseline) out.push(`warning: baseline lists a gap that is fixed, remove it: ${k}`);
@@ -780,7 +805,7 @@ export interface TraceDeps {
   /** Provably dead branches over the program (dead.ts). Optional: a caller without a prover skips it. */
   dead?(program: Program, check: unknown, entry: string): DeadBranch[];
   /** Run the named tests of one file, each in its own process (`milo test`'s runner). Null: the file would not compile. */
-  runTests(file: string, names: string[]): Map<string, { pass: boolean; output?: string }> | null;
+  runTests(file: string, names: string[], coverageDir?: string): Map<string, { pass: boolean; output?: string }> | null;
 }
 
 export interface TraceArgs {
@@ -791,6 +816,8 @@ export interface TraceArgs {
   tests?: string;
   /** Skip running the `@req` tests (--no-run). */
   noRun?: boolean;
+  /** Report statement coverage of the implementing fns by the @req tests (--coverage). */
+  coverage?: boolean;
   /** Gap keys that stay warnings under strict (--baseline). */
   baseline?: string;
   writeBaseline?: string;
@@ -812,6 +839,7 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     else if (a === "--strict") out.strict = true;
     else if (a === "--solver=z3") continue; // accepted for compatibility; z3 is the only solver
     else if (a === "--no-run") out.noRun = true;
+    else if (a === "--coverage") out.coverage = true;
     else if (a === "--baseline" || a === "--write-baseline") {
       const v = args[++i];
       if (!v) return `${a} expects a path`;
@@ -843,7 +871,8 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
     else if (a.startsWith("-")) continue;
     else if (!out.entry) out.entry = a;
   }
-  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--object <binary>] [--baseline <file>] [--write-baseline <file>]";
+  if (out.coverage && out.noRun) return "--coverage needs the tests to run: it cannot be combined with --no-run";
+  return out.entry ? out : "usage: milo trace <entry.milo> [--json] [--strict] [--safety=<do178 profile>] [--requirements <file>] [--tests <file|dir>] [--no-run] [--coverage] [--object <binary>] [--baseline <file>] [--write-baseline <file>]";
 }
 
 export interface BaselineFile { schema: 1; gaps: string[] }
@@ -863,6 +892,8 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
   const baseline = a.baseline ? loadBaseline(a.baseline) : undefined;
   // The @req tests, run once: a first pass finds them, a second builds the report with verdicts.
   let testResults: Map<string, { pass: boolean; output?: string }> | undefined;
+  const covDir = a.coverage ? mkdtempSync(join(tmpdir(), "milo_cov_")) : undefined;
+  try {
   if (!a.noRun) {
     const first = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, dead });
     const entryDir = dirname(resolve(a.entry));
@@ -874,14 +905,27 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
     }
     testResults = new Map();
     for (const [file, names] of byFile) {
-      const res = deps.runTests(file, [...names]);
+      const res = deps.runTests(file, [...names], covDir);
       for (const n of names) {
         const r = res?.get(n);
         testResults.set(`${file}:${n}`, r ?? { pass: false, output: res ? "test did not run" : "test file did not compile" });
       }
     }
   }
-  const rep = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, baseline, testResults, dead });
+  let coverage: CoverageReport | undefined;
+  const coverageErrors: string[] = [];
+  if (covDir) {
+    try {
+      const r = coverageOf(coverageSites(program, a.entry), readCoverage(covDir));
+      coverage = r.report;
+      coverageErrors.push(...r.errors);
+    } catch (e: any) { coverageErrors.push(`coverage: ${e.message}`); }
+  }
+  const rep = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, baseline, testResults, dead, coverage });
+  if (coverageErrors.length) {
+    rep.errors.push(...coverageErrors);
+    rep.ok = false;
+  }
   // The spec lock (src/specLock.ts): only under strict and only when a base ref is given.
   if (a.strict && a.specBase) {
     const { specDiff, unsignedChanges } = require("./specLock") as typeof import("./specLock");
@@ -891,6 +935,9 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
     rep.ok = rep.errors.length === 0 && rep.strictFailures.length === 0;
   }
   return rep;
+  } finally {
+    if (covDir) rmSync(covDir, { recursive: true, force: true });
+  }
 }
 
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
@@ -903,6 +950,10 @@ export function runTraceCommand(args: string[], deps: TraceDeps): number {
   const profLevel = profile ? parseSafetyLevel(profile) : null;
   if (profLevel && traceabilityOf(profLevel) === "strict") a.strict = true;
   if (profLevel && a.minTraceDepth === undefined) a.minTraceDepth = minTraceDepthOf(profLevel);
+  if (a.coverage) {
+    const missing = coverageToolsError();
+    if (missing) { console.error(`error: --coverage: ${missing}`); return 1; }
+  }
   const rep = traceEntry(a, deps);
   if (profile) rep.profile = profile;
   let objectText = "";
@@ -950,6 +1001,13 @@ export function runTraceCommand(args: string[], deps: TraceDeps): number {
 export function fnSites(program: Program, entry: string): FnSite[] {
   return projectDecls(program, inEntryProject(entry)).filter(d => d.decl === "fn" && !d.isTest)
     .map(d => ({ name: d.name, file: d.loc.file, line: d.loc.line, ids: [...d.implements, ...d.derived] }));
+}
+
+/** The fns whose bodies line coverage counts: the entry project's non-test fns, minus the @deactivated ones. */
+export function coverageSites(program: Program, entry: string): CoverageSite[] {
+  return projectDecls(program, inEntryProject(entry))
+    .filter(d => d.decl === "fn" && !d.isTest && d.deactivated === undefined)
+    .map(d => ({ name: d.name, file: d.loc.file, line: d.loc.line }));
 }
 
 /** `milo trace-object <binary> [--entry <file.milo>] [--strict] [--safety=<profile>] [--json]`. */

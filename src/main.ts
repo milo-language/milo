@@ -30,6 +30,7 @@ import { generateVerificationConditions, formatVerifyReport, proveWithZ3, format
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
+import { withGcovNotes } from "./coverage";
 import { findRequirementsFile, inEntryProject, requirementsDiagnostics, runTraceCommand, runTraceObjectCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
 import { PRESETS, parsePreset, checkPreset, formatPresetReport, type Preset, parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf, minTraceDepthOf } from "./safety";
 import { versionString } from "./version";
@@ -75,6 +76,8 @@ function cguCount(irLineCount: number, optFlag: string, emitDebug: boolean): num
   // the old one — a debugger would then fail to match frames to functions. Debug builds
   // are -O0 and already fast, so decline rather than half-fix the metadata.
   if (emitDebug) return 1;
+  // One module, one .gcno/.gcda pair (src/coverage.ts); split units would each need their own.
+  if (optFlag.includes("--coverage")) return 1;
   const explicit = cguOverride ?? (process.env.MILO_CGUS ? Number(process.env.MILO_CGUS) : null);
   if (explicit !== null && Number.isFinite(explicit)) return Math.max(1, Math.floor(explicit));
   // -O3 means the user asked for the best code we can produce; whole-module inlining is
@@ -346,10 +349,10 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
       return findDeadBranches(program, check, { onlyFile: f => mine(resolve(f)) });
     },
     // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
-    runTests(file, names) {
+    runTests(file, names, coverageDir) {
       const mainTs = join(import.meta.dir, "main.ts");
       const compiled = import.meta.dir.startsWith("/$bunfs") || !existsSync(mainTs);
-      const r = spawnSync(process.execPath, [...(compiled ? [] : [mainTs]), "test", "--json", file, "-t", `^(${names.join("|")})$`], { encoding: "utf-8", timeout: 600000 });
+      const r = spawnSync(process.execPath, [...(compiled ? [] : [mainTs]), "test", "--json", ...(coverageDir ? ["--coverage", coverageDir] : []), file, "-t", `^(${names.join("|")})$`], { encoding: "utf-8", timeout: 600000 });
       let doc: any;
       try { doc = JSON.parse(r.stdout ?? ""); } catch { return null; }
       if (doc.compileErrors?.length) return null;
@@ -1529,17 +1532,20 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   return out;
 }
 
-function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
-  const { ir, cGuards, linkLibs } = compileWithGuards(source, target, sourcePath, warningConfig);
+// `coverageDir` (milo test --coverage): the build is -O0 with line info and gcov counters, and its
+// IR, object and .gcno live in that dir so the .gcda the run writes (to the object's path) lands beside them.
+function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, coverageDir?: string): string {
+  const { ir, cGuards, linkLibs } = compileWithGuards(source, target, sourcePath, warningConfig, false, !!coverageDir);
   verifyCDecls(cGuards, target, linkLibs);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
-  const out = join(tmpdir(), `milo_${base}_${id}`);
-  const tmpLl = join(tmpdir(), `milo_${id}.ll`);
+  const outDir = coverageDir ?? tmpdir();
+  const out = join(outDir, `milo_${base}_${id}`);
+  const tmpLl = join(outDir, `milo_${id}.ll`);
   try {
-    writeFileSync(tmpLl, ir);
+    writeFileSync(tmpLl, coverageDir ? withGcovNotes(ir, join(outDir, `milo_${id}`)) : ir);
     const libs = detectLibs(ir, target) + declaredLibSpec(linkLibs, target, false);
-    linkIR(tmpLl, out, optFlag, libs, "", false, false, target, resolve(sourcePath));
+    linkIR(tmpLl, out, coverageDir ? "-O0 --coverage" : optFlag, libs, "", false, false, target, resolve(sourcePath));
   } catch (e: any) {
     throw new Error(`compilation failed:\n${e.stderr?.toString() ?? e.message}`);
   } finally {
@@ -1674,6 +1680,7 @@ async function runTests(
   filter?: string,
   json = false,
   contracts = false,
+  coverageDir?: string,
 ) {
   // In JSON mode nothing but the payload may reach stdout, or the consumer parses a log
   // line as the document.
@@ -1729,7 +1736,7 @@ async function runTests(
     let bin: string;
     try {
       bin = withThrowingDiagnostics(() =>
-        compileSourceToBinary(source + testHarnessMain(found.tests), file, target, optFlag, warningConfig));
+        compileSourceToBinary(source + testHarnessMain(found.tests), file, target, optFlag, warningConfig, coverageDir));
     } catch (e: any) {
       compileErrors.push({ file, message: e.message ?? String(e) });
       continue;
@@ -2340,9 +2347,16 @@ async function main() {
     // files (any .milo, not only *_test.milo); see src/contract-tests.ts.
     const contracts = testArgs.includes("--contracts");
     const filtered: string[] = [];
+    // `--coverage <dir>`: gcov counters, merged into <dir> by every test process (see coverage.ts).
+    let coverageDir: string | undefined;
     for (let i = 0; i < testArgs.length; i++) {
       const a = testArgs[i]!;
       if (a === "--contracts") continue;
+      if (a === "--coverage") {
+        if (i + 1 >= testArgs.length) { console.error("error: --coverage expects a directory"); process.exit(1); }
+        coverageDir = resolve(testArgs[++i]!);
+        continue;
+      }
       if (a === "-t" || a === "--test-name-pattern") {
         if (i + 1 >= testArgs.length) { console.error(`error: ${a} expects a pattern`); process.exit(1); }
         testFilter = testArgs[++i];
@@ -2367,7 +2381,13 @@ async function main() {
       }
     }
     if (files.length === 0) { console.error("no test files found"); process.exit(1); }
-    await runTests(files, target, testOpt, testWc, testFilter, testArgs.includes("--json"), contracts);
+    if (coverageDir) {
+      if (contracts) { console.error("error: --coverage does not combine with --contracts"); process.exit(1); }
+      mkdirSync(coverageDir, { recursive: true });
+      // A cached object is not recompiled, so it would write no .gcno.
+      process.env.MILO_OBJ_CACHE = "0";
+    }
+    await runTests(files, target, testOpt, testWc, testFilter, testArgs.includes("--json"), contracts, coverageDir);
     return;
   }
 

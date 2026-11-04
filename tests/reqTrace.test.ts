@@ -2,7 +2,8 @@
 // the vacuous-contract warning, and the shape of the demo's `milo trace --json`.
 // Every strict failure is planted in a scratch project, seen, then fixed and seen to clear.
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { LLVM_BIN } from "../src/mlir-backend";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -658,3 +659,119 @@ test("a test may @req a derived requirement when reached by absolute path", () =
   const r = spawnSync(process.execPath, [join(import.meta.dir, "..", "src", "main.ts"), "test", "--json", file, "-t", "^(testAccessors)$"], { encoding: "utf-8" });
   expect(JSON.parse(r.stdout).passed).toBe(1);
 });
+
+// ── --coverage: statement coverage of the implementing fn bodies by the @req tests ──
+
+const HAVE_LLVM_COV = existsSync(join(LLVM_BIN, "llvm-cov"));
+if (!HAVE_LLVM_COV) console.log(`skipping the coverage tests: no llvm-cov in ${LLVM_BIN} (set MILO_LLVM_BIN)`);
+const covTest = HAVE_LLVM_COV ? test : test.skip;
+
+const CLAMP = `@req(LLR-1)
+pub fn clamp(x: i64): i64
+requires x < 1000
+requires x > -1000
+@req(LLR-1)
+ensures result >= 0
+@req(LLR-1)
+ensures result < 1000
+{
+    if x < 0 {
+        return 0
+    }
+    return x
+}
+`;
+const lineOf = (src: string, needle: string) => src.split("\n").findIndex(l => l.includes(needle)) + 1;
+const CLAMP_TESTS = (neg: boolean) => `from "std/testing" import { assertEq }
+from "./a" import { clamp }
+
+@req(LLR-1)
+@req(HLR-1)
+fn testPositive(): void {
+    assertEq(clamp(5), 5)
+}
+${neg ? `
+@req(LLR-1)
+fn testNegative(): void {
+    assertEq(clamp(-5), 0)
+}
+` : ""}`;
+const cov = (p: Project, ...extra: string[]) => milo(["trace", p.entry, "--coverage", ...extra]);
+
+covTest("coverage: both branches tested is 100% and passes strict; contract lines are never counted", () => {
+  const p = project({ "a.milo": CLAMP, "a_test.milo": CLAMP_TESTS(true), "requirements.json": REQS });
+  try {
+    const r = cov(p, "--strict");
+    expect(r.out).toContain("line coverage: 100.0% (3/3)");
+    expect(r.code).toBe(0);
+    // 4 contract clauses sit between the signature and the `{`; only the 3 body statements count
+    const j = JSON.parse(cov(p, "--json").out);
+    expect(j.coverage.fns).toEqual([{ fn: "clamp", file: "a.milo", line: 2, covered: 3, total: 3, uncovered: [] }]);
+  } finally { p.done(); }
+}, 240000);
+
+covTest("coverage: an untested branch fails strict and names its exact line; a baseline adopts it, a new one fails", () => {
+  const p = project({ "a.milo": CLAMP, "a_test.milo": CLAMP_TESTS(false), "requirements.json": REQS });
+  try {
+    const want = lineOf(CLAMP, "return 0");
+    const r = cov(p, "--strict");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`line not covered by any requirement test: a.milo:${want} clamp`);
+    expect(r.out).toContain("line coverage: 66.7% (2/3)");
+    expect(r.out.match(/line not covered by any requirement test/g)!.length).toBe(1);
+    // report mode still exits 0
+    expect(cov(p).code).toBe(0);
+
+    const base = join(p.dir, "baseline.json");
+    expect(milo(["trace", p.entry, "--coverage", "--write-baseline", base]).code).toBe(0);
+    expect(JSON.parse(readFileSync(base, "utf-8")).gaps).toContain(`coverage:a.milo:${want}`);
+    const adopted = cov(p, "--strict", "--baseline", base);
+    expect(adopted.code).toBe(0);
+    expect(adopted.out).toContain(`warning: baselined gap: line not covered by any requirement test: a.milo:${want} clamp`);
+
+    // a newly uncovered line is not in the baseline
+    const grown = CLAMP.replace("return x\n", "if x > 500 {\n        return 500\n    }\n    return x\n");
+    p.write("a.milo", grown);
+    const fresh = cov(p, "--strict", "--baseline", base);
+    expect(fresh.code).toBe(1);
+    expect(fresh.out).toContain(`a.milo:${lineOf(grown, "return 500")} clamp`);
+  } finally { p.done(); }
+}, 240000);
+
+covTest("coverage: a fn no test calls lists every body line, not 0 of 0", () => {
+  const unused = `
+@req(LLR-1)
+pub fn unused(x: i64): i64 {
+    let y = x + 1
+    return y * 2
+}
+`;
+  const src = CLAMP + unused;
+  const p = project({ "a.milo": src, "a_test.milo": CLAMP_TESTS(true), "requirements.json": REQS });
+  try {
+    const j = JSON.parse(cov(p, "--json").out);
+    const fn = j.coverage.fns.find((f: any) => f.fn === "unused");
+    expect(fn).toMatchObject({ covered: 0, total: 2, uncovered: [lineOf(src, "let y"), lineOf(src, "return y * 2")] });
+  } finally { p.done(); }
+}, 240000);
+
+covTest("coverage: no data is an error, never a pass; a missing llvm-cov is named; --no-run is a usage error", () => {
+  const p = project({ "a.milo": CLAMP, "a_test.milo": CLAMP_TESTS(true), "requirements.json": REQS });
+  try {
+    // tests pointed at an empty dir: no process runs, so no .gcda exists
+    const empty = join(p.dir, "none");
+    mkdirSync(empty);
+    const r = cov(p, "--strict", "--tests", empty);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("no test process wrote coverage data");
+    expect(r.out).not.toContain("line coverage: 100");
+
+    const tool = spawnSync("bun", [MAIN, "trace", p.entry, "--coverage"], { encoding: "utf-8", cwd: ROOT, env: { ...process.env, MILO_LLVM_BIN: join(p.dir, "nollvm") } });
+    expect(tool.status).toBe(1);
+    expect(strip(tool.stderr + tool.stdout)).toContain("llvm-cov not found");
+
+    const usage = milo(["trace", p.entry, "--coverage", "--no-run"]);
+    expect(usage.code).toBe(1);
+    expect(usage.out).toContain("--coverage needs the tests to run");
+  } finally { p.done(); }
+}, 240000);

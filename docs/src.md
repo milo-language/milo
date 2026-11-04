@@ -40,6 +40,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/const-fold.ts` | Compile-time folding of module-global initializers: the one place that decides which globals get a static initializer and what it is. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
+| `src/coverage.ts` | Statement (line) coverage of requirement-implementing code by the @req tests, for `milo trace --coverage`. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |
 | `src/dead.ts` | Dead-branch detection (DO-178C: no dead code; DO-333: what the formal analysis covered). |
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct, plus `toJsonArray` / `fromJsonArray` for a document whose top level is an array of them. |

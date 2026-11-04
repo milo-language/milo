@@ -94,6 +94,7 @@ Run tests (\*\_test.milo, recursive in a dir; cwd by default). A test is a top-l
 | `-t <pattern>` | Run only tests matching (substring or regex). |
 | `--test-name-pattern <pattern>` | Long form of -t. |
 | `--json` | Machine-readable results. |
+| `--coverage <dir>` | Build -O0 with gcov counters; every test process adds to the .gcda files under \<dir\> (read by milo trace --coverage). |
 
 ### check
 
@@ -325,6 +326,7 @@ A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any o
 | `--json` | (.milo) the matrix as data; (trace file) {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
 | `--kind <prefix>` | Only records whose kind starts with \<prefix\> (net., sched.). |
 | `--payload <seq>` | Write one record's payload bytes to stdout. |
+| `--coverage` | (.milo) run the @req tests with line counters and report covered/total lines of each fn body; with --strict an uncovered line fails (statement coverage only; needs llvm-cov). |
 | `--object <binary>` | (.milo) add the address ranges of a binary built with -g that implement each requirement. |
 
 ### spec
