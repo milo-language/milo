@@ -2249,7 +2249,7 @@ async function main() {
     // The reference interpreter (src/interp.ts): runs the typed HIR, no codegen. Exit 3 means
     // the program uses something it does not model; exit 4 means a rule did not apply (stuck).
     let code = 0;
-    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), { contractChecks: contractChecks ?? args.includes("--debug"), entryFile: source! }); });
+    frontendToHIR(readFileSync(source!, "utf-8"), target, source!, warningConfig, (program, result) => { code = runInterp(program, result, args.includes("--live"), { contractChecks: contractChecks ?? args.includes("--debug"), entryFile: source!, hostFs: args.includes("--host-fs") }); });
     process.exit(code);
   } else if (cmd === "emit-ir") {
     const trapOnOverflow = overflowChecks ?? true;

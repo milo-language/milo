@@ -149,6 +149,17 @@ nat("string$substr", (it, [self, a, b]) => {
   const [lo, hi] = strRange(it, s, a as bigint, b as bigint);
   return it.newStr(s.b.bytes.slice(lo, hi));
 });
+// The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
+// Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
+const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+nat("_loadU8", (it, [p]) => it.mem.load(it.mem.decay(p!, PTR_U8), { tag: "int", bits: 8, signed: false }));
+nat("_loadI32", (it, [p]) => it.mem.load(it.mem.decay(p!, PTR_U8), { tag: "int", bits: 32, signed: true }));
+nat("_bytesToString", (it, [p, n]) => it.newStr([...it.mem.readBytes(it.mem.decay(p!, PTR_U8), Number(n as bigint), "_bytesToString")]));
+nat("_cstrToString", (it, [p]) => it.newStr([...it.mem.cstring(it.mem.decay(p!, PTR_U8), "_cstrToString")]));
+nat("_strDataPtr", (it, [s]) => it.mem.strPtr(it.deref(s!) as Str));
+nat("_putByte", (it, [b]) => { it.out.push(Number(b as bigint)); return undefined; });
+nat("_miloArgCount", () => 1n);
+nat("_miloArgAt", (it, [i]) => (i === 0n ? it.newStr([...enc.encode(it.entryFile || "main")]) : it.panic("argument index out of range")));
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
 
 // R-ATOMIC: one task runs at a time, so an atomic is a plain read-modify-write of the place its pointer names.
@@ -159,10 +170,8 @@ nat("replayActive", () => false);
 nat("replayRecording", () => false);
 for (const [w, bits] of [["I64", 64], ["I32", 32], ["Bool", 0]] as const) {
   const wrap = (v: bigint) => (bits ? BigInt.asIntN(bits, v) : v);
-  const atom = (it: Interp, p: Value) => {
-    if (!p || typeof p !== "object" || (p.k !== "ref" && p.k !== "mut")) return it.unsupported("atomic access through a pointer that is not the address of a variable");
-    return it.derefPlace(p);
-  };
+  const ty: TypeKind = bits ? { tag: "int", bits, signed: true } : { tag: "bool" };
+  const atom = (it: Interp, p: Value) => it.memPlace(p, ty);
   nat(`_atomicLoad${w}`, (it, [p]) => it.getPlace(atom(it, p)));
   nat(`_atomicStore${w}`, (it, [p, v]) => { it.setPlace(atom(it, p), v); return undefined; });
   nat(`_atomicSwap${w}`, (it, [p, v]) => { const pl = atom(it, p); const old = it.getPlace(pl); it.setPlace(pl, v); return old; });
@@ -353,10 +362,10 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
   const ot: TypeKind = objRaw.tag === "array" && (objRaw.size === null ? SLICE_COMBINATORS.has(m) : ARRAY_COMBINATORS.has(m)) ? { tag: "vec", element: objRaw.element } : objRaw;
   const type = it.T(e);
   const base = ot.tag === "enum" ? it.cr.enums.get(ot.name)?.baseName : undefined;
-  // R-PTR: only the address of an integer or bool cell (what the atomic intrinsics take); any other layout is raw memory
-  if (m === "addrOf" && e.args.length === 0 && (ot.tag === "int" || ot.tag === "bool")) return it.refTo(it.resolve(e.object), true);
-  if (m === "addrOf") return it.unsupported(".addrOf()");
-  if (m === "ptr" && (ot.tag === "vec" || ot.tag === "heap")) return it.unsupported(`.${m}()`);
+  // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
+  if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr(it.resolve(e.object), ot);
+  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr(it.peek(e.object) as VecV, ot.element);
+  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, it.peek(e.object), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
@@ -414,7 +423,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
         return { k: "str", b: { bytes: s.b.bytes.slice(lo, hi), rc: 1, id: -1 } };
       }
       case "len": return BigInt((it.peek(e.object) as Str).b.bytes.length);
-      case "cstr": return it.unsupported("string.cstr()");
+      case "cstr": return it.mem.cstr(it.peek(e.object) as Str);
     }
     const fn = STR_METHODS[m];
     if (fn) return it.callResolved(fn, e.args, e, undefined, e.object);

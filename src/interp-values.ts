@@ -9,6 +9,7 @@
 //   Heap<T>  box: one cell on the heap
 //   handle   a Channel, WaitGroup, atomic or Task: an object the library keeps in raw memory
 import type { Interp } from "./interp";
+import type { PtrV } from "./interp-mem";
 
 export class InterpUnsupported extends Error {
   constructor(public what: string) { super(`interp: unsupported: ${what}`); }
@@ -45,7 +46,7 @@ export interface MapV { k: "map"; buf: number | null; m: Map<string, MapEntry>; 
 // one handle per owner, `o.release` runs when an owner drops it (src/interp-co-natives.ts).
 export interface HandleV { k: "handle"; kind: string; o: { release(it: Interp): void }; ghost?: true }
 export interface FnRef { k: "fn"; name: string }
-export interface Slot { v: Value; dead?: boolean; stmt?: boolean }
+export interface Slot { v: Value; dead?: boolean; stmt?: boolean; mem?: PtrV; mty?: import("./types").TypeKind } // mem: a slot that is a place in raw memory (src/interp-mem.ts memSlot)
 export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[] }
 export interface ClosureV {
   k: "closure";
@@ -57,7 +58,7 @@ export interface ClosureV {
   ret: import("./types").TypeKind;
 }
 export type Step = string | number;
-export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | MapV | IfaceV | FnRef | ClosureV | Ref | HandleV;
+export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | MapV | IfaceV | FnRef | ClosureV | Ref | HandleV | PtrV;
 export interface Place { slot: Slot; path: Step[]; ro: boolean; viaRef: boolean }
 
 export const enc = new TextEncoder();

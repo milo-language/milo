@@ -3,6 +3,7 @@
 import { type Contract, type Expr, type Function as AstFn, type Pattern, type Stmt, floatNamespaceConst } from "./ast";
 import { relative } from "path";
 import { type TypeKind, ARRAY_COMBINATORS, SLICE_COMBINATORS } from "./types";
+import { callExtern } from "./interp-sys";
 
 import { Interp } from "./interp";
 import { Unwind, strip, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
@@ -24,14 +25,18 @@ export class InterpGen extends Interp {
         case "Ident": return this.resolveIdent(e.name);
         case "FieldAccess": { const b = (yield* this.resolve$g(e.object)); return { ...b, path: [...b.path, e.field] }; }
         case "IndexAccess": {
-          if (this.T(e.object).tag === "ptr") return this.unsupported("raw pointer indexing");
+          const ot = this.T(e.object);
+          if (ot.tag === "ptr") return this.memPlace(this.mem.advance((yield* this.peek$g(e.object)), Number((yield* this.ev$g(e.index)) as bigint) * this.mem.sizeOf(ot.inner)), ot.inner);
           const b = (yield* this.resolve$g(e.object));
           const i = (yield* this.ev$g(e.index)) as bigint;
           const n = this.seqLen(this.getPlace(b));
           if (i < 0n || i >= BigInt(n)) this.panic(`index out of bounds: ${i} (len ${n})`);
           return { ...b, path: [...b.path, Number(i)] };
         }
-        case "UnaryOp": { const b = (yield* this.resolve$g(e.operand)); return { ...b, path: [...b.path, "*"] }; }
+        case "UnaryOp": {
+          const pt = this.T(e.operand);
+          if (pt.tag === "ptr") return this.memPlace((yield* this.peek$g(e.operand)), pt.inner);
+          const b = (yield* this.resolve$g(e.operand)); return { ...b, path: [...b.path, "*"] }; }
       }
     }
     return { slot: this.tempOwn((yield* this.ev$g(e))), path: [], ro: false, viaRef: false };
@@ -55,11 +60,12 @@ export class InterpGen extends Interp {
     return v;
   }
   *callFn$g(fn: AstFn, args: Value[]): Gen {
-    if (fn.isExtern) this.unsupported(`extern ${fn.linkName ?? fn.name}`);
+    if (fn.isExtern) return callExtern(this, fn, args);
     if (++this.depth > 3000) this.panic("stack overflow");
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
-      fn.params.forEach((p, i) => this.declare(p.name, args[i]!));
+      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type) : args[i]!));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) (yield* this.enterContracts$g(fn));
       const c = (yield* this.runStmts$g(fn.body));
@@ -233,7 +239,6 @@ export class InterpGen extends Interp {
   }
   *index$g(e: Expr & { kind: "IndexAccess" }): Gen {
     const ot = this.T(e.object);
-    if (ot.tag === "ptr") return this.unsupported("raw pointer indexing");
     if (ot.tag === "string") { // a byte of a string
       const s = (yield* this.peek$g(e.object)) as Str, i = (yield* this.ev$g(e.index)) as bigint;
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
@@ -325,7 +330,6 @@ export class InterpGen extends Interp {
   *unop$g(e: Expr & { kind: "UnaryOp" }): Gen {
     if (e.op === "&mut") return (yield* this.ev$g(e.operand));
     if (e.op === "*") {
-      if (this.T(e.operand).tag === "ptr") return this.unsupported("raw pointer deref");
       if (this.tempRooted(e)) return (yield* this.readTempRooted$g(e));
       return this.readPlace((yield* this.resolve$g(e)), this.cr.movedExprs.has(e), "*box");
     }
@@ -453,7 +457,8 @@ export class InterpGen extends Interp {
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
-      case "sizeOf": case "offsetOf": case "zeroed": case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
+      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
     }
     if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
     if (this.cr.closureCalls.has(e)) {
@@ -737,10 +742,10 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
   const ot: TypeKind = objRaw.tag === "array" && (objRaw.size === null ? SLICE_COMBINATORS.has(m) : ARRAY_COMBINATORS.has(m)) ? { tag: "vec", element: objRaw.element } : objRaw;
   const type = it.T(e);
   const base = ot.tag === "enum" ? it.cr.enums.get(ot.name)?.baseName : undefined;
-  // R-PTR: only the address of an integer or bool cell (what the atomic intrinsics take); any other layout is raw memory
-  if (m === "addrOf" && e.args.length === 0 && (ot.tag === "int" || ot.tag === "bool")) return it.refTo((yield* it.resolve$g(e.object)), true);
-  if (m === "addrOf") return it.unsupported(".addrOf()");
-  if (m === "ptr" && (ot.tag === "vec" || ot.tag === "heap")) return it.unsupported(`.${m}()`);
+  // R-MEM-ADDROF, R-MEM-VECPTR: the address of a place, and the first element of a Vec or the cell of a Heap
+  if (m === "addrOf" && e.args.length === 0) return it.mem.placePtr((yield* it.resolve$g(e.object)), ot);
+  if (m === "ptr" && ot.tag === "vec") return it.mem.vecPtr((yield* it.peek$g(e.object)) as VecV, ot.element);
+  if (m === "ptr" && ot.tag === "heap") return it.unsupported(".ptr() of a Heap");
   if ((ot.tag === "int" || ot.tag === "float") && m === "toString") return it.newStr([...enc.encode(display(it, (yield* it.peek$g(e.object)), ot))]);
   if (base === "Option" && m === "take") {
     const none = it.mkEnum((ot as { name: string }).name, "None", []);
@@ -798,7 +803,7 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
         return { k: "str", b: { bytes: s.b.bytes.slice(lo, hi), rc: 1, id: -1 } };
       }
       case "len": return BigInt(((yield* it.peek$g(e.object)) as Str).b.bytes.length);
-      case "cstr": return it.unsupported("string.cstr()");
+      case "cstr": return it.mem.cstr((yield* it.peek$g(e.object)) as Str);
     }
     const fn = STR_METHODS[m];
     if (fn) return (yield* it.callResolved$g(fn, e.args, e, undefined, e.object));

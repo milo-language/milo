@@ -135,6 +135,153 @@ fn main() {
   expect(rule).toBe("E-STUCK");
 });
 
+// ── raw memory and the C layer (docs/semantics/mini-milo.md §5, R-MEM-* and R-SYS-*) ──
+const MEM = `from "std/os" import { malloc, free, memset, memcpy, realloc }\n`;
+// run a program that must get stuck; returns the rule it names
+function stuckRule(src: string): string {
+  try { run(src); } catch (e) { return (e as InterpStuck).rule; }
+  return "";
+}
+
+test("R-MEM-LOAD/STORE: malloc, typed stores and loads, memcpy, memset and free round-trip, and the block count returns to zero", () => {
+  const r = run(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(32) as *i64
+        p[0] = 41
+        p[1] = 7
+        p[2] = p[0] + p[1]
+        print(p[2])
+        let q = malloc(8) as *i64
+        memcpy(q as *u8, p as *u8, 8)
+        print(q[0])
+        memset(q as *u8, 0, 8)
+        print(q[0])
+        let b = p as *u8
+        b[8] = 1
+        print(p[1])
+        free(p as *u8)
+        free(q as *u8)
+    }
+}`);
+  expect(r.out).toBe("48\n41\n0\n1\n"); // byte 8 is the low byte of p[1], so 7 becomes 1
+  expect(r.live).toBe(0);
+});
+
+test("R-MEM-REALLOC: realloc keeps the old bytes", () => {
+  const r = run(MEM + `
+fn main() {
+    unsafe {
+        var p = malloc(8) as *i64
+        p[0] = 99
+        p = realloc(p as *u8, 64) as *i64
+        p[7] = 5
+        print(p[0] + p[7])
+        free(p as *u8)
+    }
+}`);
+  expect(r.out).toBe("104\n");
+  expect(r.live).toBe(0);
+});
+
+test("R-MEM-OOB: a load past the end of an allocation is stuck", () => {
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(8) as *i64
+        p[0] = 1
+        print(p[1])
+    }
+}`)).toBe("R-MEM-OOB");
+});
+
+test("R-MEM-UAF and R-MEM-DOUBLE-FREE: a load after free and a second free are stuck", () => {
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(8) as *i64
+        free(p as *u8)
+        print(p[0])
+    }
+}`)).toBe("R-MEM-UAF");
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(8)
+        free(p)
+        free(p)
+    }
+}`)).toBe("R-MEM-DOUBLE-FREE");
+});
+
+test("R-MEM-NULL and R-MEM-ALIGN: a null load and a misaligned i64 load are stuck", () => {
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = 0 as *i64
+        print(p[0])
+    }
+}`)).toBe("R-MEM-NULL");
+  expect(stuckRule(MEM + `
+fn main() {
+    unsafe {
+        let p = malloc(16)
+        let q = ((p as i64) + 4) as *i64
+        print(q[0])
+    }
+}`)).toBe("R-MEM-ALIGN");
+});
+
+test("R-MEM-ADDROF and R-MEM-VECPTR: pointers into a fixed array and a Vec buffer read and write the structured value", () => {
+  const r = run(`
+fn main() {
+    var a: [i32; 4] = [1, 2, 3, 4]
+    var v: Vec<i64> = [10, 20, 30]
+    unsafe {
+        let p = a.addrOf() as *i32
+        p[2] = 99
+        let q = v.ptr()
+        q[1] = q[0] + q[2]
+        let bytes = a.addrOf() as *u8
+        print(bytes[0])
+    }
+    print(a[2])
+    print(v[1])
+}`);
+  expect(r.out).toBe("1\n99\n40\n");
+});
+
+test("R-MEM-CSTR: string.cstr() is NUL-terminated and strlen finds it", () => {
+  const r = run(`
+extern fn strlen(s: *u8): u64
+fn main() {
+    let s = "hello"
+    unsafe {
+        let p = s.cstr()
+        print(strlen(p))
+        print(p[5])
+    }
+}`);
+  expect(r.out).toBe("5\n0\n");
+});
+
+test("R-SYS-FD: a file written through std/fs reads back from the in-memory filesystem, and the host is untouched", () => {
+  const name = `milo_interp_memfs_${process.pid}.txt`;
+  const r = runTasks(`
+from "std/fs" import { readFile, writeFile, pathExists }
+fn main() {
+    print(pathExists("${name}"))
+    let _w = writeFile("${name}", "in memory")
+    print(pathExists("${name}"))
+    match readFile("${name}") {
+        Result.Ok(s) => print(s),
+        Result.Err(_) => print("err"),
+    }
+}`);
+  expect(r.out).toBe("false\ntrue\nin memory\n");
+  expect(require("fs").existsSync(join(process.cwd(), name))).toBe(false);
+});
+
 // Fixtures the interpreter must run exactly as the compiled golden does (stdout, exit, live blocks).
 const FIXTURES = [
   "arithmetic", "closureCaptureFlexInt", "closureCapture", "closureCaptureDropMatrix", "closureCapturesDropped", "dropOrderFieldsVec",

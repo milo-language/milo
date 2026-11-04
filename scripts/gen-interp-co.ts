@@ -220,7 +220,7 @@ function generate(): string {
   if (missing.length) throw new Error("add `export` to:\n  " + missing.join("\n  "));
   // the original's imports, cut down to the names the twins use (an unused import is a type error under noUnusedLocals)
   const used = (n: string) => new RegExp(`(?<![\\w$.])${n}\\b`).test(bare);
-  const outside = /^import (?:type )?\{[^}]*\} from "(?:\.\/(?:ast|types|checker)|path)";$/gm;
+  const outside = /^import (?:type )?\{[^}]*\} from "(?:\.\/(?:ast|types|checker|interp-mem|interp-sys)|path)";$/gm;
   const valueImports = [...new Set(["interp", "interp-natives"].flatMap(f => readFileSync(join(SRC, f + ".ts"), "utf-8").match(outside) ?? []))].flatMap(stmt => {
     const kept = /\{([^}]*)\}/.exec(stmt)![1]!.split(",").map(x => x.trim()).filter(x => x && used(x.replace(/^type /, "").split(" as ").pop()!));
     const spec = /from "([^"]+)"/.exec(stmt)![1]!;

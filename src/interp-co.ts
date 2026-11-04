@@ -14,6 +14,7 @@ import { Interp, type Frame, type RunResult } from "./interp";
 import { InterpGen, type Gen } from "./interp-gen";
 import { NeedTasks, Panic, type ClosureV, type Slot, type Value } from "./interp-values";
 import type { Native } from "./interp-natives";
+import type { SysOptions } from "./interp-sys";
 
 interface Ctx { frames: Frame[]; temps: Slot[]; depth: number; pend: Slot[] }
 export interface Task {
@@ -181,12 +182,13 @@ export class InterpCo extends InterpGen {
  * task interpreter; a run is deterministic and its output is buffered until the end, so the rerun
  * shows exactly what a run with tasks from the start would.
  */
-export interface RunOptions { contractChecks?: boolean; entryFile?: string }
+export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions }
 export function runChecked(program: Program, checked: CheckResult, opts: RunOptions = {}): { it: Interp; result: RunResult } {
   const make = (c: new (p: Program, r: CheckResult) => Interp): Interp => {
     const i = new c(program, checked);
     i.contractChecks = !!opts.contractChecks;
     i.entryFile = opts.entryFile ?? "";
+    i.sysOptions = opts.sys ?? {};
     return i;
   };
   let it: Interp = make(Interp);

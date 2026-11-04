@@ -19,6 +19,8 @@ import {
   ExitProgram, InterpStuck, type MapV, InterpUnsupported, MOVED, NeedTasks, Panic, staticStr,
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
+import { Mem, isPtr, memSlot } from "./interp-mem";
+import { callExtern, type Sys, type SysOptions } from "./interp-sys";
 import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
@@ -47,6 +49,9 @@ export class Interp {
   aborted = false; // a panic or exit does not unwind: no drops run, no live count
   depth = 0;
   dropImpls: Set<string>;
+  mem = new Mem(this);
+  sysOptions: SysOptions = {};
+  sys?: Sys; // the C functions std calls (src/interp-sys.ts), made on the first extern call
 
   constructor(public prog: Program, public cr: CheckResult) {
     for (const f of prog.functions) this.fns.set(f.name, f);
@@ -229,7 +234,7 @@ export class Interp {
       case "Ident": return this.lookup(e.name) !== undefined;
       case "FieldAccess": return !this.isLen(e) && !floatNamespaceConst(e);
       case "IndexAccess": { const t = this.T(e.object).tag; return t !== "string" && t !== "hashmap"; }
-      case "UnaryOp": return e.op === "*" && this.T(e.operand).tag !== "ptr";
+      case "UnaryOp": return e.op === "*";
     }
     return false;
   }
@@ -239,18 +244,24 @@ export class Interp {
         case "Ident": return this.resolveIdent(e.name);
         case "FieldAccess": { const b = this.resolve(e.object); return { ...b, path: [...b.path, e.field] }; }
         case "IndexAccess": {
-          if (this.T(e.object).tag === "ptr") return this.unsupported("raw pointer indexing");
+          const ot = this.T(e.object);
+          if (ot.tag === "ptr") return this.memPlace(this.mem.advance(this.peek(e.object), Number(this.ev(e.index) as bigint) * this.mem.sizeOf(ot.inner)), ot.inner);
           const b = this.resolve(e.object);
           const i = this.ev(e.index) as bigint;
           const n = this.seqLen(this.getPlace(b));
           if (i < 0n || i >= BigInt(n)) this.panic(`index out of bounds: ${i} (len ${n})`);
           return { ...b, path: [...b.path, Number(i)] };
         }
-        case "UnaryOp": { const b = this.resolve(e.operand); return { ...b, path: [...b.path, "*"] }; }
+        case "UnaryOp": {
+          const pt = this.T(e.operand);
+          if (pt.tag === "ptr") return this.memPlace(this.peek(e.operand), pt.inner);
+          const b = this.resolve(e.operand); return { ...b, path: [...b.path, "*"] }; }
       }
     }
     return { slot: this.tempOwn(this.ev(e)), path: [], ro: false, viaRef: false };
   }
+  // R-MEM-LOAD / R-MEM-STORE: the place a raw pointer names; reading it loads, assigning it stores
+  memPlace(p: Value, ty: TypeKind): Place { return { slot: memSlot(this.mem, p, ty), path: [], ro: false, viaRef: false }; }
   seqLen(v: Value): number {
     if (v && typeof v === "object" && v !== MOVED) {
       if (v.k === "vec") return v.len;
@@ -282,9 +293,11 @@ export class Interp {
   setPlace(p: Place, v: Value): void {
     if (p.slot.dead) this.stuck("T-REF-PARAM", "a reference outlived the frame it names");
     if (p.path.length === 0) { p.slot.v = v; return; }
-    let cur = p.slot.v;
+    const root = p.slot.v;
+    let cur = root;
     for (const s of p.path.slice(0, -1)) cur = this.child(cur, s).get();
     this.child(cur, p.path[p.path.length - 1]!).set(v);
+    if (p.slot.mem) p.slot.v = root; // raw memory: the slot hands out a decoded copy, so store the changed copy back
   }
   refTo(p: Place, mut: boolean): Ref { return { k: mut ? "mut" : "ref", slot: p.slot, path: [...p.path] }; }
   deref(r: Value): Value { return this.getPlace({ slot: (r as Ref).slot, path: (r as Ref).path, ro: false, viaRef: true }); }
@@ -343,7 +356,7 @@ export class Interp {
       case "struct": return !this.dropImpls.has(v.name) && Object.values(v.f).every(x => this.copyable(x));
       case "enum": return !this.dropImpls.has(v.en) && v.a.every(x => this.copyable(x));
       case "arr": return v.e.every(x => this.copyable(x));
-      case "fn": return true;
+      case "fn": case "ptr": return true;
       case "closure": return !v.owning;
       case "vec": return v.view;
       default: return false;
@@ -364,7 +377,7 @@ export class Interp {
       case "enum": if (this.dropImpls.has(v.en)) break; return { ...v, a: v.a.map(x => this.share(x, what)) };
       case "arr": return { k: "arr", e: v.e.map(x => this.share(x, what)) };
       case "vec": if (v.view) return { ...v }; break;
-      case "fn": return v;
+      case "fn": case "ptr": return v;
       case "closure": return v.owning ? { ...v, owning: false } : v;
       case "ref": case "mut": return v;
     }
@@ -430,11 +443,12 @@ export class Interp {
   }
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
-    if (fn.isExtern) this.unsupported(`extern ${fn.linkName ?? fn.name}`);
+    if (fn.isExtern) return callExtern(this, fn, args);
     if (++this.depth > 3000) this.panic("stack overflow");
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
-      fn.params.forEach((p, i) => this.declare(p.name, args[i]!));
+      const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type) : args[i]!));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) this.enterContracts(fn);
       const c = this.runStmts(fn.body);
@@ -629,7 +643,6 @@ export class Interp {
   }
   index(e: Expr & { kind: "IndexAccess" }): Value {
     const ot = this.T(e.object);
-    if (ot.tag === "ptr") return this.unsupported("raw pointer indexing");
     if (ot.tag === "string") { // a byte of a string
       const s = this.peek(e.object) as Str, i = this.ev(e.index) as bigint;
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
@@ -723,6 +736,7 @@ export class Interp {
   }
   binValues(op: string, a: Value, b: Value, lt: TypeKind, rt: TypeKind): Value {
     if (a === MOVED || b === MOVED) this.stuck("E-STUCK", "operand was moved");
+    if (isPtr(a) || isPtr(b)) { a = this.mem.addr(a); b = this.mem.addr(b); } // R-MEM-ADDR: a pointer compares as its address
     switch (op) {
       case "==": return this.equal(a, b);
       case "!=": return !this.equal(a, b);
@@ -792,7 +806,6 @@ export class Interp {
   unop(e: Expr & { kind: "UnaryOp" }): Value {
     if (e.op === "&mut") return this.ev(e.operand);
     if (e.op === "*") {
-      if (this.T(e.operand).tag === "ptr") return this.unsupported("raw pointer deref");
       if (this.tempRooted(e)) return this.readTempRooted(e);
       return this.readPlace(this.resolve(e), this.cr.movedExprs.has(e), "*box");
     }
@@ -817,6 +830,7 @@ export class Interp {
         return x < lo ? lo : x > hi ? hi : x;
       }
       if (typeof v === "boolean") return v ? 1n : 0n;
+      if (isPtr(v)) return wrapInt(this.mem.addr(v), to);
       if (v && typeof v === "object" && v.k === "enum") return wrapInt(BigInt(v.tag), to);
     }
     if (to.tag === "float") {
@@ -825,9 +839,9 @@ export class Interp {
     }
     if (to.tag === "bool" && typeof v === "boolean") return v;
     // R-PTR: a raw pointer is a place reference (what `x.addrOf()` gives) or the integer 0 (null); casts between pointer types keep it
-    if (to.tag === "ptr" && (isRef(v) || typeof v === "bigint")) return v;
+    if (to.tag === "ptr") return this.mem.castToPtr(v, from, to);
     if (to.tag === "string" && isStr(v)) return this.share(v, "cast");
-    return this.unsupported(`cast ${from.tag} -> ${to.tag}`);
+    return this.unsupported(`cast ${from.tag} -> ${to.tag} of ${describe(v)}`);
   }
 
   // ── Option / Result ──
@@ -1001,7 +1015,8 @@ export class Interp {
       case "old": if (!shadow("old") && this.frame.olds?.has(e)) return this.share(this.frame.olds.get(e)!, "old"); break;
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
-      case "sizeOf": case "offsetOf": case "zeroed": case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
+      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
     }
     if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
     if (this.cr.closureCalls.has(e)) {

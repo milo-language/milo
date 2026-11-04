@@ -247,7 +247,6 @@ parks, yields or ends: nothing preempts it, so no operation needs a lock.
 | R-WG | `add` and `done` move a counter; `done` leaving it at zero or below wakes every waiter; `wait` parks while it is positive. |
 | R-ONCE | The first `run` calls its closure; a caller that arrives meanwhile parks until it finishes. |
 | R-ATOMIC | An atomic operation is a plain read-modify-write, since one task runs at a time. `add` and `sub` wrap at the width. The `_atomic*` intrinsics do the same through a pointer. |
-| R-PTR | A raw pointer is what `x.addrOf()` gives (a reference to the place) or the integer 0; casts between pointer types keep it. Arithmetic on it is not modelled. |
 | R-REPLAY-OFF | Record/replay is off, as in a binary run with neither MILO_RECORD nor MILO_REPLAY set. |
 
 A task operation that would park cannot run where the interpreter is not on a task's own stack: in a
@@ -266,6 +265,68 @@ as unsupported, never run wrongly.
 Struct `invariant` clauses are proved statically and have no runtime check in a compiled binary, so the
 interpreter does not check them either.
 
-Not modelled (reported as `InterpUnsupported`): extern and FFI calls, raw memory (malloc, pointer
-arithmetic, `.ptr()`), `unsafe` memory operations, async I/O (sockets, files), `sizeOf`/`zeroed`,
-record/replay wrappers.
+### Raw memory
+
+`unsafe` code is run the way WASI or Emscripten run compiled C: memory is bytes, and only the bottom
+layer of C functions is implemented (next section). Nothing here knows what a std module is for.
+`src/interp-mem.ts` implements these rules; every violation is a stuck state naming the rule, so the
+interpreter doubles as a Miri-style undefined-behaviour checker for the unsafe code in std.
+
+**Pointers.** A raw pointer `*T` is `null` (the integer 0) or `ptr(a, off)`: an allocation `a` and a byte
+offset. An allocation is a byte array (`malloc`), or a *byte view* of a value the interpreter keeps
+structured (a Vec buffer, a fixed array, a variable, a string's bytes). A view encodes its elements to
+bytes when read and decodes them when written, using the layout of `src/layout.ts` (the sizes, alignments
+and field offsets the compiled program has), so the structured value stays the single copy. Each allocation
+owns a range of one virtual address space, which gives `ptr as i64` a number and lets `n as *T` recover the
+allocation it came from.
+
+| Rule | Statement |
+|---|---|
+| R-MEM-ALLOC | `malloc(n)` makes a zeroed allocation of n bytes and counts as one live block, as in a compiled run; `calloc` is `malloc(c*n)`. |
+| R-MEM-REALLOC | `realloc(p, n)` always moves: a new allocation holds the first min(n, old size) bytes and the old one is freed. `realloc(null, n)` is `malloc(n)`. |
+| R-MEM-FREE | `free(null)` does nothing. `free(p)` frees an allocation that `malloc` made, when p is its start. |
+| R-MEM-LOAD, R-MEM-STORE | `*p`, `p[i]` (at p + i * sizeOf T) read or write a value of type T at the pointer. Scalars, pointers, structs of those and fixed arrays of those have bytes; a field written through `p.f` is read-modified-written. |
+| R-MEM-ADDROF | `x.addrOf()` is a pointer to the bytes of the place x (a fixed array is its elements). Taking it twice gives equal pointers. A place with no byte layout (a string, Vec, enum) is unsupported. |
+| R-MEM-VECPTR | `v.ptr()` points at element 0 of a slice; an empty Vec, owning no block, gives null. A string's `_strDataPtr` points at its bytes. |
+| R-MEM-CSTR | `s.cstr()` is a pointer to a NUL-terminated copy of the string's bytes; the copy is never freed and is not a live block. A string argument for a `*u8` parameter decays to the same (R-MEM-DECAY), and so does a fixed array for a `*T` parameter, as a pointer to the array itself. |
+| R-MEM-ADDR | `p as i64` is the allocation's base + offset; `n as *T` is the allocation whose range holds n, with that offset, or null for 0. Comparing pointers compares addresses. An address no allocation of this run owns can be held and compared but not followed. |
+| R-MEM-COPY | `memcpy`, `memmove` and `memset` act on bytes, with the bounds of R-MEM-OOB at both ends. `sizeOf<T>()`, `offsetOf<T>("f")` and `zeroed<T>()` use the compiled layout. |
+| R-MEM-OOB | stuck: an access of n bytes at offset o of an allocation of size s with o < 0 or o + n > s (a view's size is its element count times the element size). |
+| R-MEM-UAF | stuck: any access, `realloc` or view access to an allocation that was freed (a Vec buffer or string buffer is freed when its owner drops). |
+| R-MEM-DOUBLE-FREE | stuck: `free` of an allocation already freed. |
+| R-MEM-FREE-INVALID | stuck: `free` or `realloc` of a pointer that is not the start of a `malloc` block (a view, a `cstr`, an interior pointer). |
+| R-MEM-NULL | stuck: a load, store or C-string read through null. |
+| R-MEM-ALIGN | stuck: a load or store of a scalar of size k (at most 8) at an address that is not a multiple of k. The compiled program emits aligned accesses, so a misaligned one is undefined there. |
+| R-MEM-OVERLAP | stuck: `memcpy` whose source and destination ranges overlap (`memmove` allows it). |
+| R-MEM-WRITE-RO | stuck: a store into a read-only allocation (a string literal's bytes, a `strerror` message). |
+| R-MEM-PROVENANCE | stuck: following an address no allocation owns, or asking the address of something that is not a pointer. |
+| R-MEM-LAYOUT | stuck: `offsetOf` of a field that does not exist. |
+
+Not checked: reads of bytes `malloc` never wrote (the allocation is zeroed, as `calloc`'s would be), and a
+pointer to a stack variable that outlives its frame is only caught when the variable's slot has died.
+
+### The C layer
+
+An `extern fn` call runs `src/interp-sys.ts`, keyed by the C symbol. The set is what std calls, not
+libc: `malloc calloc realloc free memcpy memmove memset memcmp memchr strlen strcmp strncmp strerror`,
+`read write open close lseek fstat stat lstat access ftruncate truncate fsync fdatasync fcntl isatty dup
+dup2 unlink rmdir mkdir rename getcwd chdir mkdtemp opendir readdir closedir`, `getenv setenv unsetenv
+getpid getppid getuid geteuid getgid getegid sysconf tzset __error __errno_location`, `gettimeofday
+clock_gettime time usleep sleep nanosleep`, `arc4random arc4random_uniform arc4random_buf getentropy
+getrandom`, `exit _exit`, and the libm functions `sqrt fabs floor ceil round sin cos tan asin acos atan atan2
+exp log log2 log10 pow fmod`. A call to any other extern is `InterpUnsupported` naming the function;
+sockets, threads and locks, process spawning, dynamic loading, terminals, TLS and the wrapped C libraries
+(sqlite, openssl) are in that group.
+
+| Rule | Statement |
+|---|---|
+| R-SYS-FD | Descriptors 0, 1 and 2 are stdin (empty, or the host's under `milo interp`), stdout and stderr, which append to the same buffers `print` and `eprint` use, so the order of mixed output holds. `open` returns the lowest free descriptor ≥ 3, with the host OS's flag values (std's platform arm chose them). A failed call returns -1 and sets errno (read through `__error` / `__errno_location`, a pointer into memory). |
+| R-SYS-FS | Files live in an in-memory filesystem: a path is made absolute against the working directory, `..` and `.` fold, a file is a growable byte array. `struct stat` and `struct dirent` are filled at the offsets std's own `statSizeOffset`, `direntNameOffset` and the like report. The host filesystem is reachable only through a read-only `HostFs` handed in by the driver: `milo interp` seeds the in-memory filesystem lazily, read-only, from the program's own directory (the working directory starts there), or from all of `/` with `--host-fs`. A host file is copied in when first touched, writes go to the copy and never reach the host, and an `unlink` hides the host file for the rest of the run. The browser playground passes no `HostFs`. |
+| R-SYS-CLOCK | The wall clock is the host's, plus the time the program has slept: `usleep`, `sleep` and `nanosleep` advance the clock and return at once, so a sleep costs nothing and a busy-wait on the clock still ends. (The task scheduler's own clock, R-TIME, is separate.) |
+| R-SYS-ENV | `getenv` reads the environment the driver passed in (the host's under `milo interp`); `setenv` and `unsetenv` change the program's copy only. |
+| R-SYS-RANDOM | Entropy calls return host random bytes (a run is not reproducible through them). |
+| R-SYS-EXIT | `exit` and `_exit` stop the run at once like the `exit` builtin (S-PANIC-ABORT's no-drops rule). |
+
+Not modelled (reported as `InterpUnsupported`): the extern functions above not in the list, `atexit`,
+`embedFile`, `jsonStringify`, record/replay wrappers, and a raw view of a value with no byte layout
+(strings, Vecs, HashMaps, enums, closures).
