@@ -796,6 +796,25 @@ def Milo_VarOp : Milo_Op<"var"> {
   let hasVerifier = 1;
 }
 
+def Milo_DbgVarOp : Milo_Op<"dbg.var"> {
+  let summary = "names a slot as a source variable for the debugger (-g only)";
+  let description = [{
+    `milo.dbg.var %slot {name = "sum"}`: the slot holds the source variable `name`. Emitted
+    only under `-g`, so a build without it has none. It writes the slot's resource so no
+    pass drops or reorders it, and it is a user mem2reg cannot promote, which keeps the
+    variable in memory for the debugger. `convert-milo-to-llvm` keeps the op, with a
+    pointer operand and the DI type of the pointee in `di_type`; `milo-lower-debug-vars`
+    (after the function has its DISubprogram) turns it into `llvm.intr.dbg.declare`.
+
+    `arg`: the 1-based parameter number. `fields`: struct name to its field names, for the
+    structs the pointee holds (the dialect's struct type has no field names).
+  }];
+  let arguments = (ins Arg<AnyType, "", [MemWrite<Milo_Slot>]>:$ref, StrAttr:$name,
+                   OptionalAttr<I32Attr>:$arg, OptionalAttr<DictionaryAttr>:$fields,
+                   OptionalAttr<AnyAttr>:$di_type);
+  let assemblyFormat = "$ref `:` type($ref) attr-dict";
+}
+
 def Milo_ScopeOp : Milo_Op<"scope", [NoRegionArguments, RecursiveMemoryEffects,
     DeclareOpInterfaceMethods<RegionBranchOpInterface, ["getSuccessorInputs"]>]> {
   let summary = "a lexical scope that owns slots";

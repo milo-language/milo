@@ -322,9 +322,8 @@ lldbGap("frame variable renders enum variants by name with typed payloads", () =
   }
 });
 
-// -g --debug: -O0 keeps the allocas that dbg.declare binds, so locals are inspectable.
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no locals or type DIEs for lldb); see docs/roadmap.md
-lldbGap("frame variable inspects Milo locals, params, and structs (M2)", () => {
+// -g --debug: dbg.declare on stack slots, so locals are inspectable.
+test("frame variable inspects Milo locals, params, and structs (M2)", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_vars.milo");
   const bin = join(tmpdir(), "milo_dbg_vars");

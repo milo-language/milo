@@ -10,7 +10,8 @@
 // The `define` line is codegen.ts's (linkage, attributes, ABI), with params renumbered
 // to the MLIR body's `%0..%n-1`. Under -g it keeps its `!dbg` (codegen-dwarf.ts's
 // DISubprogram), and the body's DILocations are rescoped to it: the line table. Local
-// variables and type DIEs are not emitted yet.
+// variables (scalars and structs of them) are dbg.declare records on stack slots; enum, string and Vec
+// type DIEs are not emitted yet.
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
@@ -106,7 +107,7 @@ const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
 ].join(",") + ")";
 // -g: a DISubprogram per llvm.func, so the translation turns op locs into DILocations. The
 // splice swaps these subprograms for codegen-dwarf.ts's.
-const MLIR_PIPELINE_DEBUG = MLIR_PIPELINE.slice(0, -1) + ",ensure-debug-info-scope-on-llvm-func{emission-kind=LineTablesOnly})";
+const MLIR_PIPELINE_DEBUG = MLIR_PIPELINE.slice(0, -1) + ",ensure-debug-info-scope-on-llvm-func{emission-kind=LineTablesOnly},llvm.func(milo-lower-debug-vars))";
 
 const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
 const DEFINE_RE = new RegExp(String.raw`^define [^@]*@(${IDENT})\(`);
@@ -303,6 +304,8 @@ export class MlirPlan {
     // anything else is not something these ops lower to.
     const checkBody = (name: string, body: string[]) => {
       for (const b of body) {
+        // A local variable is the debug record `#dbg_declare(ptr %slot, !var, !DIExpression(), !loc)`.
+        if (debug && /^\s*#dbg_declare\(ptr %[-\w$.]+, !\d+, !DIExpression\(\), !\d+\)$/.test(b)) continue;
         const rest = b.replace(/, !tbaa !\d+/g, "");
         if (/ #\d+\b/.test(b) || /!\w/.test(debug ? rest.replace(/, !dbg !\d+/g, "") : rest)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
       }

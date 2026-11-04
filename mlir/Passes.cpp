@@ -4,6 +4,7 @@
 //                             proves every check in it passes, the original otherwise
 //   milo-expand-checks        bounds_check -> compare + call to the panic routine
 //   convert-milo-to-llvm      everything (milo, func, arith, cf) to the LLVM dialect
+//   milo-lower-debug-vars     -g: milo.dbg.var to llvm.intr.dbg.declare
 #include "Milo.h"
 
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -18,6 +19,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -309,6 +312,117 @@ struct VecStoreLowering : ConvertOpToLLVMPattern<VecStoreOp> {
   }
 };
 
+// -g local variables: milo.dbg.var survives convert-milo-to-llvm (and mem2reg, which cannot
+// promote past it) with the DI type of its slot; milo-lower-debug-vars then makes it a
+// dbg.declare in the function's DISubprogram.
+
+// The DI type of a slot's pointee: a scalar, or a struct of them. Null for what the
+// debugger cannot read as such (enums, strings, Vecs): they get no variable.
+LLVM::DITypeAttr diTypeOf(Type t, const LLVMTypeConverter &tc, const DataLayout &dl, DictionaryAttr names,
+                          unsigned depth = 0) {
+  MLIRContext *ctx = &tc.getContext();
+  auto basic = [&](StringRef name, uint64_t bits, unsigned enc) {
+    return LLVM::DIBasicTypeAttr::get(ctx, llvm::dwarf::DW_TAG_base_type, StringAttr::get(ctx, name), bits, enc);
+  };
+  if (auto i = dyn_cast<IntegerType>(t)) {
+    unsigned w = i.getWidth();
+    if (w == 1)
+      return basic("bool", 8, llvm::dwarf::DW_ATE_boolean);
+    bool sg = i.isSigned();
+    // C names, so a debugger renders an i32 as `int`.
+    const char *n = w == 8    ? (sg ? "signed char" : "unsigned char")
+                    : w == 16 ? (sg ? "short" : "unsigned short")
+                    : w == 32 ? (sg ? "int" : "unsigned int")
+                    : w == 64 ? (sg ? "long" : "unsigned long")
+                              : (sg ? "__int128" : "unsigned __int128");
+    return basic(n, w, sg ? llvm::dwarf::DW_ATE_signed : llvm::dwarf::DW_ATE_unsigned);
+  }
+  if (auto f = dyn_cast<FloatType>(t))
+    return basic(f.getWidth() == 32 ? "float" : "double", f.getWidth(), llvm::dwarf::DW_ATE_float);
+  auto s = dyn_cast<StructType>(t);
+  if (!s || !s.isInitialized() || depth > 4)
+    return nullptr;
+  auto fieldNames = names ? names.getAs<ArrayAttr>(s.getName()) : ArrayAttr();
+  if (!fieldNames || fieldNames.size() != s.getFields().size())
+    return nullptr;
+  SmallVector<LLVM::DINodeAttr> members;
+  uint64_t off = 0, maxAlign = 1;
+  for (auto [fty, fname] : llvm::zip(s.getFields(), fieldNames)) {
+    Type lt = tc.convertType(fty);
+    if (!lt)
+      return nullptr;
+    uint64_t al = dl.getTypeABIAlignment(lt), sz = dl.getTypeSize(lt);
+    off = llvm::alignTo(off, al);
+    maxAlign = std::max(maxAlign, al);
+    // A field the debugger cannot read is left out; the others keep their real offsets.
+    if (auto ft = diTypeOf(fty, tc, dl, names, depth + 1))
+      members.push_back(LLVM::DIDerivedTypeAttr::get(ctx, llvm::dwarf::DW_TAG_member, cast<StringAttr>(fname),
+                                                     nullptr, 0, nullptr, ft, sz * 8, al * 8, off * 8,
+                                                     std::nullopt, LLVM::DIFlags::Zero, nullptr));
+    off += sz;
+  }
+  return LLVM::DICompositeTypeAttr::get(ctx, llvm::dwarf::DW_TAG_structure_type, StringAttr::get(ctx, s.getName()),
+                                        nullptr, 0, nullptr, nullptr, LLVM::DIFlags::Zero,
+                                        llvm::alignTo(off, maxAlign) * 8, maxAlign * 8, nullptr, nullptr, nullptr,
+                                        nullptr, nullptr, nullptr, members);
+}
+
+struct DbgVarLowering : ConvertOpToLLVMPattern<DbgVarOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult matchAndRewrite(DbgVarOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    auto ref = dyn_cast<RefType>(op.getRef().getType());
+    if (!ref)
+      return failure();
+    DataLayout dl = DataLayout::closest(op);
+    auto di = diTypeOf(ref.getPointee(), *getTypeConverter(), dl, op.getFieldsAttr());
+    // A pointee with no DI type has no variable: the slot stays, the op goes.
+    if (!di) {
+      rw.eraseOp(op);
+      return success();
+    }
+    rw.modifyOpInPlace(op, [&] {
+      op.getRefMutable().assign(a.getRef());
+      op.setDiTypeAttr(di);
+    });
+    return success();
+  }
+};
+
+struct LowerDebugVarsPass : PassWrapper<LowerDebugVarsPass, OperationPass<LLVM::LLVMFuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerDebugVarsPass)
+  StringRef getArgument() const final { return "milo-lower-debug-vars"; }
+  StringRef getDescription() const final {
+    return "milo.dbg.var to llvm.intr.dbg.declare in the function's DISubprogram";
+  }
+  void getDependentDialects(DialectRegistry &r) const override { r.insert<LLVM::LLVMDialect>(); }
+  void runOnOperation() override {
+    LLVM::LLVMFuncOp fn = getOperation();
+    SmallVector<DbgVarOp> vars;
+    fn.walk([&](DbgVarOp v) { vars.push_back(v); });
+    if (vars.empty())
+      return;
+    auto fused = dyn_cast<FusedLocWith<LLVM::DISubprogramAttr>>(fn.getLoc());
+    MLIRContext *ctx = &getContext();
+    for (DbgVarOp v : vars) {
+      if (fused && v.getDiType()) {
+        Location l = v.getLoc();
+        if (auto f = dyn_cast<FusedLoc>(l))
+          l = f.getLocations().front();
+        unsigned line = 0;
+        if (auto fl = dyn_cast<FileLineColLoc>(l))
+          line = fl.getLine();
+        LLVM::DISubprogramAttr sp = fused.getMetadata();
+        auto var = LLVM::DILocalVariableAttr::get(ctx, sp, v.getNameAttr(), sp.getFile(), line,
+                                                  v.getArg().value_or(0), 0,
+                                                  cast<LLVM::DITypeAttr>(*v.getDiType()), LLVM::DIFlags::Zero);
+        OpBuilder b(v);
+        LLVM::DbgDeclareOp::create(b, v.getLoc(), v.getRef(), var);
+      }
+      v.erase();
+    }
+  }
+};
+
 struct ConvertMiloToLLVMPass
     : PassWrapper<ConvertMiloToLLVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertMiloToLLVMPass)
@@ -328,11 +442,13 @@ struct ConvertMiloToLLVMPass
     populateFuncToLLVMConversionPatterns(tc, patterns);
     arith::populateArithToLLVMConversionPatterns(tc, patterns);
     cf::populateControlFlowToLLVMConversionPatterns(tc, patterns);
-    patterns.add<VecLenLowering, VecLoadLowering, VecStoreLowering, VecElemRefLowering>(tc);
+    patterns.add<VecLenLowering, VecLoadLowering, VecStoreLowering, VecElemRefLowering, DbgVarLowering>(tc);
     populateScalarToLLVMPatterns(tc, patterns);
     populateOwnedToLLVMPatterns(tc, patterns);
     LLVMConversionTarget target(*ctx);
     target.addLegalOp<ModuleOp>();
+    target.addDynamicallyLegalOp<DbgVarOp>(
+        [](DbgVarOp o) { return isa<LLVM::LLVMPointerType>(o.getRef().getType()); });
     if (failed(applyFullConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
   }
@@ -345,6 +461,7 @@ void milo::registerPasses() {
   PassRegistration<VersionBoundsChecksPass>();
   PassRegistration<ExpandChecksPass>();
   PassRegistration<ConvertMiloToLLVMPass>();
+  PassRegistration<LowerDebugVarsPass>();
   registerScalarPasses();
   registerDropPasses();
 }

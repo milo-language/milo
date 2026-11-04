@@ -802,6 +802,44 @@ references) copies nothing.
 
 
 
+### `milo.dbg.var` (::milo::DbgVarOp)
+
+_Names a slot as a source variable for the debugger (-g only)_
+
+Syntax:
+
+```
+operation ::= `milo.dbg.var` $ref `:` type($ref) attr-dict
+```
+
+`milo.dbg.var %slot {name = "sum"}`: the slot holds the source variable `name`. Emitted
+only under `-g`, so a build without it has none. It writes the slot's resource so no
+pass drops or reorders it, and it is a user mem2reg cannot promote, which keeps the
+variable in memory for the debugger. `convert-milo-to-llvm` keeps the op, with a
+pointer operand and the DI type of the pointee in `di_type`; `milo-lower-debug-vars`
+(after the function has its DISubprogram) turns it into `llvm.intr.dbg.declare`.
+
+`arg`: the 1-based parameter number. `fields`: struct name to its field names, for the
+structs the pointee holds (the dialect's struct type has no field names).
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+<tr><td><code>arg</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>fields</code></td><td>::mlir::DictionaryAttr</td><td>dictionary of named attribute values</td></tr>
+<tr><td><code>di_type</code></td><td>::mlir::Attribute</td><td>any attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ref` | any non-token type |
+
+
+
 ### `milo.div` (::milo::DivOp)
 
 _Integer or float division_

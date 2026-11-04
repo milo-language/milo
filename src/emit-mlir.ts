@@ -624,7 +624,7 @@ class FnEmitter {
       params.push(`%p${i}: ${ty}`);
       if (ty.startsWith("!milo.vec<")) this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem: ty.slice(10, -1) });
       else if (p.type.tag === "ref") this.bind(p.name, { kind: "var", ref: `%p${i}`, ty: ty.slice(10, -1) });
-      else this.bindParam(p.name, `%p${i}`, ty, p.type);
+      else this.bindParam(p.name, `%p${i}`, ty, p.type, i + 1);
     });
     // A result that lives in memory (Repr) leaves as one SSA value, as a function's does.
     const ret = e.retType.tag === "void" ? null : this.place$(e.retType, "closure result");
@@ -646,8 +646,12 @@ class FnEmitter {
    * keeps it: one that owns goes to an owned slot of the body's scope (the callee owns it),
    * one that lives in memory (Repr) to a slot of its own, and is only a place from there.
    */
-  private bindParam(name: string, ref: string, ty: string, t: TypeKind): void {
-    if (!this.hasDrop(ty) && !inSlot(this.cx, ty)) { this.bind(name, { kind: "ssa", v: { ref, ty } }); return; }
+  private bindParam(name: string, ref: string, ty: string, t: TypeKind, arg: number): void {
+    if (!this.hasDrop(ty) && !inSlot(this.cx, ty)) {
+      this.bind(name, { kind: "ssa", v: { ref, ty } });
+      this.debugValue(name, ref, ty, t, arg);
+      return;
+    }
     const owned = this.hasDrop(ty);
     let slot: string;
     if (owned) slot = this.ownedSlot(name, ty, t);
@@ -657,6 +661,38 @@ class FnEmitter {
     }
     this.emit(`milo.store ${ref}, ${slot} : !milo.ref<${ty}>`);
     this.bind(name, { kind: "var", ref: slot, ty, owned });
+    if (!owned) this.debugVar(name, slot, ty, t, arg);
+  }
+
+  /**
+   * -g: `slot` (holding a `ty`) is the source variable `name`, for lldb's `frame variable`.
+   * Scalars and structs of them only (milo-opt drops the op for any other pointee). `arg` is
+   * the 1-based parameter number of a param.
+   */
+  private debugVar(name: string, slot: string, ty: string, t: TypeKind, arg?: number): void {
+    if (!this.cx.emitDebug || !(isScalarTy(ty) || ty.startsWith("!milo.struct<"))) return;
+    const fields: string[] = [];
+    const seen = new Set<string>();
+    const names = (k: TypeKind, depth: number) => {
+      if (k.tag !== "struct" || seen.has(k.name) || depth > 4) return;
+      seen.add(k.name);
+      const l = this.cx.structLayouts.get(k.name);
+      if (!l) return;
+      fields.push(`${quote(k.name)} = [${l.fields.map(f => quote(f.name)).join(", ")}]`);
+      for (const f of l.fields) names(f.typeKind, depth + 1);
+    };
+    names(t, 0);
+    const attrs = [`name = ${quote(name)}`, ...(arg ? [`arg = ${arg} : i32`] : []), ...(fields.length ? [`fields = {${fields.join(", ")}}`] : [])];
+    this.emit(`milo.dbg.var ${slot} : !milo.ref<${ty}> {${attrs.join(", ")}}`);
+  }
+
+  /** -g: `v`, an SSA value bound to `name`, copied to a slot of its own so the debugger has a place to read. */
+  private debugValue(name: string, v: string, ty: string, t: TypeKind, arg?: number): void {
+    if (!this.cx.emitDebug || !(isScalarTy(ty) || ty.startsWith("!milo.struct<"))) return;
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+    this.emit(`milo.store ${v}, ${slot} : !milo.ref<${ty}>`);
+    this.debugVar(name, slot, ty, t, arg);
   }
 
   run(): string {
@@ -691,7 +727,7 @@ class FnEmitter {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
       }
-      this.bindParam(p.name, `%p${i}`, ty, p.type);
+      this.bindParam(p.name, `%p${i}`, ty, p.type, i + 1);
       return `%p${i}: ${ty}`;
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0.
@@ -1740,11 +1776,12 @@ class FnEmitter {
           this.bind(s.name, { kind: "var", ref: slot, ty, owned: true });
           return false;
         }
-        if (!s.mutable) { this.bind(s.name, { kind: "ssa", v }); return false; }
+        if (!s.mutable) { this.bind(s.name, { kind: "ssa", v }); this.debugValue(s.name, v.ref, v.ty, s.type); return false; }
         const ref = this.fresh();
         this.vars.push(`  ${ref} = milo.var ${quote(s.name)} : !milo.ref<${ty}>`);
         this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${ty}>`);
         this.bind(s.name, { kind: "var", ref, ty });
+        this.debugVar(s.name, ref, ty, s.type);
         return false;
       }
       case "Assign": {
