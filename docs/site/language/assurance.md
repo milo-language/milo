@@ -93,6 +93,14 @@ so it proves that a function can't trap, without any contracts written. Across `
 examples it proves 909 sites today. Where it can't, it points at the assumption the code relies
 on but never states, which is the contract worth writing. See [contracts & proofs](/language/safety).
 
+### A spec lock for agent-written code
+
+`milo spec --diff <ref>` compares every requirement, contract clause and invariant with a git ref,
+and Z3 decides each changed clause. A strengthening passes. A weakening, a removal or a change to a
+requirement's text fails `milo trace --strict --spec-base <ref>` until a person accepts it in
+`spec-signoff.json`, and the diff prints the counterexample the weakening now allows. See the
+[worked example](https://github.com/milo-language/milo/blob/main/examples/assured/intro/README.md#6-lock-the-spec).
+
 ## Planned
 
 These are designed, and written up in the repository, but not built:
@@ -103,8 +111,6 @@ These are designed, and written up in the repository, but not built:
 - **Safe parallelism with no deadlocks:** parallel scopes checked by the same rule that keeps
   `&mut` arguments apart, locks with levels so lock order can't form a cycle, and lock
   invariants proved by induction over critical sections.
-- **A spec lock for agent-written code:** a change that strengthens a contract merges on its own;
-  one that weakens it needs a human, decided by the solver.
 - **Check Z3's proof output:** the prover asks Z3 for a proof, and a tiny independent
   checker verifies it, so trust rests on that checker rather than on the solver.
 
