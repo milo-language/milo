@@ -37,6 +37,7 @@ export const ALLOW: Record<string, string> = {
   "interp.ts:litEq": "literal-pattern equality helper for match arms",
   "interp.ts:describe": "formats a value for stuck messages",
   "interp.ts:describeExpr": "formats an expression for stuck messages",
+  "interp-natives.ts:natSort": "NaN-safe stable sort helper behind Vec.sort",
   "interp-natives.ts:natCmp": "ordering of two values for sort and min/max natives",
   "interp-natives.ts:nativeFor": "native table lookup by name",
   "interp-natives.ts:renderParts": "formats print arguments into text, no rule beyond the output order",
@@ -48,7 +49,6 @@ export const ALLOW: Record<string, string> = {
   "interp-run.ts:interpOptions": "parses the command-line flags",
   "interp-values.ts:fmtFloat": "float to text, the format print uses",
   "interp-sys.ts:unmodelled": "builds the InterpUnsupported message for an extern the C layer does not model",
-  "interp-sys.ts:callExtern": "dispatch by C symbol; each handler in the table cites its rule",
 };
 
 export interface Fn { file: string; name: string; line: number; ids: string[] }

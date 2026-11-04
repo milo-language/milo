@@ -15,7 +15,7 @@ import { Layout } from "./layout";
 import type { TypeKind } from "./types";
 import type { Expr } from "./ast";
 import { unique } from "./interp-natives";
-import { staticStr, type Place, type Ref, type Slot, type Str, type Struct, type Value, type VecV } from "./interp-values";
+import { staticStr, type BoxV, type Place, type Ref, type Slot, type Str, type Struct, type Value, type VecBuf, type VecV } from "./interp-values";
 
 export interface PtrV { k: "ptr"; a: Alloc; off: number }
 export const isPtr = (v: unknown): v is PtrV => !!v && typeof v === "object" && (v as { k?: string }).k === "ptr";
@@ -29,6 +29,7 @@ interface Backing {
 
 export class Alloc {
   live = true;
+  owner?: BoxV | VecBuf; // the Heap or Vec buffer whose ptr() this allocation is, so adopt can take it back
   freedBy = "";
   constructor(
     readonly id: number, readonly base: number, readonly reserve: number, readonly kind: "heap" | "static" | "view" | "map",
@@ -40,6 +41,8 @@ export class Alloc {
 
 class Raw implements Backing {
   bytes: Uint8Array;
+  // Values with no byte form (a struct holding a string or Vec) stored here, by offset: the Value itself, as a bitwise copy of its header words would be
+  vals = new Map<number, { ty: TypeKind; v: Value }>();
   constructor(n: number) { this.bytes = new Uint8Array(n); }
   // R-MEM-OOB
   size() { return this.bytes.length; }
@@ -202,7 +205,53 @@ export class Mem {
     if (!h.buf) return 0n;
     const b = h.buf;
     const a = this.viewOf(b, "elems", elem, { count: () => b.elems.length, get: i => b.elems[i], set: (i, v) => { b.elems[i] = v; }, live: () => b.id < 0 || this.it.blocks.has(b.id) });
+    a.owner = b;
     return this.ptr(a, h.start * this.sizeOf(elem));
+  }
+  // `h.ptr()`: the box's cell, as a block the pointer can hand to free() or adopt() (the Heap's own allocation)
+  // R-MEM-ADOPT
+  heapPtr(box: BoxV, inner: TypeKind): Value {
+    let m = this.views.get(box.cell);
+    if (!m) this.views.set(box.cell, (m = new Map()));
+    let a = m.get("heap");
+    if (!a) {
+      const src: ElemSrc = { count: () => 1, get: () => box.cell.v, set: (_i, v) => { box.cell.v = v; }, live: () => this.it.blocks.has(box.id) };
+      m.set("heap", (a = this.make("heap", new ElemView(this, inner, this.sizeOf(inner), src), false, box.id)));
+      a.owner = box;
+    }
+    return this.ptr(a, 0);
+  }
+  // adoptHeap(p): the Heap that p came from taken back, or a Heap standing on a malloc'd block (its drop frees the block)
+  // R-MEM-ADOPT
+  adoptHeap(p: Value, inner: TypeKind): Value {
+    const q = this.asPtr(p, "adopt");
+    if (q.a.kind !== "heap" || q.off !== 0) this.it.stuck("R-MEM-FREE-INVALID", `adopt of a pointer that is not the start of a heap block (${this.describe(q)})`);
+    if (!q.a.isLive()) this.it.stuck("R-MEM-UAF", `adopt of freed ${this.describe(q)}`);
+    const o = q.a.owner;
+    if (o && (o as BoxV).k === "box") return o as BoxV;
+    const cell = memSlot(this, q, inner) as unknown as { v: Value };
+    return { k: "box", id: q.a.block, cell, raw: q.a };
+  }
+  // adoptVec(p, len): the Vec whose buffer p points into, cut to len elements (capacity = len), or a Vec over a malloc'd block
+  // R-MEM-ADOPT
+  adoptVec(p: Value, len: number, elem: TypeKind): Value {
+    const q = this.asPtr(p, "adopt");
+    const o = q.a.owner;
+    const es = this.sizeOf(elem);
+    if (o && (o as VecBuf).elems) {
+      const b = o as VecBuf, start = q.off / es;
+      if (!q.a.isLive()) this.it.stuck("R-MEM-UAF", `adopt of freed ${this.describe(q)}`);
+      if (start + len > b.elems.length) this.it.stuck("R-MEM-OOB", `adopt of ${len} elements past the end of ${this.describe(q)}`);
+      b.elems.length = start + len;
+      return { k: "vec", buf: b, start, len, cap: len, view: false };
+    }
+    if (q.a.kind !== "heap" || q.off !== 0) this.it.stuck("R-MEM-FREE-INVALID", `adopt of a pointer that is not the start of a heap block (${this.describe(q)})`);
+    const at = (i: number) => this.advance(q, i * es);
+    const elems = new Proxy([] as Value[], {
+      get: (tg, k, r) => (k === "length" ? len : typeof k === "string" && /^\d+$/.test(k) ? this.load(at(Number(k)), elem) : Reflect.get(tg, k, r)),
+      set: (tg, k, v, r) => { if (typeof k === "string" && /^\d+$/.test(k)) { this.store(at(Number(k)), elem, v as Value); return true; } return k === "length" || Reflect.set(tg, k, v, r); },
+    });
+    return { k: "vec", buf: { id: q.a.block, elems }, start: 0, len, cap: len, view: false };
   }
   // `s.cstr()`: a NUL-terminated copy. Nothing frees it and the string does not see writes to it, as C's `const char *`.
   // R-MEM-CSTR
@@ -258,7 +307,7 @@ export class Mem {
   // `x.addrOf()`: the bytes of a place. A fixed array is its elements, any other value one element of its type.
   // R-MEM-ADDROF
   placePtr(pl: Place, ty: TypeKind): Value {
-    if (pl.slot.mem) return pl.slot.mem;
+    if (pl.slot.mem && pl.path.length === 0) return pl.slot.mem;
     const it = this.it;
     const key = pl.path.join("/") + "|" + ty.tag;
     if (ty.tag === "array" && ty.size !== null) {
@@ -267,6 +316,16 @@ export class Mem {
       return this.ptr(a, 0);
     }
     if (ty.tag === "vec") return this.vecHeadPtr(pl, key, ty.element);
+    if (ty.tag === "heap") { // the slot holding the box pointer: reads give h.ptr(), a write adopts the pointer into the slot
+      const pt: TypeKind = { tag: "ptr", inner: ty.inner };
+      const a = this.viewOf(pl.slot, key, pt, {
+        count: () => 1,
+        get: () => this.heapPtr(it.getPlace(pl) as BoxV, ty.inner),
+        set: (_i, v) => it.setPlace(pl, this.adoptHeap(v, ty.inner)),
+        live: () => !pl.slot.dead,
+      });
+      return this.ptr(a, 0);
+    }
     if (!["int", "float", "bool", "ptr", "struct", "array"].includes(ty.tag)) return it.unsupported(`.addrOf() of a ${ty.tag}`);
     const a = this.viewOf(pl.slot, key, ty, { count: () => 1, get: () => it.getPlace(pl), set: (_i, v) => it.setPlace(pl, v), live: () => !pl.slot.dead });
     return this.ptr(a, 0);
@@ -389,6 +448,37 @@ export class Mem {
     }
     return false;
   }
+  // A malloc'd block holds a Value with no byte form at an offset of its own (the bytes of that range are not meaningful)
+  // R-MEM-LOAD
+  private rawValueHome(p: Value, ty: TypeKind, write: boolean): { be: Raw; off: number } | null {
+    const { be, off } = this.access(p, this.sizeOf(ty), 1, write, write ? "store" : "load");
+    return be instanceof Raw ? { be, off } : null;
+  }
+  // A scalar access inside a Value kept in a block (a field of a struct with a string in it) reads and writes that field of the Value
+  // R-MEM-LOAD
+  private fieldInStoredValue(be: Raw, off: number, want: TypeKind): { get(): Value; set(v: Value): void } | null {
+    for (const [k, e] of be.vals) {
+      const size = this.sizeOf(e.ty);
+      if (off >= k && off < k + size) return this.fieldLoc(e.ty, e.v, off - k, want);
+    }
+    return null;
+  }
+  // R-MEM-LOAD
+  private fieldLoc(sty: TypeKind, sv: Value, rel: number, want: TypeKind): { get(): Value; set(v: Value): void } | null {
+    if (sty.tag !== "struct" || !sv || typeof sv !== "object" || sv.k !== "struct") return null;
+    const sl = this.layout.structLayouts.get(sty.name);
+    if (!sl) return null;
+    const ftys = sl.fields.map(f => f.type);
+    for (let i = 0; i < sl.fields.length; i++) {
+      const fd = sl.fields[i]!, foff = this.layout.structFieldOffset(ftys, i);
+      if (rel < foff || rel >= foff + this.sizeOf(fd.typeKind)) continue;
+      const ft = fd.typeKind;
+      const same = ft.tag === want.tag && (ft.tag !== "int" || (ft.bits === (want as typeof ft).bits && ft.signed === (want as typeof ft).signed)) && (ft.tag !== "float" || ft.bits === (want as typeof ft).bits);
+      if (rel === foff && same) return { get: () => sv.f[fd.name]!, set: x => { sv.f[fd.name] = x; } };
+      return this.fieldLoc(ft, sv.f[fd.name]!, rel - foff, want);
+    }
+    return null;
+  }
   // R-MEM-LOAD
   private valueView(p: Value, ty: TypeKind, write: boolean): { v: ElemView; i: number } {
     const n = this.sizeOf(ty);
@@ -399,17 +489,36 @@ export class Mem {
   }
   // R-MEM-LOAD
   load(p: Value, ty: TypeKind): Value {
-    if (!this.encodable(ty)) { const { v, i } = this.valueView(p, ty, false); return v.src.get(i); }
+    if (!this.encodable(ty)) {
+      const raw = this.rawValueHome(p, ty, false);
+      if (raw) { // never stored: the zeroed block's zero value, kept so later writes through its fields stick
+        let e = raw.be.vals.get(raw.off);
+        if (!e) raw.be.vals.set(raw.off, (e = { ty, v: this.zero(ty) }));
+        return e.v;
+      }
+      const { v, i } = this.valueView(p, ty, false);
+      return v.src.get(i);
+    }
     const n = this.sizeOf(ty);
     const { be, off } = this.access(p, n, Math.min(8, this.alignOf(ty)), false, "load");
+    const loc = be instanceof Raw ? this.fieldInStoredValue(be, off, ty) : null;
+    if (loc) return loc.get();
     const b = be.read(off, n);
     return this.decode(ty, new DataView(b.buffer, b.byteOffset, b.byteLength), 0);
   }
   // R-MEM-STORE
   store(p: Value, ty: TypeKind, v: Value): void {
-    if (!this.encodable(ty)) { const { v: vw, i } = this.valueView(p, ty, true); vw.src.set(i, v); return; }
+    if (!this.encodable(ty)) {
+      const raw = this.rawValueHome(p, ty, true);
+      if (raw) { raw.be.vals.set(raw.off, { ty, v }); return; }
+      const { v: vw, i } = this.valueView(p, ty, true);
+      vw.src.set(i, v);
+      return;
+    }
     const n = this.sizeOf(ty);
     const { be, off } = this.access(p, n, Math.min(8, this.alignOf(ty)), true, "store");
+    const loc = be instanceof Raw ? this.fieldInStoredValue(be, off, ty) : null;
+    if (loc) { loc.set(v); return; }
     const b = new Uint8Array(n);
     this.encode(v, ty, new DataView(b.buffer), 0);
     be.write(off, b);
@@ -448,6 +557,15 @@ export class Mem {
   // R-MEM-COPY
   memset(dst: Value, c: number, n: number): void {
     if (n === 0) return;
+    const da = isPtr(dst) ? dst.a.be : undefined;
+    // zeroing Values with no byte form: each becomes the zero value of its type, unseen by any drop (as zeroed bytes are)
+    if (da instanceof ElemView && !this.encodable(da.ty) && c === 0 && n % da.es === 0) {
+      const d = this.valueView(dst, da.ty, true);
+      this.access(dst, n, 1, true, "memset");
+      for (let j = 0; j < n / da.es; j++) d.v.src.set(d.i + j, this.zero(da.ty));
+      return;
+    }
+    if (da instanceof Raw) for (const k of [...da.vals.keys()]) if (isPtr(dst) && k >= dst.off && k < dst.off + n) da.vals.delete(k);
     this.writeBytes(dst, new Uint8Array(n).fill(c & 255), "memset");
   }
   // the bytes of a NUL-terminated string, the NUL excluded; running off the allocation is R-MEM-OOB

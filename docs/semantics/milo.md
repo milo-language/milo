@@ -366,3 +366,48 @@ stay replaced by the natives in `src/interp-natives.ts`.
 Not modelled (reported as `InterpUnsupported`): the extern functions above not in the list, `atexit`,
 `embedFile`, `jsonStringify`, record/replay wrappers, and a raw view of a value with no byte layout
 (strings, Vecs, HashMaps, enums, closures).
+
+### Interpreter gaps: library behaviour and the C layer, continued
+
+Rules added while closing the programs the interpreter reported as unsupported. The
+interpreter behaviour of `_natLess`, string pieces (`lines`, `splitView`), `?` boxing and `context`
+is the compiled one and is covered by E-VEC, E-NEW-ITER and E-IFACE above.
+
+| Rule | Statement |
+|---|---|
+| R-INT-BITS | `x.rotateLeft(n)` and `x.rotateRight(n)` rotate the bits of the integer's width by n mod width. `x.reverseBits()` reverses them. `x.checkedNeg()` is `Some(-x)`, or `None` when -x does not fit (any non-zero unsigned value, or the minimum of a signed width). |
+| R-JSON-STRINGIFY | `jsonStringify(s)` of a struct whose fields are strings, integers, floats and bools is `{"field":value,...}` in field order: a string is escaped as RFC 8259 (`"`, `\`, newline, tab, return, other bytes below 0x20 as `\u00xx`), numbers print as `print` shows them. A struct given to a `json(body: string)` method parameter is its `toJson()` when it has one, else the same text. |
+| R-EMBED-FILE | `@embedFile("p")` is the bytes of the file `p`, relative to the source file that names it, read when the call runs. Only a driver that hands in a host file reader (`milo interp`) can run it; elsewhere it is unsupported. A file that cannot be opened is stuck. |
+
+### Interpreter gaps: memory and C layer additions
+
+| Rule | Statement |
+|---|---|
+| R-MEM-ADOPT | `h.ptr()` of a `Heap<T>` is a pointer to the box's contents, a block of its own that `free` or `adopt` accepts. `h.addrOf()` is the address of the slot that holds the box: reading `*slot` gives `h.ptr()`. `adopt(p)` of a pointer a Heap gave out is that same box taken back; of a `malloc` block it is a box whose contents are the memory at p and whose drop frees the block. `adoptSlice(p, n)` of a pointer a Vec gave out is that Vec cut to n elements (capacity n); of a `malloc` block it is a Vec over the memory whose drop frees it. Any other pointer is R-MEM-FREE-INVALID. A user method named `ptr` on T wins over `Heap.ptr()`. |
+| R-MEM-NULLREF | `let g = p else { ... }` over a `?&T` or `?&mut T` parameter runs the else block when p is null, and otherwise binds g to a reference to the memory p names (a Milo caller's reference is bound as it is). |
+| R-SYS-LIBC | `strtoll`, `strtol` (64-bit), `strtoul`, `strtoull` skip leading space, take a sign, a `0x` prefix for base 16 (or 0) and digits of the base, set `*endptr` to the first byte not used (the start when there is no number) and saturate with errno ERANGE. `strtod` reads a decimal, `inf`, `nan` or `0x` integer prefix the same way. `setlocale` succeeds for the names "C", "POSIX", "" and any UTF-8 name and returns that name (the locale itself is always C); any other name returns null. `uname` fills `struct utsname` (256-byte fields on darwin, 65 on linux) with the host OS name, "milo", "0.0", "milo interpreter" and the architecture. `ioctl` fails with ENOTTY, since no descriptor is a terminal (`isatty` is 0). `proc_pidpath` writes the absolute path of the program file the driver was given. |
+| R-SYS-TIME | `localtime_r`, `gmtime_r`, `mktime` and `strftime` use a time zone that is UTC unless the program's `TZ` (its own environment, R-SYS-ENV) names another: "UTC", a POSIX `NAMEhh[:mm]` (hours west of Greenwich; a DST rule after it is ignored, there is no DST) or an IANA name resolved by the host's `Intl`. `struct tm` is the nine leading ints, `tm_gmtoff` at offset 40 and `tm_zone` at 48. `strftime` implements `%Y %y %C %m %d %e %H %I %M %S %j %a %A %b %B %h %p %u %w %Z %z %s %F %T %R %D %c %x %X %n %t %%` in the C locale, and returns 0 when the result and its NUL do not fit. |
+| R-SYS-PRINTF | `printf` writes to the stdout buffer (R-SYS-FD) and `snprintf` / `sprintf` to memory, with the conversions `d i u x X o c s p f F e E g G %`, flags `- + space # 0`, width, precision (both may be `*`) and the length modifiers `hh h l ll z j t`. A string passed where C takes `char *` (also as a variadic argument) is its NUL-terminated bytes. The result is the number of bytes the full output has. |
+| R-SYS-SYMLINK | The in-memory filesystem has symbolic links: `symlink(target, path)` makes a node holding the target path, `readlink` reads it back (EINVAL for anything else), `lstat` reports `S_IFLNK` and `readdir` reports `DT_LNK` for it, `unlink` removes the link itself. `stat`, `open`, `access`, `opendir`, `chdir` and `chmod` follow a chain of up to 8 links, a relative target being relative to the link's directory. `chmod(path, mode)` sets the permission bits `stat` reports. |
+
+### Foreign code (CLI only)
+
+Under `milo interp` (Bun) some externs run in the real library instead of being modelled: the sqlite3 C API, the
+CommonCrypto `CC_*` calls, and the functions of a `foo.c` beside `foo.milo`. The driver injects the foreign layer
+(`src/interp-ffi.ts`, which imports `bun:ffi`); the browser bundle has none, and there those externs are
+`InterpUnsupported` as before. An extern the interpreter models itself (R-SYS-*) is never sent to the foreign layer.
+Not supported through it: a struct passed or returned by value, a variadic call, a callback (a function pointer
+argument), OpenSSL, CoreFoundation.
+
+| Rule | Statement |
+|---|---|
+| R-FFI-LIB | The foreign layer handles `sqlite3_*` (the system libsqlite3), `CC_*` / `CCCrypt*` (libSystem, darwin) and, when a `foo.c` sits beside the program, every other extern symbol, looked up in that file compiled to a shared library with the system C compiler the first time one of its functions is called. A symbol the library does not have is unsupported. |
+| R-FFI-CALL | A foreign call passes integers, floats and bools by value. A pointer argument that is an interpreter pointer is copied, from the pointer to the end of its allocation, into a native buffer for the call and copied back afterwards when the library changed it (an out-parameter, a context struct); a null pointer or an address no allocation owns (a `sqlite3*`, a statement, `SQLITE_TRANSIENT`) goes through as the integer it is. A pointer result that points into an argument's buffer is a pointer into that argument; a C string result (`sqlite3_column_text`, `sqlite3_errmsg`, `sqlite3_column_name`) is a read-only interpreter copy, as long as `sqlite3_column_bytes` says for text; any other pointer result is an opaque address, held and compared but never followed (R-MEM-PROVENANCE). `sqlite3_bind_text` and `_blob` are always told the value is transient. |
+| R-FFI-SQLITE-PATH | The interpreter's filesystem is in memory, so a database file that `sqlite3_open*`, `ATTACH` or `VACUUM INTO` names by a path of it is made at the same path under a private directory of the host's temp directory, removed when the process exits. The file shows in the interpreter's filesystem (`stat`, read) once it exists, and deleting it there deletes it. `:memory:`, the empty name and `file:` URIs go to sqlite unchanged. |
+| R-FFI-COMPANION | The companion C file is compiled with `xcrun clang` (darwin) or `cc` to a shared library in a fresh temp directory; a compile error is reported as the run's failure. |
+
+### Regular expressions
+
+| Rule | Statement |
+|---|---|
+| R-SYS-REGEX | `regcomp` translates a POSIX extended regular expression to a JavaScript one in unicode mode (a character is a code point, as in the UTF-8 locale std/regex asks for; bracket classes such as `[[:alpha:]]`, `\<` and `\>`, `{n,m}`, REG_ICASE and REG_NEWLINE are translated), keeps it under an id written into the first 8 bytes of the `regex_t` (so a copy of the `regex_t` still works), and answers REG_BADPAT (2) for a pattern it cannot translate. `regexec` searches the byte range in `pmatch[0]` when REG_STARTEND is set and the bytes up to the NUL otherwise, with REG_NOTBOL keeping `^` from matching at the start of the range; it fills `pmatch` with byte offsets (-1 for a group that did not take part) and answers REG_NOMATCH (1) when nothing matches. JavaScript tries alternatives left to right where POSIX takes the longest match, so a pattern whose alternatives overlap can match shorter here. `regfree` forgets the expression. |

@@ -11,6 +11,7 @@ import type { Function as AstFn } from "./ast";
 import type { Interp } from "./interp";
 import { wrapInt } from "./interp";
 import { ExitProgram, enc, type Value } from "./interp-values";
+import { LIBC } from "./interp-libc";
 
 // What the interpreter may read of the real filesystem. Read-only by construction: there is no write method.
 export interface HostFs {
@@ -18,7 +19,17 @@ export interface HostFs {
   readdir(path: string): { name: string; dir: boolean }[] | null;
   stat(path: string): { size: number; dir: boolean; mtimeMs: number } | null;
 }
+// Code outside the interpreter that runs some externs for real (a wrapped C library, the program's companion C file).
+// The CLI driver injects one under Bun (src/interp-ffi.ts); the browser bundle has none and those externs stay unsupported.
+export interface Foreign {
+  handles(sym: string): boolean;
+  call(it: Interp, sym: string, fn: AstFn, args: Value[]): Value;
+  // a file the foreign code made at a path of the interpreter's filesystem (a database file), so the program can stat, read and delete it
+  mirror?(path: string): { size: number; dir: boolean; mtimeMs: number; data: Uint8Array } | null;
+  unlink?(path: string): void;
+}
 export interface SysOptions {
+  foreign?: Foreign;
   hostFs?: HostFs;
   // host paths the program may read: its own directory by default, "/" under --host-fs
   hostRoots?: string[];
@@ -28,9 +39,9 @@ export interface SysOptions {
   argv0?: string;
 }
 
-interface Node { dir: boolean; data: Uint8Array; size: number; mode: number; mtimeMs: number; dev?: "null" | "zero" | "random" }
+interface Node { link?: string; dir: boolean; data: Uint8Array; size: number; mode: number; mtimeMs: number; dev?: "null" | "zero" | "random" }
 interface Fd { node: Node | null; path: string; pos: number; read: boolean; write: boolean; append: boolean; std?: 0 | 1 | 2 }
-interface DirStream { names: { name: string; dir: boolean }[]; i: number; ent: Value }
+interface DirStream { names: { name: string; dir: boolean; link?: boolean }[]; i: number; ent: Value }
 
 const ERRNO = { EPERM: 1, ENOENT: 2, EBADF: 9, EACCES: 13, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOSPC: 28, ESPIPE: 29, ERANGE: 34 };
 const platform = (): "darwin" | "linux" => (typeof process !== "undefined" && process.platform === "linux" ? "linux" : "darwin");
@@ -87,7 +98,14 @@ export class Sys {
   lookup(p: string): Node | null {
     const hit = this.files.get(p);
     if (hit) return hit;
-    if (this.gone.has(p) || !this.hostAllowed(p)) return null;
+    if (this.gone.has(p)) return null;
+    const mirrored = this.o.foreign?.mirror?.(p);
+    if (mirrored) {
+      const node: Node = { dir: mirrored.dir, data: mirrored.data, size: mirrored.size, mode: 0o644, mtimeMs: mirrored.mtimeMs };
+      this.files.set(p, node);
+      return node;
+    }
+    if (!this.hostAllowed(p)) return null;
     const st = this.o.hostFs!.stat(p);
     if (!st) return null;
     // a host file is copied in when first touched; later reads see the copy, so a run never sees the host change under it
@@ -95,12 +113,21 @@ export class Sys {
     this.files.set(p, n);
     return n;
   }
+  // R-SYS-SYMLINK: the path a chain of symbolic links ends at (a link is relative to its own directory); a loop of more than 8 stops where it is
+  follow(p: string): string {
+    for (let i = 0; i < 8; i++) {
+      const l = this.files.get(p)?.link;
+      if (l === undefined) return p;
+      p = norm(parentOf(p), l);
+    }
+    return p;
+  }
   // R-SYS-FS
-  list(p: string): { name: string; dir: boolean }[] {
-    const out = new Map<string, boolean>();
-    if (this.hostAllowed(p)) for (const e of this.o.hostFs!.readdir(p) ?? []) if (!this.gone.has(norm(p, e.name))) out.set(e.name, e.dir);
-    for (const [k, n] of this.files) if (k !== p && parentOf(k) === p) out.set(k.slice(p === "/" ? 1 : p.length + 1), n.dir);
-    return [...out].map(([name, dir]) => ({ name, dir }));
+  list(p: string): { name: string; dir: boolean; link?: boolean }[] {
+    const out = new Map<string, { dir: boolean; link?: boolean }>();
+    if (this.hostAllowed(p)) for (const e of this.o.hostFs!.readdir(p) ?? []) if (!this.gone.has(norm(p, e.name))) out.set(e.name, { dir: e.dir });
+    for (const [k, n] of this.files) if (k !== p && parentOf(k) === p) out.set(k.slice(p === "/" ? 1 : p.length + 1), { dir: n.dir, link: n.link !== undefined });
+    return [...out].map(([name, v]) => ({ name, ...v }));
   }
   // R-SYS-FS
   create(p: string, dir: boolean, mode: number): Node {
@@ -140,7 +167,7 @@ function statInto(s: Sys, node: Node, buf: Value): void {
   const sizeOff = at("statSizeOffset", plat === "darwin" ? 96 : 48);
   const mtimeOff = at("statMtimeOffset", plat === "darwin" ? 48 : 88);
   const nsecOff = at("statMtimeNsecOffset", plat === "darwin" ? 56 : 96);
-  const mode = (node.dir ? 0o040000 : 0o100000) | node.mode;
+  const mode = (node.link !== undefined ? 0o120000 : node.dir ? 0o040000 : 0o100000) | node.mode;
   m.store(m.advance(buf, modeOff), plat === "darwin" ? U16 : { tag: "int", bits: 32, signed: false }, BigInt(mode));
   m.store(m.advance(buf, sizeOff), I64, BigInt(node.size));
   if (mtimeOff >= 0) m.store(m.advance(buf, mtimeOff), I64, BigInt(Math.floor(node.mtimeMs / 1000)));
@@ -214,6 +241,7 @@ function unlinkSys(s: Sys, p: string, dirOnly: boolean): bigint {
   if (dirOnly && s.list(p).length) return s.setErrno(ENOTEMPTY());
   s.files.delete(p);
   s.gone.add(p);
+  s.o.foreign?.unlink?.(p);
   return 0n;
 }
 
@@ -261,7 +289,29 @@ export const SYS: Record<string, SysFn> = {
   munmap: (s, [p]) => { s.it.mem.unmap(p!); return 0n; },
   mprotect: (s, [p, _len, prot]) => { s.it.mem.protect(p!, !!(n(prot) & 2)); return 0n; },
   fflush: () => 0n,
-  readlink: (s, [p]) => { const node = s.lookup(path(s, p!)); return s.setErrno(node ? ERRNO.EINVAL : ERRNO.ENOENT); }, // there are no symlinks
+  // R-SYS-SYMLINK
+  readlink: (s, [p, buf, size]) => {
+    const node = s.lookup(path(s, p!));
+    if (!node) return s.setErrno(ERRNO.ENOENT);
+    if (node.link === undefined) return s.setErrno(ERRNO.EINVAL);
+    const b = enc.encode(node.link).subarray(0, n(size));
+    s.it.mem.writeBytes(buf!, b, "readlink");
+    return BigInt(b.length);
+  },
+  // R-SYS-SYMLINK: a link is a node holding its target path; stat, open, access, opendir and chdir follow it, lstat and unlink do not
+  symlink: (s, [target, p]) => {
+    const q = path(s, p!);
+    if (s.lookup(q)) return s.setErrno(ERRNO.EEXIST);
+    const parent = s.lookup(parentOf(q));
+    if (!parent || !parent.dir) return s.setErrno(ERRNO.ENOENT);
+    const t = cstr(s, target!);
+    const node = s.create(q, false, 0o777);
+    node.link = t;
+    node.size = enc.encode(t).length;
+    return 0n;
+  },
+  // R-SYS-SYMLINK
+  chmod: (s, [p, mode]) => { const node = s.lookup(s.follow(path(s, p!))); if (!node) return s.setErrno(ERRNO.ENOENT); node.mode = n(mode) & 0o7777; return 0n; },
   strlen: (s, [p]) => BigInt(s.it.mem.cstring(p!, "strlen").length),
   strcmp: (s, [a, b]) => {
     const x = s.it.mem.cstring(a!, "strcmp"), y = s.it.mem.cstring(b!, "strcmp");
@@ -278,7 +328,7 @@ export const SYS: Record<string, SysFn> = {
   // ── file descriptors (R-SYS-FD) ──
   read: (s, [fd, buf, k]) => { const f = s.fds.get(n(fd)); return f ? readFd(s, f, buf!, n(k)) : s.setErrno(ERRNO.EBADF); },
   write: (s, [fd, buf, k]) => { const f = s.fds.get(n(fd)); return f ? writeFd(s, f, buf!, n(k)) : s.setErrno(ERRNO.EBADF); },
-  open: (s, [p, flags, mode]) => openPath(s, path(s, p!), n(flags), mode === undefined ? 0o666 : n(mode)),
+  open: (s, [p, flags, mode]) => openPath(s, s.follow(path(s, p!)), n(flags), mode === undefined ? 0o666 : n(mode)),
   close: (s, [fd]) => (s.fds.delete(n(fd)) ? 0n : s.setErrno(ERRNO.EBADF)),
   lseek: (s, [fd, off, wh]) => {
     const f = s.fds.get(n(fd));
@@ -296,9 +346,9 @@ export const SYS: Record<string, SysFn> = {
     statInto(s, f.node ?? { dir: false, data: new Uint8Array(0), size: 0, mode: 0o620, mtimeMs: s.now() }, buf!);
     return 0n;
   },
-  stat: (s, [p, buf]) => { const node = s.lookup(path(s, p!)); if (!node) return s.setErrno(ERRNO.ENOENT); statInto(s, node, buf!); return 0n; },
-  lstat: (s, [p, buf]) => SYS.stat!(s, [p, buf]),
-  access: (s, [p]) => (s.lookup(path(s, p!)) ? 0n : s.setErrno(ERRNO.ENOENT)),
+  stat: (s, [p, buf]) => { const node = s.lookup(s.follow(path(s, p!))); if (!node) return s.setErrno(ERRNO.ENOENT); statInto(s, node, buf!); return 0n; },
+  lstat: (s, [p, buf]) => { const node = s.lookup(path(s, p!)); if (!node) return s.setErrno(ERRNO.ENOENT); statInto(s, node, buf!); return 0n; },
+  access: (s, [p]) => (s.lookup(s.follow(path(s, p!))) ? 0n : s.setErrno(ERRNO.ENOENT)),
   ftruncate: (s, [fd, len]) => { const f = s.fds.get(n(fd)); if (!f?.node || !f.write) return s.setErrno(ERRNO.EBADF); s.grow(f.node, n(len)); return 0n; },
   truncate: (s, [p, len]) => { const node = s.lookup(path(s, p!)); if (!node || node.dir) return s.setErrno(ERRNO.ENOENT); s.grow(node, n(len)); return 0n; },
   fsync: (s, [fd]) => (s.fds.has(n(fd)) ? 0n : s.setErrno(ERRNO.EBADF)),
@@ -325,7 +375,7 @@ export const SYS: Record<string, SysFn> = {
     s.it.mem.writeBytes(buf!, b, "getcwd");
     return buf;
   },
-  chdir: (s, [p]) => { const q = path(s, p!), node = s.lookup(q); if (!node || !node.dir) return s.setErrno(ERRNO.ENOENT); s.cwd = q; return 0n; },
+  chdir: (s, [p]) => { const q = s.follow(path(s, p!)), node = s.lookup(q); if (!node || !node.dir) return s.setErrno(ERRNO.ENOENT); s.cwd = q; return 0n; },
   mkdtemp: (s, [tmpl]) => {
     const t = s.it.mem.cstring(tmpl!, "mkdtemp");
     const name = new TextDecoder().decode(t).replace(/X+$/, m => Array.from(randomBytes(m.length), b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join(""));
@@ -340,7 +390,7 @@ export const SYS: Record<string, SysFn> = {
     return fd;
   },
   opendir: (s, [p]) => {
-    const q = path(s, p!), node = s.lookup(q);
+    const q = s.follow(path(s, p!)), node = s.lookup(q);
     if (!node) { s.setErrno(ERRNO.ENOENT); return 0n; }
     if (!node.dir) { s.setErrno(ERRNO.ENOTDIR); return 0n; }
     const handle = s.it.mem.staticBytes(new Uint8Array(8));
@@ -357,7 +407,7 @@ export const SYS: Record<string, SysFn> = {
     const typeOff = platform() === "darwin" ? 20 : 18, nameOff = platform() === "darwin" ? 21 : 19;
     const at = (name: string, dflt: number) => { const f = s.it.fns.get(name); return f && !f.isExtern ? n(s.it.callFn(f, [])) : dflt; };
     m.writeBytes(st.ent, new Uint8Array(1024), "readdir");
-    m.store(m.advance(st.ent, at("direntTypeOffset", typeOff)), U8, e.dir ? 4n : 8n);
+    m.store(m.advance(st.ent, at("direntTypeOffset", typeOff)), U8, e.link ? 10n : e.dir ? 4n : 8n);
     m.writeBytes(m.advance(st.ent, at("direntNameOffset", nameOff)), new Uint8Array([...enc.encode(e.name), 0]), "readdir");
     return st.ent;
   },
@@ -447,12 +497,19 @@ function unmodelled(sym: string): string {
 
 export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
   const sym = fn.linkName ?? fn.name;
-  const impl = SYS[sym];
-  if (!impl) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
+  const impl = (SYS[sym] ?? LIBC[sym]) as SysFn | undefined;
+  const foreign = impl ? undefined : it.sysOptions.foreign;
+  if (!impl && !foreign?.handles(sym)) return it.unsupported(`extern ${sym}${unmodelled(sym)}`);
   const s = (it.sys ??= new Sys(it, it.sysOptions));
   const sig = it.cr.functions.get(fn.name);
   const held: Value[] = [];
-  const r = impl(s, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type, held)));
+  if (!impl) { // R-FFI-CALL
+    const r = foreign!.call(it, sym, fn, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type, held)));
+    for (const h of held) it.dropValue(h);
+    return r;
+  }
+  // a variadic argument has no declared type: a string or array there is passed as the pointer C would be given
+  const r = impl(s, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type ?? { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, held)));
   for (const h of held) it.dropValue(h);
   const rt = sig?.ret;
   return typeof r === "bigint" && rt?.tag === "int" ? wrapInt(r, rt) : r;

@@ -21,7 +21,7 @@ import {
 } from "./interp-values";
 import { Mem, isPtr, memSlot } from "./interp-mem";
 import { callExtern, type Sys, type SysOptions } from "./interp-sys";
-import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
+import { BUILTIN_FNS, builtinCall, concat, jsonStringify, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
 // Control flow raised from expression position (`?`, a diverging if/match arm): caught by the
@@ -217,7 +217,7 @@ export class Interp {
         for (let i = 0; i < v.len; i++) this.dropValue(v.buf.elems[v.start + i]!);
         this.free(v.buf.id);
         return;
-      case "box": this.dropValue(v.cell.v); this.free(v.id); return;
+      case "box": this.dropValue(v.cell.v); this.free(v.id); if (v.raw) v.raw.live = false; return;
       case "iface": this.dropValue(v.inner); return;
       case "map":
         if (v.view) return;
@@ -343,6 +343,12 @@ export class Interp {
     const v = this.ev(e);
     this.tempOwn(v);
     return v;
+  }
+  // peek, then follow a reference (a place of type &T reads as the T it names)
+  // E-VEC
+  peekThroughRef(e: Expr): Value {
+    const v = this.peek(e);
+    return v && typeof v === "object" && (v.k === "ref" || v.k === "mut") ? this.deref(v) : v;
   }
   // a field / deref chain: its root expression and the steps from the root down to e
   chain(e: Expr): { root: Expr; steps: Step[] } {
@@ -632,6 +638,11 @@ export class Interp {
     if (optName) return this.mkEnum(optName, "Some", [this.checked(e, this.evRaw(e))]);
     const co = this.cr.interfaceCoercions.get(e);
     if (co) return { k: "iface", concrete: co.fromType, inner: this.evRaw(e) };
+    const jt = this.cr.autoJsonStringify.get(e); // a struct given to a `json(body: string)` parameter is its JSON
+    if (jt) {
+      const codec = this.cr.autoJsonToJson.get(e);
+      return codec ? this.callNamed(codec, [this.refTo(this.resolve(e), false)]) : jsonStringify(this, this.peek(e), jt);
+    }
     if (this.cr.arraySliceArgs.has(e)) { // a fixed array given to a slice parameter: a view of it
       const a = this.isPlaceExpr(e) ? this.peek(e) : (v => (this.tempOwn(v, true), v))(this.evRaw(e));
       if (a && typeof a === "object" && a.k === "arr") return sliceView(this, a, 0n, BigInt(a.e.length));
@@ -916,7 +927,6 @@ export class Interp {
   // `?`: forward the payload, or return the failure from the enclosing function.
   // E-PROPAGATE
   propagate(e: Expr & { kind: "Propagate" }): Value {
-    if (this.cr.propagateBoxings.has(e) || this.cr.propagateMessages.has(e)) this.unsupported("? with boxing or message conversion");
     const v = this.ev(e.operand) as EnumV;
     if (v.variant === "Some" || v.variant === "Ok") { const p = v.a[0]; v.a[0] = MOVED; this.dropValue(v); return p; }
     const rt = this.frame.ret as TypeKind & { name: string };
@@ -924,9 +934,35 @@ export class Interp {
     if (v.variant === "None") ret = this.mkEnum(rt.name, "None", []);
     else {
       const c = this.cr.propagateConversions.get(e);
-      ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
+      const boxing = this.cr.propagateBoxings.get(e), msg = this.cr.propagateMessages.get(e);
+      if (boxing) ret = this.mkEnum(rt.name, "Err", [this.boxError(boxing, v.a[0]!)]);
+      else if (msg) { // into a Result<T, string> fn: the error's message()
+        const slot: Slot = { v: v.a[0]! };
+        const text = this.callNamed(this.concreteMethodFn(msg.name, "message"), [{ k: "ref", slot, path: [] } as Ref]);
+        this.dropValue(slot.v);
+        ret = this.mkEnum(rt.name, "Err", [text]);
+      } else ret = c ? this.mkEnum(rt.name, "Err", [this.mkEnum(c.targetEnumName, c.wrapVariant, v.a)]) : this.mkEnum(rt.name, "Err", v.a);
     }
     throw new Unwind({ k: "return", v: ret });
+  }
+  // @embedFile("rel/path"): the bytes of a file beside the source that names it, read when the call runs (the
+  // compiler embeds them at build time). Needs a host file reader, which only the CLI driver hands in.
+  // R-EMBED-FILE
+  embedFile(e: CallE): Value {
+    const rel = (e.args[0] as { value: string }).value;
+    if (!this.sysOptions.hostFs) return this.unsupported("builtin embedFile");
+    const dir = (e.span?.file ?? this.entryFile ?? "").replace(/[^/]*$/, "") || ".";
+    const parts: string[] = [];
+    for (const seg of (rel.startsWith("/") ? rel : dir + rel).split("/")) { if (seg === "..") parts.pop(); else if (seg !== "." && seg !== "") parts.push(seg); }
+    const bytes = this.sysOptions.hostFs!.readFile((rel.startsWith("/") || dir.startsWith("/") ? "/" : "") + parts.join("/"));
+    if (!bytes) this.stuck("R-EMBED-FILE", `@embedFile: cannot open '${rel}'`);
+    return { k: "str", b: { bytes: [...bytes], rc: 1, id: -1 } };
+  }
+  // an error value as a Heap<Interface>: a string is first an ErrorMessage, the box holds the interface pair
+  // E-IFACE
+  boxError(boxing: { fromType: string; viaMessage: boolean }, err: Value): Value {
+    const inner: Value = boxing.viaMessage ? { k: "struct", name: boxing.fromType, f: { text: err } } : err;
+    return { k: "box", id: this.alloc(), cell: { v: { k: "iface", concrete: boxing.fromType, inner } } };
   }
   // E-MOVE
   defaultValue(e: Expr & { kind: "DefaultValue" }): Value {
@@ -1079,6 +1115,8 @@ export class Interp {
     switch (e.func) {
       case "Heap": if (!shadow("Heap")) return { k: "box", id: this.alloc(), cell: { v: this.ev(e.args[0]!) } }; break;
       case "forget": if (!shadow("forget")) { this.ev(e.args[0]!); return undefined; } break; // the move is recorded on the operand
+      // sortByKey forgets a key that is a view of its element; here the closure returned a counted share of it, which is let go
+      case "_vecForget": if (!shadow("_vecForget")) { this.dropValue(this.ev(e.args[0]!)); return undefined; } break;
       case "replace": if (!shadow("replace")) return this.memReplace(e.args[0]!, this.ev(e.args[1]!)); break;
       case "swap": if (!shadow("swap")) return this.memSwap(e.args[0]!, e.args[1]!); break;
       case "_vecCopyOut": if (!shadow("_vecCopyOut")) return this.deepClone(this.peek(e.args[0]!)); break; // the structural copy std/vec's clone and filter use; capacity = length
@@ -1086,7 +1124,13 @@ export class Interp {
       case "targetOs": return staticStr(process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin");
       case "targetArch": return staticStr(process.arch === "x64" ? "x86_64" : "aarch64");
       case "sizeOf": case "offsetOf": case "zeroed": if (!shadow(e.func)) return this.mem.layoutBuiltin(e); break;
-      case "embedFile": case "jsonStringify": return this.unsupported(`builtin ${e.func}`);
+      // std/vec's natural order on two places (ints by signedness, floats IEEE, strings by bytes, false < true)
+      case "_natLess": {
+        const a = this.peekThroughRef(e.args[0]!), b = this.peekThroughRef(e.args[1]!);
+        return this.binValues("<", a, b, this.T(e.args[0]!), { tag: "bool" });
+      }
+      case "jsonStringify": if (!shadow("jsonStringify")) return jsonStringify(this, this.peek(e.args[0]!), this.T(e.args[0]!)); break;
+      case "embedFile": return this.embedFile(e);
     }
     if (this.cr.cfnCalls.has(e)) return this.unsupported("call through a C function pointer");
     if (this.cr.closureCalls.has(e)) {
@@ -1221,7 +1265,8 @@ export class Interp {
       ]);
       case "IfChainStmt": return this.ifChain(s);
       case "LetElseStmt": {
-        if (this.cr.nullRefUnwraps.has(s)) return this.unsupported("nullable extern reference unwrap");
+        const nr = this.cr.nullRefUnwraps.get(s);
+        if (nr) return this.nullRefUnwrap(s, nr);
         return this.matchCore<Completion>(s.value, [
           { pattern: s.pattern, run: () => undefined, escape: true },
           { pattern: { kind: "WildcardPattern" }, run: () => this.runBlock(s.elseBody) },
@@ -1232,6 +1277,15 @@ export class Interp {
     }
   }
 
+  // `let g = p else { ... }` over a `?&T` / `?&mut T` parameter: the null test, then g is a reference to the memory p names
+  // R-MEM-NULLREF
+  nullRefUnwrap(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Completion {
+    let v = this.peek(s.value);
+    if (v && typeof v === "object" && (v.k === "ref" || v.k === "mut")) v = this.deref(v); // a Milo caller's reference arrives as itself
+    if (v === 0n) return this.runBlock(s.elseBody);
+    this.declare(s.bindName!, isPtr(v) ? { k: nr.mutable ? "mut" : "ref", slot: memSlot(this.mem, v, nr.inner), path: [] } as Ref : v);
+    return undefined;
+  }
   // [S-LET] / [S-VAR]
   letStmt(s: Stmt & { kind: "LetDecl" | "VarDecl" }): Completion {
     const t = this.rawT(s.value);
@@ -1318,7 +1372,7 @@ export class Interp {
     this.frame.scopes.push(holder);
     try {
       const view = this.cr.stringViewForIns.get(s);
-      if (view && s.iterable.kind === "MethodCall") return this.unsupported("lines()/splitView() for-in");
+      if (view && s.iterable.kind === "MethodCall") return this.forStrView(s, view.mode, s.iterable, fin);
       const iter = this.cr.iteratorForIns.get(s);
       if (iter) {
         // an rvalue iterator dies once, when the scope around the loop ends
@@ -1367,6 +1421,33 @@ export class Interp {
       }
       return undefined;
     } finally { this.frame.scopes.pop(); this.dropScope(holder); }
+  }
+  // for line in s.lines() / for piece in s.splitView(sep): each piece is a borrowed view of the bytes (std/rt rtStrViewStep)
+  // E-NEW-ITER
+  forStrView(s: Stmt & { kind: "ForInStmt" }, mode: "lines" | "split", call: Expr & { kind: "MethodCall" }, fin: (r: Completion | "next") => Completion | "next"): Completion {
+    const bytes = (this.peek(call.object) as Str).b.bytes.slice();
+    const split = mode === "split";
+    const sep = split ? (this.peek(call.args[0]!) as Str).b.bytes.slice() : [10];
+    const find = (from: number): number => {
+      for (let i = from; i + sep.length <= bytes.length; i++) if (sep.every((c, k) => bytes[i + k] === c)) return i;
+      return -1;
+    };
+    let pos = 0, count = 0;
+    // lines stop at the end of the bytes; a split yields the piece after a trailing separator too, except for an empty separator
+    while (split ? pos <= bytes.length && (sep.length > 0 || pos < bytes.length) : pos < bytes.length) {
+      const at = split && sep.length === 0 ? pos + 1 : find(pos);
+      const end = at >= 0 ? at : bytes.length;
+      const viewEnd = !split && end > pos && bytes[end - 1] === 13 ? end - 1 : end; // CRLF: the \r ends the line
+      const piece = bytes.slice(pos, viewEnd);
+      pos = at >= 0 ? end + sep.length : bytes.length + 1;
+      const i = count++;
+      const r = fin(this.loopBody(s, sc => {
+        if (s.varName2) this.declare(s.varName, BigInt(i), sc);
+        this.declare(s.varName2 ?? s.varName, { k: "ref", slot: { v: { k: "str", b: { bytes: piece, rc: 1, id: -1 } } }, path: [] }, sc);
+      }));
+      if (r !== "next") return r;
+    }
+    return undefined;
   }
   takeOut(p: Place): Value { const v = this.getPlace(p); this.setPlace(p, MOVED); return v; }
 }

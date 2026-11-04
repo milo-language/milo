@@ -93,6 +93,9 @@ co("schedulerRunToCompletion", function* (it) {
 co("time$sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 co("sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 plain("sleepBlockingMs", (it, [ms]) => { (it as InterpCo).clock += Math.max(0, Number(ms as bigint)); return undefined; });
+// R-TIME: the scheduler is always up under the task interpreter, so making timers live is a no-op
+plain("ensureTimersLive", () => undefined);
+plain("schedulerEnsureInit", () => undefined);
 // A blocking-pool job or OS thread runs as one more task (R-TASK-BLOCKING): the interpreter has no second thread.
 plain("runtime$blockingPoolSubmit", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 plain("spawnOsThreadDetached", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
