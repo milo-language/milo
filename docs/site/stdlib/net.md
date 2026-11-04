@@ -153,6 +153,24 @@ interface, so anything it serves is reachable from the network.
 Binds exactly `addr`:`port`. Started under systemd socket activation for this
 process, it errs naming `inheritedOr`, the constructor that adopts the passed socket.
 
+#### `TcpListener.bindAddrReusePort`
+
+```milo
+fn TcpListener.bindAddrReusePort(addr: u32, port: u16): Result<TcpListener, NetError>
+```
+
+bindAddr with SO_REUSEPORT: several listeners may bind the same address and port, and the
+kernel spreads incoming connections across them (Linux; std/http gives each worker one).
+Errs where the target has no SO_REUSEPORT.
+
+#### `TcpListener.bindAddrWith`
+
+```milo
+fn TcpListener.bindAddrWith(addr: u32, port: u16, reusePort: bool): Result<TcpListener, NetError>
+```
+
+The shared body of bindAddr and bindAddrReusePort.
+
 #### `TcpListener.inheritedOr`
 
 ```milo

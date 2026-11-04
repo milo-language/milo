@@ -19,7 +19,7 @@ from "std/net" import {
     TcpListener, IpAddr, ip4, waitIo, deadlineIn
 }
 from "std/runtime" import {
-    Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote, spawnWorker
+    Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote, spawnWorkerAudited
 }
 from "std/event" import {
     setNonblocking
@@ -2770,30 +2770,10 @@ fn workersLive(): i64 {
     unsafe { return _atomicLoadI64(gWorkersLive.addrOf() as *u8) }
 }
 
-// One worker's server: its own Router (built here, on this worker's thread), its own
-// accept loop and connection tasks. `owns` is whether this worker closes `listenFd` when
-// draining (a listener of its own does; the shared one is closed by worker 0 only).
-// Call the router factory whose closure value sits at `addr`, on a frame of
-// serveRouterFactory that outlives every worker. Every worker reads the same closure value
-// (function pointer and environment) and calls it without owning it: forget() keeps this
-// copy from running the environment's drop glue, which the one owner does. Sound while the
-// factory only reads what it captured, which `@thread` on serveRouterFactory holds to Send
-// captures and no racy globals, and the doc on serveRouterFactory asks for.
-@unsafe
-fn callFactory(addr: i64): Router {
-    unsafe {
-        // A closure with no environment to overwrite: the memcpy replaces its (fn, env) pair.
-        var g: move () => Router = (): Router => Router.new()
-        memcpy(g.addrOf() as *u8, addr as *u8, 16)
-        let r = g()
-        forget(g)
-        return r
-    }
-}
-
-fn workerServe(makeAt: i64, conf: WorkerConf): void {
-    var router: Router = Router.new()
-    unsafe { router = callFactory(makeAt) }
+// One worker's server: the Router the factory built for it, its own accept loop and
+// connection tasks. `conf.owns` is whether this worker closes its listener when draining
+// (a listener of its own does; the shared one is closed by worker 0 only).
+fn workerServe(router: Router, conf: WorkerConf): void {
     let readMs = conf.readMs
     let writeMs = conf.writeMs
     let keepAlive = conf.keepAlive
@@ -2826,10 +2806,16 @@ fn workerConf(opts: &ServeOptions, listenFd: i32, owns: bool, maxConn: i64): Wor
     }
 }
 
-// serveRouterWith for a server of ServeOptions.workers schedulers: `make` builds the
-// Router, once per worker and on that worker, so a handler's captured state belongs to one
-// scheduler. With workers 1 it builds the one Router and is serveRouterWith. The calling
-// thread is worker 0; the others are threads spawnWorker starts.
+// serveRouterWith for a server of ServeOptions.workers schedulers: `make` is called once
+// per worker, here on the calling thread, and each Router goes to its worker to stay: its
+// handlers, and what they captured, belong to that one scheduler. With workers 1 it builds
+// the one Router and is serveRouterWith. The calling thread is worker 0; the others are
+// threads of their own with a scheduler each (spawnWorker).
+//
+// `@thread`: the checker holds `make` (and so every handler it creates) to Send captures
+// and rejects a mutable global reached from it that the program writes: handlers run on
+// several OS threads. State the workers share goes through a Channel, atomic or WaitGroup
+// that `make` clones for each Router.
 //
 // Where the connections land: Linux gives each worker its own SO_REUSEPORT listener and
 // the kernel spreads connections across them. Darwin's SO_REUSEPORT does not spread (one
@@ -2839,7 +2825,7 @@ fn workerConf(opts: &ServeOptions, listenFd: i32, owns: bool, maxConn: i64): Wor
 // the alternative; it adds a hop and a channel per connection for evenness the kernel
 // gives for free on Linux.
 @thread
-pub fn serveRouterFactory(host: &string, port: u16?, make: move () => Router, opts: &ServeOptions): Result<Unit> {
+pub fn serveRouterFactory(host: &string, port: u16?, make: () => Router, opts: &ServeOptions): Result<Unit> {
     var n = opts.workers
     if n == 0 {
         n = cpuCount()
@@ -2903,18 +2889,25 @@ pub fn serveRouterFactory(host: &string, port: u16?, make: move () => Router, op
         }
     }
     installDrain(true)
-    var makeAt: i64 = 0
-    unsafe { makeAt = make.addrOf() as i64 }
     unsafe { _atomicStoreI64(gWorkersLive.addrOf() as *u8, n - 1) }
     for i in 1..n {
         let conf = workerConf(opts, listenFds[i], !shared, perWorker)
-        spawnWorker(move(): void => {
-            workerServe(makeAt, conf)
-            unsafe { _atomicSubI64(gWorkersLive.addrOf() as *u8, 1) }
-        })
+        // Built here, then owned by the worker for life.
+        let router = make()
+        // The audited spawn: the checker has already held the factory (the caller's closure,
+        // which holds every handler) to Send captures and no racy globals at the call to this
+        // @thread fn. Spawning through spawnWorker here would add a second scan whose
+        // handler calls through values (handleConn) read as "may reach any closure in the
+        // program", rejecting unrelated globals of programs that merely import std/http.
+        unsafe {
+            spawnWorkerAudited(move(): void => {
+                workerServe(router, conf)
+                unsafe { _atomicSubI64(gWorkersLive.addrOf() as *u8, 1) }
+            })
+        }
     }
     // Worker 0 is this thread.
-    workerServe(makeAt, workerConf(opts, listenFds[0], true, perWorker))
+    workerServe(make(), workerConf(opts, listenFds[0], true, perWorker))
     // The others drain on their own; wait for them within the same deadline.
     let deadline = unrecordedEpochMillis() + opts.drainMs
     while workersLive() > 0 {

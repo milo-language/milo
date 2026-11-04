@@ -109,8 +109,8 @@ form matches creation order, which is what makes v7 the better default for
 database keys.
 
 Ids minted inside the same millisecond still sort in creation order. The counter
-is per process and not synchronized across threads: a racing thread can reuse a
-counter value, which costs ordering but not uniqueness.
+is per process and shared by all threads (one atomic word), so ids are ordered
+across threads too.
 
 #### `Uuid.variant`
 

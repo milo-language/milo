@@ -656,6 +656,35 @@ with an abandoned green task.
 @thread: `f` runs on a real OS thread, so the checker holds its captures to Send and
 rejects unsynchronized mutable globals reached from its body.
 
+#### `spawnWorker`
+
+```milo
+pub fn spawnWorker(f: move () => void): void
+```
+
+Start a worker: a dedicated OS thread with a green scheduler of its own (its own run
+queue, fd waiter table, timers and stack cache; every scheduler global is thread_local),
+running `f` as that scheduler's first task. A task spawned on the worker stays on it for
+life: nothing migrates between schedulers, so Task.scope borrows, "tasks never race" and
+replay order keep meaning what they mean on one thread. State shared with other workers
+goes through Channel, WaitGroup and atomics, whose cross-thread wake lands on the
+owner's transfer list (unparkTask), never on its run queue.
+The thread runs until `f` and every task `f` left behind have finished.
+Recorded or replayed runs number every thread, so callers there stay on one worker.
+@thread: `f` crosses to a real OS thread, so its captures must be Send and the checker
+rejects unsynchronized mutable globals reached from its body.
+
+#### `spawnWorkerAudited`
+
+```milo
+pub fn spawnWorkerAudited(f: move () => void): void
+```
+
+spawnWorker without the checker's thread rules, for a std caller whose closure was already
+checked where the user's closure entered (std/http's serveRouterFactory). The closure
+crosses as a raw (fn, env) pair, so the thread scan does not follow it here. A user
+program uses spawnWorker. Not numbered for record/replay: the caller refuses to run there.
+
 #### `sRunHead`
 
 ```milo

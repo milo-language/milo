@@ -1069,6 +1069,44 @@ pub fn spawnWorker(f: move () => void): void {
     })
 }
 
+// spawnWorker without the checker's thread rules, for a std caller whose closure was already
+// checked where the user's closure entered (std/http's serveRouterFactory). The closure
+// crosses as a raw (fn, env) pair, so the thread scan does not follow it here. A user
+// program uses spawnWorker. Not numbered for record/replay: the caller refuses to run there.
+@unsafe
+pub fn spawnWorkerAudited(f: move () => void): void {
+    unsafe {
+        let packed = malloc(16)
+        memcpy(packed, (f.addrOf()) as *u8, 16)
+        var tid: i64 = 0
+        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, workerTrampoline as *u8, packed)
+        if r == 0 {
+            pthread_detach(tid)
+            // The worker owns the closure environment now (see spawnOsThreadDetached).
+            forget(f)
+        } else {
+            free(packed)
+        }
+    }
+}
+
+// pthread entry for spawnWorkerAudited: run the closure as the first task of this thread's
+// scheduler, then drain whatever it left behind.
+fn workerTrampoline(arg: *u8): *u8 {
+    unsafe {
+        gOnWorkerThread = true
+        var fnPtr: *u8 = 0 as *u8
+        var envPtr: *u8 = 0 as *u8
+        memcpy((fnPtr.addrOf()) as *u8, arg, 8)
+        memcpy((envPtr.addrOf()) as *u8, (arg as i64 + 8) as *u8, 8)
+        free(arg)
+        let t = Task.spawnRaw(fnPtr, envPtr, defaultStackSize())
+        t.join()
+        schedulerRunToCompletion()
+        return 0 as *u8
+    }
+}
+
 // ── blocking pool (powers Promise.blocking outside record/replay) ──
 // A process-wide pool of OS threads, so a Promise.blocking job does not pay for a fresh
 // pthread and its stack. On an M4 a trivial job cost about 4 us through a thread of its own

@@ -1,0 +1,20 @@
+// @error: 'hits' is a mutable global, and this code runs on a real OS thread
+// Pins: a handler built by serveRouterFactory runs on several schedulers (OS threads), so a
+// handler that bumps a plain `var` global is the data race the thread rule exists for. The
+// fix is an atomic, or state of its own per Router.
+from "std/http" import { Context, Response, Router, ServeOptions, serveRouterFactory }
+
+var hits: i64 = 0
+
+fn main() {
+    serveRouterFactory("127.0.0.1", 47413, (): Router => {
+        var r = Router.new()
+        r.get("/", (ctx: &mut Context): Response => {
+            hits += 1
+            return ctx.text("hi")
+        })
+        return r
+    }, ServeOptions {
+        workers: 2
+    })!
+}

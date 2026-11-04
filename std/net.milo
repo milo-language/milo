@@ -662,6 +662,7 @@ impl TcpListener {
         return TcpListener.bindAddrWith(addr, port, true)
     }
 
+    // The shared body of bindAddr and bindAddrReusePort.
     fn bindAddrWith(addr: u32, port: u16, reusePort: bool): Result<TcpListener, NetError> {
         if activationPending() {
             return Result.Err(activationRefusal("TcpListener.bindAddr"))

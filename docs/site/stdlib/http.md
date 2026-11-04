@@ -563,7 +563,7 @@ Variants:
 pub struct Route
 ```
 
-Fields: `method: string`, `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context) => Response`.
+Fields: `method: string`, `pattern: string`, `paramNames: Vec<string>`, `handler: move (&mut Context) => Response`.
 
 ### `Router`
 
@@ -579,7 +579,7 @@ Fields:
 - `routes: Vec<Route>`
 - `streams: Vec<StreamRoute>`
 - `sockets: Vec<WsRoute>`
-- `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`
+- `middleware: Vec<Middleware>`
 - `maxBodyBytes: i64`
 - `maxInflatedBytes: i64`: 0: the same as maxBodyBytes
 
@@ -643,6 +643,16 @@ fn Router.put(self: &mut Router, pattern: string, h: move (&mut Context) => Resp
 ```
 
 Register a PUT route.
+
+#### `Router.runChain`
+
+```milo
+fn Router.runChain(self: &Router, ctx: &mut Context, routeIdx: i64, i: i64): Response
+```
+
+Link `i` of the chain: middleware `i` with the rest of the chain as its `next`, or the
+route's handler past the last one. The route table and the middleware list own the
+closures; each link only borrows them, so no environment is built per request.
 
 #### `Router.setMaxBodySize`
 
@@ -718,6 +728,7 @@ Fields:
 - `idleTimeoutMs: i64 = 5000`: How long a kept connection may sit between requests waiting for the first byte of the next one; it is then closed without a response. Once that byte arrives the request has readTimeoutMs. An idle connection holds one of the maxConn slots, and a SIGTERM drain waits for it, so keep this well below drainMs. A reverse proxy reusing upstream connections (nginx `keepalive_timeout` in an upstream block) should time them out sooner than this, so the proxy closes an idle connection rather than racing the server's close with a new request. 0 = no limit.
 - `maxRequestsPerConn: i64 = 1000`: Requests served on one connection before the server closes it, like nginx's keepalive_requests: it bounds how long one client can pin a connection task and its memory. 0 = no limit.
 - `socketActivation: bool = false`: Serve the socket systemd socket activation passes in (LISTEN_FDS/LISTEN_PID), and bind host:port only when there is none (TcpListener.inheritedOr). Off, the server binds exactly host:port, and refuses to start if it was socket-activated: an activated service says so here rather than having its address silently ignored.
+- `workers: i64 = 1`: OS threads serving connections, each with a green scheduler of its own: 1 is the single-scheduler server (the default, unchanged), 0 is one per core. A connection stays on the worker that accepted it for its whole life, so tasks never migrate and never race. maxConn is the cap across all workers (split evenly between them). Needs serveRouterFactory, which builds one Router per worker, so a handler's state is per worker unless it shares one deliberately (a Channel, an atomic, a WaitGroup). Linux gives each worker its own SO_REUSEPORT listener; elsewhere, and under socket activation, every worker accepts on the one shared listener. Not supported while recording or replaying (the trace has one thread-ordered log): that is an Err.
 
 ### `Stream`
 
@@ -783,7 +794,7 @@ pub struct StreamRoute
 
 A GET route that keeps its connection (see Router.stream).
 
-Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context, &mut Stream) => void`.
+Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: move (&mut Context, &mut Stream) => void`.
 
 ### `WebSocket`
 
@@ -848,7 +859,7 @@ pub struct WsRoute
 
 A GET route that upgrades to a WebSocket (see Router.ws).
 
-Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context, &mut WebSocket) => void`.
+Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: move (&mut Context, &mut WebSocket) => void`.
 
 ### Functions
 
@@ -954,6 +965,31 @@ Never returns once listening, except by exiting the process 0 after a SIGTERM dr
 (ServeOptions); a listener that cannot be opened is an Err. The scheduler drives the
 accept task, the handlers it spawns and any task the caller spawned earlier, exactly
 as a green-threaded server's main is supposed to.
+
+#### `serveRouterFactory`
+
+```milo
+pub fn serveRouterFactory(host: &string, port: u16?, make: () => Router, opts: &ServeOptions): Result<Unit>
+```
+
+serveRouterWith for a server of ServeOptions.workers schedulers: `make` is called once
+per worker, here on the calling thread, and each Router goes to its worker to stay: its
+handlers, and what they captured, belong to that one scheduler. With workers 1 it builds
+the one Router and is serveRouterWith. The calling thread is worker 0; the others are
+threads of their own with a scheduler each (spawnWorker).
+
+`@thread`: the checker holds `make` (and so every handler it creates) to Send captures
+and rejects a mutable global reached from it that the program writes: handlers run on
+several OS threads. State the workers share goes through a Channel, atomic or WaitGroup
+that `make` clones for each Router.
+
+Where the connections land: Linux gives each worker its own SO_REUSEPORT listener and
+the kernel spreads connections across them. Darwin's SO_REUSEPORT does not spread (one
+listener gets the traffic), and a socket-activated listener is one descriptor, so
+there every worker accepts on the one shared listener: simple, correct, a little
+uneven (whichever worker's loop wakes first wins the accept). A handoff acceptor was
+the alternative; it adds a hop and a channel per connection for evenness the kernel
+gives for free on Linux.
 
 #### `serveRouterOn`
 
