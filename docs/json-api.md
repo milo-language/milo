@@ -22,7 +22,7 @@ milo prove <file> --json             # per-obligation proof verdicts
 milo safety <file> --safety=X --json # safety-profile compliance
 milo test <dir> --json               # per-test records
 milo emit-ast <file> [--all --spans] # parsed AST
-milo emit-hir <file> [--all --spans] # typed HIR — every expression carries its type
+milo emit-mlir <file> [--all]        # the milo dialect before milo-opt (MLIR text, not JSON)
 milo lex <file>                      # token stream
 ```
 

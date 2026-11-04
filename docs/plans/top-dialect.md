@@ -1,16 +1,39 @@
 <!-- doc-meta
 system: mlir-backend
-purpose: replace HIR (src/hir.ts, src/lower.ts) with a source-faithful top layer of the milo dialect emitted straight from the checked AST; desugaring becomes MLIR passes
-key-files: src/emit-mlir.ts, src/lower.ts, src/hir.ts, src/checker.ts, mlir/Milo.td, mlir/Passes.cpp
+purpose: replace HIR with a source-faithful top layer of the milo dialect emitted straight from the checked AST; desugaring becomes MLIR passes (done for HIR, for-in, ?, interpolation)
+key-files: src/emit-mlir.ts, src/emit-forms.ts, src/backend-program.ts, mlir/Milo.td, mlir/Desugar.cpp
 update-when: a step below lands, or the op set changes
-last-verified: 2026-11-04 (milo.for_in, milo.try, milo.interp and milo-desugar built; emit-mlir.ts does not print them yet)
+last-verified: 2026-11-04 (HIR deleted; emit-mlir prints milo.for_in, milo.try, milo.interp)
 -->
 
 # Top dialect: HIR goes away
 
+## Status (2026-11-04)
+
+Done: `src/hir.ts` and `src/lower.ts` are deleted. `src/emit-mlir.ts` reads the merged AST
+and `CheckResult` through `src/emit-forms.ts` (each expression's op family, read off the
+checker's facts per visit; types are the checker's, nothing is copied into a tree) and
+`src/backend-program.ts` (the declarations). Every former importer of `hir.ts` reads the AST
+through the forms: track-caller and lazy-globals are no longer tree rewrites (a @trackCaller
+copy is the same AST emitted under its own name with its own callees; a lazy global's guard is
+emitted in front of the statement that mentions it), const-fold, noalias, owned-temp and
+startup walk the forms. `milo emit-mlir` replaces `milo emit-hir`.
+
+Top layer built: `milo.for_in` (Vec, slice, string, fixed array), `milo.try` (`?`),
+`milo.interp` (`$"..."`), lowered first by `milo-desugar` (mlir/Desugar.cpp), citing
+E-FOR-IN, E-INDEX-COPY, E-VEC, E-PROPAGATE, E-MATCH, E-INTERP. `milo.if` and `milo.match`
+already were value-producing regions, and statement temporaries already were `milo.scope`,
+so neither needed a new op. New rules for decisions the old lowering made with none:
+E-FOR-IN, E-INTERP, S-IF-CHAIN, E-TARGET.
+
+Left in the emitter as core ops (no top op yet): a `?` whose subject or payload lives in
+memory (128+ bytes), `??`, the Option/Result combinators and `.context`, let-else and
+let-chains, iterator / HashMap / consumed for-ins, and the string-view for-ins. `@req`
+attributes on the top ops are not carried yet.
+
 ## Why
 
-Today: checker → `lower.ts` (desugars into HIR: for-in, `?`, interpolation, temporaries, forks)
+Before: checker → `lower.ts` (desugars into HIR: for-in, `?`, interpolation, temporaries, forks)
 → `emit-mlir.ts` (HIR → milo dialect). HIR is a second typed tree that duplicates facts the
 checker already has, and its desugaring throws away the source shape that three upcoming
 features need:

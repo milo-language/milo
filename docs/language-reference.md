@@ -33,7 +33,7 @@ bun run src/main.ts build examples/hello.milo -o hello
 
 # Inspect the compiler's intermediate forms (useful for understanding what it does)
 bun run src/main.ts emit-ast examples/hello.milo   # parsed AST as JSON (no types yet)
-bun run src/main.ts emit-hir examples/hello.milo   # typed HIR as JSON (every expr carries its type)
+bun run src/main.ts emit-mlir examples/hello.milo  # the milo dialect before milo-opt (one op per construct)
 bun run src/main.ts emit-ir examples/hello.milo    # LLVM IR
 
 # Search the standard library (auto-discovered from std/**/*.milo)
