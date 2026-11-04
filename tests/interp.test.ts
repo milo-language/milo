@@ -1,4 +1,4 @@
-// The reference interpreter (src/interp.ts) against docs/semantics/mini-milo.md: small programs
+// The reference interpreter (src/interp.ts) against docs/semantics/milo.md: small programs
 // whose output pins one rule each (move, field move, drop order, &mut write-back, temporaries),
 // a program the checker would reject run anyway to see it get stuck, and the golden comparison
 // (scripts/interp-vs-golden.ts) over a slice of the fixtures.
@@ -135,7 +135,7 @@ fn main() {
   expect(rule).toBe("E-STUCK");
 });
 
-// ── raw memory and the C layer (docs/semantics/mini-milo.md §5, R-MEM-* and R-SYS-*) ──
+// ── raw memory and the C layer (docs/semantics/milo.md §5, R-MEM-* and R-SYS-*) ──
 const MEM = `from "std/os" import { malloc, free, memset, memcpy, realloc }\n`;
 // run a program that must get stuck; returns the rule it names
 function stuckRule(src: string): string {
@@ -328,7 +328,7 @@ test("interp-vs-golden: a slice of the fixtures is the same as the compiled run"
   expect(bad.map(r => `${r.name}: ${r.verdict} ${r.detail}`)).toEqual([]);
 }, 120_000);
 
-// ── tasks (docs/semantics/mini-milo.md R-TASK-*, R-CHAN, R-WG) ──
+// ── tasks (docs/semantics/milo.md R-TASK-*, R-CHAN, R-WG) ──
 const runTasks = (src: string, opts: RunOptions = {}) => {
   const { program } = check(src);
   const { it, result: r } = runChecked(program, checkedOf.get(program)!, opts);

@@ -3,7 +3,7 @@
 // `milo interp`) and compare stdout, exit code and live heap blocks at exit with the
 // recorded golden (tests/golden, as scripts/mlir-same.ts reads it) or, for a fixture with no
 // golden, its `// @expect:` lines. A "differ" is an interpreter bug, a compiler bug or a
-// wrong rule in docs/semantics/mini-milo.md, and a stuck program is reported as a differ.
+// wrong rule in docs/semantics/milo.md, and a stuck program is reported as a differ.
 // "unsupported" is a program the interpreter does not model (FFI, tasks, ...): skipped,
 // never counted as a pass. The "same" count is the progress number.
 //

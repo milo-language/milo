@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: concurrency
 purpose: the plan for true parallelism in safe Milo: parallel scopes under the exclusion rule, lexical locks with levels (no deadlock), lock invariants proved by induction; decisions and trade-offs
-key-files: docs/concurrency-simplification.md, docs/semantics/mini-milo.md, std/sync.milo, std/runtime.milo
+key-files: docs/concurrency-simplification.md, docs/semantics/milo.md, std/sync.milo, std/runtime.milo
 update-when: a step below ships, or a decision is revisited
 last-verified: 2026-11-03 (plan; nothing built)
 -->
@@ -16,7 +16,7 @@ three for application code, and accepts `unsafe` std code for concurrency librar
 
 1. **Parallel scopes, checked by the exclusion rule.** `parallel { a(&mut x.left); b(&mut x.right) }`
    is checked exactly like one call with several `&mut` arguments (T-EXCL in
-   docs/semantics/mini-milo.md). There's no `Send`/`Sync`: a reference can't outlive the scope,
+   docs/semantics/milo.md). There's no `Send`/`Sync`: a reference can't outlive the scope,
    because references never outlive a call. This needs dynamic `n`-way windows (roadmap:
    dynamic `splitMut`) for data-parallel loops.
 2. **Lexical locks with levels.** `Mutex<T, L>`, accessed only through `m.with((v: &mut T) => ...)`.

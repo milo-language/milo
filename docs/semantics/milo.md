@@ -1,16 +1,16 @@
 <!-- doc-meta
 system: semantics
-purpose: Mini-Milo, the core calculus: operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
+purpose: Milo Semantics: the executable definition of Milo, with Core Milo (the proved core): operational rules for moves, borrows and drops, the typing rules that keep programs out of stuck states, and the safety theorem; the spec src/interp.ts is built against
 key-files: docs/spec.md, docs/plans/core-hir.md, docs/ownership-model.md
 update-when: a rule changes, the interpreter adds a rule, or a MILO-O rule moves into the core
 last-verified: 2026-11-04 (src/interp.ts implements §2 and the rules added at the end, src/interp-co.ts the task rules, src/interp-mem.ts the R-MEM rules and src/interp-sys.ts the R-SYS rules; scripts/interp-vs-golden.ts is its gate)
 -->
 
-# Mini-Milo: the core calculus
+# Milo Semantics
 
-Mini-Milo is the smallest language that still has Milo's ownership model: integers, structs,
+This document defines what Milo programs mean. It starts with **Core Milo**, the smallest language that still has Milo's ownership model: integers, structs,
 `let`/`var`, moves, `&`/`&mut` parameters, calls and drops. Generics, closures, tasks, strings
-and `match` are left out on purpose. They are extensions, each listed at the end with the
+and `match` are left out of the core on purpose: they are extensions, defined after it (§5), each with the
 `MILO-O` rule it becomes.
 
 Three things are defined here:

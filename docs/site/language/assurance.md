@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: site-assurance
 purpose: the public page on how Milo is checked: written semantics, reference interpreter, MLIR backend, contracts and proofs, runtime-error proofs; built vs planned stated plainly
-key-files: docs/semantics/mini-milo.md, src/interp.ts, src/verify.ts, docs/verification-roadmap.md, docs/plans/parallelism.md
+key-files: docs/semantics/milo.md, src/interp.ts, src/verify.ts, docs/verification-roadmap.md, docs/plans/parallelism.md
 update-when: a layer below ships, a number changes, or a planned item moves to built
 last-verified: 2026-11-03
 -->
@@ -16,7 +16,7 @@ what the others miss. This page lists what exists today and, separately, what is
 ### A written semantics
 
 The core of the language, moves, borrows and drops, is written as precise rules in
-[Mini-Milo](https://github.com/milo-language/milo/blob/main/docs/semantics/mini-milo.md): about
+[Milo Semantics](https://github.com/milo-language/milo/blob/main/docs/semantics/milo.md): about
 twenty step rules for how a program runs, seven typing rules for what the checker accepts, and
 the safety theorem connecting them. A rule reads like this:
 
