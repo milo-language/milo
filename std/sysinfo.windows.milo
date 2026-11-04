@@ -37,8 +37,8 @@ pub extern fn GlobalMemoryStatusEx(buf: *u8): i32
 pub extern fn GetTickCount64(): u64
 
 pub fn hostname(): string {
-    var buf: [u8; 256] = [0; 256]
-    var size: [u32; 1] = [256]
+    let buf: [u8; 256] = [0; 256]
+    let size: [u32; 1] = [256]
     unsafe {
         GetComputerNameA(buf as *u8, size as *u32)
         return _cstrToString(buf as *u8)
@@ -46,7 +46,7 @@ pub fn hostname(): string {
 }
 
 pub fn cwd(): string {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         GetCurrentDirectoryA(4096, buf as *u8)
         return _cstrToString(buf as *u8)
@@ -95,7 +95,7 @@ pub fn egid(): u32 {
 }
 
 pub fn cpuCount(): i64 {
-    var buf: [u8; 64] = [0; 64]
+    let buf: [u8; 64] = [0; 64]
     unsafe {
         GetSystemInfo(buf as *u8)
         // dwNumberOfProcessors: DWORD at byte offset 32 == u32 index 8.
@@ -110,7 +110,7 @@ pub fn cpuCount(): i64 {
 // Windows has no unprivileged, non-registry brand-string source, so report the
 // processor architecture (honest and label-accurate) rather than a fabricated model.
 pub fn cpuModel(): string {
-    var buf: [u8; 64] = [0; 64]
+    let buf: [u8; 64] = [0; 64]
     unsafe {
         GetSystemInfo(buf as *u8)
         // wProcessorArchitecture: WORD at offset 0. 9 = x64, 12 = ARM64, 0 = x86.

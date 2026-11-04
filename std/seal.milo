@@ -81,7 +81,7 @@ pub fn seal(s: string): Sealed {
     unsafe {
         b = _atomicAddI64((nextSealBufferId.addrOf()) as *u8, 1)
     }
-    var out: Sealed = Sealed {
+    let out: Sealed = Sealed {
         _data: s, _bufferId: b as i32
     }
     return out
@@ -116,7 +116,7 @@ fn sealedSpan(s: &Sealed): Span {
     // wrong. That is the wrong-but-plausible failure `_bufferId` exists to abolish,
     // so the 2GB span cap is enforced here rather than discovered later.
     assert(s._data.len <= 2147483647, "sealed: buffer is larger than 2GB, no single span can cover it")
-    var sp: Span = Span {
+    let sp: Span = Span {
         start: 0, len: s._data.len as i32, _bufferId: s._bufferId
     }
     return sp
@@ -129,7 +129,7 @@ fn sealedSpanOf(s: &Sealed, start: i64, len: i64): Span {
     // used to return a perfectly valid-looking 4-byte span. A length that does not fit the
     // narrowed field is a caller error, not a span.
     assert(len >= 0 && len <= 2147483647, "sealed: span length must be in 0..2GB")
-    var sp: Span = Span {
+    let sp: Span = Span {
         start: start, len: len as i32, _bufferId: s._bufferId
     }
     return sp
@@ -329,7 +329,7 @@ pub fn share(s: Sealed): Shared {
         // no-op: the bytes now belong to the box.
         memcpy(((*box).inner.addrOf()) as *u8, (tmp.addrOf()) as *u8, sizeOf<Sealed>())
         memset((tmp.addrOf()) as *u8, 0, sizeOf<Sealed>())
-        var out: Shared = Shared {
+        let out: Shared = Shared {
             _ptr: raw, _bufferId: b
         }
         return out
@@ -342,10 +342,10 @@ pub fn share(s: Sealed): Shared {
 // it be unsealed and mutated under readers that are still reading it. The refusal
 // returns the `Shared` unharmed.
 pub fn thaw(sh: Shared): Result<Sealed, ThawRejected> {
-    var h: Shared = sh
+    let h: Shared = sh
     let live = _atomicAddI64(h._ptr, 0)
     if live != 1 {
-        var r: ThawRejected = ThawRejected {
+        let r: ThawRejected = ThawRejected {
             shared: h, holders: live
         }
         return Result.Err(r)
@@ -424,7 +424,7 @@ impl Shared {
     // last holder drops.
     fn clone(self: &Self): Shared {
         _atomicAddI64(self._ptr, 1)
-        var out: Shared = Shared {
+        let out: Shared = Shared {
             _ptr: self._ptr, _bufferId: self._bufferId
         }
         return out

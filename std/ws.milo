@@ -212,7 +212,7 @@ impl WsConn {
         var resultOpcode: WsOpcode = WsOpcode.Continuation
 
         while true {
-            var header: [u8; 2] = [0; 2]
+            let header: [u8; 2] = [0; 2]
             if !readExact(self._fd, self._ssl, header, 2) {
                 return Result.Err("connection closed")
             }
@@ -228,7 +228,7 @@ impl WsConn {
             var payloadLen: i64 = (header[1] & 127) as i64
 
             if payloadLen == 126 {
-                var extLen: [u8; 2] = [0; 2]
+                let extLen: [u8; 2] = [0; 2]
                 if !readExact(self._fd, self._ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
@@ -236,7 +236,7 @@ impl WsConn {
                 let lo = extLen[1] as i64
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
-                var extLen: [u8; 8] = [0; 8]
+                let extLen: [u8; 8] = [0; 8]
                 if !readExact(self._fd, self._ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
@@ -254,7 +254,7 @@ impl WsConn {
                 return Result.Err("message too big")
             }
 
-            var maskKey: [u8; 4] = [0; 4]
+            let maskKey: [u8; 4] = [0; 4]
             if masked {
                 if !readExact(self._fd, self._ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
@@ -381,7 +381,7 @@ impl WsConn {
         let ssl = self._ssl
         var mask: string = ""
         if self._isClient {
-            var key: [u8; 4] = [0; 4]
+            let key: [u8; 4] = [0; 4]
             unsafe {
                 Random.fillRaw(key as *u8, 4)
             }
@@ -430,7 +430,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
             return Result.Err("sysSocket() failed")
         }
 
-        var addr = makeSockaddr(port, ip)
+        let addr = makeSockaddr(port, ip)
         if connectFdIn(fd, addr) < 0 {
             sysClose(fd)
             return Result.Err("connect() failed")
@@ -454,7 +454,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         }
 
         // read response — expect "HTTP/1.1 101"
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         let respLen = readFd(fd, buf, 4096)
         if respLen <= 0 {
             sysClose(fd)
@@ -498,7 +498,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
             return Result.Err("sysSocket() failed")
         }
 
-        var addr = makeSockaddr(port, ip)
+        let addr = makeSockaddr(port, ip)
         if connectFdIn(fd, addr) < 0 {
             sysClose(fd)
             return Result.Err("connect() failed")
@@ -558,7 +558,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         }
 
         // read response — expect "HTTP/1.1 101"
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         let respLen = sslReadFd(ssl, fd, buf as *u8, 4096)
         if respLen <= 0 {
             SSL_free(ssl)

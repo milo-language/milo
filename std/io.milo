@@ -148,7 +148,7 @@ pub fn fdChannel(fd: i32): Channel<string> {
     let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
     unsafe { setNonblocking(fd) }
     Task.spawn(move(): void => {
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         while true {
             var n: i64 = 0
             unsafe {
@@ -239,7 +239,7 @@ impl FdReader {
     fn readByte(self: &Self): i64 {
         let fd = self._fd
         let green = self._green
-        var b: [u8; 1] = [0; 1]
+        let b: [u8; 1] = [0; 1]
         unsafe {
             while true {
                 let n = sysRead(fd, b as *u8, 1)
@@ -264,7 +264,7 @@ impl FdReader {
         let fd = self._fd
         let green = self._green
         var out: string = String.withCapacity(n + 1)
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         var got: i64 = 0
         while got < n {
             var want = n - got
@@ -377,7 +377,7 @@ impl File {
                 // version appended the read buffer to a String ONE BYTE AT A TIME, which
                 // cost more than the read syscalls themselves — 33ms of a 47ms grep over
                 // a 67 MB file was this loop, not the I/O.
-                var raw: Vec<u8> = Vec.filled(size, 0)
+                let raw: Vec<u8> = Vec.filled(size, 0)
                 var got: i64 = 0
                 unsafe {
                     let base = raw.ptr() as i64
@@ -499,7 +499,7 @@ pub fn putChar(ch: u8): void {
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
 fn readLineFd(fd: i32): Option<string> {
     unsafe {
-        var _rlBuf: [u8; 1] = [0; 1]
+        let _rlBuf: [u8; 1] = [0; 1]
         var _rlResult = ""
         var _rlGot = false
         while true {
@@ -532,7 +532,7 @@ pub fn readLine(): Option<string> {
 pub fn readStdin(): string {
     unsafe {
         var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         while true {
             let n = readFd(0, buf, 4096)
             if n <= 0 {
@@ -705,7 +705,7 @@ fn fdRead(fd: i32, socket: bool, max: i64): Result<string, IoError> {
         }
         // withCapacity, not filled: this buffer is only ever a landing pad for the
         // kernel, so pre-zeroing it is a wasted memset of `max` bytes per read.
-        var raw: Vec<u8> = Vec.withCapacity(max)
+        let raw: Vec<u8> = Vec.withCapacity(max)
         let base = raw.ptr()
         var n: i64 = 0
         if socket {
@@ -937,7 +937,7 @@ pub struct BufReader<R: Reader> {
 
 impl BufReader<R> {
     fn new(inner: R): BufReader<R> {
-        var b: BufReader<R> = BufReader {
+        let b: BufReader<R> = BufReader {
             inner: inner,
             buf: "",
             pos: 0,
@@ -952,7 +952,7 @@ impl BufReader<R> {
         if size < 1 {
             size = 1
         }
-        var b: BufReader<R> = BufReader {
+        let b: BufReader<R> = BufReader {
             inner: inner,
             buf: "",
             pos: 0,
@@ -1099,7 +1099,7 @@ pub struct BufWriter<W: Writer> {
 
 impl BufWriter<W> {
     fn new(inner: W): BufWriter<W> {
-        var b: BufWriter<W> = BufWriter {
+        let b: BufWriter<W> = BufWriter {
             inner: inner,
             buf: "",
             cap: defaultBufferSize()
@@ -1112,7 +1112,7 @@ impl BufWriter<W> {
         if size < 1 {
             size = 1
         }
-        var b: BufWriter<W> = BufWriter {
+        let b: BufWriter<W> = BufWriter {
             inner: inner,
             buf: "",
             cap: size

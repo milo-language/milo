@@ -398,7 +398,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
         let n = wlGet(st, 1)
 
         // handle array: [wakeup, wevts...]
-        var handles: [u8; 512] = [0; 512]
+        let handles: [u8; 512] = [0; 512]
         let hp = handles as *i64
         hp[0] = wlGet(st, 0)
         var i: i64 = 0
@@ -426,7 +426,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
 
         // WSANETWORKEVENTS { long lNetworkEvents; int iErrorCode[10]; } — 44 bytes; we only
         // read lNetworkEvents at offset 0. Enumerating also resets the WSAEVENT / re-arms it.
-        var evbuf: [u8; 64] = [0; 64]
+        let evbuf: [u8; 64] = [0; 64]
         i = 0
         while i < n {
             let fd = wlGet(st, wlSockIdx(i))

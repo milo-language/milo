@@ -50,7 +50,7 @@ fn cryptosysBytes(buf: &[u8; 32], n: i64): string {
 
 // Raw 32-byte SHA-256 digest.
 pub fn sha256Raw(input: &string, _chunk: i64): string {
-    var hash: [u8; 32] = [0; 32]
+    let hash: [u8; 32] = [0; 32]
     unsafe {
         SHA256(input, input.len as u64, hash)
     }
@@ -59,7 +59,7 @@ pub fn sha256Raw(input: &string, _chunk: i64): string {
 
 // Raw 16-byte MD5 digest.
 pub fn md5Raw(input: &string, _chunk: i64): string {
-    var hash: [u8; 32] = [0; 32]
+    let hash: [u8; 32] = [0; 32]
     unsafe {
         MD5(input, input.len as u64, hash)
     }
@@ -68,7 +68,7 @@ pub fn md5Raw(input: &string, _chunk: i64): string {
 
 // Raw 20-byte SHA-1 digest.
 pub fn sha1Raw(input: &string, _chunk: i64): string {
-    var hash: [u8; 32] = [0; 32]
+    let hash: [u8; 32] = [0; 32]
     unsafe {
         SHA1(input, input.len as u64, hash)
     }
@@ -191,7 +191,7 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
             return Result.Err("EVP_EncryptFinal_ex failed")
         }
 
-        var tag: [u8; 16] = [0; 16]
+        let tag: [u8; 16] = [0; 16]
         if EVP_CIPHER_CTX_ctrl(ctx, evpCtrlGcmGetTag(), 16, tag) != 1 {
             if plaintext.len > 0 {
                 free(ctBuf)

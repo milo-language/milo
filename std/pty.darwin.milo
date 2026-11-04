@@ -344,7 +344,7 @@ impl Pty {
     requires
     self._childPid > 0
     {
-        var status: [u8; 4] = [0; 4]
+        let status: [u8; 4] = [0; 4]
         unsafe { sysWaitpid(self._childPid, status as *u8, 0) }
         return status[1] as i32
     }

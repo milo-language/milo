@@ -30,7 +30,7 @@ pub struct TermState {
 }
 
 pub fn enableRawMode(): TermState {
-    var state = TermState { saved: [0; 64], }
+    let state = TermState { saved: [0; 64], }
 
     unsafe {
         tcgetattr(0, state.saved as *u8)
@@ -70,7 +70,7 @@ pub fn enableRawMode(): TermState {
 // of returning immediately. For an input-driven loop (a line editor) this waits on
 // the keyboard without busy-spinning, which VMIN=0 would force.
 pub fn enableRawModeBlocking(): TermState {
-    var state = TermState { saved: [0; 64], }
+    let state = TermState { saved: [0; 64], }
 
     unsafe {
         tcgetattr(0, state.saved as *u8)
@@ -106,7 +106,7 @@ pub fn restoreTerminal(state: &TermState): void {
 
 // read a keypress without blocking; returns KEY_* constant
 pub fn readKey(): i32 {
-    var buf: [u8; 3] = [0; 3]
+    let buf: [u8; 3] = [0; 3]
     var n: i64 = 0
     unsafe { n = sysRead(0, buf, 1) }
     if n <= 0 {

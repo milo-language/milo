@@ -311,7 +311,7 @@ impl EcKey {
 
     // The public key as the 65-byte uncompressed point.
     fn publicPoint(self: &Self): Result<string, WebPushError> {
-        var buf: [u8; 65] = [0; 65]
+        let buf: [u8; 65] = [0; 65]
         var n: u64 = 0
         unsafe {
             let group = EC_KEY_get0_group(self._key as *u8)
@@ -324,7 +324,7 @@ impl EcKey {
     }
 
     fn privateScalar(self: &Self): Result<string, WebPushError> {
-        var buf: [u8; 32] = [0; 32]
+        let buf: [u8; 32] = [0; 32]
         var n: i32 = 0
         unsafe { n = BN_bn2binpad(EC_KEY_get0_private_key(self._key as *u8), buf, 32) }
         if n != 32 {
@@ -344,7 +344,7 @@ impl EcKey {
         if peer.len != 65 || peer[0] != 4 {
             return Err(WebPushError.BadSubscription("p256dh is not a 65-byte uncompressed P-256 point"))
         }
-        var secret: [u8; 32] = [0; 32]
+        let secret: [u8; 32] = [0; 32]
         var n: i32 = -1
         unsafe {
             let group = EC_KEY_get0_group(self._key as *u8)
@@ -374,14 +374,14 @@ impl EcKey {
     // ECDSA over a 32-byte digest, as JWS ES256 encodes it (RFC 7518 3.4): r and s,
     // each 32 bytes big-endian, not DER.
     fn signP1363(self: &Self, digest: string): Result<string, WebPushError> {
-        var rBytes: [u8; 32] = [0; 32]
-        var sBytes: [u8; 32] = [0; 32]
+        let rBytes: [u8; 32] = [0; 32]
+        let sBytes: [u8; 32] = [0; 32]
         var ok = false
         unsafe {
             let sig = ECDSA_do_sign(digest, 32, self._key as *u8)
             if sig as i64 != 0 {
-                var r: [i64; 1] = [0; 1]
-                var s: [i64; 1] = [0; 1]
+                let r: [i64; 1] = [0; 1]
+                let s: [i64; 1] = [0; 1]
                 ECDSA_SIG_get0(sig, r as *u8, s as *u8)
                 ok = BN_bn2binpad(r[0] as *u8, rBytes, 32) == 32 && BN_bn2binpad(s[0] as *u8, sBytes, 32) == 32
                 ECDSA_SIG_free(sig)

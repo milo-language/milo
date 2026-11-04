@@ -123,7 +123,7 @@ pub fn arenaNew<T>(): Arena<T> {
     unsafe {
         id = _atomicAddI64((nextArenaId.addrOf()) as *u8, 1)
     }
-    var a: Arena<T> = Arena {
+    let a: Arena<T> = Arena {
         _id: id,
         _data: Vec.new(),
         _gens: Vec.new(),
@@ -147,7 +147,7 @@ ensures a._live == old(a._live) + 1
         a._gens[idx] = -a._gens[idx]
         let gen = a._gens[idx]
         a._live += 1
-        var h: Handle<T> = Handle {
+        let h: Handle<T> = Handle {
             arenaId: a._id, index: fi, generation: gen
         }
         return h
@@ -159,7 +159,7 @@ ensures a._live == old(a._live) + 1
     a._data.push(val)
     a._gens.push(1)
     a._live += 1
-    var h: Handle<T> = Handle {
+    let h: Handle<T> = Handle {
         arenaId: a._id, index: idx as i32, generation: 1
     }
     return h
@@ -439,12 +439,12 @@ pub fn arenaSealGrowth<T>(a: Arena<T>): Result<GrowOnlyArena<T>, FreezeRejected<
         }
     }
     if bad >= 0 {
-        var r: FreezeRejected<T> = FreezeRejected {
+        let r: FreezeRejected<T> = FreezeRejected {
             arena: a, slot: bad
         }
         return Result.Err(r)
     }
-    var g: GrowOnlyArena<T> = GrowOnlyArena {
+    let g: GrowOnlyArena<T> = GrowOnlyArena {
         _id: a._id, _data: a._data
     }
     return Result.Ok(g)
@@ -457,7 +457,7 @@ impl GrowOnlyArena<T> {
         let idx = self._data.len
         assert(idx <= 2147483647, "arena slot capacity exceeded")
         self._data.push(val)
-        var h: Handle<T> = Handle {
+        let h: Handle<T> = Handle {
             arenaId: self._id, index: idx as i32, generation: 1
         }
         return h
@@ -524,7 +524,7 @@ impl GrowOnlyArena<T> {
     // Building is over: give up `alloc` too. Cannot fail, because this tier never
     // freed anything.
     fn freeze(self: Self): FrozenArena<T> {
-        var f: FrozenArena<T> = FrozenArena {
+        let f: FrozenArena<T> = FrozenArena {
             _id: self._id, _data: self._data
         }
         return f
@@ -588,12 +588,12 @@ pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
         }
     }
     if bad >= 0 {
-        var r: FreezeRejected<T> = FreezeRejected {
+        let r: FreezeRejected<T> = FreezeRejected {
             arena: a, slot: bad
         }
         return Result.Err(r)
     }
-    var f: FrozenArena<T> = FrozenArena {
+    let f: FrozenArena<T> = FrozenArena {
         _id: a._id, _data: a._data
     }
     return Result.Ok(f)

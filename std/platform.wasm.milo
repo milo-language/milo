@@ -584,7 +584,7 @@ pub extern fn pthread_cond_timedwait_relative_np(cond: *u8, mutex: *u8, reltime:
 @replayHooked
 @unsafe
 pub fn condWaitMillis(cond: *u8, mutex: *u8, ms: i64): i32 {
-    var ts: [u8; 16] = [0; 16]
+    let ts: [u8; 16] = [0; 16]
     unsafe {
         let tsp = ts as *i64
         tsp[0] = ms / 1000

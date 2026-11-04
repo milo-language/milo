@@ -765,7 +765,7 @@ fn headerEnd(raw: &string, from: i64): i64 {
 // EOF or on error. recvFd parks a green task on EAGAIN and blocks outside one, so the
 // same reader serves the sequential and the concurrent servers.
 fn readMore(fd: i32, raw: &mut string): i64 {
-    var chunk: [u8; 8192] = [0; 8192]
+    let chunk: [u8; 8192] = [0; 8192]
     var n: i64 = 0
     unsafe { n = recvFd(fd, chunk, 8192) }
     for i in 0..n {
@@ -780,7 +780,7 @@ fn readMore(fd: i32, raw: &mut string): i64 {
 // like EOF: it drops the connection without writing a response a stalled peer would
 // not read anyway.
 fn readMoreBy(fd: i32, raw: &mut string, by: i64): i64 {
-    var chunk: [u8; 8192] = [0; 8192]
+    let chunk: [u8; 8192] = [0; 8192]
     var n: i64 = 0
     // recvFdWait fills a raw buffer from a bare descriptor; the connection task owns `fd` until closeFd.
     unsafe { n = recvFdWait(fd, chunk, 8192, (forRead: bool): bool => waitIo(fd, forRead, by)) }
@@ -1187,7 +1187,7 @@ fn termHandler(_sig: i32): void {
     unsafe {
         gTerm = 1
         if gDrainW >= 0 {
-            var b: [u8; 1] = [1]
+            let b: [u8; 1] = [1]
             osWrite(gDrainW, b as *u8, 1)
         }
         if gIdleAccept == 1 {
@@ -1207,7 +1207,7 @@ fn drainWatchFd(): i32 {
 fn installDrain(broadcast: bool): void {
     unsafe {
         if broadcast && gDrainR < 0 {
-            var fds: [i32; 2] = [0; 2]
+            let fds: [i32; 2] = [0; 2]
             if osPipe(fds as *i32) == 0 {
                 // the handler's write must never block
                 setNonblocking(fds[1])
@@ -2122,7 +2122,7 @@ impl Stream {
 // Write the pending head, if any, and `bytes` in one write. False (and the stream
 // over) if the client is gone.
 fn streamWrite(s: &mut Stream, bytes: &string): bool {
-    var buf = s._head + bytes
+    let buf = s._head + bytes
     s._head = ""
     if buf.len == 0 {
         return true

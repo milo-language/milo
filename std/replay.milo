@@ -726,7 +726,7 @@ fn fillTo(n: i64): void {
         rrBuf = rrBuf.substr(rrPos, rrBuf.len())
         rrPos = 0
     }
-    var chunk: [u8; 65536] = [0; 65536]
+    let chunk: [u8; 65536] = [0; 65536]
     while rrBuf.len() - rrPos < n && !rrEof {
         var got: i64 = 0
         unsafe {

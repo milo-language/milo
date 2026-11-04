@@ -157,7 +157,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32)
         memset(evBuf, 0, bufSize)
 
         // timespec: { tv_sec: i64, tv_nsec: i64 }
-        var ts: [u8; 16] = [0; 16]
+        let ts: [u8; 16] = [0; 16]
         let tsp = ts as *i64
         tsp[0] = (timeoutMs / 1000) as i64
         tsp[1] = ((timeoutMs % 1000) as i64) * 1000000

@@ -36,7 +36,7 @@ fn lend(x: i64): i64 {
 fn flip(b: &mut bool) { b = !b }
 
 // A by-ref param of a type the dialect lacks, never named: just a pointer in the signature.
-fn ignoresVec(_v: &Vec<i64>, _s: &mut string, n: i64): i64 { return n + 1 }
+fn ignoresVec(_v: &Vec<i64>, _s: &string, n: i64): i64 { return n + 1 }
 
 fn main() {
     var n: i64 = 40
@@ -54,6 +54,6 @@ fn main() {
     flip(&mut t)
     print(t)
     let v: Vec<i64> = [1, 2]
-    var s = "x"
-    print(ignoresVec(v, &mut s, 41))
+    let s = "x"
+    print(ignoresVec(v, s, 41))
 }

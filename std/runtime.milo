@@ -1578,7 +1578,7 @@ pub fn schedulerWaitRead(fd: i32): void {
         // register with event loop; under replay the fd is synthetic and the trace says
         // when it is ready (see pollAndWakeTraced)
         if !replayActive() {
-            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
             eventRegisterRead(el, fd)
         }
 
@@ -1616,7 +1616,7 @@ pub fn schedulerWaitWrite(fd: i32): void {
         }
 
         if !replayActive() {
-            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
             eventRegisterWrite(el, fd)
         }
         fdWaitersPush(sched, task, fd)
@@ -1733,7 +1733,7 @@ fn unparkTask(task: *u8): void {
             rtStorePtr(task, tNext(), rtReadPtr(home, sXferHead()))
             rtStorePtr(home, sXferHead(), task)
             unsafe { pthread_mutex_unlock(mtx) }
-            var el = eventLoopFromFd(rtReadI32(home, sElFd()))
+            let el = eventLoopFromFd(rtReadI32(home, sElFd()))
             eventLoopNotify(el, rtReadI32(home, sWakeupId()))
         }
     }
@@ -1884,7 +1884,7 @@ pub fn selectRegisterFd(node: *u8): void {
         }
         let kind = rtLoadI64(node, nodeKind())
         if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
-            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
             let fd = rtReadI32(node, nodeFd())
             if kind == kindSelWrite() {
                 eventRegisterWrite(el, fd)
@@ -1919,7 +1919,7 @@ pub fn selectUnregisterFd(node: *u8): void {
                 }
                 let kind = rtLoadI64(node, nodeKind())
                 if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
-                    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+                    let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
                     eventDeregister(el, rtReadI32(node, nodeFd()), kind == kindSelWrite())
                 }
                 return
@@ -2005,8 +2005,8 @@ fn pollAndWake(sched: *u8, timeoutMs: i32): void {
         return
     }
     unsafe {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-        var readyBuf: [u8; 256] = [0; 256]
+        let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let readyBuf: [u8; 256] = [0; 256]
         let effTimeout = selMinTimeout(sched, timeoutMs)
         let n = eventPoll(el, readyBuf as *i32, 64, effTimeout)
         if n > 0 {
@@ -2045,8 +2045,8 @@ fn pollAndWakeTraced(sched: *u8, timeoutMs: i32): void {
     }
     var picked = String.withCapacity(32)
     unsafe {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-        var readyBuf: [u8; 256] = [0; 256]
+        let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let readyBuf: [u8; 256] = [0; 256]
         let effTimeout = selMinTimeout(sched, timeoutMs)
         let n = eventPoll(el, readyBuf as *i32, 64, effTimeout)
         let wakeupId = rtReadI32(sched, sWakeupId())
@@ -2169,10 +2169,10 @@ fn xferCount(sched: *u8): i64 {
 // under replay) until `want` foreign unparks are queued, then detach them all.
 fn awaitXfer(sched: *u8, want: i64): *u8 {
     unsafe {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         let wakeupId = rtReadI32(sched, sWakeupId())
         while xferCount(sched) < want {
-            var readyBuf: [u8; 256] = [0; 256]
+            let readyBuf: [u8; 256] = [0; 256]
             unsafe {
                 let n = eventPoll(el, readyBuf as *i32, 64, 10)
                 if n > 0 {
@@ -2286,7 +2286,7 @@ fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
                 var isWrite: u8 = 0
                 memcpy((isWrite.addrOf()) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
                 if !replayActive() {
-                    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+                    let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
                     eventDeregister(el, fd, isWrite != 0)
                 }
                 var zero: u8 = 0
@@ -2546,7 +2546,7 @@ fn schedulerShutdown(): void {
             free(cache)
             free(rtReadPtr(sched, sFdWaiters()))
         }
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
         eventLoopClose(el)
         let xmtx = rtReadPtr(sched, sXferMutex())

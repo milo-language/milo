@@ -215,7 +215,7 @@ fn hexDigitValue(b: u8): i64 {
 
 // Lowercase hexadecimal text for `n`, no "0x" prefix.
 pub fn i64ToHex(n: i64): string {
-    var buf: [u8; 32] = [0; 32]
+    let buf: [u8; 32] = [0; 32]
     unsafe {
         snprintf(buf, 32, "%lx", n)
         return _cstrToString(buf as *u8)
@@ -226,7 +226,7 @@ pub fn i64ToHex(n: i64): string {
 
 // Octal text for `n`, no prefix.
 pub fn i64ToOct(n: i64): string {
-    var buf: [u8; 32] = [0; 32]
+    let buf: [u8; 32] = [0; 32]
     unsafe {
         snprintf(buf, 32, "%lo", n)
         return _cstrToString(buf as *u8)
@@ -257,7 +257,7 @@ pub fn i64ToBin(n: i64): string {
 
 // Format `n` with exactly `decimals` digits after the decimal point.
 pub fn formatFloat(n: f64, decimals: i32): string {
-    var buf: [u8; 64] = [0; 64]
+    let buf: [u8; 64] = [0; 64]
     unsafe {
         snprintf(buf, 64, "%.*f", decimals, n)
         return _cstrToString(buf as *u8)

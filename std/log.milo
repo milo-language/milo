@@ -429,7 +429,7 @@ impl Log {
     // over: it is closed when the sink is replaced, so no record can be written to a
     // number something else has since reused.
     fn setSinkFd(fd: OwnedFd): void {
-        var owned = fd
+        let owned = fd
         var raw: i32 = -1
         unsafe { raw = owned.rawFd() }
         // The OwnedFd would close `raw` at the end of this call; the log owns it now.

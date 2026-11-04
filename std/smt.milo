@@ -116,7 +116,7 @@ pub fn addAtom(p: &mut SmtProblem, row: Vec<i64>, konst: i64, strict: bool): i64
 pub fn nAtom(p: &mut SmtProblem, atomIdx: i64): i64 {
     p.nodeKind.push(0)
     p.nodeAtom.push(atomIdx)
-    var empty: Vec<i64> = []
+    let empty: Vec<i64> = []
     p.nodeKids.push(empty)
     return p.nodeKind.len - 1
 }
@@ -440,7 +440,7 @@ pub fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64):
             done = true
         }
     }
-    var empty: Vec<i64> = []
+    let empty: Vec<i64> = []
     return empty
 }
 

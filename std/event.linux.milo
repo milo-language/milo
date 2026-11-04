@@ -118,7 +118,7 @@ pub fn clearNonblocking(fd: i32): i32 {
 @unsafe
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
-        var ev: [u8; 16] = [0; 16]
+        let ev: [u8; 16] = [0; 16]
         let pEvents = ev as *u32
         pEvents[0] = epollIn()
         let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
@@ -131,7 +131,7 @@ pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
 @unsafe
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
-        var ev: [u8; 16] = [0; 16]
+        let ev: [u8; 16] = [0; 16]
         let pEvents = ev as *u32
         pEvents[0] = epollOut()
         let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
@@ -144,7 +144,7 @@ pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
 @unsafe
 pub fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
     unsafe {
-        var ev: [u8; 16] = [0; 16]
+        let ev: [u8; 16] = [0; 16]
         return epoll_ctl(el._epfd, epollCtlDel(), fd, ev as *u8)
     }
 }

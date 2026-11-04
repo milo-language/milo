@@ -87,7 +87,7 @@ pub fn restoreTerminal(state: &TermState): void {
 // console emit the same ANSI sequences.
 pub fn readKey(): i32 {
     unsafe {
-        var buf: [u8; 3] = [0; 3]
+        let buf: [u8; 3] = [0; 3]
         let n = read(0, buf, 1)
         if n <= 0 {
             return KEY_NONE

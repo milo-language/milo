@@ -147,8 +147,8 @@ impl Pty {
             // Two pipes: the child reads inRead, writes outWrite. After the pseudoconsole
             // is created it owns duplicates of inRead/outWrite, so the parent closes those
             // and keeps inWrite (to send input) and outRead (to receive output).
-            var inPipe: [i64; 2] = [0; 2]
-            var outPipe: [i64; 2] = [0; 2]
+            let inPipe: [i64; 2] = [0; 2]
+            let outPipe: [i64; 2] = [0; 2]
             if CreatePipe(inPipe as *i64, ((inPipe as *u8) as i64 + 8) as *i64, 0 as *u8, 0) == 0 {
                 return Result.Err("CreatePipe(in) failed")
             }
@@ -162,7 +162,7 @@ impl Pty {
             let outRead = outPipe[0]
             let outWrite = outPipe[1]
 
-            var hpc: [i64; 1] = [0]
+            let hpc: [i64; 1] = [0]
             let hr = CreatePseudoConsole(packCoord(24, 80), inRead, outWrite, 0, hpc as *u8)
             // The pseudoconsole duplicated the ends it needs; release ours.
             CloseHandle(inRead)
@@ -198,7 +198,7 @@ impl Pty {
             let cmdLine = buildCmdLine(program, args)
 
             // Size, allocate, and initialise the attribute list, then load the HPCON.
-            var sizeBuf: [i64; 1] = [0]
+            let sizeBuf: [i64; 1] = [0]
             InitializeProcThreadAttributeList(0 as *u8, 1, 0, sizeBuf as *u8)
             let attrList = malloc(sizeBuf[0])
             if InitializeProcThreadAttributeList(attrList, 1, 0, sizeBuf as *u8) == 0 {
@@ -220,7 +220,7 @@ impl Pty {
             (six as *u32) [0] = 112
             (six as *i64) [13] = attrList as i64
 
-            var pi: [u8; 24] = [0; 24]
+            let pi: [u8; 24] = [0; 24]
             let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 0, extendedStartupinfoPresent(), 0 as *u8, 0 as *u8, six as *u8, pi as *u8)
             free(cmdLine)
             if ok == 0 {
@@ -289,7 +289,7 @@ impl Pty {
     {
         unsafe {
             WaitForSingleObject(self._childHandle, 4294967295)
-            var codeBuf: [u32; 1] = [0]
+            let codeBuf: [u32; 1] = [0]
             GetExitCodeProcess(self._childHandle, codeBuf as *u32)
             return codeBuf[0] as i32
         }

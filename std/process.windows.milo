@@ -162,7 +162,7 @@ impl Process {
     // Start the program at `path` in the background, with no arguments and no shell.
     // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
-        var args: Vec<string> = Vec.new()
+        let args: Vec<string> = Vec.new()
         return createProcess(path, args, -1, -1, -1, false, 0 as *u8, 0 as *u8)
     }
 
@@ -191,7 +191,7 @@ pub fn processAlive(pid: i32): bool {
         if h == 0 {
             return false
         }
-        var codeBuf: [u32; 1] = [0]
+        let codeBuf: [u32; 1] = [0]
         let ok = GetExitCodeProcess(h, codeBuf as *u32)
         CloseHandle(h)
         return ok != 0 && codeBuf[0] == 259 as u32
@@ -379,7 +379,7 @@ impl Child {
 fn waitHandle(handle: i64): Result<i32> {
     unsafe {
         WaitForSingleObject(handle, 4294967295)
-        var codeBuf: [u32; 1] = [0]
+        let codeBuf: [u32; 1] = [0]
         if GetExitCodeProcess(handle, codeBuf as *u32) == 0 {
             return Result.Err("GetExitCodeProcess() failed")
         }
@@ -430,7 +430,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
         }
 
         // PROCESS_INFORMATION: hProcess at 0, dwProcessId at 16. 24 bytes.
-        var pi: [u8; 24] = [0; 24]
+        let pi: [u8; 24] = [0; 24]
 
         // appName NULL => the first token of cmdLine is the program and the standard
         // search (including PATH) applies, matching execvp. inherit=TRUE so the marked
@@ -610,7 +610,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 return Result.Ok(noStreamFds())
             }
             Stdio.Pipe => {
-                var fds: [i32; 2] = [0; 2]
+                let fds: [i32; 2] = [0; 2]
                 if _pipe(fds as *i32, 4096, pipeFlags()) != 0 {
                     return Result.Err("pipe(" + label + ") failed")
                 }

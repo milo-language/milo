@@ -36,7 +36,7 @@ fn run() {
     print(label(b))
     let taken = *b
     print(taken.label, " ", taken.n)
-    var s = Heap("x" + "y")
+    let s = Heap("x" + "y")
     print(*s)
     var k = Heap(41)
     * k = *k + 1

@@ -76,7 +76,7 @@ impl UnixStream {
             if fd < 0 {
                 return Result.Err("sysSocket() failed")
             }
-            var addr = makeSockaddrUn(path)
+            let addr = makeSockaddrUn(path)
             if connectFdUn(fd, addr) < 0 {
                 sysClose(fd)
                 return Result.Err("connect() failed")
@@ -99,7 +99,7 @@ impl UnixStream {
     fn recv(self: &Self): Result<string, string> {
         unsafe {
             var result: string = ""
-            var buf: [u8; 4096] = [0; 4096]
+            let buf: [u8; 4096] = [0; 4096]
             while true {
                 let n = readFd(self._fd, buf, 4096)
                 if n <= 0 {
@@ -174,7 +174,7 @@ impl UnixListener {
             if fd < 0 {
                 return Result.Err("sysSocket() failed")
             }
-            var addr = makeSockaddrUn(path)
+            let addr = makeSockaddrUn(path)
             if bindUn(fd, addr) < 0 {
                 sysClose(fd)
                 return Result.Err("bind() failed")

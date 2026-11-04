@@ -489,7 +489,7 @@ fn zlibDecompress(src: &string, limit: i64): Result<string, string> {
     if (cmf * 256 + flg) % 31 != 0 {
         return Result.Err("zlib: bad header check")
     }
-    var pos: i64 = 2
+    let pos: i64 = 2
     // FDICT (bit 5 of FLG): a 4-byte dictionary id we don't support.
     if (flg & 32) != 0 {
         return Result.Err("zlib: preset dictionary not supported")

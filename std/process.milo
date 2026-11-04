@@ -84,7 +84,7 @@ pub fn run(cmd: &string): Result<i32> {
 // the main context with no scheduler it is the one blocking call it always was.
 // Polling rather than a SIGCHLD self-pipe because a signal disposition is
 // process-wide: installing one here would replace a handler the program owns.
-fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
+fn waitpidGreen(pid: i32, statusBuf: &[u8; 4]): i32 {
     if schedulerCurrent() as i64 == 0 {
         unsafe { return sysWaitpid(pid, statusBuf as *u8, 0) }
     }
@@ -147,8 +147,8 @@ impl Process {
     // Block until the child exits and return its status. Inside a green task only this
     // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
-        var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpidGreen(self._pid, &mut statusBuf)
+        let statusBuf: [u8; 4] = [0; 4]
+        let r = waitpidGreen(self._pid, statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
@@ -332,8 +332,8 @@ impl Child {
     // Block until the child exits and return its status. Inside a green task only this
     // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
-        var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpidGreen(self._pid, &mut statusBuf)
+        let statusBuf: [u8; 4] = [0; 4]
+        let r = waitpidGreen(self._pid, statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
@@ -557,7 +557,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
                 return Result.Ok(noStreamFds())
             }
             Stdio.Pipe => {
-                var fds: [i32; 2] = [0; 2]
+                let fds: [i32; 2] = [0; 2]
                 if pipe(fds as *i32) != 0 {
                     return Result.Err("pipe(" + label + ") failed")
                 }

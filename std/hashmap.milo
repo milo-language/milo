@@ -248,7 +248,7 @@ impl HashMap<K, V> {
     // checker borrows the map for the callback, so `f` cannot insert into or remove from it.
     fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
         unsafe {
-            var raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
             var data = raw[0]._data
             let mask = raw[0]._cap.wrappingSub(1)
             var slot = _mapHash(key, raw[0]._seed) & mask

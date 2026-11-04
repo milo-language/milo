@@ -45,7 +45,7 @@ pub extern fn mach_host_self(): u32
 pub extern fn host_statistics64(host: u32, flavor: i32, info: *u8, count: *u32): i32
 
 pub fn hostname(): string {
-    var buf: [u8; 256] = [0; 256]
+    let buf: [u8; 256] = [0; 256]
     unsafe { gethostname(buf, 256) }
     unsafe {
         return _cstrToString(buf as *u8)
@@ -53,7 +53,7 @@ pub fn hostname(): string {
 }
 
 pub fn cwd(): string {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         getcwd(buf, 4096)
         return _cstrToString(buf as *u8)
@@ -94,8 +94,8 @@ pub fn cpuCount(): i64 {
 }
 
 pub fn cpuModel(): string {
-    var buf: [u8; 256] = [0; 256]
-    var len: [i64; 1] = [256]
+    let buf: [u8; 256] = [0; 256]
+    let len: [i64; 1] = [256]
     unsafe {
         sysctlbyname("machdep.cpu.brand_string", buf as *u8, len as *i64, 0 as *u8, 0)
         return _cstrToString(buf as *u8)
@@ -103,8 +103,8 @@ pub fn cpuModel(): string {
 }
 
 pub fn totalMem(): i64 {
-    var mem: [i64; 1] = [0]
-    var len: [i64; 1] = [8]
+    let mem: [i64; 1] = [0]
+    let len: [i64; 1] = [8]
     unsafe {
         sysctlbyname("hw.memsize", mem as *u8, len as *i64, 0 as *u8, 0)
     }
@@ -114,8 +114,8 @@ pub fn totalMem(): i64 {
 pub fn freeMem(): i64 {
     // HOST_VM_INFO64 = 4, count = 38
     // Include inactive + purgeable pages as available (matches Activity Monitor)
-    var stats: [u8; 512] = [0; 512]
-    var count: [u32; 1] = [38]
+    let stats: [u8; 512] = [0; 512]
+    let count: [u32; 1] = [38]
     unsafe {
         if host_statistics64(mach_host_self(), 4, stats, count as *u32) == 0 {
             let freePages = (stats as *u32) [0] as i64
@@ -130,14 +130,14 @@ pub fn freeMem(): i64 {
 
 pub fn uptime(): i64 {
     // sysctl CTL_KERN=1, KERN_BOOTTIME=21
-    var mib: [i32; 2] = [1, 21]
-    var boottime: [i64; 2] = [0, 0]
-    var len: [i64; 1] = [16]
+    let mib: [i32; 2] = [1, 21]
+    let boottime: [i64; 2] = [0, 0]
+    let len: [i64; 1] = [16]
     unsafe {
         if sysctl(mib as *i32, 2, boottime as *u8, len as *i64, 0 as *u8, 0) != 0 {
             return 0
         }
-        var tvbuf: [u8; 16] = [0; 16]
+        let tvbuf: [u8; 16] = [0; 16]
         gettimeofday(tvbuf, 0 as *u8)
         // seconds at offset 0 (little-endian i64)
         var nowSec: i64 = 0
@@ -149,14 +149,14 @@ pub fn uptime(): i64 {
 }
 
 pub fn loadAvg(): [f64; 3] {
-    var avg: [f64; 3] = [0.0; 3]
+    let avg: [f64; 3] = [0.0; 3]
     unsafe { getloadavg(avg, 3) }
     return avg
 }
 
 pub fn osRelease(): string {
-    var buf: [u8; 256] = [0; 256]
-    var len: [i64; 1] = [256]
+    let buf: [u8; 256] = [0; 256]
+    let len: [i64; 1] = [256]
     unsafe {
         sysctlbyname("kern.osrelease", buf as *u8, len as *i64, 0 as *u8, 0)
         return _cstrToString(buf as *u8)

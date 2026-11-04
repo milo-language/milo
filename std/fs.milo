@@ -175,7 +175,7 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
 
 @replayHooked
 fn fileInfoLive(path: &string): Option<FileInfo> {
-    var buf: [u8; 144] = [0; 144]
+    let buf: [u8; 144] = [0; 144]
     var r: i32 = 0
     // statPath is the per-OS stat; `buf` is sized for the largest struct stat any
     // platform arm writes (144 bytes), and path is a NUL-terminated owned string.
@@ -558,7 +558,7 @@ pub fn realPath(path: &string): Result<string, IoError> {
 
 @replayHooked
 fn realPathLive(path: &string): Result<string, IoError> {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         let r = realpath(path, buf as *u8)
         if r as i64 == 0 as i64 {
@@ -834,7 +834,7 @@ pub fn currentDir(): Result<string, IoError> {
 
 @replayHooked
 fn currentDirLive(): Result<string, IoError> {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         let r = getcwd(buf as *u8, 4096)
         if r as i64 == 0 as i64 {
@@ -868,7 +868,7 @@ pub fn lstatInfo(path: &string): Option<FileInfo> {
 
 @replayHooked
 fn lstatInfoLive(path: &string): Option<FileInfo> {
-    var buf: [u8; 144] = [0; 144]
+    let buf: [u8; 144] = [0; 144]
     var r: i32 = 0
     unsafe { r = lstat(path, buf) }
     if r != 0 {
@@ -1355,7 +1355,7 @@ pub fn copyFile(src: &string, dst: &string): Result<Unit, IoError> {
             sysClose(srcFd)
             return errPath(dst)
         }
-        var buf: [u8; 65536] = [0; 65536]
+        let buf: [u8; 65536] = [0; 65536]
         while true {
             let n = readFd(srcFd, buf as *u8, 65536)
             if n < 0 {

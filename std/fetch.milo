@@ -113,7 +113,7 @@ impl TlsStream {
                 return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
             }
 
-            var addr = makeSockaddr(port, ip)
+            let addr = makeSockaddr(port, ip)
 
             if connectFdIn(fd, addr) < 0 {
                 sysClose(fd)
@@ -250,7 +250,7 @@ impl TlsStream {
     // Prefer `incoming()` for streaming/incremental consumption.
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
                 let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 4096)
@@ -292,7 +292,7 @@ impl TlsStream {
     fn recvUpTo(self: &Self, by: i64, maxBytes: i64): Result<string, NetError> {
         let fd = self._fd
         var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         var last: i32 = 0
         while maxBytes <= 0 || result.len < maxBytes {
             unsafe {
@@ -316,7 +316,7 @@ impl TlsStream {
     // so recv() would deadlock there; this returns after one record.
     fn recvOnce(self: &Self): string {
         var result: string = ""
-        var buf: [u8; 8192] = [0; 8192]
+        let buf: [u8; 8192] = [0; 8192]
         unsafe {
             let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
@@ -348,7 +348,7 @@ impl TlsStream {
             // if it ran outside one, so enforce it here.
             setNonblocking(stream._fd)
             Task.spawn(move(): void => {
-                var buf: [u8; 4096] = [0; 4096]
+                let buf: [u8; 4096] = [0; 4096]
                 while true {
                     var n: i32 = 0
                     unsafe {
@@ -851,7 +851,7 @@ fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, m
     var raw: string = ""
     // 16 KiB is a whole TLS record, so SSL_read never leaves part of one buffered in the
     // SSL object, where a byte past the response would hide from the leftover check.
-    var buf: [u8; 16384] = [0; 16384]
+    let buf: [u8; 16384] = [0; 16384]
     var headEnd: i64 = -1
     // frame end once known; -1 unknown yet, -2 chunked (see chunks), -3 read to EOF
     var need: i64 = -1
@@ -1029,7 +1029,7 @@ fn idleAliveLive(fd: i32, since: i64): i64 {
     if unrecordedEpochMillis() - since > IDLE_MS {
         return 0
     }
-    var b: [u8; 1] = [0; 1]
+    let b: [u8; 1] = [0; 1]
     unsafe {
         // the fd is nonblocking (connectAddrWait left it so): EAGAIN is the live answer
         let n = sockRead(fd, b as *u8, 1)
@@ -1201,7 +1201,7 @@ pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxB
 // HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308
 // redirects.
 pub fn fetch(url: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "GET", headers: "", body: ""
     }
     return doFetch(url, opts)
@@ -1223,7 +1223,7 @@ pub fn fetchWithTimeout(url: &string, opts: FetchOptions, t: FetchTimeouts): Res
 
 // HTTP POST of `body` with `Content-Type: application/json`.
 pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/json",
         body: body,
@@ -1235,7 +1235,7 @@ pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
 // hand-roll it with urlEncode. Several APIs that nominally accept a raw body
 // (Overpass, most OAuth token endpoints) only accept this content type.
 pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/x-www-form-urlencoded",
         body: body,
@@ -1245,7 +1245,7 @@ pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
 
 // HTTP PUT of `body` with `Content-Type: application/json`.
 pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "PUT",
         headers: "Content-Type: application/json",
         body: body,
@@ -1255,7 +1255,7 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
 
 // HTTP DELETE.
 pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "DELETE", headers: "", body: ""
     }
     return doFetch(url, opts)
@@ -1263,7 +1263,7 @@ pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
 
 // HTTP PATCH of `body` with `Content-Type: application/json`.
 pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError> {
-    var opts = FetchOptions {
+    let opts = FetchOptions {
         method: "PATCH",
         headers: "Content-Type: application/json",
         body: body,

@@ -338,7 +338,7 @@ fn idctBlock(blk: &[i64; 64], q: &Vec<i64>, out: &mut string, off: i64, stride: 
         }
         var z2 = blk[16 + c] * q[16 + c]
         var z3 = blk[48 + c] * q[48 + c]
-        var z1 = (z2 + z3) * FIX_0_541196100
+        let z1 = (z2 + z3) * FIX_0_541196100
         let t2 = z1 - z3 * FIX_1_847759065
         let t3 = z1 + z2 * FIX_0_765366865
         z2 = blk[c] * q[c]
@@ -379,7 +379,7 @@ fn idctBlock(blk: &[i64; 64], q: &Vec<i64>, out: &mut string, off: i64, stride: 
         }
         var z2 = ws[w + 2]
         var z3 = ws[w + 6]
-        var z1 = (z2 + z3) * FIX_0_541196100
+        let z1 = (z2 + z3) * FIX_0_541196100
         let t2 = z1 - z3 * FIX_1_847759065
         let t3 = z1 + z2 * FIX_0_765366865
         let t0 = (ws[w] + ws[w + 4]) * 8192
@@ -692,7 +692,7 @@ fn upsampleRow(plane: &string, fr: &Frame, c: i64, y: i64, out: &mut Vec<i64>) {
     let fancyH = fh == 2 && cw > 2
     if fv == 2 && (fh == 1 || fancyH) {
         var nb = inRow + 1
-        var even = (y & 1) == 0
+        let even = (y & 1) == 0
         if even {
             nb = inRow - 1
         }
@@ -1103,7 +1103,7 @@ fn decodeJpeg(src: &string): Result<Image, string> {
     var transform: i64 = -1
     var scans: i64 = 0
     var pos: i64 = 2
-    var done = false
+    let done = false
     while !done {
         let mp = nextMarker(src, pos)
         if mp < 0 {

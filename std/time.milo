@@ -41,7 +41,7 @@ pub struct Instant {
 
 @replayHooked
 fn osNow(): Instant {
-    var tv: [u8; 16] = [0; 16]
+    let tv: [u8; 16] = [0; 16]
     unsafe { gettimeofday(tv, 0 as *u8) }
     let sec = readI64FromBuf(tv, 0)
     let usec = readI64FromBuf(tv, 8)

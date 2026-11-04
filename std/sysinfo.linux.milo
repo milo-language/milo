@@ -49,7 +49,7 @@ pub extern fn sysconf(name: i32): i64
 pub extern fn getloadavg(loadavg: *f64, nelem: i32): i32
 
 pub fn hostname(): string {
-    var buf: [u8; 256] = [0; 256]
+    let buf: [u8; 256] = [0; 256]
     unsafe { gethostname(buf, 256) }
     unsafe {
         return _cstrToString(buf as *u8)
@@ -57,7 +57,7 @@ pub fn hostname(): string {
 }
 
 pub fn cwd(): string {
-    var buf: [u8; 4096] = [0; 4096]
+    let buf: [u8; 4096] = [0; 4096]
     unsafe {
         getcwd(buf, 4096)
         return _cstrToString(buf as *u8)
@@ -176,7 +176,7 @@ pub fn uptime(): i64 {
 }
 
 pub fn loadAvg(): [f64; 3] {
-    var avg: [f64; 3] = [0.0; 3]
+    let avg: [f64; 3] = [0.0; 3]
     unsafe { getloadavg(avg, 3) }
     return avg
 }

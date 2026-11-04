@@ -88,7 +88,7 @@ impl TlsConn {
     // returns after one record — the TLS analogue of one read(2) on the socket.
     fn recvOnce(self: &Self): string {
         var result: string = ""
-        var buf: [u8; 8192] = [0; 8192]
+        let buf: [u8; 8192] = [0; 8192]
         unsafe {
             let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
@@ -106,7 +106,7 @@ impl TlsConn {
     // stalls mid-request is dropped like a plaintext one. Needs the fd nonblocking, which
     // acceptWithin leaves it.
     fn readMoreBy(self: &Self, raw: &mut string, by: i64): i64 {
-        var buf: [u8; 8192] = [0; 8192]
+        let buf: [u8; 8192] = [0; 8192]
         let fd = self._fd
         unsafe {
             let n = sslReadFdWait(self._ssl as *u8, fd, buf as *u8, 8192, (forRead: bool): bool => waitIo(fd, forRead, by))
@@ -144,7 +144,7 @@ impl TlsConn {
     // half; an HTTP server wants recvOnce().
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
+        let buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
                 let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 4096)
@@ -238,10 +238,10 @@ impl TlsListener {
                     return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
                 }
 
-                var one: i32 = 1
+                let one: i32 = 1
                 unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
 
-                var addr = makeSockaddr(port, 0)
+                let addr = makeSockaddr(port, 0)
                 if bindIn(fd, addr) < 0 {
                     sysClose(fd)
                     return Result.Err(NetError.ConnectionFailed("bind() failed"))

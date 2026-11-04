@@ -51,10 +51,10 @@ let CC_MAX_CHUNK: i64 = 1073741824
 // to CC_MAX_CHUNK, so no caller can reintroduce the 32-bit wrap). alg: 0 SHA-256,
 // 1 MD5, 2 SHA-1.
 fn ccDigest(alg: i64, input: &string, chunk: i64, n: i64): string {
-    var hash: [u8; 32] = [0; 32]
+    let hash: [u8; 32] = [0; 32]
     // 256 bytes covers every context (CC_SHA256_CTX 104, CC_SHA1_CTX 96, CC_MD5_CTX 92);
     // u64 elements give the 8-byte alignment the u32/u64 fields inside them need.
-    var ctx: [u64; 32] = [0; 32]
+    let ctx: [u64; 32] = [0; 32]
     var step = chunk
     if step > CC_MAX_CHUNK || step < 1 {
         step = CC_MAX_CHUNK
@@ -126,7 +126,7 @@ pub fn sha1Raw(input: &string, chunk: i64): string {
 // AES-GCM encrypt; returns ciphertext with the 16-byte tag appended. Lengths are the
 // caller's to guarantee: std/crypto checks them before calling.
 pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string, _chunk: i64): Result<string, string> {
-    var tag: [u8; 16] = [0; 16]
+    let tag: [u8; 16] = [0; 16]
 
     unsafe {
         let aadPtr = if aad.len > 0 {

@@ -34,7 +34,7 @@ let BCRYPT_MAX_CHUNK: i64 = 1073741824
 // Digest `input` in pieces of at most `chunk` bytes (clamped to BCRYPT_MAX_CHUNK, so no
 // caller can reintroduce the 32-bit wrap).
 fn bcryptHash(algHandle: i64, input: &string, outLen: i64, chunk: i64): string {
-    var digest: [u8; 32] = [0; 32]
+    let digest: [u8; 32] = [0; 32]
     var step = chunk
     if step > BCRYPT_MAX_CHUNK || step < 1 {
         step = BCRYPT_MAX_CHUNK

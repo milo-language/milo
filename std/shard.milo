@@ -218,7 +218,7 @@ fn shatter<T>(v: Vec<T>, n: i64): Shards<T> {
     if wanted < 1 {
         wanted = 1
     }
-    var s: Shards<T> = Shards {
+    let s: Shards<T> = Shards {
         buf: v,
         count: wanted,
         shatterId: id,
@@ -249,7 +249,7 @@ impl Shards<T> {
                 if i == self.count - 1 {
                     hi = total
                 }
-                var sh: Shard<T> = Shard {
+                let sh: Shard<T> = Shard {
                     _base: ((p as i64) + lo * sizeOf<T>()) as *T,
                     _len: hi - lo,
                     _start: lo,
@@ -379,7 +379,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: move (S
     // `windows` is not checked at all: `shatter` already clamps the count to at
     // least one, so the old guard rejected an input the divider was about to accept.
     if states.len <= 0 {
-        var r: NoWorkers<T> = NoWorkers {
+        let r: NoWorkers<T> = NoWorkers {
             data: v
         }
         return Result.Err(r)
@@ -562,7 +562,7 @@ fn shatterStr(s: string, n: i64): StrShards {
     if wanted < 1 {
         wanted = 1
     }
-    var out: StrShards = StrShards {
+    let out: StrShards = StrShards {
         buf: s,
         count: wanted,
         shatterId: id,
@@ -596,7 +596,7 @@ impl StrShards {
                 if end > total {
                     end = total
                 }
-                var sh: StrShard = StrShard {
+                let sh: StrShard = StrShard {
                     _base: ((p as i64) + lo) as *u8,
                     _len: end - lo,
                     _own: hi - lo,

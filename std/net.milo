@@ -222,7 +222,7 @@ impl Drop for TcpStream {
 // "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
 pub fn ip6(text: &string): Option<[u8; 16]> {
     unsafe {
-        var out: [u8; 16] = [0; 16]
+        let out: [u8; 16] = [0; 16]
         var cbuf: [u8; 64] = [0; 64]
         if text.len >= 64 {
             return Option.None
@@ -264,7 +264,7 @@ impl TcpStream {
                 return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
 
-            var addr = makeSockaddr(port, ip)
+            let addr = makeSockaddr(port, ip)
 
             if connectFdIn(fd, addr) < 0 {
                 sysClose(fd)
@@ -314,7 +314,7 @@ impl TcpStream {
             if fd < 0 {
                 return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
-            var sa = makeSockaddr6(port, addr, scopeId)
+            let sa = makeSockaddr6(port, addr, scopeId)
             if connectFdIn6(fd, sa) < 0 {
                 sysClose(fd)
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
@@ -409,7 +409,7 @@ impl TcpStream {
     fn recv(self: &Self): Result<string, NetError> {
         unsafe {
             var result: string = ""
-            var buf: [u8; 4096] = [0; 4096]
+            let buf: [u8; 4096] = [0; 4096]
             while true {
                 let n = readFd(self._fd, buf, 4096)
                 if n <= 0 {
@@ -469,7 +469,7 @@ impl TcpStream {
     fn recvOnce(self: &Self): string {
         unsafe {
             var result: string = ""
-            var buf: [u8; 65536] = [0; 65536]
+            let buf: [u8; 65536] = [0; 65536]
             let n = readFd(self._fd, buf, 65536)
             if n > 0 {
                 for i in 0..n {
@@ -663,10 +663,10 @@ impl TcpListener {
                 return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
 
-            var one: i32 = 1
+            let one: i32 = 1
             unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
 
-            var sa = makeSockaddr(port, addr)
+            let sa = makeSockaddr(port, addr)
             if bindIn(fd, sa) < 0 {
                 sysClose(fd)
                 return Result.Err(NetError.ConnectionFailed("bind() failed"))
@@ -695,9 +695,9 @@ impl TcpListener {
             if fd < 0 {
                 return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
-            var one: i32 = 1
+            let one: i32 = 1
             unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
-            var sa = makeSockaddr6(port, addr, 0)
+            let sa = makeSockaddr6(port, addr, 0)
             if bindIn6(fd, sa) < 0 {
                 sysClose(fd)
                 return Result.Err(NetError.ConnectionFailed("bind() failed"))
@@ -979,7 +979,7 @@ pub fn lookupAllBy(hostname: &string, by: i64, lookup: move (&string) => Result<
 // id at 24.
 @replayHooked
 fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
-    var hints: [u8; 48] = [0; 48]
+    let hints: [u8; 48] = [0; 48]
     unsafe {
         let h = (hints as *i32)
         // AF_UNSPEC (0) asks for both families; SOCK_STREAM keeps one entry per address
@@ -987,7 +987,7 @@ fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
         h[1] = 0
         h[2] = 1
     }
-    var resBuf: [u8; 8] = [0; 8]
+    let resBuf: [u8; 8] = [0; 8]
     var out: Vec<IpAddr> = Vec.new()
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
@@ -1020,14 +1020,14 @@ fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
 
 @replayHooked
 fn lookupV4(hostname: &string): Result<u32, NetError> {
-    var hints: [u8; 48] = [0; 48]
+    let hints: [u8; 48] = [0; 48]
     unsafe {
         let hintsFamily = (hints as *i32)
         hintsFamily[1] = 2
         hintsFamily[2] = 1
     }
 
-    var resBuf: [u8; 8] = [0; 8]
+    let resBuf: [u8; 8] = [0; 8]
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {

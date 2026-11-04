@@ -233,7 +233,7 @@ fn unlinkNode(head: *u8, node: *u8): *u8 {
 // (under mtx) before unparking, so it never dangles.
 fn chParkRecv(inner: *ChannelInner): void {
     unsafe {
-        var w: [u8; 48] = [0; 48]
+        let w: [u8; 48] = [0; 48]
         let wp = w as *u8
         nodeStoreI64(wp, nodeKind(), kindPlain())
         nodeStorePtr(wp, nodeA(), schedulerCurrent())
@@ -247,7 +247,7 @@ fn chParkRecv(inner: *ChannelInner): void {
 
 fn chParkSend(inner: *ChannelInner): void {
     unsafe {
-        var w: [u8; 48] = [0; 48]
+        let w: [u8; 48] = [0; 48]
         let wp = w as *u8
         nodeStoreI64(wp, nodeKind(), kindPlain())
         nodeStorePtr(wp, nodeA(), schedulerCurrent())
@@ -476,7 +476,7 @@ impl Channel<T> {
                 curLen = (*inner).len
             }
             syncNote("send", 1)
-            var tail: i64 = (*inner).tail
+            let tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
             // the buffer owns the bytes now: end the local without running its drop
@@ -524,7 +524,7 @@ impl Channel<T> {
                 curLen = (*inner).len
             }
             syncNote("recv", 1)
-            var head: i64 = (*inner).head
+            let head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
             // built only here, where the slot fills it: a zeroed value dropped on an
             // early return would run a user Drop on bytes that were never a value
@@ -555,7 +555,7 @@ impl Channel<T> {
                 return false
             }
             syncNote("trySend", 1)
-            var tail: i64 = (*inner).tail
+            let tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
             forget(v)
@@ -583,7 +583,7 @@ impl Channel<T> {
             }
             syncNote("tryRecv", 1)
             let cap = (*inner).capacity
-            var head: i64 = (*inner).head
+            let head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
             // built only here, where the slot fills it: a zeroed value dropped on an
             // early return would run a user Drop on bytes that were never a value
@@ -1287,7 +1287,7 @@ impl WaitGroup {
                 syncLock(mtx)
                 while nodeLoadI64(p, 16) > 0 {
                     syncNote("wg.wait", 0)
-                    var w: [u8; 48] = [0; 48]
+                    let w: [u8; 48] = [0; 48]
                     let wp = w as *u8
                     nodeStoreI64(wp, nodeKind(), kindPlain())
                     nodeStorePtr(wp, nodeA(), cur)
@@ -1420,7 +1420,7 @@ fn onceWait(p: *u8, mtx: *u8): void {
     unsafe {
         let cur = schedulerCurrent()
         if cur as i64 != 0 {
-            var w: [u8; 48] = [0; 48]
+            let w: [u8; 48] = [0; 48]
             let wp = w as *u8
             nodeStoreI64(wp, nodeKind(), kindPlain())
             nodeStorePtr(wp, nodeA(), cur)

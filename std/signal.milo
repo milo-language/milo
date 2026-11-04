@@ -106,7 +106,7 @@ fn sigPipeHandler(sig: i32): void {
         if sig > 0 && sig < 64 {
             let w = sigPipeW[sig as i64]
             if w >= 0 {
-                var b: [u8; 1] = [1]
+                let b: [u8; 1] = [1]
                 write(w, b as *u8, 1) // async-signal-safe; nonblocking
             }
         }
@@ -149,7 +149,7 @@ impl SignalPipe {
     @replayHooked
     fn drain(self: &Self): bool {
         unsafe {
-            var buf: [u8; 64] = [0; 64]
+            let buf: [u8; 64] = [0; 64]
             var n = read(self._r, buf as *u8, 64)
             let fired = n > 0
             while n == 64 {
@@ -184,7 +184,7 @@ pub fn installSignalPipe(sig: i32): Result<SignalPipe, string> {
         return Result.Err("signal number out of range")
     }
     unsafe {
-        var fds: [i32; 2] = [0; 2]
+        let fds: [i32; 2] = [0; 2]
         if pipe(fds as *i32) != 0 {
             return Result.Err("pipe() failed")
         }

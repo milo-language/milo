@@ -47,7 +47,7 @@ impl DateTime {
         }
 
         // civil date from day count (Hinnant algorithm)
-        var z = totalDays + 719468
+        let z = totalDays + 719468
         var eraInput = z
         if z < 0 {
             eraInput = z - 146096
@@ -377,7 +377,7 @@ fn osLocalBreakdown(epochSec: i64): DateTime {
     unsafe { tzset() }
     var t: [i64; 1] = [0; 1]
     t[0] = epochSec
-    var tm: [u8; 128] = [0; 128]
+    let tm: [u8; 128] = [0; 128]
     unsafe {
         let _r = localtime_r(t as *u8, tm as *u8)
     }
