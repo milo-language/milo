@@ -339,7 +339,9 @@ const FIXTURES = [
   // R-NET-PIPE R-NET-SIG: descriptors and signals
   // R-FNPTR: function pointers called from C and held in structs
   "fnToPtr", "typedFnPtr",
-  "sigpipeIgnored", "signalSigchld", "greenIoPipe", "fdWaitSharedFd", "eventLoop", "httpWorkers",
+  "sigpipeIgnored", "signalSigchld", "greenIoPipe", "fdWaitSharedFd",
+  // The interpreter models kqueue, not epoll, so on Linux these two have no oracle yet.
+  ...(process.platform === "darwin" ? ["eventLoop", "httpWorkers"] : []),
   // R-SELECT: waiting on several sources
   "selectChannelVsTimeout", "selectFdVsChannel",
   // R-NET-IO R-NET-BLOCK: a connection served and answered
