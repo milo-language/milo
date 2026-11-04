@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 587 distinct messages across 753 programs the compiler must reject.
+Every error message the test suite pins: 593 distinct messages across 760 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -102,6 +102,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Meters' is not a generic type`](#meters-is-not-a-generic-type)
 - [`'modify' argument 2: expected (&mut i64) => void, got (i64) => void`](#modify-argument-2-expected-mut-i64-void-got-i64-void)
 - [`'n' is captured by a closure argument and borrowed in the same call`](#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
+- [`'n' is taken as '&mut' but never written through`](#n-is-taken-as-mut-but-never-written-through)
 - [`'n' shadows an outer binding`](#n-shadows-an-outer-binding)
 - [`'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have`](#new-is-not-available-on-binaryheap-task-new-orders-its-elements-with-which-task-does-not-have)
 - [`'nonexistent' is not exported by 'lib/math'`](#nonexistent-is-not-exported-by-lib-math)
@@ -139,6 +140,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'strlen' is not imported`](#strlen-is-not-imported)
 - [`'struct Point' is defined twice in this file`](#struct-point-is-defined-twice-in-this-file)
 - [`'total' can park this task while it holds a reference into 'g's buffer`](#total-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
+- [`'total' is never reassigned`](#total-is-never-reassigned)
 - [`'Unit' is defined as a struct in 'std/prelude.milo' and as a struct in`](#unit-is-defined-as-a-struct-in-std-prelude-milo-and-as-a-struct-in)
 - [`'unwrapOrElse' on a non-Copy Result<string>`](#unwraporelse-on-a-non-copy-result-string)
 - [`'v' declared as Vec<string> but got Vec<i64>`](#v-declared-as-vec-string-but-got-vec-i64)
@@ -532,6 +534,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
 - [`the task scope 's' can only be used as 's.spawn(...)'`](#the-task-scope-s-can-only-be-used-as-s-spawn)
 - [`this closure is passed to a 'move' parameter, so it owns its captures`](#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures)
+- [`this closure owns its captures, so an element of this collection cannot be a plain function type`](#this-closure-owns-its-captures-so-an-element-of-this-collection-cannot-be-a-plain-function-type)
+- [`this closure owns its captures, so field 'f' cannot be a plain function type`](#this-closure-owns-its-captures-so-field-f-cannot-be-a-plain-function-type)
+- [`this closure owns its captures, so the return value cannot be a plain function type`](#this-closure-owns-its-captures-so-the-return-value-cannot-be-a-plain-function-type)
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`two migrations claim version 1`](#two-migrations-claim-version-1)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
@@ -564,6 +569,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unknown type 'Payload'`](#unknown-type-payload)
 - [`unknown type 'Widget'`](#unknown-type-widget)
 - [`unreachable code`](#unreachable-code)
+- [`unreachable match arm: '97' comes after a '_' arm`](#unreachable-match-arm-97-comes-after-a-arm)
 - [`unreachable match arm: 'Ok(Some(v))' is already covered by the arms above it`](#unreachable-match-arm-ok-some-v-is-already-covered-by-the-arms-above-it)
 - [`unsafe impl is only supported for the Send and Sync marker traits`](#unsafe-impl-is-only-supported-for-the-send-and-sync-marker-traits)
 - [`unsupported representation 'u32'`](#unsupported-representation-u32)
@@ -1485,7 +1491,7 @@ impl Counter for Tally {
 }
 
 fn main(): i32 {
-    var t = Tally { n: 0 }
+    let t = Tally { n: 0 }
     t.bump()
     return 0
 }
@@ -2025,7 +2031,7 @@ impl GraphB {
 
 fn main(): i32 {
     var a = GraphA.new()
-    var b = GraphB.new()
+    let b = GraphB.new()
     let h = a.alloc(Node { name: "x" })
     let _m = b.get(h)
     return 0
@@ -2130,7 +2136,7 @@ fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
 pub fn main(): i32 {
     var v: Vec<string> = Vec.new()
     v.push("a heap string long enough to be on the heap for sure".clone())
-    var h = H { items: v, k: 1 }
+    let h = H { items: v, k: 1 }
     show(h.items[0], consume(h.items))
     return 0
 }
@@ -2231,6 +2237,29 @@ fn main(): void {
 
 <sub>[tests/errors/dbPoolMutableGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolMutableGlobal.milo)</sub>
 
+Pins: a handler built by serveRouterFactory runs on several schedulers (OS threads), so a handler that bumps a plain `var` global is the data race the thread rule exists for. The fix is an atomic, or state of its own per Router.
+
+```milo skip
+from "std/http" import { Context, Response, Router, ServeOptions, serveRouterFactory }
+
+var hits: i64 = 0
+
+fn main() {
+    serveRouterFactory("127.0.0.1", 47413, (): Router => {
+        var r = Router.new()
+        r.get("/", (ctx: &mut Context): Response => {
+            hits += 1
+            return ctx.text("hi")
+        })
+        return r
+    }, ServeOptions {
+        workers: 2
+    })!
+}
+```
+
+<sub>[tests/errors/httpWorkersGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/httpWorkersGlobal.milo)</sub>
+
 ## `'Holder.show' can park this task while it holds a reference into 'g's buffer` {#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer}
 
 A method's receiver borrows like an argument: `g[0].show()` hands `show` a reference into g's buffer, and if `show` parks, another task can push to g and realloc it (ASan saw the use-after-free before the receiver went through the same check).
@@ -2276,7 +2305,7 @@ enum Op {
 fn evalExprFallback(id: i32, op: Op): i32 {
     match op {
         Op.Wrap(v) => {
-            var val = JSValue.Native(v)
+            let val = JSValue.Native(v)
             match val {
                 JSValue.Native(id) => { return id }
                 JSValue.Number(id) => { return id }
@@ -2603,6 +2632,25 @@ fn main(): i32 {
 
 <sub>[tests/errors/aliasCaptureStoredClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureStoredClosure.milo)</sub>
 
+## `'n' is taken as '&mut' but never written through` {#n-is-taken-as-mut-but-never-written-through}
+
+A private fn that takes `&mut T` and never writes through it tells every caller the argument may change. Take `&T`; `milo fix` also drops `&mut` at the call sites.
+
+```milo skip
+fn show(n: &mut i64): void {
+    print(n)
+}
+
+fn main() {
+    var a: i64 = 1
+    show(&mut a)
+    a = 2
+    print(a)
+}
+```
+
+<sub>[tests/errors/unwrittenMutParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unwrittenMutParam.milo)</sub>
+
 ## `'n' shadows an outer binding` {#n-shadows-an-outer-binding}
 
 A closure parameter shadowing an enclosing local used to be rejected with the same bare, location-less diagnostic as the match-arm case: closure params are declared without a span the same way function params were.
@@ -2629,7 +2677,7 @@ struct Task {
 }
 
 fn main(): i32 {
-    var h = BinaryHeap<Task>.new()
+    let h = BinaryHeap<Task>.new()
     h.push(Task { pri: 1 })
     return 0
 }
@@ -2992,13 +3040,13 @@ impl Vec<T> {
     }
 }
 
-fn grow(s: &mut [i64]) {
+fn grow(s: &[i64]) {
     s.pushTwice(1)
 }
 
 fn main() {
-    var v: Vec<i64> = [3, 4, 5]
-    grow(&mut v[0..1])
+    let v: Vec<i64> = [3, 4, 5]
+    grow(v[0..1])
     print(v.len())
 }
 ```
@@ -3316,7 +3364,7 @@ fn writer(): void {
         g.push(777)
         i = i + 1
     }
-    var _junk: Vec<i64> = Vec.filled(4, 424242)
+    let _junk: Vec<i64> = Vec.filled(4, 424242)
     print("writer done")
 }
 
@@ -3391,7 +3439,7 @@ from "std/runtime" import {
 }
 
 fn leak(): Promise<Shard<f64>> {
-    var data: Vec<f64> = Vec.filled(1000, 1.0)
+    let data: Vec<f64> = Vec.filled(1000, 1.0)
     var owner = shatter(data, 1)
     var ws = owner.windows()
     let w = ws.pop()!
@@ -3636,6 +3684,19 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/globalSliceArgAcrossPark.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalSliceArgAcrossPark.milo)</sub>
 
+## `'total' is never reassigned` {#total-is-never-reassigned}
+
+A `var` nothing writes after its initializer is an error, not a warning: `let` says the same thing and lets the checker reject a later write. `milo fix` rewrites it.
+
+```milo skip
+fn main() {
+    var total = 40 + 2
+    print(total)
+}
+```
+
+<sub>[tests/errors/varNeverReassigned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/varNeverReassigned.milo)</sub>
+
 ## `'Unit' is defined as a struct in 'std/prelude.milo' and as a struct in` {#unit-is-defined-as-a-struct-in-std-prelude-milo-and-as-a-struct-in}
 
 A type's body IS its signature, so redefining a prelude type with different fields is the type-level equivalent of the `shadows-stdlib` signature mismatch fns already reject: std's own uses of `Unit` would bind to this definition. (An identical redefinition still merges — see tests/modules.test.ts.)
@@ -3754,7 +3815,7 @@ The scope body itself moves 'v' into a `move` closure (reaching it only through 
 from "std/runtime" import { Task, schedulerYield }
 
 pub fn main(): i32 {
-    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
     Task.scope((s) => {
         s.spawn(() => {
             for x in v {
@@ -3808,7 +3869,7 @@ A scoped task hands 'v' to a nested `move` closure, which frees it when that tas
 from "std/runtime" import { Task, schedulerYield }
 
 pub fn main(): i32 {
-    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
     Task.scope((s) => {
         s.spawn(() => {
             for x in v {
@@ -4241,7 +4302,7 @@ from "std/os" import {
 }
 
 pub fn main(): i32 {
-    var v: Vec<u8> = Vec.new()
+    let v: Vec<u8> = Vec.new()
     let p = v.ptr()
     var w = v
     w.push(0)
@@ -4462,7 +4523,7 @@ One task, no park: the closure reaches itself through the struct it is stored in
 
 ```milo skip
 struct Node {
-    f: (&Node) => void,
+    f: move (&Node) => void,
 }
 
 fn main(): void {
@@ -4474,15 +4535,13 @@ fn main(): void {
             log.push("x".clone())
             for l in log {
                 if depth < 2 {
-                    let g = self2.f
-                    g(self2)
+                    self2.f(self2)
                 }
                 print(l)
             }
         },
     }
-    let g = h.f
-    g(h)
+    h.f(h)
 }
 ```
 
@@ -4954,7 +5013,7 @@ Both array-literal paths called `checkExprWithHint(elem, hint.element)` and thre
 
 ```milo skip
 fn main() {
-    var x: [i64; 2] = ["a", "b"]
+    let x: [i64; 2] = ["a", "b"]
     print(x[0])
 }
 ```
@@ -5027,6 +5086,7 @@ Passing a Vec element and the Vec itself as two &mut args aliases the element in
 ```milo skip
 fn bad(elem: &mut i32, v: &mut Vec<i32>): i32 {
     v.push(1)
+    elem = elem + 1     // a write through elem, after the push may have freed it
     return elem
 }
 
@@ -5133,7 +5193,7 @@ Random.fillRaw writes through a raw pointer, so calling it needs `unsafe` even w
 from "std/random" import { Random }
 
 fn main(): i32 {
-    var key: [u8; 16] = [0; 16]
+    let key: [u8; 16] = [0; 16]
     var p: *u8 = 0 as *u8
     unsafe { p = key as *u8 }
     Random.fillRaw(p, 16) // @error: calling 'Random.fillRaw' requires an unsafe block
@@ -5264,7 +5324,7 @@ fn main(): void {
 extern type Opaque
 
 fn main(): i32 {
-    var x: Opaque = 0
+    let x: Opaque = 0
     return 0
 }
 
@@ -5861,7 +5921,7 @@ fn advance<T: Tick>(x: &T) {
 }
 
 fn main() {
-    var c = Counter { n: 0 }
+    let c = Counter { n: 0 }
     advance(c)
     print(c.n)
 }
@@ -5923,7 +5983,7 @@ pub fn main(): i32 {
 a closure stores its captures and can outlive the frame that owns the Vec, so a view captured by one dangles — this returned garbage from freed memory before the check
 
 ```milo skip
-fn makeGetter(): () => i64 {
+fn makeGetter(): move () => i64 {
     var v: Vec<i64> = Vec.new()
     v.push(111)
     let s = v[0..1]
@@ -5981,7 +6041,7 @@ A fixed array casts to a pointer, never straight to an integer: codegen emitted 
 
 ```milo skip
 fn main(): i32 {
-    var a: [u8; 4] = [0; 4]
+    let a: [u8; 4] = [0; 4]
     let n = (a as i64) + 1
     print(n)
     return 0
@@ -6363,7 +6423,7 @@ An unannotated Vec.new() that is never pushed to has no element to infer.
 
 ```milo skip
 fn main() {
-    var xs = Vec.new()  // @error: cannot infer Vec element type
+    let xs = Vec.new()  // @error: cannot infer Vec element type
     print(xs.len.toString())
 }
 ```
@@ -6490,7 +6550,7 @@ fn pick(d: &Doc, o: Option<Text>): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" } }
     print(pick(d, Option.None))
 }
 
@@ -6512,7 +6572,7 @@ fn pick(d: &Doc, c: bool): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, true))
 }
 
@@ -6534,7 +6594,7 @@ fn pick(d: &Doc, n: i64): Text {
 }
 
 fn main() {
-    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
+    let d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, 0))
 }
 
@@ -6790,7 +6850,7 @@ struct User {
 }
 
 fn main() {
-    var users: Vec<User> = [User {
+    let users: Vec<User> = [User {
         name: Text { s: "Alice" }, age: 30,
     }
     ,]
@@ -7843,7 +7903,7 @@ Handing a borrowing closure to a function that KEEPS it. `wrap` stores its param
 
 ```milo skip
 struct Box {
-    f: (i64) => i64,
+    f: move (i64) => i64,
 }
 
 fn wrap(g: move (i64) => i64): Box {
@@ -9612,7 +9672,7 @@ struct Wrap<T: HasValue> {
 
 impl Wrap<T> {
     fn make(inner: T): Wrap<T> {
-        var w: Wrap<T> = Wrap {
+        let w: Wrap<T> = Wrap {
             inner: inner
         }
         return w
@@ -10507,7 +10567,7 @@ enum Box {
 }
 
 fn main() {
-    var b = Box.Full(Ctr {
+    let b = Box.Full(Ctr {
         v: 1
     }
     )
@@ -10651,7 +10711,7 @@ fn bump(n: &Node): void {
 }
 
 fn main() {
-    var n = Node.Leaf(1)
+    let n = Node.Leaf(1)
     bump(n)
 }
 ```
@@ -11783,7 +11843,7 @@ struct Bag {
 }
 
 fn main(): i32 {
-    var m: HashMap<Bag, i32> = HashMap.new()
+    let m: HashMap<Bag, i32> = HashMap.new()
     return 0
 }
 ```
@@ -11809,15 +11869,15 @@ fn main() {
 ## `old() takes a scalar` {#old-takes-a-scalar}
 
 ```milo skip
-fn f(v: &mut Vec<i64>): i64
+fn f(v: &Vec<i64>): i64
 ensures v.len == old(v).len
 {
     return v.len
 }
 
 fn main() {
-    var xs = vecNew<i64>()
-    print(f(&mut xs))
+    let xs = vecNew<i64>()
+    print(f(xs))
 }
 ```
 
@@ -12129,7 +12189,7 @@ extern struct Point {
 }
 
 fn main(): i32 {
-    var p = Point {
+    let p = Point {
         x: 1, y: 2
     }
     let ptr = 0 as *Point
@@ -12268,7 +12328,7 @@ A borrow inside a Vec outlives the value it borrows: the Vec survives the scope 
 
 ```milo skip
 fn main() {
-    var toks: Vec<&[u8]> = Vec.new()
+    let toks: Vec<&[u8]> = Vec.new()
     print($"{toks.len}")
 }
 ```
@@ -12449,7 +12509,7 @@ A loop binding that shadows an outer name is rejected. It used to be accepted an
 ```milo skip
 fn main(): i32 {
     let row = 5
-    var nums: Vec<i64> = [7, 8, 9]
+    let nums: Vec<i64> = [7, 8, 9]
     var total = 0
     for row in nums {  // @error: shadows an outer binding
         total = total + row
@@ -13040,12 +13100,12 @@ from "std/runtime" import {
     Task, TaskScope
 }
 
-fn helper(_s: &mut TaskScope): void {
+fn helper(_s: &TaskScope): void {
 }
 
 pub fn main(): i32 {
     Task.scope((s) => {
-        helper(&mut s)
+        helper(s)
     })
     return 0
 }
@@ -13080,6 +13140,56 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureToMoveParamCapturesSelf.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureToMoveParamCapturesSelf.milo)</sub>
+
+## `this closure owns its captures, so an element of this collection cannot be a plain function type` {#this-closure-owns-its-captures-so-an-element-of-this-collection-cannot-be-a-plain-function-type}
+
+A Vec whose element type is a plain function keeps no owner for a pushed closure's environment. The element type has to be `move (T) => R`.
+
+```milo skip
+fn main() {
+    let n = 6
+    var v: Vec<(i64) => i64> = Vec.new()
+    v.push(move (x: i64): i64 => x + n)
+    print(v.len())
+}
+```
+
+<sub>[tests/errors/plainClosureEnvVecElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/plainClosureEnvVecElement.milo)</sub>
+
+## `this closure owns its captures, so field 'f' cannot be a plain function type` {#this-closure-owns-its-captures-so-field-f-cannot-be-a-plain-function-type}
+
+The store spellings of plainClosureEnvReturn: a struct field and a Vec element typed as a plain function. A closure that captures nothing has no environment and stays allowed (tests/fixtures/closureStoredMove.milo, makeFree).
+
+```milo skip
+struct Holder {
+    f: (i64) => i64,
+}
+
+fn main() {
+    let n = 5
+    let h = Holder { f: move (x: i64): i64 => x + n }
+    print(h.f(1))
+}
+```
+
+<sub>[tests/errors/plainClosureEnvStored.milo](https://github.com/milo-language/milo/blob/main/tests/errors/plainClosureEnvStored.milo)</sub>
+
+## `this closure owns its captures, so the return value cannot be a plain function type` {#this-closure-owns-its-captures-so-the-return-value-cannot-be-a-plain-function-type}
+
+A `move` closure that captures `n` owns a heap environment. A plain `(i64) => i64` is Copy and owns nothing, so returning the closure under that type left its environment without an owner and it was never freed. The return type has to say `move`.
+
+```milo skip
+fn makeAdder(n: i64): (i64) => i64 {
+    return move (x: i64): i64 => x + n
+}
+
+fn main() {
+    let f = makeAdder(2)
+    print(f(1))
+}
+```
+
+<sub>[tests/errors/plainClosureEnvReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/plainClosureEnvReturn.milo)</sub>
 
 ## `two fields map to the JSON name 'id'` {#two-fields-map-to-the-json-name-id}
 
@@ -13239,7 +13349,7 @@ type A = B
 type B = A
 
 pub fn main(): i32 {
-    var x: A = 1
+    let x: A = 1
     print(x)
     return 0
 }
@@ -13255,7 +13365,7 @@ Same rule through the generic path, where the substitution rebuilds the same app
 type Loop<T> = Loop<T>
 
 pub fn main(): i32 {
-    var x: Loop<i64> = 1
+    let x: Loop<i64> = 1
     print(x)
     return 0
 }
@@ -13271,7 +13381,7 @@ A generic alias names a shape, not a type: `Pair` on its own is missing the very
 type Pair<T> = Vec<T>
 
 pub fn main(): i32 {
-    var x: Pair = Vec.new()
+    let x: Pair = Vec.new()
     x.push(1)
     return 0
 }
@@ -13287,7 +13397,7 @@ An alias is expanded by substituting one argument per parameter, so the wrong co
 type Pair<T> = Vec<T>
 
 pub fn main(): i32 {
-    var x: Pair<i64, bool> = Vec.new()
+    let x: Pair<i64, bool> = Vec.new()
     x.push(1)
     return 0
 }
@@ -13756,6 +13866,23 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/unreachableAfterVoidReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unreachableAfterVoidReturn.milo)</sub>
 
+## `unreachable match arm: '97' comes after a '_' arm` {#unreachable-match-arm-97-comes-after-a-arm}
+
+First match wins, so `'a'` after `_` can never run.
+
+```milo skip
+fn classify(c: u8): i64 {
+    return match c {
+        _ => 0,
+        'a' => 1,
+    }
+}
+
+fn main() { print(classify('a')) }
+```
+
+<sub>[tests/errors/matchArmAfterWildcard.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchArmAfterWildcard.milo)</sub>
+
 ## `unreachable match arm: 'Ok(Some(v))' is already covered by the arms above it` {#unreachable-match-arm-ok-some-v-is-already-covered-by-the-arms-above-it}
 
 `Ok(x)` takes every Ok, so the nested arm after it can never run.
@@ -13855,7 +13982,7 @@ The closure reads `p.name` through its by-reference capture, and the field was m
 struct P { name: Vec<i64>, age: i64 }
 fn eat(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var p = P { name: Vec<i64>.filled(3, 7), age: 3 }
+    let p = P { name: Vec<i64>.filled(3, 7), age: 3 }
     let f = () => { print(p.name) }
     eat(p.name)
     f()
@@ -13896,7 +14023,7 @@ fn check(m: HashMap<i32, i32>): i32 {
 }
 
 fn main(): i32 {
-    var m: HashMap<i32, i32> = HashMap.new()
+    let m: HashMap<i32, i32> = HashMap.new()
     check(m)
     check(m)
     return 0
@@ -14022,8 +14149,8 @@ A binding consumed on either arm of a fork is unusable afterwards — which arm 
 
 ```milo skip
 fn main() {
-    var a = Vec<i64>.filled(3, 7)
-    var b = Vec<i64>.filled(3, 7)
+    let a = Vec<i64>.filled(3, 7)
+    let b = Vec<i64>.filled(3, 7)
     let c = true
     let s = if c { a } else { b }
     print(s)
@@ -14053,8 +14180,8 @@ fn main(): i32 {
 
 ```milo skip
 fn main() {
-    var a = Vec<i64>.filled(3, 7)
-    var b = Vec<i64>.filled(3, 7)
+    let a = Vec<i64>.filled(3, 7)
+    let b = Vec<i64>.filled(3, 7)
     let n = 0
     let s = match n { 0 => a, _ => b }
     print(s)
@@ -14440,7 +14567,7 @@ The other half: `??` also moves the payload OUT of its Option operand. The enum'
 fn main() {
     var d = "dflt"
     d.pushStr("-x")
-    var o: Option<string> = Option.Some("payload-long-enough")
+    let o: Option<string> = Option.Some("payload-long-enough")
     let n = (o ?? d).len
     print(n.toString())
     if let Option.Some(p) = o {
@@ -14502,7 +14629,7 @@ fn total(a: [Vec<i64>; 2]): i64 {
 fn main() {
     var p: Vec<i64> = Vec.new()
     p.push(3)
-    var q: Vec<i64> = Vec.new()
+    let q: Vec<i64> = Vec.new()
     print(total([p, q]))
     print(p.len())
 }
@@ -14551,7 +14678,7 @@ fn getIt(): Result<string> {
 }
 
 fn use(): Result<i32> {
-    var r = getIt()
+    let r = getIt()
     let s = r?
     match r {
         Result.Ok(v) => { print("ok: ", v) }
@@ -14595,7 +14722,7 @@ fn getIt(): Result<string> {
 }
 
 fn main() {
-    var r = getIt()
+    let r = getIt()
     let s = r!
     match r {
         Result.Ok(v) => { print("ok: ", v) }
@@ -14631,7 +14758,7 @@ Passing the closure on is a use of what it captures by reference: `run` calls it
 fn run(f: () => void): void { f() }
 fn consume(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var s = Vec<i64>.filled(3, 7)
+    let s = Vec<i64>.filled(3, 7)
     let f = (): void => { print(s) }
     consume(s)
     run(f)
@@ -14649,7 +14776,7 @@ pub fn main(): i32 {
 ```milo skip
 fn consume(s: Vec<i64>): void { print(s.len.toString()) }
 pub fn main(): i32 {
-    var s = Vec<i64>.filled(3, 7)
+    let s = Vec<i64>.filled(3, 7)
     let f = (): i64 => s.len
     consume(s)
     print(f().toString())
@@ -15037,7 +15164,7 @@ fn describe(v: &Val): i64 {
 }
 
 fn main() {
-    var x = Val.Str("hello world")
+    let x = Val.Str("hello world")
     if let Val.Str(s) = x {
         print($"{describe(x)}")
     } else {
@@ -15061,7 +15188,7 @@ fn startsHello(v: &Val): bool {
 }
 
 fn main() {
-    var x = Val.Str("hello world")
+    let x = Val.Str("hello world")
     match x {
         Val.Str(s) => {
             let bad = startsHello(x)
