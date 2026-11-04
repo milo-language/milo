@@ -960,7 +960,7 @@ async function assertAsanWorks(dir: string): Promise<void> {
   const probe = join(dir, "__asan_selfcheck.milo");
   writeFileSync(probe, `from "std/os" import { strlen }
 fn main() {
-    var v: Vec<u8> = Vec.filled(8, 65)
+    let v: Vec<u8> = Vec.filled(8, 65)
     print(strlen(v.ptr()))
 }
 `);
