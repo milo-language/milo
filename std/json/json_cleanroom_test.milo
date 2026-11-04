@@ -1,0 +1,4155 @@
+// Clean-room tests for std/json: written from `milo spec --packet` output (requirements, signatures
+// and contracts, no bodies) and RFC 8259, by an author who never saw the implementation.
+from "std/json" import { Json, JsonVal, JsonMember, JsonObj, JsonArr, JsonCur, JsonEvent, JsonToken, JsonPull, JsonError, JsonMismatch, JSON_MAX_DEPTH, jsonParse, jsoncParse, jsonEscapeStr, jsonPretty, jsonSer, jsonQuote, jsonFloatStr, jsonF32Str, jsonBoolStr, jsonKindName, jsonPull }
+
+// ---------- helpers ----------
+
+fn hexv(c: u8): i64 {
+    if c >= 48 && c <= 57 { return (c as i64) - 48 }
+    if c >= 65 && c <= 70 { return (c as i64) - 55 }
+    if c >= 97 && c <= 102 { return (c as i64) - 87 }
+    return -1
+}
+
+// Bytes from a hex string such as "C3 A9" (spaces ignored). Lets tests build ill-formed UTF-8.
+fn hx(h: string): string {
+    var out = ""
+    var hi: i64 = -1
+    var i: i64 = 0
+    while i < h.len {
+        let v = hexv(h[i])
+        if v >= 0 {
+            if hi < 0 {
+                hi = v
+            } else {
+                out.push((hi * 16 + v) as u8)
+                hi = -1
+            }
+        }
+        i += 1
+    }
+    return out
+}
+
+fn byteStr(b: i64): string {
+    var s = ""
+    s.push(b as u8)
+    return s
+}
+
+fn q(inner: string): string {
+    return "\"" + inner + "\""
+}
+
+fn okP(s: string): bool {
+    return jsonParse(s).isOk()
+}
+
+fn badP(s: string): bool {
+    return jsonParse(s).isErr()
+}
+
+fn okC(s: string): bool {
+    return jsoncParse(s).isOk()
+}
+
+fn badC(s: string): bool {
+    return jsoncParse(s).isErr()
+}
+
+fn P(s: string): Json {
+    return jsonParse(s)!
+}
+
+fn errText(s: string): string {
+    match jsonParse(s) {
+        Result.Ok(_) => { return "" }
+        Result.Err(e) => { return e }
+    }
+}
+
+fn decode(jsonText: string): Option<string> {
+    match jsonParse(jsonText) {
+        Result.Ok(d) => { return d.asStr() }
+        Result.Err(_) => { return Option.None }
+    }
+}
+
+fn strIs(o: Option<string>, want: string): bool {
+    match o {
+        Option.Some(s) => { return s == want }
+        Option.None => { return false }
+    }
+}
+
+fn intIs(o: Option<i64>, want: i64): bool {
+    return o.isSome() && o.unwrapOr(want + 1) == want
+}
+
+fn fltIs(o: Option<f64>, want: f64): bool {
+    return o.isSome() && o.unwrapOr(f64.NAN) == want
+}
+
+fn boolIs(o: Option<bool>, want: bool): bool {
+    return o.isSome() && o.unwrapOr(!want) == want
+}
+
+fn numF(s: string): f64 {
+    match jsonParse(s) {
+        Result.Ok(d) => { return d.asF64().unwrapOr(f64.NAN) }
+        Result.Err(_) => { return f64.NAN }
+    }
+}
+
+fn rootInt(s: string): Option<i64> {
+    match jsonParse(s) {
+        Result.Ok(d) => { return d.curInt(d.curRoot()) }
+        Result.Err(_) => { return Option.None }
+    }
+}
+
+fn rootUint(s: string): Option<u64> {
+    match jsonParse(s) {
+        Result.Ok(d) => { return d.curUint(d.curRoot()) }
+        Result.Err(_) => { return Option.None }
+    }
+}
+
+fn joinKeys(v: &Vec<string>): string {
+    var out = ""
+    var i: i64 = 0
+    while i < v.len {
+        if i > 0 { out.push(44) }
+        out.pushStr(v[i])
+        i += 1
+    }
+    return out
+}
+
+// Compact text of a document's value: equal iff the two documents hold the same value.
+fn canon(s: string): string {
+    let d = jsonParse(s)!
+    let v = d.curJsonVal(d.curRoot())
+    return jsonSer(v)
+}
+
+fn evCode(e: JsonEvent): string {
+    match e {
+        JsonEvent.StartObject => { return "{" }
+        JsonEvent.EndObject => { return "}" }
+        JsonEvent.StartArray => { return "[" }
+        JsonEvent.EndArray => { return "]" }
+        JsonEvent.Key => { return "K" }
+        JsonEvent.Str => { return "S" }
+        JsonEvent.Num => { return "N" }
+        JsonEvent.Bool => { return "B" }
+        JsonEvent.Null => { return "Z" }
+        JsonEvent.End => { return "End" }
+        JsonEvent.Error => { return "Error" }
+    }
+}
+
+// Space-joined event codes up to and including End or Error (or the cap).
+fn pullCodes(src: string): string {
+    var p = jsonPull(src)
+    var out = ""
+    var n: i64 = 0
+    let cap = src.len * 2 + 10
+    while n < cap {
+        let t = p.next()
+        let c = evCode(t.kind)
+        if n > 0 { out.push(32) }
+        out.pushStr(c)
+        if c == "End" || c == "Error" { return out }
+        n += 1
+    }
+    return out + " CAP"
+}
+
+fn tokAt(src: string, idx: i64): JsonToken {
+    var p = jsonPull(src)
+    var t = p.next()
+    var n: i64 = 0
+    while n < idx {
+        t = p.next()
+        n += 1
+    }
+    return t
+}
+
+fn pullTerminates(src: string): bool {
+    let c = pullCodes(src)
+    return c.endsWith("End") || c.endsWith("Error")
+}
+
+fn endsInError(src: string): bool {
+    return pullCodes(src).endsWith("Error")
+}
+
+fn nestArr(n: i64): string {
+    return "[".repeat(n) + "]".repeat(n)
+}
+
+fn nestObj(n: i64): string {
+    return "{\"a\":".repeat(n) + "1" + "}".repeat(n)
+}
+
+let SAMPLE: string = "{\"a\":{\"b\":5,\"s\":\"x\",\"f\":1.5,\"t\":true},\"items\":[{\"name\":\"n0\"},{\"name\":\"n1\"}],\"m\":[[1,2],[3,4]]}"
+
+// ---------- umbrella requirements ----------
+
+@req(JSON-API)
+fn testApiReadsOneDocumentFourWays() {
+    let d = P(SAMPLE)
+    assert(intIs(d.path("a.b")!.asI64(), 5))
+    assert(intIs(d.curInt(d.curPath("a.b")), 5))
+    assert(intIs(d.i64Path("a.b"), 5))
+    assert(intIs(d.idxI64(d.idxPath(d.idxRoot(), "a.b")), 5))
+    assert(intIs(d.get("a")!.i64("b"), 5))
+}
+
+@req(JSON-SER)
+fn testSerUmbrellaBuilderOutputParses() {
+    let s = Json.obj().str("k", "v\"\n").int("n", 7).arr("a", Json.arr().int(1).nil()).build()
+    let d = P(s)
+    assert(strIs(d.str("k"), "v\"\n"))
+    assert(intIs(d.i64("n"), 7))
+    assert(d.get("a")!.len() == 2)
+}
+
+@req(JSON-JSONC)
+fn testJsoncUmbrellaAcceptsPlainAndExtended() {
+    assert(okC("{\"a\":[1,2]}"))
+    assert(okC("{\"a\":[1,2,], // c\n}"))
+    assert(badC("{a:1}"))
+}
+
+@req(JSON-PULL)
+fn testPullUmbrellaTokenizes() {
+    assert(pullCodes("{\"a\":[1,true,null,\"s\"]}") == "{ K [ N B Z S ] } End")
+}
+
+@req(JSON-SAFE)
+fn testSafeGarbageTerminates() {
+    let junk: Vec<string> = ["{{{{", "]]]]", "\"", "\\", "-", "1e", "tru", "\"\\u", "[1,", "{\"a\"", hx("FF FE FD"), hx("22 E2 82"), "/*", "[".repeat(5000), "{\"a\":".repeat(5000), "\"".repeat(7), ",,,:::"]
+    for s in junk {
+        assert(badP(s))
+        assert(badC(s))
+        assert(pullTerminates(s))
+    }
+}
+
+// ---------- JSON-PARSE ----------
+
+@req(JSON-PARSE)
+fn testParseAcceptsRfcExampleImage() {
+    let s = "{\n  \"Image\": {\n    \"Width\":  800,\n    \"Height\": 600,\n    \"Title\":  \"View from 15th Floor\",\n    \"Thumbnail\": {\n      \"Url\":    \"http://www.example.com/image/481989943\",\n      \"Height\": 125,\n      \"Width\":  100\n    },\n    \"Animated\" : false,\n    \"IDs\": [116, 943, 234, 38793]\n  }\n}"
+    let d = P(s)
+    let img = d.get("Image")!
+    assert(intIs(img.i64("Width"), 800))
+    assert(strIs(img.str("Title"), "View from 15th Floor"))
+    assert(boolIs(img.bool("Animated"), false))
+    assert(img.get("IDs")!.len() == 4)
+    assert(intIs(img.get("IDs")!.at(3)!.asI64(), 38793))
+}
+
+@req(JSON-PARSE)
+fn testParseAcceptsRfcExampleArrayOfObjects() {
+    let s = "[\n {\"precision\": \"zip\", \"Latitude\":  37.7668, \"Longitude\": -122.3959, \"Address\": \"\", \"City\": \"SAN FRANCISCO\"},\n {\"precision\": \"zip\", \"Latitude\":  37.371991, \"Longitude\": -122.026020, \"Address\": \"\", \"City\": \"SUNNYVALE\"}\n]"
+    let d = P(s)
+    assert(d.len() == 2)
+    assert(fltIs(d.at(1)!.f64("Latitude"), 37.371991))
+    assert(strIs(d.at(0)!.str("Address"), ""))
+}
+
+@req(JSON-PARSE)
+fn testParseValidCorpus() {
+    let good: Vec<string> = ["0", "-0", "1", "\"\"", "true", "false", "null", "[]", "{}", " [ ] ", "[[],{}]", "{\"\":1}", "{\"a\":{\"a\":{}}}", "[1,[2,[3]]]", "[null,null]", "{\"a\":[],\"b\":{}}", "1E400", "-1e-400", "\"\\u0000\"", "[\"a\",\"b\"]", "\t\r\n 0 \t\r\n"]
+    for s in good {
+        assert(okP(s), "should accept: " + s)
+    }
+}
+
+@req(JSON-PARSE)
+fn testParseInvalidCorpus() {
+    let bad: Vec<string> = ["", " ", "{", "}", "[", "]", ",", ":", "'a'", "undefined", "NaN", "{'a':1}", "[1,]", "{\"a\":1,}", "01", "\"", "tru", "1 2", "{} {}", "[]x"]
+    for s in bad {
+        assert(badP(s), "should reject: " + s)
+    }
+}
+
+@req(JSON-PARSE)
+fn testParseStaticMethodMatchesFreeFunction() {
+    let s = "[1,2,3]"
+    let r = Json.parse(s)
+    assert(r.isOk())
+    let bad = "[1,2,"
+    assert(Json.parse(bad).isErr())
+}
+
+// ---------- JSON-TEXT ----------
+
+@req(JSON-TEXT)
+fn testTextEmptyInputIsError() {
+    assert(badP(""))
+}
+
+@req(JSON-TEXT)
+fn testTextWhitespaceOnlyIsError() {
+    assert(badP(" "))
+    assert(badP(" \t\r\n "))
+}
+
+@req(JSON-TEXT)
+fn testTextTrailingValueIsError() {
+    assert(badP("1 2"))
+    assert(badP("{} {}"))
+    assert(badP("[] []"))
+    assert(badP("true false"))
+    assert(badP("\"a\"\"b\""))
+}
+
+@req(JSON-TEXT)
+fn testTextTrailingGarbageIsError() {
+    assert(badP("{}x"))
+    assert(badP("[]]"))
+    assert(badP("1,"))
+    assert(badP("null null"))
+    assert(badP("{}}"))
+}
+
+@req(JSON-TEXT)
+fn testTextAnyValueTypeAtTopLevel() {
+    assert(P("\"s\"").isStr())
+    assert(P("12").isNum())
+    assert(P("true").isBool())
+    assert(P("null").isNull())
+    assert(P("[]").isArray())
+    assert(P("{}").isObject())
+}
+
+@req(JSON-TEXT)
+fn testTextSurroundingWhitespaceAllowed() {
+    assert(strIs(P("  \n\t\"s\"\r\n ").asStr(), "s"))
+}
+
+// ---------- JSON-WS ----------
+
+@req(JSON-WS)
+fn testWsFourWhitespaceCharsBetweenAllTokens() {
+    let s = "\t{ \r\n\"a\"\t:\n[ 1 , 2 ] ,\r\"b\" : null }\n"
+    let d = P(s)
+    assert(d.get("a")!.len() == 2)
+    assert(d.get("b")!.isNull())
+}
+
+@req(JSON-WS)
+fn testWsVerticalTabIsError() {
+    assert(badP("[1," + hx("0B") + "2]"))
+    assert(badP(hx("0B") + "1"))
+}
+
+@req(JSON-WS)
+fn testWsFormFeedIsError() {
+    assert(badP("[1," + hx("0C") + "2]"))
+    assert(badP("1" + hx("0C")))
+}
+
+@req(JSON-WS)
+fn testWsNoBreakSpaceIsError() {
+    assert(badP("[1," + hx("C2 A0") + "2]"))
+    assert(badP(hx("C2 A0") + "1"))
+}
+
+@req(JSON-WS)
+fn testWsLineSeparatorU2028IsError() {
+    assert(badP("[1," + hx("E2 80 A8") + "2]"))
+    assert(badP("1" + hx("E2 80 A9")))
+}
+
+@req(JSON-WS)
+fn testWsNulOutsideStringIsError() {
+    assert(badP("1" + hx("00")))
+    assert(badP("[1," + hx("00") + "2]"))
+    assert(badP(hx("00")))
+}
+
+@req(JSON-WS)
+fn testWsOtherUnicodeSpacesAreErrors() {
+    assert(badP(hx("EF BB BF")))
+    assert(badP("[" + hx("E2 80 83") + "1]"))
+    assert(badP("[" + hx("E3 80 80") + "1]"))
+    assert(badP("[" + hx("85") + "1]"))
+}
+
+// ---------- JSON-LITERALS ----------
+
+@req(JSON-LITERALS)
+fn testLiteralsExactLowerCaseAccepted() {
+    assert(P("true").asBool().unwrapOr(false))
+    assert(boolIs(P("false").asBool(), false))
+    assert(P("null").isNull())
+}
+
+@req(JSON-LITERALS)
+fn testLiteralsPrefixIsError() {
+    let bad: Vec<string> = ["t", "tr", "tru", "f", "fals", "n", "nu", "nul"]
+    for s in bad {
+        assert(badP(s), s)
+        assert(badP("[" + s + "]"), s)
+    }
+}
+
+@req(JSON-LITERALS)
+fn testLiteralsWrongCaseIsError() {
+    let bad: Vec<string> = ["True", "TRUE", "tRue", "False", "FALSE", "Null", "NULL", "nULL"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-LITERALS)
+fn testLiteralsLongerNameIsError() {
+    let bad: Vec<string> = ["truee", "truex", "true1", "falsee", "nulll", "nullx", "[truex]", "[nulll]", "{\"a\":falsey}", "truefalse", "nullnull", "true_"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-LITERALS)
+fn testLiteralsOtherNamesAreErrors() {
+    let bad: Vec<string> = ["undefined", "nil", "None", "NaN", "Infinity", "yes", "on"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+// ---------- JSON-OBJECT ----------
+
+@req(JSON-OBJECT)
+fn testObjectEmptyAndSimpleAccepted() {
+    assert(okP("{}"))
+    assert(okP("{ }"))
+    assert(okP("{\n}"))
+    assert(P("{}").len() == 0)
+    let d = P("{\"a\":1,\"b\":[true],\"c\":{\"d\":null}}")
+    assert(d.len() == 3)
+}
+
+@req(JSON-OBJECT)
+fn testObjectBadNamesAreErrors() {
+    let bad: Vec<string> = ["{a:1}", "{1:2}", "{'a':1}", "{null:1}", "{true:1}", "{[]:1}", "{{}:1}", "{\"a\":1,b:2}", "{-1:1}"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-OBJECT)
+fn testObjectMissingColonOrValueIsError() {
+    let bad: Vec<string> = ["{\"a\" 1}", "{\"a\"}", "{\"a\":}", "{\"a\":,}", "{\"a\",1}", "{\"a\"::1}", "{:1}", "{\"a\":1,\"b\"}", "{\"a\":1,\"b\":}", "{\"a\"=1}", "{\"a\";1}"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-OBJECT)
+fn testObjectBadCommasAreErrors() {
+    let bad: Vec<string> = ["{,}", "{\"a\":1,}", "{\"a\":1,,\"b\":2}", "{\"a\":1 \"b\":2}", "{,\"a\":1}", "{\"a\":1,,}", "{\"a\":1;\"b\":2}"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-OBJECT)
+fn testObjectUnclosedOrMismatchedIsError() {
+    let bad: Vec<string> = ["{", "{\"a\"", "{\"a\":", "{\"a\":1", "{\"a\":1,", "{\"a\":1]", "{\"a\":[}", "{\"a\":{}", "{\"a\":[1}]", "{]", "{\"a\":1}}", "{{\"a\":1}"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+// ---------- JSON-DUP-NAMES ----------
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesAreNotAnError() {
+    assert(okP("{\"a\":1,\"a\":2}"))
+    assert(okP("{\"a\":1,\"a\":1,\"a\":1}"))
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesKeepEveryMember() {
+    let d = P("{\"a\":1,\"a\":2,\"b\":3}")
+    assert(d.len() == 3)
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesGetReturnsFirst() {
+    let d = P("{\"a\":{\"v\":1},\"a\":{\"v\":2}}")
+    assert(intIs(d.get("a")!.i64("v"), 1))
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesTypedAccessorsReturnFirst() {
+    let d = P("{\"s\":\"x\",\"s\":\"y\",\"i\":1,\"i\":2,\"f\":1.5,\"f\":2.5,\"b\":true,\"b\":false}")
+    assert(strIs(d.str("s"), "x"))
+    assert(intIs(d.i64("i"), 1))
+    assert(fltIs(d.f64("f"), 1.5))
+    assert(boolIs(d.bool("b"), true))
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesFirstMemberWinsEvenWhenWrongKind() {
+    let d = P("{\"a\":null,\"a\":5}")
+    assert(d.i64("a").isNone())
+    assert(d.get("a")!.isNull())
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesCurFieldReturnsFirst() {
+    let d = P("{\"a\":1,\"a\":2}")
+    let c = d.curField(d.curRoot(), "a")
+    assert(intIs(d.curInt(c), 1))
+}
+
+@req(JSON-DUP-NAMES)
+fn testDupNamesLaterMemberStillReachableByPosition() {
+    let d = P("{\"a\":1,\"a\":2}")
+    let r = d.curRoot()
+    assert(intIs(d.curInt(d.curValueAt(r, 1)), 2))
+    assert(d.curKeyAt(r, 1) == "a")
+}
+
+// ---------- JSON-ARRAY ----------
+
+@req(JSON-ARRAY)
+fn testArrayEmptyAndSimpleAccepted() {
+    assert(okP("[]"))
+    assert(okP("[ ]"))
+    assert(okP("[\n]"))
+    assert(okP("[1]"))
+    assert(okP("[1,\"a\",null,true,[],{}]"))
+    assert(P("[]").len() == 0)
+    assert(P("[1,2,3]").len() == 3)
+}
+
+@req(JSON-ARRAY)
+fn testArrayBadCommasAreErrors() {
+    let bad: Vec<string> = ["[,]", "[1,]", "[,1]", "[1,,2]", "[1,,]", "[1 2]", "[\"a\" \"b\"]", "[[] []]", "[1;2]"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-ARRAY)
+fn testArrayColonInsteadOfCommaIsError() {
+    assert(badP("[1:2]"))
+    assert(badP("[\"a\":1]"))
+    assert(badP("[:]"))
+}
+
+@req(JSON-ARRAY)
+fn testArrayUnclosedOrMismatchedIsError() {
+    let bad: Vec<string> = ["[", "[1", "[1,", "[[1]", "[1}", "[}", "[{]", "[1]]", "[[]", "[{\"a\":1]", "[1,[2}]"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+// ---------- JSON-NUM-GRAMMAR ----------
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarValidForms() {
+    let good: Vec<string> = ["0", "-0", "1", "-1", "10", "123456789", "0.5", "-0.5", "0.0", "10.25", "0e0", "0E0", "1e5", "1E5", "1e+5", "1e-5", "1.5E-10", "-1.5e+10", "0.1e1", "123456789012345678901234567890", "1e00", "1.000"]
+    for s in good {
+        assert(okP(s), s)
+        assert(P(s).isNum(), s)
+    }
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarLeadingZeroIsError() {
+    let bad: Vec<string> = ["01", "00", "-01", "007", "00.5", "[01]", "01e1", "-00"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarLeadingPlusIsError() {
+    assert(badP("+1"))
+    assert(badP("[+1]"))
+    assert(badP("+0"))
+    assert(badP("+.5"))
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarBadDecimalPointIsError() {
+    let bad: Vec<string> = [".5", "-.5", "1.", "-1.", "1.e5", "0.", ".", "-.", "1.2.3", "1..2", "[1.]", "[.5]", "0.e1"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarBadExponentIsError() {
+    let bad: Vec<string> = ["1e", "1E", "1e+", "1e-", "1E+", "e5", "1e5.5", "1ee5", "1e+-5", "1e--5", "1.5e", "[1e]", "0e", "1e 5"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarNonDecimalAndSpecialsAreErrors() {
+    let bad: Vec<string> = ["0x10", "0X1F", "0b101", "0o7", "010", "NaN", "nan", "Infinity", "-Infinity", "inf", "-inf", "+Infinity", "1_000", "1,5", "-", "--1", "- 1", "-+1", "1-", "1+1", "0xG", "1f", "1L", "1.5d"]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-NUM-GRAMMAR)
+fn testNumGrammarNonAsciiDigitsAreErrors() {
+    assert(badP(hx("D9 A1")))
+    assert(badP(hx("EF BC 91")))
+}
+
+// ---------- JSON-NUM-RANGE ----------
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeInt64Boundaries() {
+    assert(intIs(rootInt("9223372036854775807"), 9223372036854775807))
+    assert(intIs(rootInt("-9223372036854775808"), -9223372036854775807 - 1))
+    assert(rootInt("9223372036854775808").isNone())
+    assert(rootInt("-9223372036854775809").isNone())
+    assert(okP("9223372036854775808"))
+    assert(okP("-9223372036854775809"))
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeInt64AccessorsOnDoc() {
+    let d = P("{\"max\":9223372036854775807,\"over\":9223372036854775808,\"min\":-9223372036854775808}")
+    assert(intIs(d.i64("max"), 9223372036854775807))
+    assert(d.i64("over").isNone())
+    assert(intIs(d.i64("min"), -9223372036854775807 - 1))
+    assert(intIs(P("9223372036854775807").asI64(), 9223372036854775807))
+    assert(P("9223372036854775808").asI64().isNone())
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeUint64Boundaries() {
+    assert(rootUint("18446744073709551615").isSome())
+    assert(rootUint("18446744073709551616").isNone())
+    assert(rootUint("9223372036854775808").isSome())
+    assert(rootUint("0").isSome())
+    assert(rootUint("-1").isNone())
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeUint64ValueIsExact() {
+    assert(rootUint("18446744073709551615").unwrapOr(0) == 18446744073709551615)
+    assert(rootUint("9223372036854775808").unwrapOr(0) == 9223372036854775808)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeIntegerAccessorsRejectNonIntegerLiterals() {
+    assert(rootInt("1.0").isNone())
+    assert(rootInt("1.5").isNone())
+    assert(rootInt("1e2").isNone())
+    assert(rootInt("1E2").isNone())
+    assert(rootInt("100e-2").isNone())
+    assert(rootInt("0.0").isNone())
+    assert(rootUint("1.0").isNone())
+    assert(rootUint("1e2").isNone())
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeNegativeZeroIsIntegerZero() {
+    assert(intIs(rootInt("-0"), 0))
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeIntegerAccessorNeverTruncatesFloatKey() {
+    let d = P("{\"x\":2.9,\"y\":-2.9,\"z\":3.0}")
+    assert(d.i64("x").isNone())
+    assert(d.i64("y").isNone())
+    assert(d.i64("z").isNone())
+    assert(fltIs(d.f64("x"), 2.9))
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeIntegerAsF64() {
+    assert(numF("3") == 3.0)
+    assert(numF("-7") == -7.0)
+    assert(fltIs(P("{\"n\":42}").f64("n"), 42.0))
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeF64PastRangeIsInfinity() {
+    assert(numF("1e400") == f64.INF)
+    assert(numF("-1e400") == f64.NEG_INF)
+    assert(numF("1e99999999999") == f64.INF)
+    assert(numF("1.7976931348623159e308") == f64.INF)
+    assert(numF("1" + "0".repeat(400)) == f64.INF)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeF64BelowRangeIsZero() {
+    assert(numF("1e-400") == 0.0)
+    assert(numF("1e-99999999999") == 0.0)
+    assert(numF("0." + "0".repeat(400) + "1") == 0.0)
+    assert(numF("2.4703282292062327e-324") == 0.0)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeNegativeUnderflowKeepsSignedZero() {
+    let z = numF("-1e-400")
+    assert(z == 0.0)
+    assert(1.0 / z < 0.0)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeF64LimitsExact() {
+    assert(numF("1.7976931348623157e308") == 1.7976931348623157e308)
+    assert(numF("5e-324") == 5e-324)
+    assert(numF("4.9e-324") == 5e-324)
+    assert(numF("2.4703282292062328e-324") == 5e-324)
+    assert(numF("2.2250738585072014e-308") == 2.2250738585072014e-308)
+    assert(numF("2.2250738585072011e-308") == 2.2250738585072011e-308)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeCorrectRoundingNearTies() {
+    // 2^53 + 1 is a tie between 2^53 and 2^53 + 2: round to even gives 2^53.
+    assert(numF("9007199254740993") == 9007199254740992.0)
+    // a tiny excess past the tie rounds up
+    assert(numF("9007199254740993.0000000000000000000001") == 9007199254740994.0)
+    assert(numF("9007199254740995") == 9007199254740996.0)
+    assert(numF("0.1") == 0.1)
+    assert(numF("0.30000000000000004") == 0.30000000000000004)
+    assert(numF("1e23") == 1e23)
+    assert(numF("8.41e21") == 8.41e21)
+    assert(numF("4.35") == 4.35)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeVeryLongMantissa() {
+    assert(numF("0." + "0".repeat(400) + "1e400") == 0.1)
+    assert(numF("1" + "0".repeat(400) + "e-400") == 1.0)
+    assert(numF("1" + "0".repeat(30)) == 1e30)
+    assert(numF("0." + "3".repeat(500)) == 0.3333333333333333)
+    assert(numF("123456789." + "9".repeat(300)) == 123456790.0)
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeLongDigitStringsAreAccepted() {
+    let big = "9".repeat(5000)
+    assert(okP(big))
+    assert(okP("-" + big))
+    assert(okP("[" + big + "," + big + "]"))
+    assert(okP("0." + big))
+    assert(rootInt(big).isNone())
+    assert(rootUint(big).isNone())
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeRawStrIsVerbatim() {
+    let lits: Vec<string> = ["1.50E+2", "-0", "0.10", "1e5", "1E-5", "123456789012345678901234567890", "-0.0e0", "1.000"]
+    for s in lits {
+        assert(P(s).rawStr() == s, s)
+    }
+}
+
+@req(JSON-NUM-RANGE)
+fn testNumRangeRawStrOfMemberKeepsSpelling() {
+    let d = P("{\"a\": 1.50E+2 ,\"b\":[ 7 ]}")
+    assert(d.get("a")!.rawStr() == "1.50E+2")
+}
+
+// ---------- JSON-STR-CHARS ----------
+
+@req(JSON-STR-CHARS)
+fn testStrCharsPlainAndEmpty() {
+    assert(strIs(decode("\"\""), ""))
+    assert(strIs(P("\"abc def\"").asStr(), "abc def"))
+    assert(strIs(P("\"  \"").asStr(), "  "))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsEveryControlByteRawIsError() {
+    var b: i64 = 0
+    while b < 32 {
+        let s = "\"a" + byteStr(b) + "b\""
+        assert(badP(s), "control byte " + b.toString())
+        b += 1
+    }
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsEveryPrintableAsciiAccepted() {
+    var b: i64 = 32
+    while b < 128 {
+        if b != 34 && b != 92 {
+            let s = "\"a" + byteStr(b) + "b\""
+            let want = "a" + byteStr(b) + "b"
+            assert(strIs(decode(s), want), "byte " + b.toString())
+        }
+        b += 1
+    }
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsTabAndLineFeedAreErrors() {
+    assert(badP("\"a\tb\""))
+    assert(badP("\"a\nb\""))
+    assert(badP("\"a\rb\""))
+    assert(badP("{\"a\tb\":1}"))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsUnterminatedIsError() {
+    assert(badP("\""))
+    assert(badP("\"abc"))
+    assert(badP("[\"abc]"))
+    assert(badP("{\"a\":\"b}"))
+    assert(badP("\"abc\\\""))
+    assert(badP("{\"abc"))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsSingleQuotesAreErrors() {
+    assert(badP("'a'"))
+    assert(badP("['a']"))
+    assert(badP("{'a':1}"))
+    assert(badP("{\"a\":'b'}"))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsSingleQuoteInsideDoubleQuotedIsText() {
+    assert(strIs(decode("\"it's\""), "it's"))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsDelByteIsAccepted() {
+    assert(strIs(decode(q(hx("7F"))), hx("7F")))
+}
+
+@req(JSON-STR-CHARS)
+fn testStrCharsRawControlInKeyIsError() {
+    assert(badP("{\"a" + hx("01") + "\":1}"))
+    assert(badP("{\"a" + hx("1F") + "\":1}"))
+}
+
+// ---------- JSON-STR-ESC ----------
+
+@req(JSON-STR-ESC)
+fn testStrEscQuoteBackslashSolidus() {
+    assert(strIs(decode("\"\\\"\""), "\""))
+    assert(strIs(decode("\"\\\\\""), "\\"))
+    assert(strIs(decode("\"\\/\""), "/"))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscControlLetters() {
+    assert(strIs(decode("\"\\b\""), byteStr(8)))
+    assert(strIs(decode("\"\\f\""), byteStr(12)))
+    assert(strIs(decode("\"\\n\""), byteStr(10)))
+    assert(strIs(decode("\"\\r\""), byteStr(13)))
+    assert(strIs(decode("\"\\t\""), byteStr(9)))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscBackslashThenQuoteDoesNotEndString() {
+    let d = P("[\"a\\\\\",\"b\"]")
+    assert(strIs(d.at(0)!.asStr(), "a\\"))
+    assert(strIs(d.at(1)!.asStr(), "b"))
+    assert(strIs(decode("\"a\\\"b\""), "a\"b"))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscUnknownLetterIsError() {
+    let bad: Vec<string> = ["\"\\a\"", "\"\\x41\"", "\"\\'\"", "\"\\0\"", "\"\\1\"", "\"\\v\"", "\"\\e\"", "\"\\B\"", "\"\\N\"", "\"\\T\"", "\"\\U0041\"", "\"\\ \"", "\"\\z\"", "\"\\?\""]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscLoneBackslashAtEndIsError() {
+    assert(badP("\"abc\\"))
+    assert(badP("\"\\"))
+    assert(badP("\\"))
+    assert(badP("\"\\\""))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscBackslashNewlineIsError() {
+    assert(badP("\"a\\\nb\""))
+    assert(badP("\"a\\\r\nb\""))
+    assert(badP("\"a\\\rb\""))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscInKeyDecodes() {
+    let d = P("{\"a\\nb\":1,\"\\u0041\":2}")
+    assert(intIs(d.i64("a\nb"), 1))
+    assert(intIs(d.i64("A"), 2))
+}
+
+@req(JSON-STR-ESC)
+fn testStrEscAdjacentEscapes() {
+    assert(strIs(decode("\"\\n\\t\\\\\\\"\""), "\n\t\\\""))
+}
+
+// ---------- JSON-STR-UESC ----------
+
+@req(JSON-STR-UESC)
+fn testStrUescBasicAndCase() {
+    assert(strIs(decode("\"\\u0041\""), "A"))
+    assert(strIs(decode("\"\\u00e9\""), hx("C3 A9")))
+    assert(strIs(decode("\"\\u00E9\""), hx("C3 A9")))
+    assert(strIs(decode("\"\\u20Ac\""), hx("E2 82 AC")))
+    assert(strIs(decode("\"\\u20aC\""), hx("E2 82 AC")))
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescNulCharacter() {
+    let s = orS(decode("\"\\u0000\""), "none")
+    assert(s.len == 1)
+    assert(s[0] == 0)
+    assert(strIs(decode("\"a\\u0000b\""), "a" + hx("00") + "b"))
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescBoundaryCodePoints() {
+    assert(strIs(decode("\"\\u007F\""), hx("7F")))
+    assert(strIs(decode("\"\\u0080\""), hx("C2 80")))
+    assert(strIs(decode("\"\\u07FF\""), hx("DF BF")))
+    assert(strIs(decode("\"\\u0800\""), hx("E0 A0 80")))
+    assert(strIs(decode("\"\\uD7FF\""), hx("ED 9F BF")))
+    assert(strIs(decode("\"\\uE000\""), hx("EE 80 80")))
+    assert(strIs(decode("\"\\uFFFF\""), hx("EF BF BF")))
+    assert(strIs(decode("\"\\uFFFE\""), hx("EF BF BE")))
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescExactlyFourDigits() {
+    assert(strIs(decode("\"\\u0041BCD\""), "ABCD"))
+    assert(strIs(decode("\"\\u00411\""), "A1"))
+    assert(strIs(decode("\"\\u0041\\u0042\""), "AB"))
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescTooFewDigitsIsError() {
+    let bad: Vec<string> = ["\"\\u\"", "\"\\u1\"", "\"\\u12\"", "\"\\u123\"", "\"\\u", "\"\\u1", "\"\\u123", "\"\\u12 4\""]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescNonHexDigitIsError() {
+    let bad: Vec<string> = ["\"\\u12G4\"", "\"\\uZZZZ\"", "\"\\u-123\"", "\"\\u+123\"", "\"\\u 123\"", "\"\\u0x41\"", "\"\\u00g1\"", "\"\\u123\\\"", "\"\\u{41}\""]
+    for s in bad {
+        assert(badP(s), s)
+    }
+}
+
+@req(JSON-STR-UESC)
+fn testStrUescNonAsciiNearHexIsError() {
+    assert(badP("\"\\u" + hx("D9 A1") + "000\""))
+    assert(badP("\"\\u00" + hx("C3 A9") + "\""))
+}
+
+// ---------- JSON-STR-SURROGATE ----------
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogatePairDecodesToFourByteUtf8() {
+    assert(strIs(decode("\"\\uD83D\\uDE00\""), hx("F0 9F 98 80")))
+    assert(strIs(decode("\"\\ud83d\\ude00\""), hx("F0 9F 98 80")))
+    assert(strIs(decode("\"\\uD83d\\uDe00\""), hx("F0 9F 98 80")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogatePairBoundaries() {
+    assert(strIs(decode("\"\\uD800\\uDC00\""), hx("F0 90 80 80")))
+    assert(strIs(decode("\"\\uDBFF\\uDFFF\""), hx("F4 8F BF BF")))
+    assert(strIs(decode("\"\\uD800\\uDFFF\""), hx("F0 90 8F BF")))
+    assert(strIs(decode("\"\\uDBFF\\uDC00\""), hx("F4 8F B0 80")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogatePairWithNeighbours() {
+    assert(strIs(decode("\"a\\uD83D\\uDE00b\""), "a" + hx("F0 9F 98 80") + "b"))
+    assert(strIs(decode("\"\\uD83D\\uDE00\\uD83D\\uDE01\""), hx("F0 9F 98 80 F0 9F 98 81")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateLoneHighBecomesReplacement() {
+    assert(strIs(decode("\"\\uD800\""), hx("EF BF BD")))
+    assert(strIs(decode("\"\\uDBFF\""), hx("EF BF BD")))
+    assert(strIs(decode("\"a\\uD83Db\""), "a" + hx("EF BF BD") + "b"))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateLoneLowBecomesReplacement() {
+    assert(strIs(decode("\"\\uDC00\""), hx("EF BF BD")))
+    assert(strIs(decode("\"\\uDFFF\""), hx("EF BF BD")))
+    assert(strIs(decode("\"\\uDE00\\uD83D\""), hx("EF BF BD EF BF BD")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateHighFollowedByNonLowKeepsFollowingEscape() {
+    assert(strIs(decode("\"\\uD83D\\u0041\""), hx("EF BF BD") + "A"))
+    assert(strIs(decode("\"\\uD83D\\n\""), hx("EF BF BD") + "\n"))
+    assert(strIs(decode("\"\\uD83D\\uE000\""), hx("EF BF BD EE 80 80")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateTwoHighsInARow() {
+    assert(strIs(decode("\"\\uD83D\\uD83D\""), hx("EF BF BD EF BF BD")))
+    // the second high still pairs with a following low
+    assert(strIs(decode("\"\\uD83D\\uD83D\\uDE00\""), hx("EF BF BD F0 9F 98 80")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateHighThenRawCharacter() {
+    assert(strIs(decode("\"\\uD83D" + hx("C3 A9") + "\""), hx("EF BF BD C3 A9")))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogateDecodedLoneIsValidUtf8() {
+    // the output of a lone surrogate must be re-parseable raw: valid UTF-8 inside a string
+    let s = orS(decode("\"\\uD800\""), "")
+    assert(okP(q(s)))
+    assert(strIs(decode(q(s)), s))
+}
+
+@req(JSON-STR-SURROGATE)
+fn testSurrogatePairInKey() {
+    let d = P("{\"\\uD83D\\uDE00\":1}")
+    assert(intIs(d.i64(hx("F0 9F 98 80")), 1))
+}
+
+// ---------- JSON-UTF8 ----------
+
+@req(JSON-UTF8)
+fn testUtf8WellFormedSequencesAccepted() {
+    let good: Vec<string> = ["C2 80", "C3 A9", "DF BF", "E0 A0 80", "E2 82 AC", "ED 9F BF", "EE 80 80", "EF BF BF", "F0 90 80 80", "F0 9F 98 80", "F3 BF BF BF", "F4 8F BF BF"]
+    for h in good {
+        let s = hx(h)
+        assert(strIs(decode(q(s)), s), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8LoneContinuationBytesAreErrors() {
+    let bad: Vec<string> = ["80", "BF", "A9", "90", "C3 A9 A9", "E2 82 AC 80"]
+    for h in bad {
+        assert(badP(q("x" + hx(h) + "y")), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8Latin1BytesAreErrors() {
+    assert(badP(q("caf" + hx("E9"))))
+    assert(badP(q(hx("E9") + "cole")))
+    assert(badP(q("na" + hx("EF") + "ve")))
+    assert(badP(q(hx("FC"))))
+    assert(badP(q(hx("A0"))))
+}
+
+@req(JSON-UTF8)
+fn testUtf8TruncatedSequencesAreErrors() {
+    let bad: Vec<string> = ["C3", "E2", "E2 82", "F0", "F0 9F", "F0 9F 98", "F4 8F BF"]
+    for h in bad {
+        // followed by the closing quote, and by an ASCII letter
+        assert(badP(q(hx(h))), h)
+        assert(badP(q(hx(h) + "a")), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8ContinuationReplacedByAsciiIsError() {
+    let bad: Vec<string> = ["C3 28", "E2 28 A1", "E2 82 28", "F0 28 8C BC", "F0 90 28 BC", "F0 90 8C 28"]
+    for h in bad {
+        assert(badP(q(hx(h))), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8OverlongFormsAreErrors() {
+    let bad: Vec<string> = ["C0 80", "C0 AF", "C1 BF", "C1 80", "E0 80 80", "E0 80 AF", "E0 9F BF", "F0 80 80 80", "F0 80 80 AF", "F0 8F BF BF"]
+    for h in bad {
+        assert(badP(q(hx(h))), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8EncodedSurrogatesAreErrors() {
+    let bad: Vec<string> = ["ED A0 80", "ED AD BF", "ED AF BF", "ED B0 80", "ED BF BF", "ED A0 80 ED B0 80"]
+    for h in bad {
+        assert(badP(q(hx(h))), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8AboveU10FFFFIsError() {
+    let bad: Vec<string> = ["F4 90 80 80", "F4 BF BF BF", "F5 80 80 80", "F7 BF BF BF"]
+    for h in bad {
+        assert(badP(q(hx(h))), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8FiveAndSixByteFormsAreErrors() {
+    let bad: Vec<string> = ["F8 88 80 80 80", "F8 80 80 80 80", "FB BF BF BF BF", "FC 84 80 80 80 80", "FD BF BF BF BF BF"]
+    for h in bad {
+        assert(badP(q(hx(h))), h)
+    }
+}
+
+@req(JSON-UTF8)
+fn testUtf8InvalidLeadBytesAreErrors() {
+    assert(badP(q(hx("FE"))))
+    assert(badP(q(hx("FF"))))
+    assert(badP(q(hx("FE FF"))))
+}
+
+@req(JSON-UTF8)
+fn testUtf8IllFormedInKeyIsError() {
+    assert(badP("{" + q(hx("C3 28")) + ":1}"))
+    assert(badP("{" + q(hx("E9")) + ":1}"))
+    assert(badP("{" + q(hx("ED A0 80")) + ":1}"))
+}
+
+@req(JSON-UTF8)
+fn testUtf8NonAsciiOutsideStringIsError() {
+    assert(badP("[" + hx("C3 A9") + "]"))
+    assert(badP(hx("C3 A9")))
+    assert(badP("{" + hx("C3 A9") + ":1}"))
+    assert(badP("1" + hx("C3 A9")))
+    assert(badP("[1," + hx("E2 82 AC") + "]"))
+    assert(badP(hx("FF")))
+}
+
+@req(JSON-UTF8)
+fn testUtf8ValidAfterInvalidIsStillRejected() {
+    assert(badP("[" + q("ok") + "," + q(hx("E9")) + "]"))
+    assert(badP("[" + q(hx("C3 A9")) + "," + q(hx("C0 80")) + "]"))
+}
+
+// ---------- JSON-BOM ----------
+
+@req(JSON-BOM)
+fn testBomLeadingUtf8BomIsError() {
+    assert(badP(hx("EF BB BF") + "1"))
+    assert(badP(hx("EF BB BF") + "{}"))
+    assert(badP(hx("EF BB BF") + "[1,2]"))
+    assert(badP(hx("EF BB BF") + "\"s\""))
+    assert(badP(hx("EF BB BF")))
+}
+
+@req(JSON-BOM)
+fn testBomAfterWhitespaceOrInsideValueIsError() {
+    assert(badP(" " + hx("EF BB BF") + "1"))
+    assert(badP("[" + hx("EF BB BF") + "1]"))
+    assert(badP("1" + hx("EF BB BF")))
+}
+
+@req(JSON-BOM)
+fn testBomInsideStringIsOrdinaryText() {
+    assert(strIs(decode(q(hx("EF BB BF"))), hx("EF BB BF")))
+}
+
+@req(JSON-BOM)
+fn testBomUtf16LittleEndianIsError() {
+    assert(badP(hx("FF FE 31 00")))
+    assert(badP(hx("FF FE 5B 00 5D 00")))
+    assert(badP(hx("5B 00 5D 00")))
+    assert(badP(hx("31 00")))
+    assert(badP(hx("22 00 61 00 22 00")))
+}
+
+@req(JSON-BOM)
+fn testBomUtf16BigEndianIsError() {
+    assert(badP(hx("FE FF 00 31")))
+    assert(badP(hx("FE FF 00 5B 00 5D")))
+    assert(badP(hx("00 5B 00 5D")))
+    assert(badP(hx("00 31")))
+}
+
+@req(JSON-BOM)
+fn testBomUtf32IsError() {
+    assert(badP(hx("FF FE 00 00 31 00 00 00")))
+    assert(badP(hx("00 00 FE FF 00 00 00 31")))
+    assert(badP(hx("31 00 00 00")))
+    assert(badP(hx("00 00 00 31")))
+    assert(badP(hx("5B 00 00 00 5D 00 00 00")))
+}
+
+// ---------- JSON-DEPTH ----------
+
+@req(JSON-DEPTH)
+fn testDepthLimitConstantIs512() {
+    assert(JSON_MAX_DEPTH == 512)
+}
+
+@req(JSON-DEPTH)
+fn testDepthExactlyMaxArraysAccepted() {
+    assert(okP(nestArr(512)))
+    assert(okP(nestArr(1)))
+    assert(okP(nestArr(511)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthOnePastMaxArraysIsErr() {
+    assert(badP(nestArr(513)))
+    assert(badP(nestArr(514)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthExactlyMaxObjectsAccepted() {
+    assert(okP(nestObj(512)))
+    assert(okP(nestObj(511)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthOnePastMaxObjectsIsErr() {
+    assert(badP(nestObj(513)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthMixedContainersCount() {
+    // alternating array/object: 256 pairs = 512 containers deep
+    let ok512 = "[{\"a\":".repeat(256) + "1" + "}]".repeat(256)
+    assert(okP(ok512))
+    let bad513 = "[" + ok512 + "]"
+    assert(badP(bad513))
+}
+
+@req(JSON-DEPTH)
+fn testDepthScalarInsideDoesNotCount() {
+    assert(okP("[".repeat(512) + "1" + "]".repeat(512)))
+    assert(okP("[".repeat(512) + "\"s\"" + "]".repeat(512)))
+    assert(badP("[".repeat(513) + "1" + "]".repeat(513)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthErrorNamesTheLimit() {
+    let e = errText(nestArr(513)).toLower()
+    assert(e.contains("512"), e)
+}
+
+@req(JSON-DEPTH)
+fn testDepthVeryDeepUnclosedDoesNotOverflowStack() {
+    assert(badP("[".repeat(200000)))
+    assert(badP("{\"a\":".repeat(200000)))
+    assert(badP("[".repeat(1000000)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthVeryDeepClosedIsErr() {
+    assert(badP(nestArr(100000)))
+    assert(badP(nestObj(100000)))
+}
+
+@req(JSON-DEPTH)
+fn testDepthWideIsNotDeep() {
+    assert(okP("[" + "[],".repeat(10000) + "[]]"))
+    assert(okP("[" + "{},".repeat(10000) + "{}]"))
+}
+
+@req(JSON-DEPTH)
+fn testDepthSiblingsAfterDeepReturnToShallow() {
+    let deep = nestArr(512)
+    assert(okP("[" + deep.substr(1, deep.len - 1) + "," + deep.substr(1, deep.len - 1) + "]"))
+}
+
+@req(JSON-DEPTH)
+fn testDepthLimitAppliesToStaticParse() {
+    let a = nestArr(512)
+    let b = nestArr(513)
+    assert(Json.parse(a).isOk())
+    assert(Json.parse(b).isErr())
+}
+
+// ---------- JSON-SER-ESCAPE ----------
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeQuoteAndBackslash() {
+    assert(jsonEscapeStr("a\"b") == "a\\\"b")
+    assert(jsonEscapeStr("a\\b") == "a\\\\b")
+    assert(jsonEscapeStr("\"") == "\\\"")
+    assert(jsonEscapeStr("\\") == "\\\\")
+    assert(jsonEscapeStr("\\\"") == "\\\\\\\"")
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeNewlineTabReturn() {
+    assert(jsonEscapeStr("\n") == "\\n")
+    assert(jsonEscapeStr("\t") == "\\t")
+    assert(jsonEscapeStr("\r") == "\\r")
+    assert(jsonEscapeStr("a\nb") == "a\\nb")
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeOtherControlsUseU00xx() {
+    assert(jsonEscapeStr(hx("00")) == "\\u0000")
+    assert(jsonEscapeStr(hx("01")) == "\\u0001")
+    assert(jsonEscapeStr(hx("1F")).toLower() == "\\u001f")
+    assert(jsonEscapeStr(hx("1B")).toLower() == "\\u001b")
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeEveryControlByteRoundTripsAndLeavesNoRawControl() {
+    var b: i64 = 0
+    while b < 32 {
+        let s = "x" + byteStr(b) + "y"
+        let e = jsonEscapeStr(s)
+        var i: i64 = 0
+        while i < e.len {
+            assert(e[i] >= 32, "raw control byte left for " + b.toString())
+            i += 1
+        }
+        assert(strIs(decode(q(e)), s), "control byte " + b.toString())
+        b += 1
+    }
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeSolidusDelAndAsciiUnchanged() {
+    assert(jsonEscapeStr("a/b") == "a/b")
+    assert(jsonEscapeStr(hx("7F")) == hx("7F"))
+    assert(jsonEscapeStr("plain text 123 ~!@#$%^&*()") == "plain text 123 ~!@#$%^&*()")
+    assert(jsonEscapeStr("") == "")
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeNonAsciiCopiedUnchanged() {
+    let s = hx("C3 A9 E2 82 AC F0 9F 98 80 E2 80 A8 EF BB BF F4 8F BF BF")
+    assert(jsonEscapeStr(s) == s)
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeCopiesEveryOtherByteUnchanged() {
+    // bytes that are not valid UTF-8 are not this function's concern: copied as is
+    assert(jsonEscapeStr(hx("FF")) == hx("FF"))
+    assert(jsonEscapeStr("a" + hx("E9") + "b") == "a" + hx("E9") + "b")
+}
+
+@req(JSON-SER-ESCAPE)
+fn testSerEscapeQuoteWrapsAndEscapes() {
+    assert(jsonQuote("") == "\"\"")
+    assert(jsonQuote("a") == "\"a\"")
+    assert(jsonQuote("a\"b\n") == "\"a\\\"b\\n\"")
+}
+
+// ---------- JSON-SER-GRAMMAR ----------
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarEmptyContainers() {
+    let a = JsonVal.JArr([])
+    let o = JsonVal.JObj([])
+    assert(P(jsonSer(a)).isArray())
+    assert(P(jsonSer(a)).len() == 0)
+    assert(P(jsonSer(o)).isObject())
+    assert(P(jsonSer(o)).len() == 0)
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarCommasOnlyBetweenElements() {
+    let one = JsonVal.JArr([JsonVal.JInt(1)])
+    let two = JsonVal.JArr([JsonVal.JInt(1), JsonVal.JInt(2)])
+    assert(P(jsonSer(one)).len() == 1)
+    assert(P(jsonSer(two)).len() == 2)
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarObjectMembers() {
+    let m: Vec<JsonMember> = [JsonMember { key: "a", val: JsonVal.JInt(1) }, JsonMember { key: "b", val: JsonVal.JNull }]
+    let o = JsonVal.JObj(m)
+    let d = P(jsonSer(o))
+    assert(d.len() == 2)
+    assert(intIs(d.i64("a"), 1))
+    assert(d.get("b")!.isNull())
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarNamesAreQuotedAndEscaped() {
+    let nasty = "k\"\\\n\t" + hx("01") + hx("C3 A9")
+    let m: Vec<JsonMember> = [JsonMember { key: nasty, val: JsonVal.JInt(5) }]
+    let o = JsonVal.JObj(m)
+    let d = P(jsonSer(o))
+    assert(intIs(d.i64(nasty), 5))
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarNestedContainersClose() {
+    let inner: Vec<JsonVal> = [JsonVal.JArr([]), JsonVal.JObj([]), JsonVal.JArr([JsonVal.JArr([JsonVal.JNull])])]
+    let v = JsonVal.JArr(inner)
+    let d = P(jsonSer(v))
+    assert(d.len() == 3)
+    assert(d.at(1)!.isObject())
+    assert(d.at(2)!.at(0)!.at(0)!.isNull())
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarScalarsAtTopLevel() {
+    let s = JsonVal.JStr("x")
+    let b = JsonVal.JBool(true)
+    let n = JsonVal.JNull
+    assert(strIs(P(jsonSer(s)).asStr(), "x"))
+    assert(boolIs(P(jsonSer(b)).asBool(), true))
+    assert(P(jsonSer(n)).isNull())
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarBoolStr() {
+    assert(jsonBoolStr(true) == "true")
+    assert(jsonBoolStr(false) == "false")
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarBuilderObjectAndArrayParse() {
+    let o = Json.obj().str("a", "x").int("b", 1).nil("c")
+    assert(okP(o.build()))
+    let a = Json.arr().str("x").int(1).nil()
+    assert(okP(a.build()))
+    assert(okP(Json.obj().build()))
+    assert(okP(Json.arr().build()))
+}
+
+@req(JSON-SER-GRAMMAR)
+fn testSerGrammarRawValueEmbedded() {
+    let m: Vec<JsonMember> = [JsonMember { key: "r", val: JsonVal.JRaw("[1, 2 ,3]") }]
+    let v = JsonVal.JObj(m)
+    let d = P(jsonSer(v))
+    assert(d.get("r")!.len() == 3)
+}
+
+// ---------- JSON-SER-NUM ----------
+
+@req(JSON-SER-NUM)
+fn testSerNumIntegersAreDecimalDigits() {
+    let zero = JsonVal.JInt(0)
+    let neg = JsonVal.JInt(-1)
+    let pos = JsonVal.JInt(1234567890)
+    assert(jsonSer(zero) == "0")
+    assert(jsonSer(neg) == "-1")
+    assert(jsonSer(pos) == "1234567890")
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumInt64Extremes() {
+    let mx = JsonVal.JInt(9223372036854775807)
+    let mn = JsonVal.JInt(-9223372036854775807 - 1)
+    assert(jsonSer(mx) == "9223372036854775807")
+    assert(jsonSer(mn) == "-9223372036854775808")
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumNanAndInfinitiesSerializeAsNull() {
+    assert(jsonFloatStr(f64.NAN) == "null")
+    assert(jsonFloatStr(f64.INF) == "null")
+    assert(jsonFloatStr(f64.NEG_INF) == "null")
+    let n = JsonVal.JFloat(f64.NAN)
+    let i = JsonVal.JFloat(f64.INF)
+    let m = JsonVal.JFloat(f64.NEG_INF)
+    assert(jsonSer(n) == "null")
+    assert(jsonSer(i) == "null")
+    assert(jsonSer(m) == "null")
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumF32NonFiniteSerializeAsNull() {
+    assert(jsonF32Str(f32.NAN) == "null")
+    assert(jsonF32Str(f32.INF) == "null")
+    assert(jsonF32Str(f32.NEG_INF) == "null")
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumFiniteFloatIsAJsonNumber() {
+    let vals: Vec<f64> = [0.0, 1.0, -1.0, 0.5, 100.0, 1e10, 1e21, 1e22, 1e-7, 1.5e300, 5e-324, 1.7976931348623157e308, 123456789.125]
+    for v in vals {
+        let s = jsonFloatStr(v)
+        assert(okP(s), s)
+        assert(P(s).isNum(), s)
+    }
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumWholeFloatStillParsesAsNumber() {
+    assert(numF(jsonFloatStr(1.0)) == 1.0)
+    assert(numF(jsonFloatStr(-250.0)) == -250.0)
+    assert(numF(jsonFloatStr(1e20)) == 1e20)
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumNonFiniteInsideContainers() {
+    let items: Vec<JsonVal> = [JsonVal.JFloat(f64.NAN), JsonVal.JInt(1), JsonVal.JFloat(f64.INF)]
+    let v = JsonVal.JArr(items)
+    let d = P(jsonSer(v))
+    assert(d.len() == 3)
+    assert(d.at(0)!.isNull())
+    assert(d.at(2)!.isNull())
+    assert(intIs(d.at(1)!.asI64(), 1))
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumF32FiniteIsAJsonNumber() {
+    let s = jsonF32Str(0.1)
+    assert(okP(s), s)
+    assert((numF(s) as f32) == (0.1 as f32))
+    assert((numF(jsonF32Str(16777216.0)) as f32) == (16777216.0 as f32))
+    assert((numF(jsonF32Str(3.4028235e38)) as f32) == (3.4028235e38 as f32))
+}
+
+@req(JSON-SER-NUM)
+fn testSerNumBuilderFloatNonFiniteIsNull() {
+    let d = P(Json.obj().float("n", f64.NAN).float("i", f64.INF).float("ok", 2.5).build())
+    assert(d.get("n")!.isNull())
+    assert(d.get("i")!.isNull())
+    assert(fltIs(d.f64("ok"), 2.5))
+}
+
+// ---------- JSON-SER-ROUNDTRIP ----------
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripStringsViaQuote() {
+    let strs: Vec<string> = ["", "a", "plain text", "quote\" and \\ backslash", "slash / solidus", "tab\there", "nl\nhere", "cr\rhere", "\\u0041 literal", "\\n literal", "\"\"\"", "\\\\\\", hx("7F"), hx("C3 A9 E2 82 AC F0 9F 98 80"), hx("E2 80 A8 E2 80 A9"), hx("EF BB BF"), hx("F4 8F BF BF"), hx("EF BF BD"), "a" + hx("00") + "b", hx("EF BF BF EE 80 80 ED 9F BF")]
+    for s in strs {
+        assert(strIs(decode(jsonQuote(s)), s), s)
+    }
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripStringsViaEscapeStr() {
+    let strs: Vec<string> = ["a\"b", "back\\slash", "line\nbreak", hx("01 02 1F"), hx("C3 A9"), "/"]
+    for s in strs {
+        assert(strIs(decode(q(jsonEscapeStr(s))), s), s)
+    }
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripEveryControlCharacter() {
+    var all = ""
+    var b: i64 = 0
+    while b < 32 {
+        all.push(b as u8)
+        b += 1
+    }
+    assert(strIs(decode(jsonQuote(all)), all))
+    let v = JsonVal.JStr(all)
+    assert(strIs(decode(jsonSer(v)), all))
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripEveryAsciiCharacter() {
+    var all = ""
+    var b: i64 = 0
+    while b < 128 {
+        all.push(b as u8)
+        b += 1
+    }
+    assert(strIs(decode(jsonQuote(all)), all))
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripLongString() {
+    let s = "ab\"\n\\".repeat(5000) + hx("C3 A9").repeat(5000)
+    assert(strIs(decode(jsonQuote(s)), s))
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripEveryValidCodePointBoundary() {
+    let cps: Vec<string> = ["C2 80", "DF BF", "E0 A0 80", "ED 9F BF", "EE 80 80", "EF BF BD", "EF BF BF", "F0 90 80 80", "F4 8F BF BF"]
+    for h in cps {
+        let s = hx(h)
+        let v = JsonVal.JStr(s)
+        assert(strIs(decode(jsonSer(v)), s), h)
+    }
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripIntegers() {
+    let ints: Vec<i64> = [0, 1, -1, 9, 10, -10, 255, 65536, 2147483647, -2147483648, 4294967296, 9007199254740993, -9007199254740993, 9223372036854775807, -9223372036854775807 - 1]
+    for n in ints {
+        let v = JsonVal.JInt(n)
+        let d = P(jsonSer(v))
+        assert(intIs(d.asI64(), n), n.toString())
+    }
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripFloatsExactly() {
+    let fs: Vec<f64> = [0.1, 0.2, 0.30000000000000004, 1.0 / 3.0, 2.0 / 3.0, 1e-7, 1e21, 1e22, 1e23, 123456789.123456789, 5e-324, 2.2250738585072014e-308, 1.7976931348623157e308, -1.5, 4.35, 100.0, 1.0, 9007199254740993.0, 3.141592653589793, 2.718281828459045, 1e100, 1.0e-100, 0.000001, 123456.789e3]
+    for f in fs {
+        assert(numF(jsonFloatStr(f)) == f, jsonFloatStr(f))
+        let v = JsonVal.JFloat(f)
+        assert(numF(jsonSer(v)) == f, jsonFloatStr(f))
+        let n = -f
+        assert(numF(jsonFloatStr(n)) == n)
+    }
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripNegativeZeroKeepsSign() {
+    let nz = -0.0
+    let back = numF(jsonFloatStr(nz))
+    assert(back == 0.0)
+    assert(1.0 / back < 0.0)
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripBoolNullAndOrder() {
+    let items: Vec<JsonVal> = [JsonVal.JBool(false), JsonVal.JNull, JsonVal.JBool(true), JsonVal.JStr("z"), JsonVal.JInt(3)]
+    let v = JsonVal.JArr(items)
+    let d = P(jsonSer(v))
+    assert(d.len() == 5)
+    assert(boolIs(d.at(0)!.asBool(), false))
+    assert(d.at(1)!.isNull())
+    assert(boolIs(d.at(2)!.asBool(), true))
+    assert(strIs(d.at(3)!.asStr(), "z"))
+    assert(intIs(d.at(4)!.asI64(), 3))
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripObjectMemberOrder() {
+    let m: Vec<JsonMember> = [JsonMember { key: "z", val: JsonVal.JInt(1) }, JsonMember { key: "a", val: JsonVal.JInt(2) }, JsonMember { key: "m", val: JsonVal.JInt(3) }, JsonMember { key: "", val: JsonVal.JInt(4) }, JsonMember { key: "A", val: JsonVal.JInt(5) }]
+    let v = JsonVal.JObj(m)
+    let d = P(jsonSer(v))
+    assert(joinKeys(d.keys()) == "z,a,m,,A")
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripSerOfParsedValueIsStable() {
+    let src = "{\"a\":[1,2.5,\"x\\ny\",true,null,{\"b\":[]}],\"c\":{}}"
+    let once = canon(src)
+    assert(canon(once) == once)
+}
+
+@req(JSON-SER-ROUNDTRIP)
+fn testRoundtripParsedStringsWithEscapes() {
+    let d = P("[\"a\\u0000b\",\"\\ud83d\\ude00\",\"\\u001f\"]")
+    let v = d.curJsonVal(d.curRoot())
+    let again = P(jsonSer(v))
+    assert(strIs(again.at(0)!.asStr(), "a" + hx("00") + "b"))
+    assert(strIs(again.at(1)!.asStr(), hx("F0 9F 98 80")))
+    assert(strIs(again.at(2)!.asStr(), hx("1F")))
+}
+
+// ---------- JSON-SER-PRETTY ----------
+
+@req(JSON-SER-PRETTY)
+fn testPrettyOutputParsesToSameValue() {
+    let src = "{\"a\":[1,2.5,\"x\\ny\",true,null,{\"b\":[],\"c\":{}}],\"d\":{\"e\":\"f\"}}"
+    for ind in [0, 1, 2, 4, 8] {
+        let p = jsonPretty(src, ind)
+        assert(okP(p), p)
+        assert(canon(p) == canon(src), p)
+    }
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyKeepsNumberLiteralsByteForByte() {
+    let src = "[1.0,1E5,-0,1.50e+2,12345678901234567890123,0.10,1e-07,-0.0e0]"
+    let p = jsonPretty(src, 2)
+    let lits: Vec<string> = ["1.0", "1E5", "-0", "1.50e+2", "12345678901234567890123", "0.10", "1e-07", "-0.0e0"]
+    for l in lits {
+        assert(p.contains(l), l)
+    }
+    assert(P(p).len() == 8)
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyKeepsStringLiteralsByteForByte() {
+    let src = "{\"k\\/1\":\"a\\u0041\\n\\/ \\\" b\",\"e\":\"\\ud83d\\ude00\",\"s\":\"a, b: {c} [d]\",\"u\":\"" + hx("C3 A9") + "\"}"
+    let p = jsonPretty(src, 2)
+    assert(p.contains("\"k\\/1\""))
+    assert(p.contains("\"a\\u0041\\n\\/ \\\" b\""))
+    assert(p.contains("\"\\ud83d\\ude00\""))
+    assert(p.contains("\"a, b: {c} [d]\""))
+    assert(p.contains("\"" + hx("C3 A9") + "\""))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyStringWithSpacesAndBracketsNotReindented() {
+    let src = "[\"  lead\",\"trail  \",\"{\",\"}\",\"[\",\",\",\":\"]"
+    let p = jsonPretty(src, 4)
+    assert(canon(p) == canon(src))
+    assert(p.contains("\"  lead\""))
+    assert(p.contains("\"trail  \""))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyEmptyContainersAndScalars() {
+    let srcs: Vec<string> = ["{}", "[]", "[[],{}]", "{\"a\":{},\"b\":[]}", "1", "\"s\"", "true", "null", "-1.5e3"]
+    for s in srcs {
+        let p = jsonPretty(s, 2)
+        assert(okP(p), s)
+        assert(canon(p) == canon(s), s)
+    }
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyWhitespaceDoesNotLeakIntoKeysAndOrder() {
+    let src = "{\"b\":1,\"a\":2,\"b\":3}"
+    let d = P(jsonPretty(src, 2))
+    assert(d.len() == 3)
+    assert(intIs(d.i64("b"), 1))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyIsIdempotent() {
+    let src = "{\"a\":[1,2,{\"b\":null}],\"c\":\"d\"}"
+    let once = jsonPretty(src, 2)
+    let twice = jsonPretty(once, 2)
+    assert(once == twice)
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyOfAlreadySpacedInputKeepsValue() {
+    let src = "  {  \"a\"  :  [  1  ,  2  ]  ,  \"b\" :\t{ }\n}  "
+    let p = jsonPretty(src, 3)
+    assert(canon(p) == canon(src))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyDocMethodMatchesValue() {
+    let d = P("{\"a\":[1,2],\"b\":\"x\"}")
+    let p = d.pretty(2)
+    assert(okP(p))
+    assert(canon(p) == canon("{\"a\":[1,2],\"b\":\"x\"}"))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyBuilderBuildPrettyMatchesBuild() {
+    let o = Json.obj().str("a", "x y").arr("l", Json.arr().int(1).int(2).obj(Json.obj().nil("n"))).obj("o", Json.obj())
+    assert(canon(o.buildPretty(2)) == canon(o.build()))
+    let a = Json.arr().int(1).str("s").arr(Json.arr())
+    assert(canon(a.buildPretty(4)) == canon(a.build()))
+}
+
+@req(JSON-SER-PRETTY)
+fn testPrettyLargeNumbersAndDuplicateKeysSurvive() {
+    let src = "{\"a\":123456789012345678901234567890,\"a\":1e400}"
+    let p = jsonPretty(src, 2)
+    assert(p.contains("123456789012345678901234567890"))
+    assert(p.contains("1e400"))
+    assert(P(p).len() == 2)
+}
+
+// ---------- JSON-JSONC-COMMENTS ----------
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncLineCommentAtEndOfFileWithoutNewline() {
+    assert(okC("1 // c"))
+    assert(okC("[1] // c"))
+    assert(okC("// c" + "\n" + "1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncLineCommentEndsAtLineFeed() {
+    let d = jsoncParse("[1, // one\n 2 // two\n]")!
+    assert(d.len() == 2)
+    assert(intIs(d.at(1)!.asI64(), 2))
+    assert(okC("// c\r\n1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncLineCommentSwallowsRestOfLine() {
+    assert(badC("[1, // c ]"))
+    assert(okC("[1, // c ]\n2]"))
+    assert(okC("// c */ still comment\n1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncBlockCommentBasics() {
+    assert(okC("/* c */ 1"))
+    assert(okC("1 /* c */"))
+    assert(okC("/* c */" + "1"))
+    assert(okC("[1,/*x*/2]"))
+    assert(okC("[1 /* a */ , 2]"))
+    assert(okC("{\"a\"/*c*/:/*d*/1}"))
+    assert(okC("/* multi\nline\n*/ [ ]"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncBlockCommentOddStars() {
+    assert(okC("/**/1"))
+    assert(okC("/***/1"))
+    assert(okC("/* * */1"))
+    assert(okC("/* a * b ** c */ 1"))
+    assert(okC("/*/ */ 1"))
+    assert(okC("/** doc **/ 1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncBlockCommentDoesNotNest() {
+    assert(badC("/* /* */ */ 1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncUnterminatedBlockCommentIsError() {
+    assert(badC("/* x"))
+    assert(badC("/* x *"))
+    assert(badC("1 /*"))
+    assert(badC("1 /* x *"))
+    assert(badC("[1 /* ]"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentDoesNotJoinDigits() {
+    assert(badC("1/**/2"))
+    assert(badC("[1/**/2]"))
+    assert(badC("1// c\n2"))
+    assert(okC("[1/**/,2]"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentDoesNotJoinNumberParts() {
+    assert(badC("-/**/1"))
+    assert(badC("1./**/5"))
+    assert(badC("1/**/.5"))
+    assert(badC("1e/**/5"))
+    assert(badC("1e+/**/5"))
+    assert(badC("0/**/1"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentDoesNotJoinLiteralLetters() {
+    assert(badC("tr/**/ue"))
+    assert(badC("nu/**/ll"))
+    assert(badC("true/**/false"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentDoesNotJoinStrings() {
+    assert(badC("\"a\"/**/\"b\""))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentMarkersInsideStringAreText() {
+    assert(strIs(jsoncParse("\"//x\"")!.asStr(), "//x"))
+    assert(strIs(jsoncParse("\"/*x*/\"")!.asStr(), "/*x*/"))
+    assert(strIs(jsoncParse("\"http://example.com\"")!.asStr(), "http://example.com"))
+    assert(strIs(jsoncParse("\"a /* b\"")!.asStr(), "a /* b"))
+    let d = jsoncParse("{\"a//b\":1,\"c/*d*/\":2}")!
+    assert(intIs(d.i64("a//b"), 1))
+    assert(intIs(d.i64("c/*d*/"), 2))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncEscapedQuoteBeforeCommentMarkerStaysInString() {
+    assert(strIs(jsoncParse("\"a\\\"//b\"")!.asStr(), "a\"//b"))
+    assert(strIs(jsoncParse("\"a\\\\\" // c")!.asStr(), "a\\"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncLoneSlashIsError() {
+    assert(badC("/"))
+    assert(badC("1 /"))
+    assert(badC("/x"))
+    assert(badC("[1 / 2]"))
+    assert(badC("1 /\n/ c"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentsOnlyIsEmptyInputError() {
+    assert(badC("// c"))
+    assert(badC("/* c */"))
+    assert(badC("/* a */ // b\n"))
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsoncCommentsBetweenEveryTokenOfObject() {
+    let s = "/*0*/{/*1*/\"a\"/*2*/:/*3*/[/*4*/1/*5*/,/*6*/2/*7*/]/*8*/,/*9*/\"b\"//10\n:null//11\n}/*12*/"
+    let d = jsoncParse(s)!
+    assert(d.get("a")!.len() == 2)
+    assert(d.get("b")!.isNull())
+}
+
+@req(JSON-JSONC-COMMENTS)
+fn testJsonStrictRejectsComments() {
+    assert(badP("// c\n1"))
+    assert(badP("1 /* c */"))
+    assert(badP("[1,/*x*/2]"))
+}
+
+// ---------- JSON-JSONC-TRAILING ----------
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaInArray() {
+    let d = jsoncParse("[1,2,]")!
+    assert(d.len() == 2)
+    assert(intIs(d.at(1)!.asI64(), 2))
+    assert(okC("[1,]"))
+    assert(okC("[ 1 , ]"))
+    assert(okC("[\"a\",]"))
+    assert(okC("[[],]"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaInObject() {
+    let d = jsoncParse("{\"a\":1,\"b\":2,}")!
+    assert(d.len() == 2)
+    assert(intIs(d.i64("b"), 2))
+    assert(okC("{\"a\":1,}"))
+    assert(okC("{\"a\":{},}"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaNested() {
+    let d = jsoncParse("{\"a\":[1,[2,],],\"b\":{\"c\":3,},}")!
+    assert(d.get("a")!.len() == 2)
+    assert(intIs(d.get("b")!.i64("c"), 3))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaWithCommentsAndWhitespace() {
+    assert(okC("[1, /* c */ ]"))
+    assert(okC("[1 // c\n, // d\n]"))
+    assert(okC("{\"a\":1 /*x*/ , /*y*/ }"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncCommaWithNoValueBeforeIsStillError() {
+    let bad: Vec<string> = ["[,]", "[,1]", "[1,,]", "[1,,2]", "[,,]", "{,}", "{,\"a\":1}", "{\"a\":1,,}", "{\"a\":1,,\"b\":2}"]
+    for s in bad {
+        assert(badC(s), s)
+    }
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncOnlyOneTrailingCommaAllowed() {
+    assert(badC("[1,,]"))
+    assert(badC("{\"a\":1,,}"))
+    assert(badC("[1, /* c */ ,]"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaNotAllowedOutsideContainers() {
+    assert(badC("1,"))
+    assert(badC(","))
+    assert(badC("[1],"))
+    assert(badC("\"a\","))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncTrailingCommaStillNeedsMemberAfterKey() {
+    assert(badC("{\"a\",}"))
+    assert(badC("{\"a\":,}"))
+    assert(badC("{\"a\":1,\"b\",}"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsonStrictRejectsTrailingComma() {
+    assert(badP("[1,]"))
+    assert(badP("{\"a\":1,}"))
+}
+
+@req(JSON-JSONC-TRAILING)
+fn testJsoncMethodAndFreeFunctionAgree() {
+    let s = "[1,2,]"
+    assert(Json.parseJsonc(s).isOk())
+    let t = "[1,,]"
+    assert(Json.parseJsonc(t).isErr())
+}
+
+// ---------- JSON-JSONC-STRICT ----------
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncAcceptsEverythingJsonAccepts() {
+    let good: Vec<string> = ["0", "-0", "\"\"", "true", "null", "[]", "{}", " [ 1 , 2 ] ", "{\"a\":{\"b\":[1,2.5e3,\"x\\u00e9\"]}}", "{\"a\":1,\"a\":2}", "\"\\ud800\"", "1E400", "\t\r\n 7 \t\r\n"]
+    for s in good {
+        assert(okP(s), s)
+        assert(okC(s), s)
+    }
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsMalformedJsonLikeJson() {
+    let bad: Vec<string> = ["", " ", "{", "}", "[", "]", "[1 2]", "{a:1}", "{'a':1}", "{\"a\" 1}", "{\"a\":}", "[1:2]", "{\"a\":1 \"b\":2}", "tru", "TRUE", "nulll", "[truex]", "1 2", "{} {}", "[]x", "'a'", "undefined"]
+    for s in bad {
+        assert(badC(s), s)
+    }
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsBadNumbers() {
+    let bad: Vec<string> = ["01", "+1", ".5", "1.", "1e", "1e+", "-", "0x10", "NaN", "Infinity", "-Infinity", "1.e5", "--1", "00"]
+    for s in bad {
+        assert(badC(s), s)
+    }
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsBadStrings() {
+    assert(badC("\"abc"))
+    assert(badC("\"a\tb\""))
+    assert(badC("\"a\nb\""))
+    assert(badC("\"\\a\""))
+    assert(badC("\"\\u12\""))
+    assert(badC("\"\\u12G4\""))
+    assert(badC("\"abc\\"))
+    assert(badC("\"a\\\nb\""))
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsIllFormedUtf8() {
+    let bad: Vec<string> = ["C3 28", "E9", "C0 80", "ED A0 80", "F4 90 80 80", "F8 88 80 80 80", "80", "FF", "E2 82"]
+    for h in bad {
+        assert(badC(q(hx(h))), h)
+    }
+    assert(badC("[" + hx("C3 A9") + "]"))
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsBomAndOtherEncodings() {
+    assert(badC(hx("EF BB BF") + "1"))
+    assert(badC(hx("FF FE 31 00")))
+    assert(badC(hx("5B 00 5D 00")))
+    assert(badC(hx("00 00 00 31")))
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncRejectsWhitespaceBeyondFour() {
+    assert(badC("[1," + hx("0B") + "2]"))
+    assert(badC("[1," + hx("0C") + "2]"))
+    assert(badC("[1," + hx("C2 A0") + "2]"))
+    assert(badC("1" + hx("00")))
+    assert(badC("[1," + hx("E2 80 A8") + "2]"))
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncDepthLimitSameAsJson() {
+    assert(okC(nestArr(512)))
+    assert(badC(nestArr(513)))
+    assert(okC(nestObj(512)))
+    assert(badC(nestObj(513)))
+    assert(badC("[".repeat(300000)))
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncDecodesLikeJson() {
+    let s = "{\"a\":\"\\ud83d\\ude00\\uD800x\\n\",\"b\":-1.5e2,\"c\":12345678901234567890}"
+    assert(canon(s) == jsoncCanon(s))
+    let d = jsoncParse(s)!
+    assert(strIs(d.str("a"), hx("F0 9F 98 80 EF BF BD") + "x\n"))
+    assert(fltIs(d.f64("b"), -150.0))
+    assert(d.i64("c").isNone())
+}
+
+fn jsoncCanon(s: string): string {
+    let d = jsoncParse(s)!
+    let v = d.curJsonVal(d.curRoot())
+    return jsonSer(v)
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncSingleByteInputsAgreeWithJson() {
+    var b: i64 = 0
+    while b < 256 {
+        let s = byteStr(b)
+        let isDigit = b >= 48 && b <= 57
+        assert(okC(s) == isDigit, "byte " + b.toString())
+        b += 1
+    }
+}
+
+@req(JSON-JSONC-STRICT)
+fn testJsoncDoesNotAcceptOtherExtensions() {
+    let bad: Vec<string> = ["{unquoted:1}", "['a']", "[1,2,3,]]", "0x1F", "[.5]", "[+1]", "{\"a\":1;}", "# c\n1", "<!-- c -->1", "[1,2]; ", "1 # x"]
+    for s in bad {
+        assert(badC(s), s)
+    }
+}
+
+// ---------- JSON-PULL-EVENTS ----------
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsObjectWithEveryValueType() {
+    assert(pullCodes("{\"a\":[1,true,null,\"s\"]}") == "{ K [ N B Z S ] } End")
+    assert(pullCodes("{\"a\":1,\"b\":false,\"c\":null,\"d\":\"x\",\"e\":{},\"f\":[]}") == "{ K N K B K Z K S K { } K [ ] } End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsTopLevelScalars() {
+    assert(pullCodes("1") == "N End")
+    assert(pullCodes("\"x\"") == "S End")
+    assert(pullCodes("true") == "B End")
+    assert(pullCodes("false") == "B End")
+    assert(pullCodes("null") == "Z End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsEmptyContainers() {
+    assert(pullCodes("{}") == "{ } End")
+    assert(pullCodes("[]") == "[ ] End")
+    assert(pullCodes("[[],{}]") == "[ [ ] { } ] End")
+    assert(pullCodes(" { } ") == "{ } End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsStringInNamePositionIsKeyElsewhereStr() {
+    assert(pullCodes("{\"k\":\"v\"}") == "{ K S }" + " End")
+    assert(pullCodes("[\"k\",\"v\"]") == "[ S S ] End")
+    assert(pullCodes("[{\"k\":\"v\"},\"k\"]") == "[ { K S } S ] End")
+    assert(pullCodes("{\"k\":{\"k\":\"k\"}}") == "{ K { K S } } End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsKeyAfterNestedValueReturnsToNamePosition() {
+    assert(pullCodes("{\"a\":[1,\"x\"],\"b\":\"y\"}") == "{ K [ N S ] K S } End")
+    assert(pullCodes("{\"a\":{\"b\":1},\"c\":2}") == "{ K { K N } K N } End")
+    assert(pullCodes("{\"a\":[],\"b\":\"y\",\"c\":{}}") == "{ K [ ] K S K { } } End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsKeyAndStrTextDecoded() {
+    let t1 = tokAt("{\"a\\nb\":\"c\\u0041\\\"\"}", 1)
+    assert(evCode(t1.kind) == "K")
+    assert(t1.text == "a\nb")
+    let t2 = tokAt("{\"a\\nb\":\"c\\u0041\\\"\"}", 2)
+    assert(evCode(t2.kind) == "S")
+    assert(t2.text == "cA\"")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsSurrogatesLikeParse() {
+    assert(tokAt("\"\\ud83d\\ude00\"", 0).text == hx("F0 9F 98 80"))
+    assert(tokAt("\"\\ud800\"", 0).text == hx("EF BF BD"))
+    assert(tokAt("\"\\uD83D\\u0041\"", 0).text == hx("EF BF BD") + "A")
+    assert(tokAt("\"\\uDC00\"", 0).text == hx("EF BF BD"))
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsNonAsciiTextAndEmptyString() {
+    assert(tokAt(q(hx("C3 A9 E2 82 AC")), 0).text == hx("C3 A9 E2 82 AC"))
+    let t = tokAt("[\"\"]", 1)
+    assert(evCode(t.kind) == "S")
+    assert(t.text == "")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsNumValuesMatchParse() {
+    let lits: Vec<string> = ["0", "-0", "1", "-1.5e2", "1E+2", "0.1", "123456789012345678901234567890", "1e400", "-1e400", "1e-400", "5e-324", "9007199254740993", "1.7976931348623157e308"]
+    for s in lits {
+        let t = tokAt(s, 0)
+        assert(evCode(t.kind) == "N", s)
+        assert(t.num == numF(s), s)
+    }
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsNumInsideArrayKeepsOrder() {
+    let src = "[1,2.5,-3]"
+    assert(tokAt(src, 1).num == 1.0)
+    assert(tokAt(src, 2).num == 2.5)
+    assert(tokAt(src, 3).num == -3.0)
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsBoolFlag() {
+    assert(tokAt("[true,false]", 1).flag == true)
+    assert(tokAt("[true,false]", 2).flag == false)
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsWhitespaceBetweenTokensIgnored() {
+    assert(pullCodes("\t{ \r\n\"a\"\t:\n[ 1 , 2 ] }\n") == "{ K [ N N ] } End")
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsDeepNestingDoesNotRecurse() {
+    let c = pullCodes(nestArr(100000))
+    assert(c.startsWith("[ [ [ "))
+    assert(c.endsWith("] ] End"))
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsLargeFlatArray() {
+    let src = "[" + "1,".repeat(20000) + "1]"
+    var p = jsonPull(src)
+    var count: i64 = 0
+    var last = ""
+    var guard: i64 = 0
+    while guard < 50000 {
+        let t = p.next()
+        last = evCode(t.kind)
+        if last == "N" { count += 1 }
+        if last == "End" || last == "Error" { break }
+        guard += 1
+    }
+    assert(last == "End")
+    assert(count == 20001)
+}
+
+@req(JSON-PULL-EVENTS)
+fn testPullEventsEmptyStringKey() {
+    assert(pullCodes("{\"\":1}") == "{ K N } End")
+    assert(tokAt("{\"\":1}", 1).text == "")
+}
+
+// ---------- JSON-PULL-TOKENS ----------
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensMisspelledLiteralIsError() {
+    let bad: Vec<string> = ["tru", "nul", "fals", "True", "NULL", "FALSE", "nULL", "t", "n", "f"]
+    for s in bad {
+        assert(pullCodes(s) == "Error", s)
+        assert(endsInError("[" + s + "]"), s)
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensBadNumbersAreErrors() {
+    let bad: Vec<string> = ["01", "1.", ".5", "+1", "1e", "1e+", "-", "-x", "0x10", "NaN", "Infinity", "1.e5", "--1", "-.5", "00"]
+    for s in bad {
+        assert(endsInError("[" + s + "]"), s)
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensBadStringsAreErrors() {
+    assert(endsInError("\"abc"))
+    assert(endsInError("\"a\tb\""))
+    assert(endsInError("\"a\nb\""))
+    assert(endsInError("\"a" + hx("00") + "b\""))
+    assert(endsInError("\"a" + hx("1F") + "b\""))
+    assert(endsInError("'a'"))
+    assert(endsInError("[\"abc]"))
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensBadEscapesAreErrors() {
+    let bad: Vec<string> = ["\"\\a\"", "\"\\x41\"", "\"\\'\"", "\"\\0\"", "\"\\U0041\"", "\"abc\\", "\"a\\\nb\""]
+    for s in bad {
+        assert(endsInError(s), s)
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensBadUnicodeEscapesAreErrors() {
+    let bad: Vec<string> = ["\"\\u\"", "\"\\u1\"", "\"\\u12\"", "\"\\u123\"", "\"\\u12G4\"", "\"\\uZZZZ\"", "\"\\u"]
+    for s in bad {
+        assert(endsInError(s), s)
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensIllFormedUtf8IsError() {
+    let bad: Vec<string> = ["E9", "80", "C3 28", "C0 80", "ED A0 80", "F4 90 80 80", "F8 88 80 80 80", "E2 82", "FF", "F0 9F 98"]
+    for h in bad {
+        assert(endsInError(q(hx(h))), h)
+        assert(endsInError(q("a" + hx(h) + "b")), h)
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensIllFormedUtf8InKeyIsError() {
+    assert(endsInError("{" + q(hx("C3 28")) + ":1}"))
+    assert(endsInError("{" + q(hx("E9")) + ":1}"))
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensErrorIsFinal() {
+    var p = jsonPull("[1, tru, 2, 3]")
+    var seen: i64 = 0
+    var isErr = false
+    while seen < 3 {
+        let t = p.next()
+        isErr = evCode(t.kind) == "Error"
+        seen += 1
+    }
+    assert(isErr)
+    var i: i64 = 0
+    while i < 10 {
+        assert(evCode(p.next().kind) == "Error")
+        i += 1
+    }
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensErrorStopsBeforeValidTail() {
+    assert(pullCodes("[\"ok\", 01, true, null]") == "[ S Error")
+    assert(pullCodes("{\"a\":1,\"b\":\"x\\q\",\"c\":2}") == "{ K N K Error")
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensTokensBeforeErrorAreStillDelivered() {
+    let c = pullCodes("[1,2,3,x]")
+    assert(c.startsWith("[ N N N"))
+    assert(c.endsWith("Error"))
+}
+
+@req(JSON-PULL-TOKENS)
+fn testPullTokensGoodTokensDoNotError() {
+    let good: Vec<string> = ["0", "-0", "1e5", "1E-5", "0.5", "\"\\u00e9\"", "\"\\ud83d\\ude00\"", "\"\\ud800\"", "\"\\/\"", "true", "false", "null"]
+    for s in good {
+        assert(pullCodes(s).endsWith("End"), s)
+    }
+}
+
+// ---------- JSON-PULL-STRUCTURE ----------
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureUnmatchedClosersYieldTokens() {
+    assert(pullCodes("]") == "] End")
+    assert(pullCodes("}") == "} End")
+    assert(pullCodes("[}") == "[ } End")
+    assert(pullCodes("[]]") == "[ ] ] End")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureUnclosedContainerEndsWithEnd() {
+    assert(pullCodes("[1,2") == "[ N N End")
+    assert(pullCodes("[") == "[ End")
+    assert(pullCodes("{") == "{ End")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureMissingAndDoubledCommasAreNotChecked() {
+    assert(pullCodes("[1 2]") == "[ N N ] End")
+    assert(pullCodes("[1,,2]") == "[ N N ] End")
+    assert(pullCodes("[1,]") == "[ N ] End")
+    assert(pullCodes("[,1]") == "[ N ] End")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureMultipleRootValuesAllowed() {
+    assert(pullCodes("1 2") == "N N End")
+    assert(pullCodes("[] {} null") == "[ ] { } Z End")
+    assert(pullCodes("true false") == "B B End")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureMissingColonOrValueNotChecked() {
+    assert(pullCodes("{\"a\" 1}") == "{ K N } End")
+    assert(pullCodes("{\"a\":}") == "{ K } End")
+}
+
+@req(JSON-PULL-STRUCTURE)
+fn testPullStructureNeedsParseForValidation() {
+    let s = "[1 2]"
+    assert(pullTerminates(s))
+    assert(badP(s))
+}
+
+// ---------- JSON-GET ----------
+
+@req(JSON-GET)
+fn testGetMissingKeyIsNone() {
+    let d = P("{\"a\":1}")
+    assert(d.get("b").isNone())
+    assert(d.str("b").isNone())
+    assert(d.i64("b").isNone())
+    assert(d.f64("b").isNone())
+    assert(d.bool("b").isNone())
+    assert(d.get("A").isNone())
+    assert(d.get("").isNone())
+    assert(d.get("a ").isNone())
+}
+
+@req(JSON-GET)
+fn testGetEmptyKeyIsAKey() {
+    let d = P("{\"\":7}")
+    assert(intIs(d.i64(""), 7))
+}
+
+@req(JSON-GET)
+fn testGetKeyLookupIsOnDecodedName() {
+    let d = P("{\"a\\u0062\":1,\"x\\ny\":2}")
+    assert(intIs(d.i64("ab"), 1))
+    assert(intIs(d.i64("x\ny"), 2))
+    assert(d.i64("a\\u0062").isNone())
+}
+
+@req(JSON-GET)
+fn testGetKeyIsNotAPrefixMatch() {
+    let d = P("{\"abc\":1}")
+    assert(d.get("ab").isNone())
+    assert(d.get("abcd").isNone())
+    assert(d.get("bc").isNone())
+}
+
+@req(JSON-GET)
+fn testGetOnNonObjectIsNone() {
+    assert(P("[1,2]").get("a").isNone())
+    assert(P("5").get("a").isNone())
+    assert(P("\"a\"").get("a").isNone())
+    assert(P("null").get("a").isNone())
+    assert(P("true").str("a").isNone())
+    assert(P("[1]").i64("0").isNone())
+}
+
+@req(JSON-GET)
+fn testGetAtOutOfRangeIsNone() {
+    let d = P("[10,20,30]")
+    assert(d.at(3).isNone())
+    assert(d.at(4).isNone())
+    assert(d.at(9223372036854775807).isNone())
+    assert(P("[]").at(0).isNone())
+}
+
+@req(JSON-GET)
+fn testGetAtNegativeIndexIsNone() {
+    let d = P("[10,20,30]")
+    assert(d.at(-1).isNone())
+    assert(d.at(-3).isNone())
+    assert(d.at(-9223372036854775807 - 1).isNone())
+}
+
+@req(JSON-GET)
+fn testGetAtInRange() {
+    let d = P("[10,20,30]")
+    assert(intIs(d.at(0)!.asI64(), 10))
+    assert(intIs(d.at(2)!.asI64(), 30))
+}
+
+@req(JSON-GET)
+fn testGetAtOnScalarsIsNone() {
+    assert(P("5").at(0).isNone())
+    assert(P("\"abc\"").at(0).isNone())
+    assert(P("null").at(0).isNone())
+    assert(P("true").at(0).isNone())
+}
+
+@req(JSON-GET)
+fn testGetWrongKindIsNeverCoerced() {
+    let d = P("{\"s\":\"5\",\"n\":5,\"b\":true,\"z\":null,\"a\":[1],\"o\":{}}")
+    assert(d.i64("s").isNone())
+    assert(d.f64("s").isNone())
+    assert(d.str("n").isNone())
+    assert(d.bool("n").isNone())
+    assert(d.i64("b").isNone())
+    assert(d.str("b").isNone())
+    assert(d.i64("z").isNone())
+    assert(d.str("z").isNone())
+    assert(d.bool("z").isNone())
+    assert(d.i64("a").isNone())
+    assert(d.str("o").isNone())
+    assert(d.f64("a").isNone())
+}
+
+@req(JSON-GET)
+fn testGetBoolIsNotNumeric() {
+    assert(P("true").asI64().isNone())
+    assert(P("true").asF64().isNone())
+    assert(P("0").asBool().isNone())
+    assert(P("1").asBool().isNone())
+    assert(P("\"true\"").asBool().isNone())
+    assert(P("null").asBool().isNone())
+}
+
+@req(JSON-GET)
+fn testGetAsAccessorsRightKind() {
+    assert(strIs(P("\"hi\"").asStr(), "hi"))
+    assert(intIs(P("-12").asI64(), -12))
+    assert(fltIs(P("1.25").asF64(), 1.25))
+    assert(boolIs(P("true").asBool(), true))
+    assert(boolIs(P("false").asBool(), false))
+}
+
+@req(JSON-GET)
+fn testGetAsAccessorsWrongKindIsNone() {
+    assert(P("5").asStr().isNone())
+    assert(P("null").asStr().isNone())
+    assert(P("[\"a\"]").asStr().isNone())
+    assert(P("{}").asStr().isNone())
+    assert(P("\"5\"").asI64().isNone())
+    assert(P("[1]").asI64().isNone())
+    assert(P("\"1.5\"").asF64().isNone())
+    assert(P("null").asF64().isNone())
+    assert(P("{}").asBool().isNone())
+}
+
+@req(JSON-GET)
+fn testGetAsI64OfNonIntegerNumberIsNone() {
+    assert(P("1.5").asI64().isNone())
+    assert(P("1e3").asI64().isNone())
+    assert(P("1.0").asI64().isNone())
+}
+
+@req(JSON-GET)
+fn testGetKindPredicatesExclusive() {
+    let docs: Vec<string> = ["null", "\"s\"", "1", "true", "[]", "{}"]
+    var i: i64 = 0
+    while i < docs.len {
+        let d = P(docs[i])
+        var n: i64 = 0
+        if d.isNull() { n += 1 }
+        if d.isStr() { n += 1 }
+        if d.isNum() { n += 1 }
+        if d.isBool() { n += 1 }
+        if d.isArray() { n += 1 }
+        if d.isObject() { n += 1 }
+        assert(n == 1, docs[i])
+        i += 1
+    }
+    assert(P("null").isNull())
+    assert(P("\"s\"").isStr())
+    assert(P("-1.5e2").isNum())
+    assert(P("false").isBool())
+    assert(P("[1]").isArray())
+    assert(P("{\"a\":1}").isObject())
+}
+
+@req(JSON-GET)
+fn testGetStringThatLooksLikeOtherKinds() {
+    assert(P("\"null\"").isStr())
+    assert(!P("\"null\"").isNull())
+    assert(P("\"123\"").isStr())
+    assert(!P("\"123\"").isNum())
+    assert(P("\"true\"").isStr())
+    assert(!P("\"true\"").isBool())
+    assert(P("\"[]\"").isStr())
+    assert(!P("\"[]\"").isArray())
+}
+
+@req(JSON-GET)
+fn testGetLenOfContainers() {
+    assert(P("[]").len() == 0)
+    assert(P("{}").len() == 0)
+    assert(P("[1,2,3]").len() == 3)
+    assert(P("{\"a\":1,\"b\":2}").len() == 2)
+    assert(P("[[],[1,2]]").len() == 2)
+    assert(P("{\"a\":[1,2,3]}").len() == 1)
+}
+
+@req(JSON-GET)
+fn testGetLenOfScalarsIsZero() {
+    assert(P("5").len() == 0)
+    assert(P("true").len() == 0)
+    assert(P("null").len() == 0)
+}
+
+@req(JSON-GET)
+fn testGetKeysInSourceOrder() {
+    let d = P("{\"z\":1,\"a\":{\"x\":1},\"m\":[1],\"\":0}")
+    assert(joinKeys(d.keys()) == "z,a,m,")
+    assert(d.keys().len == 4)
+}
+
+@req(JSON-GET)
+fn testGetKeysAreDecoded() {
+    let d = P("{\"a\\nb\":1,\"\\u0041\":2}")
+    let k = d.keys()
+    assert(k[0] == "a\nb")
+    assert(k[1] == "A")
+}
+
+@req(JSON-GET)
+fn testGetKeysOfNonObjectIsEmpty() {
+    assert(P("[1,2]").keys().len == 0)
+    assert(P("5").keys().len == 0)
+    assert(P("{}").keys().len == 0)
+    assert(P("null").keys().len == 0)
+}
+
+@req(JSON-GET)
+fn testGetKeysDoNotIncludeNestedKeys() {
+    let d = P("{\"a\":{\"b\":{\"c\":1}}}")
+    assert(joinKeys(d.keys()) == "a")
+}
+
+@req(JSON-GET)
+fn testGetSubtreeRawStrIsCanonical() {
+    let d = P("{\"a\": [1, 2 ] ,\"b\":{ \"c\" : \"x\\u0041\" },\"n\": 1.50E+2 ,\"t\": true ,\"z\":null}")
+    assert(d.get("a")!.rawStr() == "[1,2]")
+    assert(d.get("b")!.rawStr() == "{\"c\":\"xA\"}")
+    assert(d.get("n")!.rawStr() == "1.50E+2")
+    assert(d.get("t")!.rawStr() == "true")
+    assert(d.get("z")!.rawStr() == "null")
+}
+
+@req(JSON-GET)
+fn testGetSubtreeStringRawStrIncludesQuotes() {
+    let d = P("{\"s\":\"a\\u0041\"}")
+    assert(d.get("s")!.rawStr() == "\"aA\"")
+}
+
+@req(JSON-GET)
+fn testGetAtSubtreeRawStr() {
+    let d = P("[ {\"a\":1} , [2,3] , \"x\" ]")
+    assert(d.at(0)!.rawStr() == "{\"a\":1}")
+    assert(d.at(1)!.rawStr() == "[2,3]")
+    assert(d.at(2)!.rawStr() == "\"x\"")
+}
+
+@req(JSON-GET)
+fn testGetSubtreeIsADocumentOfItsOwn() {
+    let d = P("{\"a\":{\"b\":[10,20,{\"c\":\"deep\"}]},\"other\":1}")
+    let sub = d.get("a")!
+    assert(sub.isObject())
+    assert(sub.len() == 1)
+    assert(sub.get("other").isNone())
+    let arr = sub.get("b")!
+    assert(arr.len() == 3)
+    assert(intIs(arr.at(1)!.asI64(), 20))
+    assert(strIs(arr.at(2)!.str("c"), "deep"))
+    assert(intIs(sub.path("b[0]")!.asI64(), 10))
+}
+
+@req(JSON-GET)
+fn testGetSubtreeOfScalarIsScalarDoc() {
+    let d = P("[5,\"s\",true,null]")
+    assert(intIs(d.at(0)!.asI64(), 5))
+    assert(d.at(0)!.isNum())
+    assert(strIs(d.at(1)!.asStr(), "s"))
+    assert(boolIs(d.at(2)!.asBool(), true))
+    assert(d.at(3)!.isNull())
+}
+
+fn subOf(s: string): Json {
+    let d = P(s)
+    return d.get("keep")!
+}
+
+@req(JSON-GET)
+fn testGetSubtreeOutlivesParent() {
+    let sub = subOf("{\"keep\":{\"x\":[1,2,3]}}")
+    assert(sub.get("x")!.len() == 3)
+    assert(sub.rawStr() == "{\"x\":[1,2,3]}")
+}
+
+@req(JSON-GET)
+fn testGetKeyWithDuplicateIsFirstRawStr() {
+    let d = P("{\"a\":1,\"a\":22}")
+    assert(d.get("a")!.rawStr() == "1")
+}
+
+// ---------- JSON-PATH ----------
+
+@req(JSON-PATH)
+fn testPathSimpleMember() {
+    let d = P(SAMPLE)
+    assert(d.path("a")!.isObject())
+    assert(intIs(d.path("a.b")!.asI64(), 5))
+    assert(strIs(d.path("a.s")!.asStr(), "x"))
+}
+
+@req(JSON-PATH)
+fn testPathIndexStep() {
+    let d = P(SAMPLE)
+    assert(strIs(d.path("items[0].name")!.asStr(), "n0"))
+    assert(strIs(d.path("items[1].name")!.asStr(), "n1"))
+    assert(d.path("items[1]")!.isObject())
+    assert(d.path("items")!.len() == 2)
+}
+
+@req(JSON-PATH)
+fn testPathConsecutiveIndexSteps() {
+    let d = P(SAMPLE)
+    assert(intIs(d.path("m[0][1]")!.asI64(), 2))
+    assert(intIs(d.path("m[1][0]")!.asI64(), 3))
+    assert(d.path("m[1]")!.len() == 2)
+}
+
+@req(JSON-PATH)
+fn testPathMultiDigitIndex() {
+    var s = "["
+    var i: i64 = 0
+    while i < 25 {
+        if i > 0 { s.push(44) }
+        s.pushStr(i.toString())
+        i += 1
+    }
+    s.push(93)
+    let d = P("{\"v\":" + s + "}")
+    assert(intIs(d.path("v[24]")!.asI64(), 24))
+    assert(intIs(d.path("v[10]")!.asI64(), 10))
+    assert(d.path("v[25]").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathMissingKeyIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("zz").isNone())
+    assert(d.path("a.zz").isNone())
+    assert(d.path("zz.b").isNone())
+    assert(d.path("a.b.c").isNone())
+    assert(d.path("items[0].zz").isNone())
+    assert(d.path("A").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathIndexOutOfRangeIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("items[2]").isNone())
+    assert(d.path("items[99]").isNone())
+    assert(d.path("items[2].name").isNone())
+    assert(d.path("m[0][2]").isNone())
+    assert(d.path("items[99999999999999999999]").isNone())
+    assert(d.path("items[9223372036854775808]").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathStepIntoScalarIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("a.b.x").isNone())
+    assert(d.path("a.b[0]").isNone())
+    assert(d.path("a.s.x").isNone())
+    assert(d.path("a.t.x").isNone())
+    assert(d.path("a.s[0]").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathKeyStepIntoArrayAndIndexStepIntoObjectIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("items.name").isNone())
+    assert(d.path("a[0]").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathNonDigitInBracketsIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("items[x]").isNone())
+    assert(d.path("items[-1]").isNone())
+    assert(d.path("items[1x]").isNone())
+    assert(d.path("items[ 1]").isNone())
+    assert(d.path("items[+1]").isNone())
+    assert(d.path("items[1.0]").isNone())
+    assert(d.path("items[a]").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathUnterminatedBracketIsNone() {
+    let d = P(SAMPLE)
+    assert(d.path("items[").isNone())
+    assert(d.path("items[0").isNone())
+    assert(d.path("items[0.name").isNone())
+    assert(d.path("m[0][").isNone())
+    assert(d.path("m[0][1").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathScalarLeaves() {
+    let d = P(SAMPLE)
+    assert(strIs(d.strPath("a.s"), "x"))
+    assert(intIs(d.i64Path("a.b"), 5))
+    assert(fltIs(d.f64Path("a.f"), 1.5))
+    assert(boolIs(d.boolPath("a.t"), true))
+    assert(strIs(d.strPath("items[1].name"), "n1"))
+    assert(intIs(d.i64Path("m[1][1]"), 4))
+}
+
+@req(JSON-PATH)
+fn testPathTypedReadersWrongKindIsNone() {
+    let d = P(SAMPLE)
+    assert(d.strPath("a.b").isNone())
+    assert(d.i64Path("a.s").isNone())
+    assert(d.i64Path("a.f").isNone())
+    assert(d.f64Path("a.s").isNone())
+    assert(d.boolPath("a.b").isNone())
+    assert(d.strPath("a").isNone())
+    assert(d.i64Path("items").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathTypedReadersMissIsNone() {
+    let d = P(SAMPLE)
+    assert(d.strPath("a.zz").isNone())
+    assert(d.i64Path("items[5].name").isNone())
+    assert(d.f64Path("zz").isNone())
+    assert(d.boolPath("a.t.x").isNone())
+    assert(d.strPath("items[x].name").isNone())
+    assert(d.i64Path("m[0][").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathCursorForm() {
+    let d = P(SAMPLE)
+    let c = d.curPath("a.b")
+    assert(c >= 0)
+    assert(intIs(d.curInt(c), 5))
+    assert(d.curPath("a.zz") == -1)
+    assert(d.curPath("items[9]") == -1)
+    assert(d.curPath("a.b.c") == -1)
+    assert(d.curPath("items[x]") == -1)
+    assert(d.curPath("items[") == -1)
+}
+
+@req(JSON-PATH)
+fn testPathCurAtStartsFromCursor() {
+    let d = P(SAMPLE)
+    let a = d.curField(d.curRoot(), "a")
+    assert(intIs(d.curInt(d.curAt(a, "b")), 5))
+    assert(d.curAt(a, "zz") == -1)
+    assert(d.curAt(-1, "b") == -1)
+}
+
+@req(JSON-PATH)
+fn testPathAtReadersStartFromCursor() {
+    let d = P(SAMPLE)
+    let a = d.curField(d.curRoot(), "a")
+    assert(strIs(d.strAt(a, "s"), "x"))
+    assert(intIs(d.i64At(a, "b"), 5))
+    assert(fltIs(d.f64At(a, "f"), 1.5))
+    assert(boolIs(d.boolAt(a, "t"), true))
+    assert(d.strAt(a, "zz").isNone())
+    assert(d.i64At(a, "s").isNone())
+    assert(d.strAt(-1, "s").isNone())
+    assert(d.i64At(-1, "b").isNone())
+    assert(d.f64At(-1, "f").isNone())
+    assert(d.boolAt(-1, "t").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathMatchesStepByStepAccessors() {
+    let d = P(SAMPLE)
+    let viaPath = d.path("items[1].name")!
+    let viaSteps = d.get("items")!.at(1)!.get("name")!
+    assert(viaPath.rawStr() == viaSteps.rawStr())
+    assert(d.path("a")!.rawStr() == d.get("a")!.rawStr())
+    assert(d.path("m[1][0]")!.rawStr() == d.get("m")!.at(1)!.at(0)!.rawStr())
+}
+
+@req(JSON-PATH)
+fn testPathDuplicateKeyTakesFirst() {
+    let d = P("{\"a\":{\"x\":1},\"a\":{\"x\":2}}")
+    assert(intIs(d.i64Path("a.x"), 1))
+}
+
+@req(JSON-PATH)
+fn testPathOnScalarRootIsNone() {
+    assert(P("5").path("a").isNone())
+    assert(P("5").path("a[0]").isNone())
+    assert(P("null").i64Path("a").isNone())
+}
+
+@req(JSON-PATH)
+fn testPathKeyWithBracketInObjectNotConfusedAfterIndex() {
+    let d = P("{\"a\":[{\"b\":[{\"c\":7}]}]}")
+    assert(intIs(d.i64Path("a[0].b[0].c"), 7))
+    assert(d.i64Path("a[0].b[1].c").isNone())
+}
+
+// ---------- JSON-CURSOR ----------
+
+@req(JSON-CURSOR)
+fn testCursorRootHolds() {
+    let d = P(SAMPLE)
+    let r = d.curRoot()
+    assert(r >= 0)
+    assert(d.curHolds(r))
+    assert(d.curLen(r) == 3)
+}
+
+@req(JSON-CURSOR)
+fn testCursorMissIsMinusOne() {
+    let d = P(SAMPLE)
+    let r = d.curRoot()
+    assert(d.curField(r, "zz") == -1)
+    let items = d.curField(r, "items")
+    assert(d.curChild(items, 2) == -1)
+    assert(d.curChild(items, 99) == -1)
+    assert(d.curChild(items, -1) == -1)
+    assert(d.curChild(items, 9223372036854775807) == -1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorReadersTreatMinusOneAsNothing() {
+    let d = P(SAMPLE)
+    assert(d.curLen(-1) == 0)
+    assert(d.curKind(-1) == -1)
+    assert(!d.curHolds(-1))
+    assert(d.curInt(-1).isNone())
+    assert(d.curUint(-1).isNone())
+    assert(d.curFloat(-1).isNone())
+    assert(d.curBool(-1).isNone())
+    assert(d.curStr(-1).isNone())
+    assert(d.curRaw(-1) == "")
+    assert(d.curItems(-1).len == 0)
+}
+
+@req(JSON-CURSOR)
+fn testCursorNavigationFromMissStaysMiss() {
+    let d = P(SAMPLE)
+    assert(d.curField(-1, "a") == -1)
+    assert(d.curChild(-1, 0) == -1)
+    assert(d.curField(d.curField(d.curRoot(), "zz"), "a") == -1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorFieldAndChildNavigate() {
+    let d = P(SAMPLE)
+    let items = d.curField(d.curRoot(), "items")
+    assert(d.curLen(items) == 2)
+    let second = d.curChild(items, 1)
+    assert(strIs(d.curStr(d.curField(second, "name")), "n1"))
+    assert(strIs(d.curStr(d.curField(d.curChild(items, 0), "name")), "n0"))
+}
+
+@req(JSON-CURSOR)
+fn testCursorKindsDistinctPerType() {
+    let d = P("{\"o\":{},\"a\":[],\"s\":\"x\",\"n\":1,\"b\":true,\"z\":null}")
+    let r = d.curRoot()
+    let ks: Vec<i32> = [d.curKind(d.curField(r, "o")), d.curKind(d.curField(r, "a")), d.curKind(d.curField(r, "s")), d.curKind(d.curField(r, "n")), d.curKind(d.curField(r, "b")), d.curKind(d.curField(r, "z"))]
+    var i: i64 = 0
+    while i < 6 {
+        assert(ks[i] >= 0)
+        var j: i64 = i + 1
+        while j < 6 {
+            assert(ks[i] != ks[j])
+            j += 1
+        }
+        i += 1
+    }
+}
+
+@req(JSON-CURSOR)
+fn testCursorTrueAndFalseShareKind() {
+    let d = P("[true,false]")
+    let r = d.curRoot()
+    assert(d.curKind(d.curChild(r, 0)) == d.curKind(d.curChild(r, 1)))
+}
+
+@req(JSON-CURSOR)
+fn testCursorLenOfContainersAndScalars() {
+    let d = P("{\"a\":[1,2,3],\"o\":{\"x\":1,\"y\":2},\"n\":5,\"e\":[],\"s\":\"abc\"}")
+    let r = d.curRoot()
+    assert(d.curLen(d.curField(r, "a")) == 3)
+    assert(d.curLen(d.curField(r, "o")) == 2)
+    assert(d.curLen(d.curField(r, "e")) == 0)
+    assert(d.curLen(d.curField(r, "n")) == 0)
+}
+
+@req(JSON-CURSOR)
+fn testCursorHoldsOnlyForRealNodes() {
+    let d = P(SAMPLE)
+    assert(d.curHolds(d.curField(d.curRoot(), "a")))
+    assert(!d.curHolds(d.curField(d.curRoot(), "zz")))
+    assert(!d.curHolds(-1))
+    assert(!d.curHolds(-2))
+}
+
+@req(JSON-CURSOR)
+fn testCursorFromOneDocumentIsNotHeldByAnother() {
+    let big = P("[1,2,3,4,5,6,7,8,9,10]")
+    let small = P("1")
+    let c = big.curChild(big.curRoot(), 9)
+    assert(big.curHolds(c))
+    assert(!small.curHolds(c))
+}
+
+@req(JSON-CURSOR)
+fn testCursorScalarReaders() {
+    let d = P("{\"i\":-42,\"u\":18446744073709551615,\"f\":2.5,\"b\":true,\"s\":\"hi\"}")
+    let r = d.curRoot()
+    assert(intIs(d.curInt(d.curField(r, "i")), -42))
+    assert(d.curUint(d.curField(r, "u")).unwrapOr(0) == 18446744073709551615)
+    assert(fltIs(d.curFloat(d.curField(r, "f")), 2.5))
+    assert(boolIs(d.curBool(d.curField(r, "b")), true))
+    assert(strIs(d.curStr(d.curField(r, "s")), "hi"))
+}
+
+@req(JSON-CURSOR)
+fn testCursorReadersWrongKindIsNone() {
+    let d = P("{\"s\":\"5\",\"n\":5,\"b\":true,\"z\":null,\"a\":[1]}")
+    let r = d.curRoot()
+    assert(d.curInt(d.curField(r, "s")).isNone())
+    assert(d.curFloat(d.curField(r, "s")).isNone())
+    assert(d.curStr(d.curField(r, "n")).isNone())
+    assert(d.curBool(d.curField(r, "n")).isNone())
+    assert(d.curInt(d.curField(r, "b")).isNone())
+    assert(d.curStr(d.curField(r, "z")).isNone())
+    assert(d.curInt(d.curField(r, "a")).isNone())
+    assert(d.curUint(d.curField(r, "s")).isNone())
+    assert(d.curBool(d.curField(r, "s")).isNone())
+}
+
+@req(JSON-CURSOR)
+fn testCursorRawIsCanonical() {
+    let d = P("{\"a\": [1, 2 ] ,\"n\": 1.50E+2 ,\"s\":\"x\\u0041\"}")
+    let r = d.curRoot()
+    assert(d.curRaw(d.curField(r, "a")) == "[1,2]")
+    assert(d.curRaw(d.curField(r, "n")) == "1.50E+2")
+    assert(d.curRaw(d.curField(r, "s")) == "\"xA\"")
+}
+
+@req(JSON-CURSOR)
+fn testCursorItemsOfArray() {
+    let d = P("[10,20,30]")
+    let items = d.curItems(d.curRoot())
+    assert(items.len == 3)
+    assert(intIs(d.curInt(items[0]), 10))
+    assert(intIs(d.curInt(items[1]), 20))
+    assert(intIs(d.curInt(items[2]), 30))
+}
+
+@req(JSON-CURSOR)
+fn testCursorItemsOfEmptyAndScalar() {
+    let empty = P("[]")
+    assert(empty.curItems(empty.curRoot()).len == 0)
+    let d = P("5")
+    assert(d.curItems(d.curRoot()).len == 0)
+}
+
+@req(JSON-CURSOR)
+fn testCursorKeyAtAndValueAtFollowSourceOrder() {
+    let d = P("{\"z\":1,\"a\":\"two\",\"m\":[3]}")
+    let r = d.curRoot()
+    assert(d.curKeyAt(r, 0) == "z")
+    assert(d.curKeyAt(r, 1) == "a")
+    assert(d.curKeyAt(r, 2) == "m")
+    assert(intIs(d.curInt(d.curValueAt(r, 0)), 1))
+    assert(strIs(d.curStr(d.curValueAt(r, 1)), "two"))
+    assert(d.curLen(d.curValueAt(r, 2)) == 1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorKeyAtAndValueAtOutOfRange() {
+    let d = P("{\"a\":1}")
+    let r = d.curRoot()
+    assert(d.curKeyAt(r, 1) == "")
+    assert(d.curKeyAt(r, -1) == "")
+    assert(d.curKeyAt(r, 99) == "")
+    assert(d.curValueAt(r, 1) == -1)
+    assert(d.curValueAt(r, -1) == -1)
+    assert(d.curValueAt(r, 99) == -1)
+    assert(d.curKeyAt(-1, 0) == "")
+    assert(d.curValueAt(-1, 0) == -1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorKeyAtIsDecoded() {
+    let d = P("{\"a\\nb\":1}")
+    assert(d.curKeyAt(d.curRoot(), 0) == "a\nb")
+}
+
+@req(JSON-CURSOR)
+fn testCursorJsonValMatchesDocument() {
+    let d = P("{\"a\":[1,\"x\",null,true,1.5],\"b\":{\"c\":false}}")
+    let v = d.curJsonVal(d.curRoot())
+    let again = P(jsonSer(v))
+    assert(again.get("a")!.len() == 5)
+    assert(intIs(again.path("a[0]")!.asI64(), 1))
+    assert(strIs(again.path("a[1]")!.asStr(), "x"))
+    assert(again.path("a[2]")!.isNull())
+    assert(boolIs(again.path("a[3]")!.asBool(), true))
+    assert(fltIs(again.path("a[4]")!.asF64(), 1.5))
+    assert(boolIs(again.path("b.c")!.asBool(), false))
+    assert(joinKeys(again.keys()) == "a,b")
+}
+
+@req(JSON-CURSOR)
+fn testCursorJsonValOfSubtree() {
+    let d = P("{\"a\":{\"k\":[1,2]},\"b\":3}")
+    let v = d.curJsonVal(d.curField(d.curRoot(), "a"))
+    let s = P(jsonSer(v))
+    assert(joinKeys(s.keys()) == "k")
+    assert(s.get("k")!.len() == 2)
+}
+
+@req(JSON-CURSOR)
+fn testCursorJsonIsDocumentOfSubtree() {
+    let d = P("{\"a\":{\"k\":[1,2]},\"b\":3}")
+    let sub = d.curJson(d.curField(d.curRoot(), "a"))
+    assert(sub.isObject())
+    assert(sub.get("b").isNone())
+    assert(sub.get("k")!.len() == 2)
+    assert(sub.rawStr() == "{\"k\":[1,2]}")
+}
+
+@req(JSON-CURSOR)
+fn testCursorAgreesWithOwnedAccessors() {
+    let d = P("{\"s\":\"v\",\"i\":7,\"f\":0.25,\"b\":false,\"z\":null}")
+    let r = d.curRoot()
+    assert(strIs(d.curStr(d.curField(r, "s")), orS(d.str("s"), "?")))
+    assert(d.curInt(d.curField(r, "i")).unwrapOr(0) == d.i64("i").unwrapOr(1))
+    assert(d.curFloat(d.curField(r, "f")).unwrapOr(0.0) == d.f64("f").unwrapOr(1.0))
+    assert(boolIs(d.curBool(d.curField(r, "b")), d.bool("b").unwrapOr(true)))
+    assert(d.curStr(d.curField(r, "z")).isNone() == d.str("z").isNone())
+    assert(d.curInt(d.curField(r, "s")).isNone() == d.i64("s").isNone())
+}
+
+@req(JSON-CURSOR)
+fn testCursorRootOfScalarDocument() {
+    let d = P("\"only\"")
+    assert(strIs(d.curStr(d.curRoot()), "only"))
+    assert(d.curLen(d.curRoot()) == 0)
+    assert(d.curChild(d.curRoot(), 0) == -1)
+    assert(d.curField(d.curRoot(), "a") == -1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorChildOnScalarIsMiss() {
+    let d = P("{\"n\":5,\"s\":\"abc\"}")
+    let n = d.curField(d.curRoot(), "n")
+    assert(d.curChild(n, 0) == -1)
+    assert(d.curField(n, "x") == -1)
+    let s = d.curField(d.curRoot(), "s")
+    assert(d.curChild(s, 0) == -1)
+    assert(d.curField(s, "x") == -1)
+}
+
+@req(JSON-CURSOR)
+fn testCursorFieldOnArrayIsMiss() {
+    let d = P("[1,2]")
+    assert(d.curField(d.curRoot(), "a") == -1)
+    assert(d.curField(d.curRoot(), "0") == -1)
+}
+
+// ---------- JSON-INDEX ----------
+
+@req(JSON-INDEX)
+fn testIndexChainKeyThenPos() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    let items = d.idxKey(r, "items")
+    let second = d.idxPos(items, 1)
+    assert(strIs(d.idxStr(d.idxKey(second, "name")), "n1"))
+    assert(intIs(d.idxI64(d.idxKey(d.idxKey(r, "a"), "b")), 5))
+    assert(fltIs(d.idxF64(d.idxKey(d.idxKey(r, "a"), "f")), 1.5))
+    assert(boolIs(d.idxBool(d.idxKey(d.idxKey(r, "a"), "t")), true))
+}
+
+@req(JSON-INDEX)
+fn testIndexRootExistsAndLen() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    assert(d.idxExists(r))
+    assert(d.idxLen(r) == 3)
+    assert(d.idxLen(d.idxKey(r, "items")) == 2)
+    assert(d.idxLen(d.idxKey(r, "m")) == 2)
+}
+
+@req(JSON-INDEX)
+fn testIndexMissingKeyDoesNotExist() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    let miss = d.idxKey(r, "zz")
+    assert(!d.idxExists(miss))
+    assert(d.idxStr(miss).isNone())
+    assert(d.idxF64(miss).isNone())
+    assert(d.idxI64(miss).isNone())
+    assert(d.idxBool(miss).isNone())
+    assert(d.idxLen(miss) == 0)
+    assert(d.idxKind(miss) == -1)
+    assert(d.idxRaw(miss) == "")
+    assert(d.idxItems(miss).len == 0)
+    assert(d.idxKeys(miss).len == 0)
+}
+
+@req(JSON-INDEX)
+fn testIndexOutOfRangePosDoesNotExist() {
+    let d = P(SAMPLE)
+    let items = d.idxKey(d.idxRoot(), "items")
+    assert(!d.idxExists(d.idxPos(items, 2)))
+    assert(!d.idxExists(d.idxPos(items, 99)))
+    assert(!d.idxExists(d.idxPos(items, -1)))
+    assert(d.idxExists(d.idxPos(items, 0)))
+}
+
+@req(JSON-INDEX)
+fn testIndexStepsAfterAMissStayMissing() {
+    let d = P(SAMPLE)
+    let miss = d.idxKey(d.idxRoot(), "zz")
+    assert(!d.idxExists(d.idxKey(miss, "a")))
+    assert(!d.idxExists(d.idxPos(miss, 0)))
+    assert(!d.idxExists(d.idxPath(miss, "a.b")))
+    let deep = d.idxKey(d.idxKey(d.idxKey(miss, "a"), "b"), "c")
+    assert(!d.idxExists(deep))
+    assert(d.idxStr(deep).isNone())
+}
+
+@req(JSON-INDEX)
+fn testIndexWrongStepKindDoesNotExist() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    assert(!d.idxExists(d.idxKey(d.idxKey(r, "items"), "name")))
+    assert(!d.idxExists(d.idxKey(d.idxKey(d.idxKey(r, "a"), "b"), "x")))
+    assert(!d.idxExists(d.idxPos(d.idxKey(d.idxKey(r, "a"), "s"), 0)))
+}
+
+@req(JSON-INDEX)
+fn testIndexPathMatchesStepwise() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    let viaPath = d.idxPath(r, "items[1].name")
+    assert(strIs(d.idxStr(viaPath), "n1"))
+    assert(d.idxRaw(viaPath) == d.idxRaw(d.idxKey(d.idxPos(d.idxKey(r, "items"), 1), "name")))
+    assert(!d.idxExists(d.idxPath(r, "items[9].name")))
+    assert(!d.idxExists(d.idxPath(r, "items[x]")))
+    assert(!d.idxExists(d.idxPath(r, "items[")))
+    assert(intIs(d.idxI64(d.idxPath(d.idxKey(r, "a"), "b")), 5))
+}
+
+@req(JSON-INDEX)
+fn testIndexKindMatchesCursorKind() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    let cr = d.curRoot()
+    assert(d.idxKind(r) == d.curKind(cr))
+    assert(d.idxKind(d.idxKey(r, "a")) == d.curKind(d.curField(cr, "a")))
+    assert(d.idxKind(d.idxKey(r, "items")) == d.curKind(d.curField(cr, "items")))
+    assert(d.idxKind(d.idxPath(r, "a.s")) == d.curKind(d.curPath("a.s")))
+    assert(d.idxKind(d.idxPath(r, "a.t")) == d.curKind(d.curPath("a.t")))
+}
+
+@req(JSON-INDEX)
+fn testIndexReadersWrongKindIsNone() {
+    let d = P(SAMPLE)
+    let r = d.idxRoot()
+    let s = d.idxPath(r, "a.s")
+    let n = d.idxPath(r, "a.b")
+    assert(d.idxI64(s).isNone())
+    assert(d.idxF64(s).isNone())
+    assert(d.idxBool(s).isNone())
+    assert(d.idxStr(n).isNone())
+    assert(d.idxBool(n).isNone())
+    assert(d.idxI64(d.idxPath(r, "a.f")).isNone())
+}
+
+@req(JSON-INDEX)
+fn testIndexRawIsCanonical() {
+    let d = P("{\"a\": [1, 2 ] ,\"s\":\"x\\u0041\"}")
+    let r = d.idxRoot()
+    assert(d.idxRaw(d.idxKey(r, "a")) == "[1,2]")
+    assert(d.idxRaw(d.idxKey(r, "s")) == "\"xA\"")
+}
+
+@req(JSON-INDEX)
+fn testIndexItemsOfArray() {
+    let d = P("[10,20,30]")
+    let items = d.idxItems(d.idxRoot())
+    assert(items.len == 3)
+    assert(intIs(d.idxI64(items[0]), 10))
+    assert(intIs(d.idxI64(items[1]), 20))
+    assert(intIs(d.idxI64(items[2]), 30))
+    assert(d.idxItems(d.idxKey(d.idxRoot(), "x")).len == 0)
+}
+
+@req(JSON-INDEX)
+fn testIndexKeysOfObjectInSourceOrder() {
+    let d = P("{\"z\":1,\"a\":2,\"m\":3}")
+    let ks = d.idxKeys(d.idxRoot())
+    assert(joinKeys(ks) == "z,a,m")
+    let arr = P("[1]")
+    assert(arr.idxKeys(arr.idxRoot()).len == 0)
+}
+
+@req(JSON-INDEX)
+fn testIndexValueAtFollowsMemberOrder() {
+    let d = P("{\"z\":1,\"a\":\"two\",\"m\":[3]}")
+    let r = d.idxRoot()
+    assert(intIs(d.idxI64(d.idxValueAt(r, 0)), 1))
+    assert(strIs(d.idxStr(d.idxValueAt(r, 1)), "two"))
+    assert(d.idxLen(d.idxValueAt(r, 2)) == 1)
+    assert(!d.idxExists(d.idxValueAt(r, 3)))
+    assert(!d.idxExists(d.idxValueAt(r, -1)))
+}
+
+@req(JSON-INDEX)
+fn testIndexDuplicateKeyTakesFirst() {
+    let d = P("{\"a\":1,\"a\":2}")
+    assert(intIs(d.idxI64(d.idxKey(d.idxRoot(), "a")), 1))
+    assert(intIs(d.idxI64(d.idxValueAt(d.idxRoot(), 1)), 2))
+}
+
+@req(JSON-INDEX)
+fn testIndexJsonOfSubtree() {
+    let d = P("{\"a\":{\"k\":[1,2]},\"b\":3}")
+    let sub = d.idxJson(d.idxKey(d.idxRoot(), "a"))
+    assert(sub.isObject())
+    assert(sub.get("b").isNone())
+    assert(sub.get("k")!.len() == 2)
+}
+
+@req(JSON-INDEX)
+fn testIndexBoolAndNullNumbers() {
+    let d = P("{\"t\":true,\"f\":false,\"z\":null,\"n\":-0.5}")
+    let r = d.idxRoot()
+    assert(boolIs(d.idxBool(d.idxKey(r, "t")), true))
+    assert(boolIs(d.idxBool(d.idxKey(r, "f")), false))
+    assert(d.idxExists(d.idxKey(r, "z")))
+    assert(d.idxBool(d.idxKey(r, "z")).isNone())
+    assert(fltIs(d.idxF64(d.idxKey(r, "n")), -0.5))
+}
+
+@req(JSON-INDEX)
+fn testIndexNullMemberExistsButMissingDoesNot() {
+    let d = P("{\"z\":null}")
+    assert(d.idxExists(d.idxKey(d.idxRoot(), "z")))
+    assert(!d.idxExists(d.idxKey(d.idxRoot(), "y")))
+}
+
+// ---------- JSON-ERROR ----------
+
+@req(JSON-ERROR)
+fn testErrorSyntaxHasNoPath() {
+    let e = JsonError.Syntax("unexpected end of input")
+    assert(e.path() == "")
+}
+
+@req(JSON-ERROR)
+fn testErrorMismatchPathIsReported() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "a.b", expected: "string", actual: "number" })
+    assert(e.path() == "a.b")
+}
+
+@req(JSON-ERROR)
+fn testErrorUnderPrefixesOneSegment() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "b", expected: "string", actual: "number" })
+    assert(e.under("a").path() == "a.b")
+}
+
+@req(JSON-ERROR)
+fn testErrorUnderOnEmptyPathIsJustTheSegment() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "", expected: "string", actual: "number" })
+    assert(e.under("a").path() == "a")
+}
+
+@req(JSON-ERROR)
+fn testErrorUnderTwiceBuildsDottedPath() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "c", expected: "string", actual: "number" })
+    assert(e.under("b").under("a").path() == "a.b.c")
+}
+
+@req(JSON-ERROR)
+fn testErrorUnderIndexAbutsBrackets() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "", expected: "string", actual: "number" })
+    assert(e.underIndex(3).path() == "[3]")
+}
+
+@req(JSON-ERROR)
+fn testErrorIndexUnderFieldAbuts() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "", expected: "string", actual: "number" })
+    assert(e.underIndex(3).under("items").path() == "items[3]")
+    let e2 = JsonError.Mismatch(JsonMismatch { path: "", expected: "string", actual: "number" })
+    assert(e2.underIndex(0).underIndex(12).path() == "[12][0]")
+}
+
+@req(JSON-ERROR)
+fn testErrorUnderPrefixesExistingPath() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "name", expected: "string", actual: "number" })
+    assert(e.under("items").path() == "items.name")
+}
+
+@req(JSON-ERROR)
+fn testErrorMessageNamesFieldExpectedAndFound() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "user.age", expected: "number", actual: "string" })
+    let m = e.message()
+    assert(m.contains("user.age"), m)
+    assert(m.contains("number"), m)
+    assert(m.contains("string"), m)
+}
+
+@req(JSON-ERROR)
+fn testErrorMessageExpectedBeforeFound() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "f", expected: "boolean", actual: "array" })
+    let m = e.message()
+    assert(m.contains("boolean") && m.contains("array"), m)
+    assert(m.indexOf("boolean").unwrapOr(-1) < m.indexOf("array").unwrapOr(-1), m)
+}
+
+@req(JSON-ERROR)
+fn testErrorMessageReflectsUnderPrefix() {
+    let e = JsonError.Mismatch(JsonMismatch { path: "age", expected: "number", actual: "string" })
+    let m = e.under("user").message()
+    assert(m.contains("user.age"), m)
+}
+
+@req(JSON-ERROR)
+fn testErrorMissingMessageIsNonEmpty() {
+    let e = JsonError.Missing("name")
+    assert(e.message().len > 0)
+    assert(e.message().contains("name"))
+}
+
+@req(JSON-ERROR)
+fn testErrorSyntaxMessageKeepsText() {
+    let e = JsonError.Syntax("bad thing at 3")
+    assert(e.message().contains("bad thing at 3"))
+}
+
+@req(JSON-ERROR)
+fn testErrorKindNameOfMissingIsMissing() {
+    assert(jsonKindName(-1).contains("missing"))
+}
+
+@req(JSON-ERROR)
+fn testErrorKindNamesAreDistinctAndNonEmpty() {
+    let d = P("{\"o\":{},\"a\":[],\"s\":\"x\",\"n\":1,\"b\":true,\"z\":null}")
+    let r = d.curRoot()
+    let names: Vec<string> = [jsonKindName(d.curKind(d.curField(r, "o"))), jsonKindName(d.curKind(d.curField(r, "a"))), jsonKindName(d.curKind(d.curField(r, "s"))), jsonKindName(d.curKind(d.curField(r, "n"))), jsonKindName(d.curKind(d.curField(r, "b"))), jsonKindName(d.curKind(d.curField(r, "z"))), jsonKindName(-1)]
+    var i: i64 = 0
+    while i < 7 {
+        assert(names[i].len > 0)
+        var j: i64 = i + 1
+        while j < 7 {
+            assert(names[i] != names[j], names[i])
+            j += 1
+        }
+        i += 1
+    }
+}
+
+@req(JSON-ERROR)
+fn testErrorKindNameTrueAndFalseAgree() {
+    let d = P("[true,false]")
+    let r = d.curRoot()
+    assert(jsonKindName(d.curKind(d.curChild(r, 0))) == jsonKindName(d.curKind(d.curChild(r, 1))))
+}
+
+// ---------- JSON-BUILD ----------
+
+@req(JSON-BUILD)
+fn testBuildEmptyObjectAndArray() {
+    let o = P(Json.obj().build())
+    assert(o.isObject())
+    assert(o.len() == 0)
+    let a = P(Json.arr().build())
+    assert(a.isArray())
+    assert(a.len() == 0)
+}
+
+@req(JSON-BUILD)
+fn testBuildObjectMembersInCallOrder() {
+    let d = P(Json.obj().str("z", "1").int("a", 2).bool("m", true).nil("n").float("f", 0.5).build())
+    assert(joinKeys(d.keys()) == "z,a,m,n,f")
+}
+
+@req(JSON-BUILD)
+fn testBuildObjectTypedValues() {
+    let d = P(Json.obj().str("s", "txt").int("i", -7).float("f", 2.5).bool("b", false).nil("z").build())
+    assert(strIs(d.str("s"), "txt"))
+    assert(intIs(d.i64("i"), -7))
+    assert(fltIs(d.f64("f"), 2.5))
+    assert(boolIs(d.bool("b"), false))
+    assert(d.get("z")!.isNull())
+}
+
+@req(JSON-BUILD)
+fn testBuildArrayElementsInCallOrder() {
+    let d = P(Json.arr().str("s").int(2).float(3.5).bool(true).nil().build())
+    assert(d.len() == 5)
+    assert(strIs(d.at(0)!.asStr(), "s"))
+    assert(intIs(d.at(1)!.asI64(), 2))
+    assert(fltIs(d.at(2)!.asF64(), 3.5))
+    assert(boolIs(d.at(3)!.asBool(), true))
+    assert(d.at(4)!.isNull())
+}
+
+@req(JSON-BUILD)
+fn testBuildStringValuesAreEscaped() {
+    let nasty = "q\" b\\ n\n t\t r\r " + hx("01 1F") + " " + hx("C3 A9 F0 9F 98 80") + " /"
+    let d = P(Json.obj().str("k", nasty).build())
+    assert(strIs(d.str("k"), nasty))
+    let a = P(Json.arr().str(nasty).build())
+    assert(strIs(a.at(0)!.asStr(), nasty))
+}
+
+@req(JSON-BUILD)
+fn testBuildKeysAreEscaped() {
+    let nasty = "k\"\\\n" + hx("02") + hx("C3 A9")
+    let d = P(Json.obj().int(nasty, 1).build())
+    assert(intIs(d.i64(nasty), 1))
+}
+
+@req(JSON-BUILD)
+fn testBuildNestedObjectAndArray() {
+    let d = P(Json.obj().obj("o", Json.obj().int("x", 1)).arr("a", Json.arr().int(1).int(2)).build())
+    assert(intIs(d.path("o.x")!.asI64(), 1))
+    assert(d.get("a")!.len() == 2)
+    assert(intIs(d.path("a[1]")!.asI64(), 2))
+}
+
+@req(JSON-BUILD)
+fn testBuildArrayOfObjectsAndArrays() {
+    let d = P(Json.arr().obj(Json.obj().str("k", "v")).arr(Json.arr().nil()).obj(Json.obj()).build())
+    assert(d.len() == 3)
+    assert(strIs(d.at(0)!.str("k"), "v"))
+    assert(d.at(1)!.len() == 1)
+    assert(d.at(2)!.isObject())
+    assert(d.at(2)!.len() == 0)
+}
+
+@req(JSON-BUILD)
+fn testBuildValForm() {
+    let d = P(Json.obj().val("a", JsonVal.JInt(5)).val("b", JsonVal.JStr("s")).val("c", JsonVal.JNull).val("d", JsonVal.JBool(true)).build())
+    assert(intIs(d.i64("a"), 5))
+    assert(strIs(d.str("b"), "s"))
+    assert(d.get("c")!.isNull())
+    assert(boolIs(d.bool("d"), true))
+    let a = P(Json.arr().val(JsonVal.JInt(1)).val(JsonVal.JStr("two")).build())
+    assert(intIs(a.at(0)!.asI64(), 1))
+    assert(strIs(a.at(1)!.asStr(), "two"))
+}
+
+@req(JSON-BUILD)
+fn testBuildRawFormEmbedsParsedFragment() {
+    let d = P(Json.obj().raw("r", "[1, 2 ,{\"x\":null}]").int("after", 1).build())
+    assert(d.get("r")!.len() == 3)
+    assert(d.path("r[2].x")!.isNull())
+    assert(intIs(d.i64("after"), 1))
+    let a = P(Json.arr().raw("{\"k\":1}").raw("\"s\"").build())
+    assert(intIs(a.at(0)!.i64("k"), 1))
+    assert(strIs(a.at(1)!.asStr(), "s"))
+}
+
+@req(JSON-BUILD)
+fn testBuildOptSomeAddsKeyNoneDoesNot() {
+    let d = P(Json.obj().strOpt("s", Option.Some("x")).strOpt("s2", Option.None).intOpt("i", Option.Some(4)).intOpt("i2", Option.None).floatOpt("f", Option.Some(1.5)).floatOpt("f2", Option.None).boolOpt("b", Option.Some(true)).boolOpt("b2", Option.None).build())
+    assert(joinKeys(d.keys()) == "s,i,f,b")
+    assert(d.get("s2").isNone())
+    assert(d.get("i2").isNone())
+    assert(d.get("f2").isNone())
+    assert(d.get("b2").isNone())
+    assert(strIs(d.str("s"), "x"))
+    assert(intIs(d.i64("i"), 4))
+    assert(fltIs(d.f64("f"), 1.5))
+    assert(boolIs(d.bool("b"), true))
+}
+
+@req(JSON-BUILD)
+fn testBuildOptAllNoneIsEmptyObject() {
+    let d = P(Json.obj().strOpt("a", Option.None).intOpt("b", Option.None).floatOpt("c", Option.None).boolOpt("d", Option.None).build())
+    assert(d.isObject())
+    assert(d.len() == 0)
+}
+
+@req(JSON-BUILD)
+fn testBuildOptSomeFalseAndZeroAndEmptyAreKept() {
+    let d = P(Json.obj().boolOpt("b", Option.Some(false)).intOpt("i", Option.Some(0)).strOpt("s", Option.Some("")).floatOpt("f", Option.Some(0.0)).build())
+    assert(d.len() == 4)
+    assert(boolIs(d.bool("b"), false))
+    assert(intIs(d.i64("i"), 0))
+    assert(strIs(d.str("s"), ""))
+}
+
+@req(JSON-BUILD)
+fn testBuildNumbersExtremes() {
+    let d = P(Json.obj().int("max", 9223372036854775807).int("min", -9223372036854775807 - 1).float("tiny", 5e-324).float("big", 1.7976931348623157e308).float("third", 1.0 / 3.0).build())
+    assert(intIs(d.i64("max"), 9223372036854775807))
+    assert(intIs(d.i64("min"), -9223372036854775807 - 1))
+    assert(fltIs(d.f64("tiny"), 5e-324))
+    assert(fltIs(d.f64("big"), 1.7976931348623157e308))
+    assert(fltIs(d.f64("third"), 1.0 / 3.0))
+    let a = P(Json.arr().int(9223372036854775807).float(0.1).build())
+    assert(intIs(a.at(0)!.asI64(), 9223372036854775807))
+    assert(fltIs(a.at(1)!.asF64(), 0.1))
+}
+
+@req(JSON-BUILD)
+fn testBuildWholeFloatStaysANumber() {
+    let d = P(Json.obj().float("f", 3.0).build())
+    assert(d.get("f")!.isNum())
+    assert(fltIs(d.f64("f"), 3.0))
+}
+
+@req(JSON-BUILD)
+fn testBuildBuildPrettyParsesToSameMembers() {
+    let o = Json.obj().str("a", "x y").arr("l", Json.arr().int(1).int(2).obj(Json.obj().nil("n"))).obj("o", Json.obj()).float("f", 0.5)
+    let p = P(o.buildPretty(2))
+    assert(joinKeys(p.keys()) == "a,l,o,f")
+    assert(strIs(p.str("a"), "x y"))
+    assert(p.get("l")!.len() == 3)
+    assert(p.path("l[2].n")!.isNull())
+    assert(p.get("o")!.len() == 0)
+}
+
+@req(JSON-BUILD)
+fn testBuildArrayBuildPretty() {
+    let a = Json.arr().str("s").int(1).arr(Json.arr().bool(true))
+    let p = P(a.buildPretty(4))
+    assert(p.len() == 3)
+    assert(strIs(p.at(0)!.asStr(), "s"))
+    assert(boolIs(p.at(2)!.at(0)!.asBool(), true))
+}
+
+@req(JSON-BUILD)
+fn testBuildPutAppendsInOrder() {
+    var o = Json.obj()
+    o.put("b", JsonVal.JInt(1))
+    o.put("a", JsonVal.JStr("two"))
+    o.put("c", JsonVal.JNull)
+    let d = P(o.build())
+    assert(joinKeys(d.keys()) == "b,a,c")
+    assert(intIs(d.i64("b"), 1))
+}
+
+@req(JSON-BUILD)
+fn testBuildToJsonTextOfValue() {
+    let v = JsonVal.JArr([JsonVal.JInt(1), JsonVal.JStr("a\"b"), JsonVal.JNull, JsonVal.JBool(false)])
+    let d = P(v.toJsonText())
+    assert(d.len() == 4)
+    assert(strIs(d.at(1)!.asStr(), "a\"b"))
+    assert(canon(v.toJsonText()) == canon(jsonSer(v)))
+}
+
+@req(JSON-BUILD)
+fn testBuildToJsonTextOfScalars() {
+    let i = JsonVal.JInt(-5)
+    let s = JsonVal.JStr("x")
+    let n = JsonVal.JNull
+    assert(i.toJsonText() == "-5")
+    assert(strIs(P(s.toJsonText()).asStr(), "x"))
+    assert(n.toJsonText() == "null")
+}
+
+@req(JSON-BUILD)
+fn testBuildManyMembersKeepOrder() {
+    var o = Json.obj()
+    var i: i64 = 0
+    var want = ""
+    while i < 1000 {
+        let k = "k" + i.toString()
+        o.put(k, JsonVal.JInt(i))
+        if i > 0 { want.push(44) }
+        want.pushStr(k)
+        i += 1
+    }
+    let d = P(o.build())
+    assert(d.len() == 1000)
+    assert(joinKeys(d.keys()) == want)
+    assert(intIs(d.i64("k999"), 999))
+}
+
+@req(JSON-BUILD)
+fn testBuildManyElementsKeepOrder() {
+    var a = Json.arr()
+    var i: i64 = 0
+    while i < 2000 {
+        a = a.int(i)
+        i += 1
+    }
+    let d = P(a.build())
+    assert(d.len() == 2000)
+    assert(intIs(d.at(0)!.asI64(), 0))
+    assert(intIs(d.at(1999)!.asI64(), 1999))
+    assert(intIs(d.at(1234)!.asI64(), 1234))
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadAppendsNewKeys() {
+    let src = P("{\"c\":3,\"d\":4}")
+    let o = Json.obj().int("a", 1).int("b", 2).spread(src, src.curRoot())
+    let d = P(o.build())
+    assert(joinKeys(d.keys()) == "a,b,c,d")
+    assert(intIs(d.i64("c"), 3))
+    assert(intIs(d.i64("d"), 4))
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadRepeatedKeyReplacesValueInPlace() {
+    let src = P("{\"b\":99,\"c\":3}")
+    let o = Json.obj().int("a", 1).int("b", 2).int("z", 26).spread(src, src.curRoot())
+    let d = P(o.build())
+    assert(joinKeys(d.keys()) == "a,b,z,c")
+    assert(intIs(d.i64("b"), 99))
+    assert(intIs(d.i64("a"), 1))
+    assert(d.len() == 4)
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadReplacementCanChangeKind() {
+    let src = P("{\"a\":[1,2]}")
+    let o = Json.obj().str("a", "text").int("b", 1).spread(src, src.curRoot())
+    let d = P(o.build())
+    assert(joinKeys(d.keys()) == "a,b")
+    assert(d.get("a")!.isArray())
+    assert(d.get("a")!.len() == 2)
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadOfNestedCursor() {
+    let src = P("{\"inner\":{\"x\":1,\"y\":[true]},\"other\":2}")
+    let at = src.curField(src.curRoot(), "inner")
+    let d = P(Json.obj().int("x", 0).spread(src, at).build())
+    assert(joinKeys(d.keys()) == "x,y")
+    assert(intIs(d.i64("x"), 1))
+    assert(d.get("y")!.len() == 1)
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadIntoEmptyObject() {
+    let src = P("{\"b\":2,\"a\":1}")
+    let d = P(Json.obj().spread(src, src.curRoot()).build())
+    assert(joinKeys(d.keys()) == "b,a")
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadKeepsLaterBuilderCallsAfterIt() {
+    let src = P("{\"b\":9}")
+    let d = P(Json.obj().int("a", 1).spread(src, src.curRoot()).int("c", 3).build())
+    assert(joinKeys(d.keys()) == "a,b,c")
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadDoesNotChangeSource() {
+    let src = P("{\"b\":99}")
+    let o = Json.obj().int("b", 1).spread(src, src.curRoot())
+    let s = o.build()
+    assert(okP(s))
+    assert(intIs(src.i64("b"), 99))
+}
+
+@req(JSON-BUILD)
+fn testBuildSpreadNumbersKeepLiteralValue() {
+    let src = P("{\"big\":12345678901234567890,\"f\":1.5e2,\"s\":\"a\\u0041\"}")
+    let d = P(Json.obj().spread(src, src.curRoot()).build())
+    assert(fltIs(d.f64("f"), 150.0))
+    assert(strIs(d.str("s"), "aA"))
+    assert(d.i64("big").isNone())
+    assert(d.get("big")!.isNum())
+    assert(fltIs(d.f64("big"), 12345678901234567890.0))
+}
+
+@req(JSON-BUILD)
+fn testBuildParseBuildRoundTripOfDocument() {
+    let src = "{\"a\":[1,2.5,\"x\\ny\",true,null,{\"b\":[]}],\"c\":{},\"d\":\"\\u00e9\"}"
+    let d = P(src)
+    let o = Json.obj().spread(d, d.curRoot())
+    assert(canon(o.build()) == canon(src))
+}
+
+@req(JSON-BUILD)
+fn testBuildSameBuilderBuildsRepeatedly() {
+    let o = Json.obj().int("a", 1)
+    assert(o.build() == o.build())
+    let a = Json.arr().int(1)
+    assert(a.build() == a.build())
+}
+
+// ---------- JSON-POOL ----------
+
+@req(JSON-POOL)
+fn testPoolKindsAndScalarsReadBackExactly() {
+    let d = P("{\"s\":\"text\",\"i\":-123,\"f\":-2.5e-3,\"t\":true,\"n\":false,\"z\":null,\"a\":[],\"o\":{}}")
+    assert(strIs(d.str("s"), "text"))
+    assert(intIs(d.i64("i"), -123))
+    assert(fltIs(d.f64("f"), -2.5e-3))
+    assert(boolIs(d.bool("t"), true))
+    assert(boolIs(d.bool("n"), false))
+    assert(d.get("z")!.isNull())
+    assert(d.get("a")!.isArray())
+    assert(d.get("o")!.isObject())
+}
+
+@req(JSON-POOL)
+fn testPoolInt64PayloadKeepsAllBits() {
+    let d = P("[9007199254740993,-9007199254740993,9223372036854775807,-9223372036854775808,4611686018427387904,1099511627776]")
+    assert(intIs(d.at(0)!.asI64(), 9007199254740993))
+    assert(intIs(d.at(1)!.asI64(), -9007199254740993))
+    assert(intIs(d.at(2)!.asI64(), 9223372036854775807))
+    assert(intIs(d.at(3)!.asI64(), -9223372036854775807 - 1))
+    assert(intIs(d.at(4)!.asI64(), 4611686018427387904))
+    assert(intIs(d.at(5)!.asI64(), 1099511627776))
+}
+
+@req(JSON-POOL)
+fn testPoolFloatPayloadKeepsAllBits() {
+    let d = P("[0.1,5e-324,1.7976931348623157e308,-0.0,123456789.123456789,2.2250738585072014e-308]")
+    assert(fltIs(d.at(0)!.asF64(), 0.1))
+    assert(fltIs(d.at(1)!.asF64(), 5e-324))
+    assert(fltIs(d.at(2)!.asF64(), 1.7976931348623157e308))
+    assert(fltIs(d.at(4)!.asF64(), 123456789.123456789))
+    assert(fltIs(d.at(5)!.asF64(), 2.2250738585072014e-308))
+    let nz = d.at(3)!.asF64().unwrapOr(1.0)
+    assert(nz == 0.0)
+    assert(1.0 / nz < 0.0)
+}
+
+@req(JSON-POOL)
+fn testPoolInfinityPayloadSurvives() {
+    let d = P("[1e999,-1e999]")
+    assert(fltIs(d.at(0)!.asF64(), f64.INF))
+    assert(fltIs(d.at(1)!.asF64(), f64.NEG_INF))
+}
+
+@req(JSON-POOL)
+fn testPoolStringTextWithEscapesAndMultibyte() {
+    let d = P("[\"a\\nb\\\\c\\\"d\",\"" + hx("C3 A9 E2 82 AC F0 9F 98 80") + "\",\"\",\"\\u0000\"]")
+    assert(strIs(d.at(0)!.asStr(), "a\nb\\c\"d"))
+    assert(strIs(d.at(1)!.asStr(), hx("C3 A9 E2 82 AC F0 9F 98 80")))
+    assert(strIs(d.at(2)!.asStr(), ""))
+    assert(orS(d.at(3)!.asStr(), "").len == 1)
+}
+
+@req(JSON-POOL)
+fn testPoolChildCountAndOrder() {
+    let d = P("[[1,2,3],[],[4],{\"a\":[5,6]},\"x\"]")
+    assert(d.len() == 5)
+    assert(d.at(0)!.len() == 3)
+    assert(d.at(1)!.len() == 0)
+    assert(d.at(2)!.len() == 1)
+    assert(d.at(3)!.len() == 1)
+    assert(d.at(3)!.get("a")!.len() == 2)
+    assert(intIs(d.at(0)!.at(2)!.asI64(), 3))
+    assert(intIs(d.at(2)!.at(0)!.asI64(), 4))
+    assert(intIs(d.at(3)!.path("a[1]")!.asI64(), 6))
+}
+
+@req(JSON-POOL)
+fn testPoolLargeArrayReadsBackInOrder() {
+    var s = "["
+    var i: i64 = 0
+    while i < 100000 {
+        if i > 0 { s.push(44) }
+        s.pushStr(i.toString())
+        i += 1
+    }
+    s.push(93)
+    let d = P(s)
+    let r = d.curRoot()
+    assert(d.curLen(r) == 100000)
+    var j: i64 = 0
+    var allOk = true
+    while j < 100000 {
+        if d.curInt(d.curChild(r, j)).unwrapOr(-1) != j { allOk = false }
+        j += 1
+    }
+    assert(allOk)
+    assert(d.curChild(r, 100000) == -1)
+}
+
+@req(JSON-POOL)
+fn testPoolLargeObjectLookups() {
+    var s = "{"
+    var i: i64 = 0
+    while i < 2000 {
+        if i > 0 { s.push(44) }
+        s.pushStr("\"k" + i.toString() + "\":" + (i * 3).toString())
+        i += 1
+    }
+    s.push(125)
+    let d = P(s)
+    assert(d.len() == 2000)
+    assert(intIs(d.i64("k0"), 0))
+    assert(intIs(d.i64("k1999"), 5997))
+    assert(intIs(d.i64("k1000"), 3000))
+    assert(d.get("k2000").isNone())
+    assert(d.keys().len == 2000)
+}
+
+@req(JSON-POOL)
+fn testPoolManySiblingContainersKeepTheirOwnChildren() {
+    let d = P("[[1],[2,3],[4,5,6],[],[7]]")
+    assert(d.at(0)!.len() == 1)
+    assert(d.at(1)!.len() == 2)
+    assert(d.at(2)!.len() == 3)
+    assert(d.at(3)!.len() == 0)
+    assert(d.at(4)!.len() == 1)
+    assert(intIs(d.at(2)!.at(2)!.asI64(), 6))
+    assert(intIs(d.at(4)!.at(0)!.asI64(), 7))
+}
+
+@req(JSON-POOL)
+fn testPoolDeepNestingReadsBack() {
+    let s = "{\"a\":".repeat(200) + "42" + "}".repeat(200)
+    let d = P(s)
+    var cur = d.curRoot()
+    var depth: i64 = 0
+    while d.curKind(cur) == d.curKind(d.curRoot()) && depth < 1000 {
+        cur = d.curField(cur, "a")
+        depth += 1
+    }
+    assert(depth == 200)
+    assert(intIs(d.curInt(cur), 42))
+}
+
+@req(JSON-POOL)
+fn testPoolHandedOverSubtreeServesSameDocument() {
+    let d = P("{\"x\":[1,{\"y\":\"deep\"},3],\"k\":\"v\"}")
+    let sub = d.curJson(d.curField(d.curRoot(), "x"))
+    assert(sub.len() == 3)
+    assert(intIs(sub.at(0)!.asI64(), 1))
+    assert(strIs(sub.at(1)!.str("y"), "deep"))
+    assert(intIs(sub.at(2)!.asI64(), 3))
+    assert(sub.rawStr() == "[1,{\"y\":\"deep\"},3]")
+    assert(canon(sub.rawStr()) == canon("[1,{\"y\":\"deep\"},3]"))
+}
+
+@req(JSON-POOL)
+fn testPoolSubtreeOfSubtree() {
+    let d = P("{\"a\":{\"b\":{\"c\":[10,20]}}}")
+    let c = d.get("a")!.get("b")!.get("c")!
+    assert(c.len() == 2)
+    assert(intIs(c.at(1)!.asI64(), 20))
+    assert(c.rawStr() == "[10,20]")
+}
+
+@req(JSON-POOL)
+fn testPoolTwoDocumentsAreIndependent() {
+    let a = P("{\"v\":1}")
+    let b = P("{\"v\":2,\"w\":[1]}")
+    assert(intIs(a.i64("v"), 1))
+    assert(intIs(b.i64("v"), 2))
+    assert(a.get("w").isNone())
+    assert(b.get("w")!.len() == 1)
+}
+
+@req(JSON-POOL)
+fn testPoolEscapedKeysAndValuesStayInSourceOrder() {
+    let d = P("{\"b\\u0031\":\"x\\ty\",\"a\":\"\\\\\"}")
+    assert(joinKeys(d.keys()) == "b1,a")
+    assert(strIs(d.str("b1"), "x\ty"))
+    assert(strIs(d.str("a"), "\\"))
+}
+
+@req(JSON-POOL)
+fn testPoolWhitespaceHeavySourceReadsBack() {
+    let d = P(" \n{ \"a\" :\t[ 1 ,\r\n 2 ] , \"b\" : { } } \n")
+    assert(d.get("a")!.len() == 2)
+    assert(intIs(d.path("a[1]")!.asI64(), 2))
+    assert(d.get("b")!.len() == 0)
+    assert(d.get("a")!.rawStr() == "[1,2]")
+}
+
+// ---------- JSON-SAFE-BOUNDS ----------
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsEverySingleByteInputTerminates() {
+    var b: i64 = 0
+    while b < 256 {
+        let s = byteStr(b)
+        let isDigit = b >= 48 && b <= 57
+        assert(okP(s) == isDigit, "byte " + b.toString())
+        assert(pullTerminates(s))
+        b += 1
+    }
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsEveryProperPrefixOfADocumentIsErr() {
+    let src = "{\"a\":[1,2.5e3,\"x\\u00e9\\ud83d\\ude00\",true,null],\"b\":{\"c\":-0.5},\"d\":\"" + hx("C3 A9 E2 82 AC F0 9F 98 80") + "\"}"
+    assert(okP(src))
+    var n: i64 = 0
+    while n < src.len {
+        let prefix = src.substr(0, n)
+        assert(badP(prefix), "prefix length " + n.toString())
+        assert(pullTerminates(prefix))
+        n += 1
+    }
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsTruncatedMultibyteAtEndOfInput() {
+    let bad: Vec<string> = ["22 C3", "22 E2", "22 E2 82", "22 F0", "22 F0 9F", "22 F0 9F 98", "22 61 F4 8F BF"]
+    for h in bad {
+        assert(badP(hx(h)), h)
+        assert(badC(hx(h)), h)
+        assert(pullTerminates(hx(h)), h)
+        assert(endsInError(hx(h)), h)
+    }
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsTruncatedEscapesAtEndOfInput() {
+    let bad: Vec<string> = ["\"\\", "\"\\u", "\"\\u1", "\"\\u12", "\"\\u123", "\"\\ud83d\\", "\"\\ud83d\\u", "\"\\ud83d\\ude0", "\"\\ud83d\\ude00"]
+    for s in bad {
+        assert(badP(s), s)
+        assert(badC(s), s)
+        assert(pullTerminates(s), s)
+    }
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsTruncatedLiteralsAndNumbersAtEndOfInput() {
+    let bad: Vec<string> = ["t", "tr", "tru", "f", "fa", "fal", "fals", "n", "nu", "nul", "-", "0.", "1e", "1e+", "1E-", "[-", "[0.", "{\"a\":-", "{\"a\":tru", "{\"a\":nul"]
+    for s in bad {
+        assert(badP(s), s)
+        assert(badC(s), s)
+        assert(pullTerminates(s), s)
+    }
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsTruncatedCommentsAtEndOfInput() {
+    let bad: Vec<string> = ["/", "/*", "/**", "/*/", "1 /", "1 /*", "1 /* *", "[1 /"]
+    for s in bad {
+        assert(badC(s), s)
+    }
+    assert(okC("1 //"))
+    assert(okC("1 //x"))
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsTwoByteInputsTerminate() {
+    var a: i64 = 0
+    while a < 256 {
+        var b: i64 = 0
+        while b < 256 {
+            let s = byteStr(a) + byteStr(b)
+            let r = jsonParse(s)
+            let c = jsoncParse(s)
+            let _ = r.isOk()
+            let _2 = c.isOk()
+            b += 1
+        }
+        a += 1
+    }
+    assert(true)
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsMutatedDocumentTerminates() {
+    let base = "{\"a\":[1,2.5e3,\"x\\u00e9\",true,null],\"b\":{\"c\":-0.5}}"
+    let poke: Vec<i64> = [0, 34, 92, 123, 125, 91, 93, 44, 58, 255, 128, 192, 237, 244, 117, 101, 45, 48]
+    var i: i64 = 0
+    while i < base.len {
+        for p in poke {
+            var m = base.clone()
+            m.setByte(i, p as u8)
+            let r = jsonParse(m)
+            let c = jsoncParse(m)
+            let _ = r.isOk()
+            let _2 = c.isOk()
+            assert(pullTerminates(m))
+        }
+        i += 1
+    }
+    assert(true)
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsStringEndingExactlyAtBufferEnd() {
+    assert(okP("\"\""))
+    assert(okP("\"a\""))
+    assert(okP("0"))
+    assert(okP("12"))
+    assert(okP("true"))
+    assert(okP("null"))
+    assert(okP("[]"))
+    assert(badP("\"a"))
+    assert(badP("\"a\\\""))
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsEmbeddedNulDoesNotEndInput() {
+    assert(badP("1" + hx("00") + "2"))
+    assert(badP("[1]" + hx("00")))
+    assert(badP("\"a" + hx("00") + "\""))
+    assert(badP("{}" + hx("00") + "garbage"))
+    assert(pullTerminates("[1," + hx("00") + "2]"))
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsLongRunsOfSameByte() {
+    let reps: Vec<string> = ["\"", "\\", "-", "0", "e", "{", "}", "[", "]", ",", ":", " ", "/", "*", hx("C3"), hx("80"), hx("F0")]
+    for r in reps {
+        let s = r.repeat(10000)
+        let _ = jsonParse(s).isOk()
+        let _2 = jsoncParse(s).isOk()
+        assert(pullTerminates(s))
+    }
+    assert(true)
+}
+
+@req(JSON-SAFE-BOUNDS)
+fn testSafeBoundsCursorReadsOutsideDocumentAreEmpty() {
+    let d = P("[1,2]")
+    let wild: Vec<i64> = [-1, -2, -9223372036854775807 - 1]
+    for c in wild {
+        assert(d.curKind(c) == -1 || d.curHolds(c))
+        if !d.curHolds(c) {
+            assert(d.curLen(c) == 0)
+            assert(d.curInt(c).isNone())
+            assert(d.curStr(c).isNone())
+            assert(d.curRaw(c) == "")
+            assert(d.curChild(c, 0) == -1)
+            assert(d.curField(c, "a") == -1)
+        }
+    }
+}
+
+// ---------- JSON-SAFE-ARITH ----------
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithIntPastRangeIsNoneNotWrapped() {
+    let over: Vec<string> = ["9223372036854775808", "9223372036854775809", "9223372036854775810", "9223372036854775817", "9999999999999999999", "10000000000000000000", "18446744073709551615", "18446744073709551616", "92233720368547758070", "99999999999999999999999999", "-9223372036854775809", "-9223372036854775810", "-9999999999999999999", "-18446744073709551616", "-99999999999999999999"]
+    for s in over {
+        assert(okP(s), s)
+        assert(rootInt(s).isNone(), s)
+    }
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithIntAtRangeEdgeIsExact() {
+    assert(intIs(rootInt("9223372036854775807"), 9223372036854775807))
+    assert(intIs(rootInt("9223372036854775806"), 9223372036854775806))
+    assert(intIs(rootInt("-9223372036854775808"), -9223372036854775807 - 1))
+    assert(intIs(rootInt("-9223372036854775807"), -9223372036854775807))
+    assert(intIs(rootInt("922337203685477580"), 922337203685477580))
+    assert(intIs(rootInt("0"), 0))
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithMultiplyByTenOverflowCaseIsNone() {
+    // 922337203685477581 * 10 + 0 overflows i64 while the final value 9223372036854775810 is out of range
+    assert(rootInt("9223372036854775810").isNone())
+    // wraps to a small positive number in two's complement if unchecked
+    assert(rootInt("18446744073709551617").isNone())
+    assert(rootInt("18446744073709551626").isNone())
+    assert(rootInt("36893488147419103232").isNone())
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithUintPastRangeIsNone() {
+    let over: Vec<string> = ["18446744073709551616", "18446744073709551617", "18446744073709551625", "184467440737095516150", "99999999999999999999", "100000000000000000000", "1" + "0".repeat(100), "36893488147419103232"]
+    for s in over {
+        assert(rootUint(s).isNone(), s)
+    }
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithUintAtRangeEdgeIsExact() {
+    assert(rootUint("18446744073709551615").unwrapOr(0) == 18446744073709551615)
+    assert(rootUint("18446744073709551614").unwrapOr(0) == 18446744073709551614)
+    assert(rootUint("1844674407370955161").unwrapOr(0) == 1844674407370955161)
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithHugeDigitStringsNoCrash() {
+    let big = "9".repeat(20000)
+    assert(rootInt(big).isNone())
+    assert(rootUint(big).isNone())
+    assert(rootInt("-" + big).isNone())
+    let ones = "1".repeat(100000)
+    assert(rootInt(ones).isNone())
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithLeadingMinusOnlyForSignedRead() {
+    assert(rootUint("-1").isNone())
+    assert(rootUint("-9223372036854775808").isNone())
+    assert(rootUint("-18446744073709551615").isNone())
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithOwnedAccessorsAlsoReturnNoneOnOverflow() {
+    let d = P("{\"a\":9223372036854775808,\"b\":-9223372036854775809,\"c\":99999999999999999999}")
+    assert(d.i64("a").isNone())
+    assert(d.i64("b").isNone())
+    assert(d.i64("c").isNone())
+    assert(d.curInt(d.curField(d.curRoot(), "c")).isNone())
+    assert(d.idxI64(d.idxKey(d.idxRoot(), "a")).isNone())
+    assert(d.i64Path("c").isNone())
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithExponentAndFractionLengthsDoNotOverflow() {
+    assert(okP("1e" + "9".repeat(50)))
+    assert(okP("1e-" + "9".repeat(50)))
+    assert(numF("1e" + "9".repeat(50)) == f64.INF)
+    assert(numF("1e-" + "9".repeat(50)) == 0.0)
+    assert(numF("0." + "0".repeat(5000) + "1e5000") == 0.1)
+    assert(numF("1e+0000000000000000000000000000000001") == 10.0)
+    assert(numF("1e-0000000000000000000000000000000001") == 0.1)
+}
+
+@req(JSON-SAFE-ARITH)
+fn testSafeArithPathIndexOverflowIsNone() {
+    let d = P("{\"a\":[1,2,3]}")
+    assert(d.path("a[18446744073709551617]").isNone())
+    assert(d.path("a[99999999999999999999999999]").isNone())
+    assert(d.path("a[9223372036854775808]").isNone())
+    assert(d.path("a[" + "9".repeat(5000) + "]").isNone())
+    assert(d.curPath("a[18446744073709551617]") == -1)
+    assert(intIs(d.i64Path("a[2]"), 3))
+}
+
+fn orS(o: Option<string>, dflt: string): string {
+    return o ?? dflt
+}

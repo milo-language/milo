@@ -200,7 +200,8 @@ fn jsonMintDocId(): i64 {
 
 @req(JSON-DUP-NAMES)
 fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
-    if klen != target.len {
+    // An escape only shrinks when decoded, so a raw name shorter than the target can never match.
+    if klen < target.len {
         return false
     }
     // The span comes from the parser, which keeps it inside the source; the check is what lets
@@ -209,11 +210,15 @@ fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
         return false
     }
     for i in 0..klen {
-        if source[off + i] != target[i] {
+        // Bytes before the first escape are verbatim, so only a name that has one pays to decode.
+        if source[off + i] == '\\' {
+            return jsonMaterializeStr(source, off, klen) == target
+        }
+        if i >= target.len || source[off + i] != target[i] {
             return false
         }
     }
-    return true
+    return klen == target.len
 }
 
 // ── String materialization (allocates only when user requests the value) ──
@@ -285,6 +290,11 @@ fn jsonNodeInt(source: &string, n: &JsonNode): Option<i64> {
         }
         acc *= 10
         let d = (c as i64) - 48
+        // The one value whose magnitude does not fit in acc. JSON forbids leading zeros, but a
+        // longer literal with this prefix must still miss, so it has to be the last digit.
+        if neg && acc == 9223372036854775800 && d == 8 && i + 1 == end {
+            return Option.Some(-9223372036854775807 - 1)
+        }
         if acc > 9223372036854775807 - d {
             return Option.None
         }
@@ -877,8 +887,8 @@ impl Json {
     }
 
     // The document re-rendered with `indent` spaces per level (0 or less
-    // minifies). Reformats rawStr(), so what comes out is the same bytes the
-    // parse went in with, only re-spaced (see jsonPretty).
+    // minifies). Reformats rawStr(), so numbers keep their literal text and strings
+    // their value (see jsonPretty).
     @req(JSON-SER-PRETTY)
     fn pretty(self: &Self, indent: i64): string {
         let raw = self.rawStr()
@@ -1190,6 +1200,9 @@ impl Json {
     fn keys(self: &Self): Vec<string> {
         var result: Vec<string> = Vec.new()
         let root = self.curRoot()
+        if self.curKind(root) != 5 {
+            return result
+        }
         var i: i64 = 0
         while i < self.curLen(root) {
             result.push(self.curKeyAt(root, i))
@@ -1438,6 +1451,12 @@ fn jsonStripJsonc(s: &string): string {
             i += 2
             while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') {
                 i += 1
+            }
+            if i + 1 >= s.len {
+                // Unterminated: keep the opener so jsonParse rejects it. Dropping it would
+                // accept `1 /*` as a whole document.
+                nc.push('/')
+                nc.push('*')
             }
             i += 2
         } else {
@@ -1906,7 +1925,8 @@ impl JsonParser {
                     i += 1
                 }
                 if self.s[numStart] == '-' {
-                    result = 0.0 - result
+                    // Not `0.0 - result`: that turns -0 into +0, and strtod keeps the sign.
+                    result = -result
                 }
             } else {
                 result = self.s.substr(numStart, self.pos).parseF64() ?? 0.0

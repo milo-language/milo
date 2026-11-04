@@ -1,0 +1,16 @@
+{
+  "signoffs": [
+    {
+      "id": "JSON-GET",
+      "hash": "a6d2052c2d54",
+      "who": "claude",
+      "why": "the text claimed rawStr is the subtree's source text; rawStr has always been a canonical rendering, and the node pool keeps no end offsets to do otherwise. Clean-room tests found the mismatch. Corrects the text, code unchanged."
+    },
+    {
+      "id": "JSON-CURSOR",
+      "hash": "111b23f6d831",
+      "who": "claude",
+      "why": "states what jsonCurResolve already does: curHolds answers false for a foreign cursor and other reads abort. The old text left this unsaid, so clean-room tests expected an empty answer. Strengthens the text, code unchanged."
+    }
+  ]
+}
