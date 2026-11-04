@@ -181,9 +181,193 @@ function linFormula(e: Sexp, vars: Set<string>): FNode | null {
   return null;
 }
 
+// ---- products and constant division ----
+//
+// `(* x y)` with two non-constant factors and `(div t c)` are outside the linear fragment.
+// Both are rewritten to a fresh Int symbol plus linear constraints, before linearization:
+//
+//   (div t c), c > 0   q with c*q <= t <= c*q + c-1. This is the definition of floor division,
+//                      so the rewrite is exact and a counterexample to it is a real one.
+//   (* x y)            m with min(corners) <= m <= max(corners), the four products of the
+//                      factors' bounds. That is an OVER-approximation (m is free inside the
+//                      box), so it can prove a claim but never refute one: the caller turns a
+//                      "violated" verdict on an abstracted VC into "unknown".
+//
+// The factor bounds come only from top-level conjuncts of the VC's asserts (requires, type
+// ranges, the negated goal), which hold in every model. A bound that is not exact in a double
+// (past 2^53) is dropped, which leaves the product unabstracted and the VC `unknown`.
+type Iv = { lo: bigint; hi: bigint };
+const EXACT = 2n ** 53n;
+
+const floorDiv = (a: bigint, b: bigint): bigint => { const q = a / b; return (a % b !== 0n) && ((a < 0n) !== (b < 0n)) ? q - 1n : q; };
+const ceilDiv = (a: bigint, b: bigint): bigint => -floorDiv(-a, b);
+
+// Bounds a top-level conjunct puts on a single Int variable (x <= c, x >= c, 2*x < 7, x = 3).
+function recordBounds(e: Sexp, vars: Set<string>, isInt: Map<string, boolean>, bounds: Map<string, Iv>): void {
+  if (Array.isArray(e) && e[0] === "and") { for (let i = 1; i < e.length; i++) recordBounds(e[i], vars, isInt, bounds); return; }
+  const fn = linFormula(e, vars);
+  const atoms: FNode[] = [];
+  const walk = (n: FNode) => { if (n.op === "atom") atoms.push(n); else if (n.op === "and") n.ks.forEach(walk); };
+  if (fn) walk(fn);
+  for (const a of atoms) {
+    if (a.op !== "atom" || a.lin.coeffs.size !== 1) continue;
+    const [[x, c]] = [...a.lin.coeffs];
+    if (!isInt.get(x!) || !Number.isInteger(c) || !Number.isInteger(a.lin.konst) || c === 0) continue;
+    // c*x + k <= 0  (or < 0, which is c*x + k <= -1 over the integers)
+    const t = -BigInt(a.lin.konst) - (a.strict ? 1n : 0n);
+    const cb = BigInt(c);
+    const cur = bounds.get(x!) ?? { lo: -(2n ** 64n), hi: 2n ** 64n };
+    if (cb > 0n) cur.hi = cur.hi < floorDiv(t, cb) ? cur.hi : floorDiv(t, cb);
+    else cur.lo = cur.lo > ceilDiv(t, cb) ? cur.lo : ceilDiv(t, cb);
+    bounds.set(x!, cur);
+  }
+}
+
+// [min, max] of an integer-coefficient linear term over the known variable bounds, or null.
+function intervalOf(l: Lin, bounds: Map<string, Iv>): Iv | null {
+  if (!Number.isInteger(l.konst)) return null;
+  let lo = BigInt(l.konst), hi = lo;
+  for (const [x, c] of l.coeffs) {
+    const b = bounds.get(x);
+    if (!b || !Number.isInteger(c) || b.lo < -EXACT || b.hi > EXACT) return null;
+    const cb = BigInt(c);
+    const [p, q] = [cb * b.lo, cb * b.hi];
+    lo += p < q ? p : q;
+    hi += p < q ? q : p;
+  }
+  return { lo, hi };
+}
+
+// Closed integer/boolean subterm (literals under + - * div ite and comparisons), evaluated
+// exactly. The verifier emits these for constant arithmetic like `65536 / 2`; a double would
+// round the 2^63-sized ones, BigInt does not.
+function constEval(e: Sexp): bigint | boolean | null {
+  if (typeof e === "string") {
+    if (/^-?\d+$/.test(e)) return BigInt(e);
+    if (e === "true") return true;
+    if (e === "false") return false;
+    return null;
+  }
+  const head = e[0];
+  if (head === "ite" && e.length === 4) {
+    const c = constEval(e[1]!);
+    if (typeof c !== "boolean") return null;
+    return constEval(c ? e[2]! : e[3]!);
+  }
+  const kids = e.slice(1).map(constEval);
+  if (kids.length === 0 || kids.some(k => k === null)) return null;
+  const nums = kids as (bigint | boolean)[];
+  const allNum = nums.every(k => typeof k === "bigint");
+  const n = nums as bigint[];
+  if (allNum) {
+    if (head === "+") return n.reduce((a, b) => a + b, 0n);
+    if (head === "-") return n.length === 1 ? -n[0]! : n.slice(1).reduce((a, b) => a - b, n[0]!);
+    if (head === "*") return n.reduce((a, b) => a * b, 1n);
+    if (head === "div" && n.length === 2 && n[1]! > 0n) return floorDiv(n[0]!, n[1]!);
+    if (n.length === 2) {
+      if (head === "<=") return n[0]! <= n[1]!;
+      if (head === "<") return n[0]! < n[1]!;
+      if (head === ">=") return n[0]! >= n[1]!;
+      if (head === ">") return n[0]! > n[1]!;
+      if (head === "=") return n[0]! === n[1]!;
+    }
+    return null;
+  }
+  const b = nums as boolean[];
+  if (!nums.every(k => typeof k === "boolean")) return null;
+  if (head === "and") return b.every(Boolean);
+  if (head === "or") return b.some(Boolean);
+  if (head === "not" && b.length === 1) return !b[0];
+  if (head === "=>" && b.length === 2) return !b[0] || b[1]!;
+  return null;
+}
+
+interface Lifted { asserts: Sexp[]; newVars: string[]; abstracted: boolean }
+
+function liftNonlinear(asserts: Sexp[], vars: Set<string>, isIntList: Map<string, boolean>): Lifted {
+  const bounds = new Map<string, Iv>();
+  for (const a of asserts) recordBounds(a, vars, isIntList, bounds);
+  const defs: Sexp[] = [];
+  const newVars: string[] = [];
+  let abstracted = false;
+  const fresh = (kind: string): string => {
+    const name = `${kind}${newVars.length}`;
+    newVars.push(name); vars.add(name); isIntList.set(name, true);
+    return name;
+  };
+  const lit = (n: bigint): Sexp => n.toString();
+  // `t <op> c` is decided when t's interval is known and sits wholly on one side of the
+  // integer literal c. Needed for the i64 overflow obligations: their `+-2^63` bounds are
+  // beyond a double, and with the product's interval in hand they are plain tautologies.
+  const decideCmp = (op: string, a: Sexp, b: Sexp): Sexp | null => {
+    const ca = constEval(a), cb = constEval(b);
+    const flip: Record<string, string> = { "<=": ">=", "<": ">", ">=": "<=", ">": "<" };
+    if (typeof ca === "bigint" && typeof cb !== "bigint") { const r = decideCmp(flip[op]!, b, a); return r; }
+    if (typeof cb !== "bigint") return null;
+    const l = linTerm(a, vars);
+    // Only terms over fresh symbols: their intervals come from OTHER atoms' bounds. A declared
+    // variable's bound can come from this very atom, and deciding it from itself would delete
+    // the requires clause it states.
+    if (!l || [...l.coeffs.keys()].some(v => !newVars.includes(v))) return null;
+    const iv = intervalOf(l, bounds);
+    if (!iv) return null;
+    const yes = op === "<=" ? iv.hi <= cb : op === "<" ? iv.hi < cb : op === ">=" ? iv.lo >= cb : iv.lo > cb;
+    const no = op === "<=" ? iv.lo > cb : op === "<" ? iv.lo >= cb : op === ">=" ? iv.hi < cb : iv.hi <= cb;
+    return yes ? "true" : no ? "false" : null;
+  };
+  const lift = (e: Sexp): Sexp => {
+    if (!Array.isArray(e)) return e;
+    const folded = constEval(e);
+    if (typeof folded === "bigint") return folded.toString();
+    if (typeof folded === "boolean") return folded ? "true" : "false";
+    const kids = e.map((k, i) => (i === 0 ? k : lift(k)));
+    if ((kids[0] === "<=" || kids[0] === "<" || kids[0] === ">=" || kids[0] === ">") && kids.length === 3) {
+      const d = decideCmp(kids[0], kids[1]!, kids[2]!);
+      if (d) return d;
+    }
+    if (kids[0] === "div" && kids.length === 3 && typeof kids[2] === "string" && /^[1-9]\d*$/.test(kids[2])) {
+      const t = linTerm(kids[1]!, vars);
+      if (!t) return kids;
+      const c = BigInt(kids[2]);
+      const q = fresh("div");
+      defs.push(["and", ["<=", ["*", kids[2], q], kids[1]!], ["<=", kids[1]!, ["+", ["*", kids[2], q], lit(c - 1n)]]]);
+      const iv = intervalOf(t, bounds);
+      if (iv) bounds.set(q, { lo: floorDiv(iv.lo, c), hi: floorDiv(iv.hi, c) });
+      return q;
+    }
+    if (kids[0] === "*" && kids.length >= 3) {
+      const factors: Sexp[] = [];
+      let constant = 1;
+      for (const k of kids.slice(1)) {
+        const t = linTerm(k, vars);
+        if (t && t.coeffs.size === 0) constant *= t.konst; else factors.push(k);
+      }
+      if (factors.length < 2) return kids;
+      let acc = factors[0]!;
+      for (const next of factors.slice(1)) {
+        const la = linTerm(acc, vars), lb = linTerm(next, vars);
+        const ia = la && intervalOf(la, bounds), ib = lb && intervalOf(lb, bounds);
+        if (!ia || !ib) return kids; // unbounded factor: leave it nonlinear, so the VC is unknown
+        const corners = [ia.lo * ib.lo, ia.lo * ib.hi, ia.hi * ib.lo, ia.hi * ib.hi];
+        const lo = corners.reduce((a, b) => (a < b ? a : b)), hi = corners.reduce((a, b) => (a > b ? a : b));
+        if (lo < -EXACT || hi > EXACT) return kids;
+        const m = fresh("mul");
+        bounds.set(m, { lo, hi });
+        defs.push(["and", [">=", m, lit(lo)], ["<=", m, lit(hi)]]);
+        abstracted = true;
+        acc = m;
+      }
+      return constant === 1 ? acc : ["*", String(constant), acc];
+    }
+    return kids;
+  };
+  const out = asserts.map(lift);
+  return { asserts: [...out, ...defs], newVars, abstracted };
+}
+
 // Parse one VC's SMT-LIB into (ordered vars, root formula), or null if any part
 // is outside the linear fragment.
-function vcToFormula(smtlib: string): { vars: string[]; isInt: boolean[]; root: FNode } | null {
+function vcToFormula(smtlib: string): { vars: string[]; isInt: boolean[]; root: FNode; nDeclared: number; abstracted: boolean } | null {
   let forms: Sexp[];
   try { forms = parseAll(tokenize(smtlib)); } catch { return null; }
   const vars: string[] = [];
@@ -203,10 +387,14 @@ function vcToFormula(smtlib: string): { vars: string[]; isInt: boolean[]; root: 
     }
     else if (f[0] === "assert") asserts.push(f[1]);
   }
+  const nDeclared = vars.length;
+  const sorts = new Map(vars.map((v, i) => [v, isInt[i]!]));
+  const lifted = liftNonlinear(asserts, varSet, sorts);
+  for (const v of lifted.newVars) { vars.push(v); isInt.push(true); }
   const ks: FNode[] = [];
-  for (const a of asserts) { const fn = linFormula(a, varSet); if (!fn) return null; ks.push(fn); }
+  for (const a of lifted.asserts) { const fn = linFormula(a, varSet); if (!fn) return null; ks.push(fn); }
   const root: FNode = ks.length === 1 ? ks[0] : { op: "and", ks };
-  return { vars, isInt, root };
+  return { vars, isInt, root, nDeclared, abstracted: lifted.abstracted };
 }
 
 // ---- DSL serialization (see tools/smtSolve.milo for the grammar) ----
@@ -224,6 +412,9 @@ function scaleToIntegers(values: number[]): number[] | null {
   // An already-integer row goes through untouched. It must not meet the 2^53 ceiling
   // below: rows built from i64 bounds legitimately reach 2^62, and std/smt has its own
   // overflow guard for what happens to them during elimination.
+  // A value at or past 2^63 would print as a token std/smt cannot read as i64 (the i64
+  // overflow obligations carry exactly such bounds), so the VC is unknown instead.
+  if (values.some(v => Math.abs(v) >= 2 ** 63)) return null;
   if (values.every(Number.isInteger)) return values;
   for (let d = 1, mul = 10; d <= 12; d++, mul *= 10) {
     const scaled = values.map(v => v * mul);
@@ -250,8 +441,11 @@ function serialize(f: FNode, idx: Map<string, number>, nvars: number, atoms: str
     for (const [k, v] of f.lin.coeffs) row[must(idx, k, "idx")] = v;
     const scaled = scaleToIntegers([...row, f.lin.konst]);
     if (!scaled) throw new UnscalableAtom();
-    const ai = atoms.length;
-    atoms.push(`${f.strict ? 1 : 0} ${scaled.slice(0, nvars).join(" ")} ${scaled[nvars]}`);
+    // Equal atoms share one index: std/smt enumerates 2^(free atoms), and the same bound
+    // repeated across disjuncts would otherwise count once per copy.
+    const text = `${f.strict ? 1 : 0} ${scaled.slice(0, nvars).join(" ")} ${scaled[nvars]}`;
+    let ai = atoms.indexOf(text);
+    if (ai < 0) { ai = atoms.length; atoms.push(text); }
     nodes.push({ kind: 0, atom: ai });
     return nodes.length - 1;
   }
@@ -342,7 +536,7 @@ function counterexampleDetail(vars: string[], witness: number[]): string {
 // Discharge all VCs via std/smt. Mirrors proveWithZ3's ProveResult shape.
 export function proveWithMilo(result: VerifyResult): ProveResult {
   const results: SolverResult[] = new Array(result.conditions.length);
-  let prepared: { index: number; vars: string[]; isInt: boolean[]; root: FNode }[] = [];
+  let prepared: { index: number; vars: string[]; isInt: boolean[]; root: FNode; nDeclared: number; abstracted: boolean }[] = [];
 
   result.conditions.forEach((vc, i) => {
     // "outside linear fragment" is the catch-all for anything the parser rejects, which
@@ -353,7 +547,7 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
     if (!f) {
       results[i] = { vc, status: "unknown", detail: cant.length ? untranslatableDetail(cant) : "outside linear fragment (std/smt)" };
     } else {
-      prepared.push({ index: i, vars: f.vars, isInt: f.isInt, root: f.root });
+      prepared.push({ index: i, vars: f.vars, isInt: f.isInt, root: f.root, nDeclared: f.nDeclared, abstracted: f.abstracted });
     }
   });
 
@@ -394,7 +588,12 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
         else if (v?.verdict === "violated" && unreproducibleCounterexample(vc)) {
           results[p.index] = { vc, status: "unknown", detail: unreproducibleCounterexample(vc)! };
         }
-        else if (v?.verdict === "violated") results[p.index] = { vc, status: "failed", detail: counterexampleDetail(p.vars, v.witness) };
+        // A product was replaced by its interval: the witness may not respect a*b, so it
+        // refutes nothing. Only the "proven" direction survives the over-approximation.
+        else if (v?.verdict === "violated" && p.abstracted) {
+          results[p.index] = { vc, status: "unknown", detail: "nonlinear product bounded by its interval (std/smt): no counterexample claimed" };
+        }
+        else if (v?.verdict === "violated") results[p.index] = { vc, status: "failed", detail: counterexampleDetail(p.vars.slice(0, p.nDeclared), v.witness.slice(0, p.nDeclared)) };
         else if (v?.verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };
         else results[p.index] = { vc, status: "error", detail: (proc.stderr || "std/smt solver produced no verdict").split("\n")[0] };
       });

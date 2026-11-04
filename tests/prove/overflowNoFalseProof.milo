@@ -1,6 +1,6 @@
 // @proven: 1
-// @failed: 0
-// @unknown: 1
+// @failed: 1
+// @unknown: 0
 // Soundness: an overflow inside the solver must never be reported as a proof.
 //
 // std/smt decides feasibility by Fourier-Motzkin elimination, which multiplies constraint
@@ -12,10 +12,11 @@
 // answer a prover can give — worse than no answer — so combine() now detects the overflow
 // and the verdict degrades to `unknown`.
 //
+// Since `n / 2` became a linear definition (n = 2q + r) the system no longer reaches the
+// overflowing combine, and the solver reports the true answer: `failed`, with the witness x = -1.
+//
 // (The 1 proven is main's own call, buggy(10) — a constant that satisfies the bound.)
-// This asserts the DEGRADATION, not a proof: if someone widens the solver's arithmetic
-// later, this becomes `failed` (with x = -1) and the annotation should follow. What must
-// never come back is `proven`.
+// What must never come back is `proven`.
 pub fn half(n: i64): i64
 requires n >= 0
 {
