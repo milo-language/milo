@@ -202,8 +202,12 @@ for (const [w, bits] of [["I64", 64], ["I32", 32], ["Bool", 0]] as const) {
   }
 }
 
+const copyOut = (it: Interp, x: Value): Value => (it.copyable(x) || isStr(x) ? it.share(x, "copy") : it.deepClone(x));
 const VEC: Record<string, Native> = {
   push: (it, [self, x], e) => { const h = vecOf(it, self); growOne(it, h, elemSize(it, e)); h.buf!.elems[h.start + h.len++] = x; return undefined; },
+  // first / last are copies of the element (get yields a view of it), as E-INDEX-COPY reads one
+  first: (it, [self], e) => { const h = asVec(it, it.deref(self)); return h.len === 0 ? opt(it, e, NONE) : opt(it, e, copyOut(it, h.buf!.elems[h.start]!)); },
+  last: (it, [self], e) => { const h = asVec(it, it.deref(self)); return h.len === 0 ? opt(it, e, NONE) : opt(it, e, copyOut(it, h.buf!.elems[h.start + h.len - 1]!)); },
   pop: (it, [self], e) => {
     const h = vecOf(it, self);
     return h.len === 0 ? opt(it, e, NONE) : opt(it, e, h.buf!.elems[h.start + --h.len]!);

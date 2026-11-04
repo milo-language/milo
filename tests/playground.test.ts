@@ -36,6 +36,28 @@ test("playground: unsupported features say so plainly", () => {
   expect(r.stderr + r.diagnostics.map(d => d.message).join()).toMatch(/unsupported|sizeOf/);
 });
 
+test("playground: raw memory and the in-memory filesystem work in the browser bundle", () => {
+  const r = run(`from "std/os" import { malloc, free }
+from "std/fs" import { readFile, writeFile }
+pub fn main(): i32 {
+    unsafe {
+        let p = malloc(16) as *i64
+        p[1] = 42
+        print(p[1])
+        free(p as *u8)
+    }
+    let _w = writeFile("note.txt", "kept in memory")
+    match readFile("note.txt") {
+        Result.Ok(s) => print(s),
+        Result.Err(_) => print("err"),
+    }
+    return 0
+}
+`);
+  expect(r.stderr).toBe("");
+  expect(r.stdout).toBe("42\nkept in memory\n");
+});
+
 test("playground: std import resolves from the embedded bundle", () => {
   const r = run(`from "std/hex" import { hexChar }\npub fn main(): i32 {\n    print(hexChar(11))\n    return 0\n}\n`);
   expect(r.stderr).toBe("");
