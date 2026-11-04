@@ -18,7 +18,7 @@ Shipped items are one-liners here — git history and the linked design docs kee
 
 ### Core Language
 
-Primitive types, `let`/`var`, if/else, while/for, functions, structs, enums with exhaustiveness-checked pattern matching (nested patterns such as `Ok(Some(v))` and `Some(0)` since 2026-10-12, checked by Maranget usefulness so a missing `Ok(None)` is named), generics with monomorphization and inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading, Go-style interfaces (structural typing, vtable dispatch), `Heap<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??`, auto-`From` error conversion through `?`, `let`-else, let-chains (`if let A = x && let B = a.f && cond`, in `while` too; shipped 2026-10-12 after the hackersonly port asked for them twice), string interpolation, bitwise ops, hex/binary literals, `as` casts, for-in over ranges/Vec/array/string/HashMap and any type with `next(&mut Self): Option<T>`, slicing on Vec/array/string, `pub`/private visibility with per-file enforcement, `@embedFile`, `@externalLinkage`, `@targetOs()`, typed IR is the checked AST lowered straight to the MLIR top layer (HIR deleted 2026-11-04, see Since 2026-10-28).
+Primitive types, `let`/`var`, if/else, while/for, functions, structs, enums with exhaustiveness-checked pattern matching (nested patterns such as `Ok(Some(v))` and `Some(0)` since 2026-10-12, checked by Maranget usefulness so a missing `Ok(None)` is named), generics with monomorphization and inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading, Go-style interfaces (structural typing, vtable dispatch), `Heap<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??`, auto-`From` error conversion through `?`, `let`-else, let-chains (`if let A = x && let B = a.f && cond`, in `while` too; shipped 2026-10-12 after a ported web app asked for them twice), string interpolation, bitwise ops, hex/binary literals, `as` casts, for-in over ranges/Vec/array/string/HashMap and any type with `next(&mut Self): Option<T>`, slicing on Vec/array/string, `pub`/private visibility with per-file enforcement, `@embedFile`, `@externalLinkage`, `@targetOs()`, typed IR is the checked AST lowered straight to the MLIR top layer (HIR deleted 2026-11-04, see Since 2026-10-28).
 
 Diagnostics carry "did you mean" suggestions on a missed method, field, or name — from an alias table for other languages' spellings (`length`, `toUpperCase`, `forEach`, `unwrap`) as well as edit distance — and a failed static call reports the real mistake (unknown type / no such static method / missing import, with the `from "std/x" import { Y }` line written out) instead of the old blanket "unknown enum". A plain string holding `${name}` warns (`missing-interpolation`) rather than silently emitting the characters.
 
@@ -277,7 +277,7 @@ Properties the old LLVM-text codegen (deleted 2026-11-04) had that the MLIR back
 
 In order:
 
-1. tahoeroads requirements draft (awaiting user review)
+1. first external application traced end to end (requirements, proofs, tests, object)
 2. spec lock plus clean-room tests
 3. line-coverage gate
 4. lock levels plus the channel wait-graph rule ([plans/parallelism.md](plans/parallelism.md))

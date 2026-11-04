@@ -48,7 +48,8 @@ less ceremony, needs this track to be credible.
    construct (drop, bounds check, overflow trap, runtime call, clone) is a numbered
    `MILO-O-`/`MILO-B-` rule with tests, carried as an MLIR location tag through every pass
    into DWARF. Report per function: object range -> op -> source line, plus the list of
-   generated constructs by rule. Needs DWARF from MLIR locations (a parity gap today).
+   generated constructs by rule. Built without new DWARF: the line table maps ranges to source
+   lines, and a check's rule is read off the runtime call it ends in (`__milo_bounds_fail` ...).
    Gate: every generated instruction range in a fixture maps to a source line or a rule;
    an unmapped range fails.
 
