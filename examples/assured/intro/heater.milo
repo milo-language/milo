@@ -19,8 +19,14 @@ requires target >= 0 && target <= 1000
     return gap
 }
 
-@derived(R-1)
+// The demo's one command: a function of its own so a test can check it (`main` can't be imported).
+@derived(D-1)
+pub fn demoCommand(): i32 {
+    return heaterPercent(150, 200)
+}
+
+@derived(D-1)
 pub fn main(): i32 {
-    print(heaterPercent(150, 200))
+    print(demoCommand())
     return 0
 }

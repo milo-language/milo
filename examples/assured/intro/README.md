@@ -28,8 +28,9 @@ pub fn heaterPercent(reading: i32, target: i32): i32
     @req(R-2) ensures reading < target || result == 0
 ```
 
-`main` is only the demo harness, so it is `@derived(R-1)`: code that is needed but isn't the
-requirement itself.
+`main` is only the demo harness. It traces to `D-1`, a **derived** requirement: behaviour the
+implementation needs that no higher requirement asked for. Derived requirements are written
+down like any other, so they can be reviewed at the system level; the trace lists them separately.
 
 ## 3. Test it
 
@@ -58,8 +59,18 @@ R-2  A reading at or above the target turns the heater off.
   formalized    PROVEN   heater.milo:10 @req(R-2) ensures reading < target || result == 0  [heaterPercent]
   verified      PASS      heater_test.milo:10 testAtTargetTurnsOff
 
+D-1  Derived: a demo entry point prints one heater command. Not part of the controller.
+  implemented   heater.milo:24 demoCommand  (derived)
+  implemented   heater.milo:29 main  (derived)
+  verified      PASS      heater_test.milo:16 testDemoPrintsHalfPower
+
 untraced fns: none
+requirements with no implementation: none
 requirements with no verifying test: none
+derived (feed back to the system level):
+  heater.milo:24 demoCommand
+  heater.milo:29 main
+dead branches: none
 unknown: 0
 
 strict: ok

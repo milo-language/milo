@@ -1,4 +1,4 @@
-from "./heater" import { heaterPercent }
+from "./heater" import { heaterPercent, demoCommand }
 
 @req(R-1)
 fn testCommandStaysInRange() {
@@ -10,4 +10,9 @@ fn testCommandStaysInRange() {
 fn testAtTargetTurnsOff() {
     assert(heaterPercent(200, 200) == 0)
     assert(heaterPercent(500, 200) == 0)
+}
+
+@req(D-1)
+fn testDemoPrintsHalfPower() {
+    assert(demoCommand() == 50)
 }
