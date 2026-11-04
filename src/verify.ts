@@ -3558,6 +3558,37 @@ export function proveWithZ3(result: VerifyResult): ProveResult {
   };
 }
 
+// Spec lock (src/specLock.ts): does `a` hold whenever `given` and `hyp` do? Asks z3 whether
+// `hyp && given && !a` is satisfiable over `vars` (name -> Milo type name). "implies" = unsat;
+// "refuted" = sat, with the model so the caller can show a witness; "unknown" = the clause uses
+// something this standalone lowering cannot express (calls, old) or z3 gave up. Never "implies"
+// by accident: an UNSUPPORTED marker is caught by untranslatable() before z3 sees the query.
+export function clauseImplies(vars: Map<string, string>, hyp: Expr[], given: Expr, a: Expr): { status: "implies" | "refuted" | "unknown"; model?: string } {
+  if (!hasZ3()) return { status: "unknown" };
+  REAL_SYMS = new Set(); NONREAL_SYMS = new Set();
+  GLOBAL_CONST_SMT = new Map(); OLD_ENV = null; FIELD_REFS = null; CALL_MODEL = null; RTE = false;
+  let query: string;
+  try {
+    const decls = [...vars].map(([n, t]) => declareConst(n, t));
+    const ranges = [...vars].map(([n, t]) => intRangeAssumption(n, t)).filter(Boolean);
+    const lines = [...decls, ...ranges, ...hyp.map(h => `(assert ${exprToSmt(h)})`), `(assert ${exprToSmt(given)})`, `(assert (not ${exprToSmt(a)}))`];
+    query = lines.join("\n") + "\n(check-sat)\n(get-model)\n";
+  } catch { return { status: "unknown" }; }
+  if (untranslatable(query).length) return { status: "unknown" };
+  const { spawnSync } = require("child_process") as typeof import("child_process");
+  const proc = spawnSync("z3", ["-in", "-T:5"], { input: query, encoding: "utf-8", timeout: 10000 });
+  const out = (proc.stdout ?? "").trim();
+  // z3 answers (get-model) after unsat with an error line; the verdict is the first line.
+  if (out.startsWith("unsat")) return { status: "implies" };
+  if (out.includes("(error")) return { status: "unknown" };
+  if (out.startsWith("sat")) {
+    const model = [...out.matchAll(/\(define-fun (\S+) \(\) \S+\s+(\(- [\d.]+\)|[^)\s]+)\)/g)]
+      .map(m => `${m[1]} = ${m[2]!.replace(/^\(- ([\d.]+)\)$/, "-$1")}`).join(", ");
+    return { status: "refuted", model };
+  }
+  return { status: "unknown" };
+}
+
 // Machine-readable proof report (schema 1). A certification workflow, a CI dashboard or a
 // ratchet wants the per-obligation verdict as data, not a rendered table — and parsing the
 // table is how a consumer ends up depending on its column widths. The SMT-LIB text of each

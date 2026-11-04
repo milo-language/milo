@@ -108,6 +108,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards. |
 | `src/scaffold.ts` | The process scaffold around the program's functions, as an LLVM-dialect module (`milo.scaffold`, folded into the program by milo-opt's milo-merge-scaffold): - the process entry: argc/argv, record/rep… |
 | `src/skill.ts` | `milo skill`: the agent guide. |
+| `src/specLock.ts` | Spec lock: agents may change code freely but may not silently weaken intent. |
 | `src/startup.ts` | What runs before and around `main`: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a green task of its ow… |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |

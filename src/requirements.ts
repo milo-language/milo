@@ -793,6 +793,8 @@ export interface TraceArgs {
   /** Gap keys that stay warnings under strict (--baseline). */
   baseline?: string;
   writeBaseline?: string;
+  /** Git ref to diff the spec (requirements, contracts) against; under strict an unsigned weakening fails (--spec-base). */
+  specBase?: string;
   /** A binary built with -g: adds the object column (--object). */
   object?: string;
   /** The profile's minTraceDepth. */
@@ -815,6 +817,11 @@ export function parseTraceArgs(args: string[]): TraceArgs | string {
       if (a === "--baseline") out.baseline = v; else out.writeBaseline = v;
     } else if (a.startsWith("--baseline=")) out.baseline = a.slice(11);
     else if (a.startsWith("--write-baseline=")) out.writeBaseline = a.slice(17);
+    else if (a === "--spec-base") {
+      const v = args[++i];
+      if (!v) return `${a} expects a git ref`;
+      out.specBase = v;
+    } else if (a.startsWith("--spec-base=")) out.specBase = a.slice(12);
     else if (a === "--object") {
       const v = args[++i];
       if (!v) return `${a} expects a binary`;
@@ -873,7 +880,16 @@ export function traceEntry(a: TraceArgs, deps: TraceDeps): TraceReport {
       }
     }
   }
-  return buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, baseline, testResults, dead });
+  const rep = buildTrace({ entry: a.entry, program, prove, requirementsPath: a.requirements, tests: a.tests, minTraceDepth: a.minTraceDepth, strict: a.strict, baseline, testResults, dead });
+  // The spec lock (src/specLock.ts): only under strict and only when a base ref is given.
+  if (a.strict && a.specBase) {
+    const { specDiff, unsignedChanges } = require("./specLock") as typeof import("./specLock");
+    const d = specDiff(a.entry, a.specBase);
+    if (d.error) rep.strictFailures.push(`spec lock: ${d.error}`);
+    for (const c of unsignedChanges(d.changes)) rep.strictFailures.push(`spec lock: ${c.what}: ${c.id} needs sign-off in spec-signoff.json (hash ${c.hash})${c.counterexample ? `; counterexample: ${c.counterexample}` : ""}`);
+    rep.ok = rep.errors.length === 0 && rep.strictFailures.length === 0;
+  }
+  return rep;
 }
 
 export function runTraceCommand(args: string[], deps: TraceDeps): number {
