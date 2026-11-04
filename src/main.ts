@@ -30,7 +30,7 @@ import { generateVerificationConditions, formatVerifyReport, proveWithZ3, format
 import type { SafetyLevel } from "./safety";
 import { readRecord, pinMismatches, buildRecord, buildRefusal, recordIr } from "./pinned-build";
 import { readObject, checkObject, allocationFindings } from "./object-checks";
-import { requirementsDiagnostics, runTraceCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
+import { inEntryProject, requirementsDiagnostics, runTraceCommand, traceEntry, formatTrace, type TraceDeps } from "./requirements";
 import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSafetyReport, safetyJson, listSafetyLevels, traceabilityOf } from "./safety";
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -341,13 +341,13 @@ function traceDeps(target: TargetInfo, warningConfig: WarningConfig): TraceDeps 
     },
     prove(program, check, entry) {
       requireZ3();
-      const dir = dirname(resolve(entry)) + "/";
-      const vcs = generateVerificationConditions(program, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry), methods: check as any });
+      const mine = inEntryProject(entry);
+      const vcs = generateVerificationConditions(program, { onlyFile: f => mine(resolve(f)), methods: check as any });
       return proveWithZ3(vcs);
     },
     dead(program, check, entry) {
-      const dir = dirname(resolve(entry)) + "/";
-      return findDeadBranches(program, check, { onlyFile: f => resolve(f).startsWith(dir) || resolve(f) === resolve(entry) });
+      const mine = inEntryProject(entry);
+      return findDeadBranches(program, check, { onlyFile: f => mine(resolve(f)) });
     },
     // `milo test --json` in a child process: the same runner (one process per test), no copy of it here.
     runTests(file, names) {

@@ -2,7 +2,7 @@
 // the vacuous-contract warning, and the shape of the demo's `milo trace --json`.
 // Every strict failure is planted in a scratch project, seen, then fixed and seen to clear.
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -422,4 +422,42 @@ test("a dev build warns about a traceability gap and succeeds; --strict fails; a
     expect(stale.code).toBe(0);
     expect(stale.out).toContain("baseline lists a gap that is fixed, remove it: untraced:helper");
   } finally { p.done(); }
+}, 180000);
+
+// ── module layout ──
+
+// std/json.milo keeps its requirements and tests in std/json/. The directory the entry sits in
+// is a pile of other modules, so only the entry file and its own directory are the project.
+test("a single-file module finds m/requirements.json and ignores its neighbours", () => {
+  const p = project({
+    "a.milo": CODE,
+    "neighbour.milo": `pub fn untraced(x: i64): i64 {\n    return x\n}\n`,
+  });
+  try {
+    mkdirSync(join(p.dir, "a"));
+    writeFileSync(join(p.dir, "a", "requirements.json"), REQS);
+    writeFileSync(join(p.dir, "a", "a_test.milo"), TEST.replace(`"./a"`, `"../a"`));
+    const rep = JSON.parse(trace(p, "--strict").out);
+    expect(rep.requirementsFile).toContain(join("a", "requirements.json"));
+    expect(rep.untracedFns).toEqual([]);
+    const llr = rep.requirements.find((r: any) => r.id === "LLR-1");
+    expect(llr.implementedBy.map((s: any) => s.fn)).toEqual(["inc"]);
+    expect(llr.verifiedBy.map((s: any) => s.fn)).toEqual(["testInc"]);
+    // a requirements.json beside the entry still wins over the module directory
+    p.write("requirements.json", JSON.stringify({ requirements: [{ id: "OTHER", text: "x" }] }));
+    expect(JSON.parse(trace(p).out).requirementsFile).not.toContain(join("a", "requirements.json"));
+  } finally { p.done(); }
+}, 120000);
+
+// std/json is the worked module: its trace must stay strict-clean (the matrix in
+// docs/site/stdlib/json.md is condensed from it), and the doc must name every requirement.
+// The tests are not run here (json_test.milo has its own gate); everything else is.
+test("milo trace std/json.milo --strict is ok and docs/site/stdlib/json.md lists every requirement", () => {
+  const r = JSON.parse(milo(["trace", "std/json.milo", "--json", "--no-run", "--strict"]).out);
+  expect({ ok: r.ok, failures: r.strictFailures, errors: r.errors }).toEqual({ ok: true, failures: [], errors: [] });
+  expect(r.requirements.length).toBeGreaterThan(30);
+  expect(r.untracedFns).toEqual([]);
+  const doc = readFileSync(join(ROOT, "docs", "site", "stdlib", "json.md"), "utf-8");
+  const missing = r.requirements.map((q: any) => q.id).filter((id: string) => !doc.includes("`" + id + "`"));
+  expect(missing).toEqual([]);
 }, 180000);

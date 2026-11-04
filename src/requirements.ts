@@ -26,7 +26,7 @@
 // TODO(coverage): line/branch coverage of the implementing fns by the verifying tests.
 import type { DeadBranch } from "./dead";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
-import { dirname, join, relative, resolve, sep } from "path";
+import { basename, dirname, join, relative, resolve, sep } from "path";
 import type { Attribute, Contract, Function, Program } from "./ast";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
@@ -64,7 +64,30 @@ export interface RequirementsFile { path: string; reqs: Requirement[]; errors: s
 export function findRequirementsFile(entry: string, explicit?: string): string | null {
   if (explicit) return resolve(explicit);
   const next = join(dirname(resolve(entry)), "requirements.json");
-  return existsSync(next) ? next : null;
+  if (existsSync(next)) return next;
+  const own = moduleDir(entry);
+  return own ? join(own, "requirements.json") : null;
+}
+
+/**
+ * A single-file module keeps its requirements, tests and proofs in a directory named after it:
+ * `std/json.milo` with `std/json/requirements.json`. Its neighbours in `std/` are other
+ * modules, not this project, so the trace is scoped to the entry file and that directory.
+ * Null for the ordinary layout (requirements.json beside the entry).
+ */
+export function moduleDir(entry: string): string | null {
+  const abs = resolve(entry);
+  if (existsSync(join(dirname(abs), "requirements.json"))) return null;
+  const own = join(dirname(abs), basename(abs, ".milo"));
+  return existsSync(join(own, "requirements.json")) ? own : null;
+}
+
+/** Whether a source file belongs to the entry's project (see moduleDir). */
+export function inEntryProject(entry: string): (f: string) => boolean {
+  const abs = resolve(entry);
+  const own = moduleDir(entry);
+  const dir = own ?? dirname(abs);
+  return f => f === abs || f.startsWith(dir + sep);
 }
 
 export function loadRequirements(path: string): RequirementsFile {
@@ -200,6 +223,7 @@ function testDecls(entry: string, tests: string | undefined, inProject: (f: stri
     for (const f of readdirSync(p).sort()) if (f.endsWith("_test.milo")) files.push(join(resolve(p), f));
   };
   if (tests) add(tests);
+  else if (moduleDir(entry)) add(moduleDir(entry)!);
   else { add(dir); add(join(dir, "tests")); }
   const out: DeclUse[] = [];
   for (const f of files) {
@@ -324,7 +348,7 @@ export interface TraceOptions {
 export function buildTrace(o: TraceOptions): TraceReport {
   const entryAbs = resolve(o.entry);
   const dir = dirname(entryAbs);
-  const inProject = (f: string) => f === entryAbs || f.startsWith(dir + sep);
+  const inProject = inEntryProject(o.entry);
   const errors: string[] = [];
   const strictFailures: string[] = [];
 
