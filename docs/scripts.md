@@ -73,6 +73,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-interp-co.ts` | Generates src/interp-gen.ts: a generator twin (`name$g`) of every interpreter function that can reach a task switch. |
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |
 | `scripts/gen-lang-docs.ts` | Renders the published language reference from `milo lang --json`. |
+| `scripts/gen-language-requirements.ts` | Generates docs/semantics/requirements.json: Milo's language requirements, one per semantics rule in docs/semantics/milo.md (grouped under its section) plus the MILO-O ownership rules in docs/spec.md. |
 | `scripts/gen-programs-grammar.ts` | Random Milo program generator for scripts/gen-programs.ts, deterministic from a seed. |
 | `scripts/gen-programs.ts` | Differential fuzzer over random well-typed Milo programs (scripts/gen-programs-grammar.ts). |
 | `scripts/gen-scripts-doc.ts` | Regenerates the Index table in docs/scripts.md from each script's own first comment line, so the index cannot fall behind the directory. |
