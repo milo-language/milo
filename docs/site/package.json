@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "stage": "cp ../../install.sh public/install.sh",
+    "stage": "cp ../../install.sh public/install.sh && bun ../../scripts/build-playground.ts",
     "dev": "bun run stage && vitepress dev",
     "build": "bun run stage && vitepress build",
     "preview": "vitepress preview"

@@ -337,6 +337,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Get started', link: '/getting-started/installation', activeMatch: '^/(getting-started|tour)' },
+      { text: 'Playground', link: '/playground' },
       { text: 'Learn', link: '/language/variables', activeMatch: '^/(language/(variables|functions|ownership|structs|enums|collections|strings|error-handling|traits|closures|modules)|packages)' },
       { text: 'How-to', link: '/language/patterns', activeMatch: '^/(language/(patterns|safety|safety-profiles)|features/(concurrency(?!-)|ffi)|ai-coding)' },
       { text: 'Why Milo', link: '/language/why-no-lifetimes', activeMatch: '^/(language/(why-no-lifetimes|vs-rust)|benchmarks|demos|roadmap)' },
