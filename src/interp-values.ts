@@ -27,13 +27,14 @@ export const MOVED: Moved = { k: "moved" };
 
 export interface StrBuf { bytes: number[]; rc: number; id: number } // id < 0: static, never counted
 export interface Str { k: "str"; b: StrBuf }
-export interface Struct { k: "struct"; name: string; f: Record<string, Value> }
-export interface EnumV { k: "enum"; en: string; variant: string; tag: number; a: Value[] }
+// ghost: a view of a value someone else owns (an if/match fork of named places, a `get`): dropping it does nothing
+export interface Struct { k: "struct"; name: string; f: Record<string, Value>; ghost?: true }
+export interface EnumV { k: "enum"; en: string; variant: string; tag: number; a: Value[]; ghost?: true }
 export interface ArrV { k: "arr"; e: Value[] }
 export interface VecBuf { id: number; elems: Value[] }
 // `view`: a slice, which borrows the buffer and drops nothing. `buf` null: nothing allocated.
 export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number; cap: number; view: boolean }
-export interface BoxV { k: "box"; id: number; cell: { v: Value } }
+export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true }
 export interface IfaceV { k: "iface"; concrete: string; inner: Value }
 export interface FnRef { k: "fn"; name: string }
 export interface Slot { v: Value; dead?: boolean }
@@ -54,7 +55,17 @@ export interface Place { slot: Slot; path: Step[]; ro: boolean; viaRef: boolean 
 export const enc = new TextEncoder();
 export const dec = new TextDecoder();
 export const strText = (s: Str) => dec.decode(Uint8Array.from(s.b.bytes));
-export const staticStr = (text: string): Str => ({ k: "str", b: { bytes: [...enc.encode(text)], rc: 1, id: -1 } });
+// A literal's \xNN escapes above 0x7f ride U+F780..U+F7FF (src/lower.ts embedFile uses the same): one raw byte each.
+export const literalBytes = (text: string): number[] => {
+  const out: number[] = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0xf780 && cp <= 0xf7ff) out.push(cp - 0xf700);
+    else out.push(...enc.encode(ch));
+  }
+  return out;
+};
+export const staticStr = (text: string): Str => ({ k: "str", b: { bytes: literalBytes(text), rc: 1, id: -1 } });
 
 // C's %.17g-style shortest round-trip text, the way the compiled runtime prints a float.
 export function fmtFloat(x: number, bits = 64): string {

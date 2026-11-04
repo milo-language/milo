@@ -103,7 +103,9 @@ const nat = (n: string, f: Native) => NATIVES.set(n, f);
 nat("string$push", (it, [self, b]) => { appendTo(it, self as Ref, [Number(b as bigint)]); return undefined; });
 nat("string$clone", (it, [self]) => it.newStr([...(it.deref(self) as Str).b.bytes]));
 nat("string$clear", (it, [self]) => { const s = unique(it, self as Ref); s.b.bytes.length = 0; return undefined; });
-nat("string$truncate", (it, [self, n]) => { const s = unique(it, self as Ref); const k = Number(n as bigint); if (k < s.b.bytes.length) s.b.bytes.length = Math.max(k, 0); return undefined; });
+nat("string$truncate", (it, [self, n]) => {
+  const s = unique(it, self as Ref); const k = Number(n as bigint);
+  if (k >= 0 && k < s.b.bytes.length && (s.b.bytes[k]! & 192) === 128) it.panic(`milo: truncate(${k}) lands inside a multibyte UTF-8 character`); if (k < s.b.bytes.length) s.b.bytes.length = Math.max(k, 0); return undefined; });
 nat("string$setByte", (it, [self, i, b]) => {
   const s = unique(it, self as Ref);
   s.b.bytes[idx(it, i, s.b.bytes.length)] = Number(b as bigint);
@@ -139,7 +141,7 @@ const VEC: Record<string, Native> = {
     return undefined;
   },
   clear: (it, [self]) => { const h = vecOf(it, self); while (h.len > 0) it.dropValue(h.buf!.elems[h.start + --h.len]!); return undefined; },
-  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) > 0n) grow(it, h, h.len + Number(n)); return undefined; },
+  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) < 0n) it.panic("negative capacity"); if ((n as bigint) > 0n) grow(it, h, h.len + Number(n)); return undefined; },
   swap: (it, [self, a, b]) => {
     const h = vecOf(it, self); const i = idx(it, a, h.len), j = idx(it, b, h.len);
     const el = h.buf!.elems; [el[h.start + i], el[h.start + j]] = [el[h.start + j]!, el[h.start + i]!];
@@ -174,28 +176,33 @@ export function nativeFor(name: string): Native | undefined {
 
 // ── builtin functions (print, format, exit, assert, ...) ──
 export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min"]);
-function renderParts(it: Interp, e: CallE): number[] {
+// Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
+// that part is evaluated, so output from evaluating a later part comes after it (print-order).
+function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
   let args = e.args;
   const only = args.length === 1 ? args[0]! : null;
-  if (only && only.kind === "Call" && only.func === "format" && !it.fns.has("format")) args = only.args;
+  const formatted = !!only && only.kind === "Call" && only.func === "format" && !it.fns.has("format");
+  if (formatted) args = only!.args;
   const out: number[] = [];
   for (const a of args) {
     const v = it.peek(a);
     out.push(...(isStr(v) ? v.b.bytes : enc.encode(display(it, v, it.T(a)))));
+    if (sink && !formatted && isStr(v)) { sink.push(...out); out.length = 0; }
   }
   return out;
 }
 export function builtinCall(it: Interp, e: CallE): Value {
   switch (e.func) {
     case "print": case "eprint": {
-      const bytes = renderParts(it, e);
+      const dest = e.func === "print" ? it.out : it.err;
+      const bytes = renderParts(it, e, dest);
       bytes.push(10);
-      (e.func === "print" ? it.out : it.err).push(...bytes);
+      dest.push(...bytes);
       return undefined;
     }
     case "format": return it.newStr(renderParts(it, e));
     case "flush": return undefined;
-    case "exit": throw new ExitProgram(Number(it.ev(e.args[0]!) as bigint));
+    case "exit": { const code = Number(it.ev(e.args[0]!) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if (it.peek(e.args[0]!) === true) return undefined;
       const msg = e.args[1] ? strText(it.peek(e.args[1]) as Str) : "";
@@ -262,6 +269,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
       const a = it.peek(e.object) as bigint, b = it.peek(e.args[0]!) as bigint;
       if (m.endsWith("Div") || m.endsWith("Rem")) {
         if (b === 0n) return opt(it, e, NONE);
+        if (t.signed && b === -1n && a === -(1n << BigInt(t.bits - 1))) return opt(it, e, NONE);
       }
       const r = op === "+" ? a + b : op === "-" ? a - b : op === "*" ? a * b : op === "/" ? a / b : a % b;
       const lo = t.signed ? -(1n << BigInt(t.bits - 1)) : 0n, hi = t.signed ? (1n << BigInt(t.bits - 1)) - 1n : (1n << BigInt(t.bits)) - 1n;
@@ -282,7 +290,7 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
     if (m === "get") {
       const v = it.peek(e.object) as VecV, i = it.ev(e.args[0]!) as bigint;
       if (i < 0n || i >= BigInt(v.len)) return opt(it, e, NONE);
-      return opt(it, e, it.share(v.buf!.elems[v.start + Number(i)]!, "get"));
+      return opt(it, e, it.viewOf(v.buf!.elems[v.start + Number(i)]!)); // Option<&T>: a view of the element
     }
   }
   if (ot.tag === "hashmap" && m === "len") return it.unsupported("hashmap");

@@ -38,6 +38,7 @@ const list = (dir: string, kind: "fixtures" | "programs") => readdirSync(dir).fi
 export async function compareOne(p: { path: string; name: string; kind: "fixtures" | "programs" }, cwd: string): Promise<Result> {
   const src = readFileSync(p.path, "utf-8");
   const flags = /^\/\/ @mlir-same-flags:(.*)$/m.exec(src)?.[1]?.trim().split(/\s+/) ?? [];
+  if (flags.includes("--contract-checks")) return { name: p.name, verdict: "unsupported", detail: "contract checks" };
   if (existsSync(p.path.replace(/\.milo$/, ".c"))) return { name: p.name, verdict: "unsupported", detail: "companion C file" };
   const gpath = join(GOLDEN, p.kind, `${p.name}.json`);
   let want: { code: number | null; signal: string | null; stdout: string; live: string | null };
