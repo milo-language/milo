@@ -8,7 +8,9 @@
 // module the names simply resolve. src/codegen.ts emits only a stub for a taken function
 // (MlirPlan.take), with its real `define` line and its call edges.
 // The `define` line is codegen.ts's (linkage, attributes, ABI), with params renumbered
-// to the MLIR body's `%0..%n-1`; DWARF for these functions is M6, so -g drops their `!dbg`.
+// to the MLIR body's `%0..%n-1`. Under -g it keeps its `!dbg` (codegen-dwarf.ts's
+// DISubprogram), and the body's DILocations are rescoped to it: the line table. Local
+// variables and type DIEs are not emitted yet.
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
@@ -102,6 +104,9 @@ const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
   "reconcile-unrealized-casts",
   "llvm.func(mem2reg," + CANONICALIZE + ")",
 ].join(",") + ")";
+// -g: a DISubprogram per llvm.func, so the translation turns op locs into DILocations. The
+// splice swaps these subprograms for codegen-dwarf.ts's.
+const MLIR_PIPELINE_DEBUG = MLIR_PIPELINE.slice(0, -1) + ",ensure-debug-info-scope-on-llvm-func{emission-kind=LineTablesOnly})";
 
 const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
 const DEFINE_RE = new RegExp(String.raw`^define [^@]*@(${IDENT})\(`);
@@ -246,7 +251,8 @@ export class MlirPlan {
     // A per-module extern is one more typed view of a C symbol: codegen.ts renames its
     // calls to that symbol at the end of generate(), so the MLIR side is renamed the same way.
     const links = new Map([...this.fns.values()].filter(f => f.isExtern && f.linkName && f.linkName !== f.name).map(f => [f.name, f.linkName!]));
-    const llText = run(optPath, ["--emit-llvmir", MLIR_PIPELINE], text);
+    const debug = this.cx.emitDebug;
+    const llText = run(optPath, ["--emit-llvmir", debug ? MLIR_PIPELINE_DEBUG : MLIR_PIPELINE], text);
     const ll = (links.size ? mapSymbols(llText, n => links.get(n)) : llText).split("\n");
     // The bodies are spliced into codegen.ts's module: a triple or layout the two disagree on
     // would size a struct differently on each side of a call.
@@ -267,7 +273,7 @@ export class MlirPlan {
         i = end;
       } else if (l.startsWith("declare")) {
         const m = DECL_RE.exec(l);
-        if (m) decls.push({ name: unquote(m[1]), line: l.replace(/ #\d+$/, "") });
+        if (m) decls.push({ name: unquote(m[1]), line: l.replace(/ #\d+$/, "").replace(/ !dbg !\d+/, "") });
       } else if (/^!\d+ = /.test(l)) {
         metadata.push(l);
       } else if (l.startsWith("@")) {
@@ -280,7 +286,30 @@ export class MlirPlan {
     // MLIR's metadata ids start at 0, as codegen.ts's do: shift them past those.
     let mdBase = 0;
     for (const l of lines) { const m = /^!(\d+) = /.exec(l); if (m) mdBase = Math.max(mdBase, Number(m[1]) + 1); }
-    const renumber = (s: string) => s.replace(/!(\d+)\b/g, (_, n: string) => `!${Number(n) + mdBase}`);
+    // -g: the scaffold's DICompileUnit and DISubprograms (codegen-dwarf.ts) stay the module's;
+    // a reference to MLIR's compile unit or to a taken function's MLIR subprogram is
+    // redirected to them, so MLIR's DILocations (and any DILexicalBlockFile under them)
+    // land in the scaffold's scopes.
+    const redirect = new Map<number, number>();
+    if (debug) {
+      const cu = lines.map(l => /^!(\d+) = distinct !DICompileUnit\(/.exec(l)).find(m => m);
+      const mlirCu = ll.map(l => /^!(\d+) = distinct !DICompileUnit\(/.exec(l)).find(m => m);
+      if (!cu) throw new Error("mlir: -g module has no DICompileUnit");
+      if (mlirCu) redirect.set(Number(mlirCu[1]), Number(cu[1]));
+    }
+    const renumber = (s: string) => s.replace(/!(\d+)\b/g, (_, n: string) => `!${redirect.get(Number(n)) ?? Number(n) + mdBase}`);
+    // The body is spliced into a module whose attribute groups it does not know, and whose
+    // metadata numbering it shares: TBAA tags (and under -g, DILocations) are renumbered,
+    // anything else is not something these ops lower to.
+    const checkBody = (name: string, body: string[]) => {
+      for (const b of body) {
+        const rest = b.replace(/, !tbaa !\d+/g, "");
+        if (/ #\d+\b/.test(b) || /!\w/.test(debug ? rest.replace(/, !dbg !\d+/g, "") : rest)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
+      }
+    };
+    const dbgOf = (l: string) => { const m = / !dbg !(\d+)/.exec(l); return m ? Number(m[1]) : null; };
+    // What the module takes from MLIR, in MLIR's numbering: where -g's metadata is reached from.
+    const fromMlir: string[] = [];
     const out: string[] = [];
     let spliced = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -297,13 +326,13 @@ export class MlirPlan {
       }
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
-      for (const b of got.body) {
-        // The body is spliced into a module whose attribute groups it does not know, and
-        // whose metadata numbering it shares: TBAA tags are renumbered below, anything
-        // else (attribute groups, !dbg) is not something these ops lower to.
-        if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
+      checkBody(name, got.body);
+      let header = debug ? l : l.replace(/ !dbg !\d+/, "");
+      const sp = dbgOf(header), mlirSp = dbgOf(got.header);
+      if (debug && mlirSp !== null) {
+        if (sp !== null) redirect.set(mlirSp, sp);
+        else header = header.replace(/ \{$/, ` !dbg !${mlirSp + mdBase} {`);
       }
-      let header = l.replace(/ !dbg !\d+/, "");
       // main's are the process entry's argc/argv (codegen genFunction), not Milo params.
       const paramNames = name === "main" ? ["_milo_argc", "_milo_argv"] : this.fns.get(name)!.params.map(p => p.name);
       if (this.cx.sretFns.has(name)) paramNames.unshift("__sret.out");
@@ -322,7 +351,8 @@ export class MlirPlan {
         if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
         // The entry label goes; the MLIR body brings its own entry block.
         if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
-        let p = lines[j].replace(/, !dbg !\d+/, "");
+        // Under -g its DILocations are the scaffold's, in the subprogram the header keeps.
+        let p = debug ? lines[j] : lines[j].replace(/, !dbg !\d+/, "");
         for (const [re, to] of renames) p = p.replace(re, to);
         if (/^\s*%\d+ = |^\S.*:$/.test(p)) throw new Error(`mlir: ${name} prologue defines a value or a block: ${p}`);
         prologue.push(p);
@@ -336,6 +366,7 @@ export class MlirPlan {
       };
       if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
       const body = got.body.map(renumber);
+      fromMlir.push(got.header, ...got.body);
       // An entry block is printed unlabeled unless something branches to it.
       const at = body.length && /^\S.*:/.test(body[0]) ? 1 : 0;
       body.splice(at, 0, ...prologue);
@@ -348,14 +379,35 @@ export class MlirPlan {
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
     // Closure bodies are functions codegen.ts never defined: appended whole, MLIR's `define internal` line and all.
+    // Under -g a closure keeps MLIR's DISubprogram (codegen.ts has none for it), now in the
+    // scaffold's compile unit. Glue has no source, so its locs are the dialect text's: none ship.
+    const glueNames = new Set(glueFn.flatMap(f => f.closures));
     for (const name of [...this.taken, ...glueFn].flatMap(f => f.closures)) {
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
-      for (const b of got.body) if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
-      out.push(got.header.replace(/ #\d+/g, ""), ...got.body.map(renumber), "}");
+      checkBody(name, got.body);
+      const header = got.header.replace(/ #\d+/g, "");
+      if (glueNames.has(name)) out.push(header.replace(/ !dbg !\d+/, ""), ...got.body.map(b => renumber(b.replace(/, !dbg !\d+/g, ""))), "}");
+      else { out.push(renumber(header), ...got.body.map(renumber), "}"); fromMlir.push(header, ...got.body); }
+    }
+    if (!debug) out.push(...metadata.map(renumber));
+    else {
+      // Only the nodes the spliced code reaches: MLIR's compile unit, its subprograms for
+      // taken functions and declarations, and its module flags are the scaffold's to say.
+      const nodes = new Map(metadata.map(m => [Number(/^!(\d+)/.exec(m)![1]), m]));
+      const seen = new Set<number>();
+      const reach = (s: string) => {
+        for (const [, n] of s.matchAll(/!(\d+)\b/g)) {
+          const id = Number(n);
+          if (redirect.has(id) || seen.has(id) || !nodes.has(id)) continue;
+          seen.add(id);
+          reach(nodes.get(id)!.replace(/^!\d+ = /, ""));
+        }
+      };
+      for (const l of fromMlir) reach(l);
+      out.push(...[...seen].sort((a, b) => a - b).map(id => renumber(nodes.get(id)!)));
     }
     // A global MLIR only declares (the recorder's counters) is codegen.ts's module's own.
-    out.push(...metadata.map(renumber));
     const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
     // codegen.ts names no data layout (clang picks it from the triple); name the one the bodies
     // were lowered with.

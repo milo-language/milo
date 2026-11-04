@@ -35,8 +35,7 @@ function emitIr(path: string, debug: boolean): string {
   return execSync(`bun run ${COMPILER} emit-ir ${path}${g}`, { stdio: ["pipe", "pipe", "pipe"] }).toString();
 }
 
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no !dbg on defines, no local or type DIEs); see docs/roadmap.md
-test.failing("-g emits DWARF metadata that passes the LLVM verifier", () => {
+test("-g emits DWARF metadata that passes the LLVM verifier", () => {
   const f = join(tmpdir(), "milo_dbg_verify.milo");
   writeFileSync(f, SRC);
   try {
@@ -76,8 +75,7 @@ test("no debug metadata without -g (zero-cost by default)", () => {
   }
 });
 
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no line table or locals for lldb); see docs/roadmap.md
-lldbGap("built binary carries a source line table lldb can bind to", () => {
+test("built binary carries a source line table lldb can bind to", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_lldb.milo");
   const bin = join(tmpdir(), "milo_dbg_lldb");
@@ -242,7 +240,7 @@ test.failing("enum variants are described at their own field offsets", () => {
   }
 });
 
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no line table or locals for lldb); see docs/roadmap.md
+// parity gap after legacy deletion: DWARF for MLIR function bodies (no locals or type DIEs for lldb); see docs/roadmap.md
 lldbGap("frame variable reads each variant's fields at their own offsets", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_offsets.milo");
@@ -301,7 +299,7 @@ test.failing("niche Options describe the payload-only layout", () => {
   }
 });
 
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no line table or locals for lldb); see docs/roadmap.md
+// parity gap after legacy deletion: DWARF for MLIR function bodies (no locals or type DIEs for lldb); see docs/roadmap.md
 lldbGap("frame variable renders enum variants by name with typed payloads", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_enum.milo");
@@ -325,7 +323,7 @@ lldbGap("frame variable renders enum variants by name with typed payloads", () =
 });
 
 // -g --debug: -O0 keeps the allocas that dbg.declare binds, so locals are inspectable.
-// parity gap after legacy deletion: DWARF for MLIR function bodies (no line table or locals for lldb); see docs/roadmap.md
+// parity gap after legacy deletion: DWARF for MLIR function bodies (no locals or type DIEs for lldb); see docs/roadmap.md
 lldbGap("frame variable inspects Milo locals, params, and structs (M2)", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_vars.milo");

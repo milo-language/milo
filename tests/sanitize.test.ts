@@ -57,8 +57,7 @@ test("--sanitize marks emitted functions sanitize_address", () => {
   expect(defines.filter(l => !l.includes(" #0"))).toEqual([]);
 });
 
-// parity gap after legacy deletion: MLIR function definitions carry no !dbg (no DWARF for MLIR bodies yet); see docs/roadmap.md
-test.failing("--sanitize composes with -g (attribute group precedes !dbg)", () => {
+test("--sanitize composes with -g (attribute group precedes !dbg)", () => {
   const src = join(dir, "dbg.milo");
   writeFileSync(src, "fn main() { print(\"ok\") }\n");
   const ir = execSync(`bun ${MILO} emit-ir -g --sanitize ${src}`, { encoding: "utf-8" });

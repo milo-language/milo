@@ -14,6 +14,8 @@ import { MlirGlue } from "./mlir-glue";
 
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
+  // -g: every op carries its source loc (the line table); off, the text has none of them.
+  readonly emitDebug: boolean;
   // std/replay is in the program, so replay-engine fns count their depth (codegen replayEngineScope).
   replayScope: boolean;
   // requires/ensures/invariant become runtime checks only when on (-O0 by default).
@@ -73,6 +75,32 @@ export class MlirUnsupported extends Error {
 const PTR = "!milo.ptr";
 // Only ever a literal until drops exist (Milo.td StringType).
 const STR = "!milo.string";
+
+/** A function's own loc: the line its DISubprogram (codegen-dwarf.ts) names. */
+function fnDebugLoc(cx: MlirEmitCtx, fn: HIRFunction): string {
+  return debugLocOf(cx, { file: fn.sourceFile, line: fn.line ?? 0, col: 1 }) ?? "loc(unknown)";
+}
+
+/** `loc(...)` of `span` for the line table: the code's own place, not a @trackCaller site. */
+function debugLocOf(cx: MlirEmitCtx, span: Span): string | null {
+  const l = cx.checkLocation(span);
+  return l ? `loc(${quote(l.file)}:${l.line}:${l.col})` : null;
+}
+
+/** An op line without a loc: not a block label, a brace, or a line that already has one. */
+function needsLoc(line: string): boolean {
+  const t = line.trim();
+  return t !== "" && !t.startsWith("^") && !t.startsWith("}") && !t.endsWith("{") && !/ loc\(.*\)$/.test(t);
+}
+
+/**
+ * -g: every op line of `text` still without a loc gets `loc`, and so does each region's
+ * closing brace (the lines nothing emitted through FnEmitter.emit: slots, env drops,
+ * the function's own `}`).
+ */
+function fillDebugLocs(text: string, loc: string): string {
+  return text.split("\n").map(l => needsLoc(l) || l.trim() === "}" ? `${l} ${loc}` : l).join("\n");
+}
 
 /** The dialect's type for a Milo scalar (ints carry signedness), or null. */
 function mlirType(t: TypeKind): string | null {
@@ -574,6 +602,7 @@ class FnEmitter {
     // A closure body runs per call: a closure it builds keeps a frame env (scoped
     // staticEnv by currentFnName, which a closure body never is).
     this.inClosureBody = true;
+    if (this.cx.emitDebug) this.debugLoc = (e.span && debugLocOf(this.cx, e.span)) || fnDebugLoc(this.cx, this.fn);
     const params = ["%env: !milo.ptr"];
     const refs = caps.map((c, i) => this.def(`milo.env.capture %env[${i}] : ${c.place}`, c.place).ref);
     // A move env's liveness flags follow its captures in the table.
@@ -609,7 +638,7 @@ class FnEmitter {
     this.closeScope(0, jumped, null);
     if (!jumped) this.emit(ret === null ? "milo.return" : "milo.unreachable");
     const head = `func.func @${quote(name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} attributes {llvm.linkage = #llvm.linkage<internal>} {`;
-    return [head, ...this.vars, ...this.body, "}"].join("\n");
+    return [head, ...this.vars, ...this.body, this.cx.emitDebug ? `} ${this.debugLoc}` : "}"].join("\n");
   }
 
   /**
@@ -634,6 +663,7 @@ class FnEmitter {
     const fn = this.fn;
     if (fn.isExtern) throw new MlirUnsupported("extern fn");
     if (fn.isVariadic) throw new MlirUnsupported("variadic fn");
+    if (this.cx.emitDebug) this.debugLoc = fnDebugLoc(this.cx, fn);
     // main's prologue (argc/argv, global init, stdout buffering) is codegen.ts's; the
     // splice keeps it. Behind a green-task wrapper main's body is MAIN_BODY, which the
     // wrapper's task calls with nothing and takes its i32 as the exit code.
@@ -1246,7 +1276,31 @@ class FnEmitter {
     this.emit(line);
   }
 
-  private emit(line: string): void { this.body.push(`${"  ".repeat(this.depth)}${line}`); }
+  private emit(line: string): void { this.body.push(`${"  ".repeat(this.depth)}${this.cx.emitDebug ? this.withDebugLoc(line) : line}`); }
+
+  // -g only: the source location of what is being emitted, for the line table. An op the
+  // parser reads without a loc gets one in the MLIR text itself, which would make the
+  // line table point at the dialect text, so every op gets one.
+  private debugLoc = "";
+  // A region op's loc follows its closing brace: the loc of each open `{`, innermost last.
+  private openLocs: string[] = [];
+
+  private withDebugLoc(line: string): string {
+    if (line.endsWith("{")) {
+      if (!line.startsWith("}")) this.openLocs.push(this.debugLoc);
+      return line;
+    }
+    if (line === "}") return `} ${this.openLocs.pop() ?? this.debugLoc}`;
+    return needsLoc(line) ? `${line} ${this.debugLoc}` : line;
+  }
+
+  /** Runs `f` with the line table pointing at `span` (when it has one). */
+  private at<T>(span: Span | undefined, f: () => T): T {
+    if (!this.cx.emitDebug || !span) return f();
+    const saved = this.debugLoc;
+    this.debugLoc = debugLocOf(this.cx, span) ?? saved;
+    try { return f(); } finally { this.debugLoc = saved; }
+  }
   private fresh(): string { return `%v${this.n++}`; }
   private bind(name: string, b: Binding): void { this.scopes[this.scopes.length - 1].set(name, b); }
 
@@ -1599,7 +1653,9 @@ class FnEmitter {
   // MILO_MLIR_PROBE (census only): a refused statement is noted and skipped, so one run
   // lists every blocker of a function, not just its first. The function never ships.
   readonly probed: string[] = [];
-  private stmt(s: HIRStmt): boolean {
+  private stmt(s: HIRStmt): boolean { return this.at(s.span, () => this.stmtAt(s)); }
+
+  private stmtAt(s: HIRStmt): boolean {
     if (!PROBE) return this.stmtProbed(s);
     const at = { body: this.body.length, owned: this.owned.length, scopes: this.scopes.length, depth: this.depth,
       pending: this.pending.length, loops: this.loops, loopBase: this.loopBase.length, blocks: this.blocks.length };
@@ -2397,7 +2453,9 @@ class FnEmitter {
   }
 
   /** `stmt`: evaluated for effect only, so a void call is fine. */
-  private expr(e: HIRExpr, stmt = false): Val {
+  private expr(e: HIRExpr, stmt = false): Val { return this.at(e.span, () => this.exprAt(e, stmt)); }
+
+  private exprAt(e: HIRExpr, stmt: boolean): Val {
     switch (e.kind) {
       case "IntLit":
       case "CharLit": {
@@ -5302,7 +5360,8 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
   try {
     const text = em.run();
     if (em.probed.length) return [...new Set(em.probed)].join("\n");
-    return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: [text, ...em.closures.texts].join("\n"), callees: em.callees, calls: em.calls, closures: em.closures.names };
+    const all = [text, ...em.closures.texts].join("\n");
+    return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: cx.emitDebug ? fillDebugLocs(all, fnDebugLoc(cx, fn)) : all, callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
     if (err instanceof MlirUnsupported) return [...new Set([...em.probed, err.reason])].filter(r => !r.includes(PROBE_SKIPPED)).join("\n") || err.reason;
     if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");

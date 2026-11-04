@@ -207,7 +207,7 @@ per-function compile cache.
 
 ## Open items
 
-- DWARF for MLIR function bodies: with `-g`, no `define` carries `!dbg` (`tests/sanitize.test.ts`).
+- DWARF for MLIR function bodies: line tables are done (`-g` locs on every op, `ensure-debug-info-scope-on-llvm-func`, DILocations spliced into codegen-dwarf.ts's subprograms); local variables and type DIEs remain (`tests/debugInfo.test.ts`).
 - `!range`/`!noundef` on loads of ranged ints (`tests/refParamAttrs.test.ts`).
 
 Both are tracked under "MLIR parity gaps" in `docs/roadmap.md`.
