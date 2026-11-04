@@ -1,0 +1,87 @@
+// @skip-os: win32
+// ServeOptions { workers: 4 }: four schedulers (this thread and three spawnWorker threads)
+// serve one port, each with a Router of its own built on its own thread by the factory.
+// 60 requests over fresh connections all get the right answer, and each handler sends on a
+// Channel that a task on the main scheduler drains: a cross-scheduler wake per request.
+// @expect: bad workers refused
+// @expect: listening on http://127.0.0.1:47411 (bound)
+// @expect: ok 60 of 60
+// @expect: handler sends seen 60
+// @expect: post echo ok
+from "std/http" import {
+    Context, Response, Router, ServeOptions, serveRouterFactory
+}
+from "std/fetch" import {
+    fetch, fetchWith, FetchOptions
+}
+from "std/runtime" import {
+    Task
+}
+from "std/sync" import {
+    Channel
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47411
+
+fn clients(hits: &Channel<i64>): void {
+    sleepMs(200)
+    var ok = 0
+    for i in 0..60 {
+        let res = fetch($"http://127.0.0.1:{PORT}/hello")
+        match res {
+            Result.Ok(resp) => {
+                if resp.status == 200 && resp.body == "hello" {
+                    ok += 1
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+    }
+    print($"ok {ok} of 60")
+    var seen = 0
+    while seen < 60 {
+        hits.recv()!
+        seen += 1
+    }
+    print($"handler sends seen {seen}")
+    let post = fetchWith($"http://127.0.0.1:{PORT}/echo", FetchOptions {
+        method: "POST", headers: "", body: "ping"
+    })!
+    if post.status == 200 && post.body == "echo ping" {
+        print("post echo ok")
+    }
+    exit(0)
+}
+
+pub fn main(): i32 {
+    let hits = Channel<i64>.new(128)!
+    let tx = hits.clone()
+    Task.spawn(move(): void => {
+        clients(hits)
+    })
+    let bad = serveRouterFactory("127.0.0.1", PORT, (): Router => Router.new(), ServeOptions {
+        workers: -1
+    })
+    if bad.isErr() {
+        print("bad workers refused")
+    }
+    serveRouterFactory("127.0.0.1", PORT, (): Router => {
+        var r = Router.new()
+        let h = tx.clone()
+        r.get("/hello", (ctx: &mut Context): Response => {
+            h.send(1)!
+            return ctx.text("hello")
+        })
+        r.post("/echo", (ctx: &mut Context): Response => {
+            return ctx.text($"echo {ctx.req.body}")
+        })
+        return r
+    }, ServeOptions {
+        workers: 4
+    })!
+    return 1
+}

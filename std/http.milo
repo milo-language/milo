@@ -2,6 +2,7 @@
 
 from "std/os" import {
     inet_pton,
+    memcpy,
     sysClose,
     sysAccept,
     recvFd,
@@ -18,10 +19,16 @@ from "std/net" import {
     TcpListener, IpAddr, ip4, waitIo, deadlineIn
 }
 from "std/runtime" import {
-    Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote
+    Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote, spawnWorker
 }
 from "std/event" import {
     setNonblocking
+}
+from "std/sysinfo" import {
+    cpuCount
+}
+from "std/replay" import {
+    replayOff
 }
 from "std/sync" import {
     Channel, AtomicBool
@@ -1185,7 +1192,7 @@ var gIdleAccept: i32 = 0
 
 fn termHandler(_sig: i32): void {
     unsafe {
-        gTerm = 1
+        _atomicStoreI32(gTerm.addrOf() as *u8, 1)
         if gDrainW >= 0 {
             let b: [u8; 1] = [1]
             osWrite(gDrainW, b as *u8, 1)
@@ -1211,8 +1218,8 @@ fn installDrain(broadcast: bool): void {
             if osPipe(fds as *i32) == 0 {
                 // the handler's write must never block
                 setNonblocking(fds[1])
-                gDrainR = fds[0]
-                gDrainW = fds[1]
+                _atomicStoreI32(gDrainR.addrOf() as *u8, fds[0])
+                _atomicStoreI32(gDrainW.addrOf() as *u8, fds[1])
             }
         }
         osSignal(15, termHandler as *u8)
@@ -1267,6 +1274,16 @@ pub struct ServeOptions {
     // binds exactly host:port, and refuses to start if it was socket-activated: an
     // activated service says so here rather than having its address silently ignored.
     socketActivation: bool = false,
+    // OS threads serving connections, each with a green scheduler of its own: 1 is the
+    // single-scheduler server (the default, unchanged), 0 is one per core. A connection
+    // stays on the worker that accepted it for its whole life, so tasks never migrate and
+    // never race. maxConn is the cap across all workers (split evenly between them).
+    // Needs serveRouterFactory, which builds one Router per worker, so a handler's state is
+    // per worker unless it shares one deliberately (a Channel, an atomic, a WaitGroup).
+    // Linux gives each worker its own SO_REUSEPORT listener; elsewhere, and under socket
+    // activation, every worker accepts on the one shared listener. Not supported while
+    // recording or replaying (the trace has one thread-ordered log): that is an Err.
+    workers: i64 = 1,
 }
 
 // ── Public API ──
@@ -2606,7 +2623,7 @@ fn serveNextConn(fds: &Channel<i32>, serve: (i32) => void, done: &Channel<i32>):
 // On SIGTERM (see "Graceful drain") it closes this process's copy of the listener,
 // waits for the connections in flight, and exits. Under socket activation the service
 // manager still holds the socket, so new connections queue for the next process.
-fn acceptLoop(listenFd: i32, fds: &Channel<i32>, serve: (i32) => void, maxConn: i64, drainMs: i64): void {
+fn acceptLoop(listenFd: i32, ownsListener: bool, fds: &Channel<i32>, serve: (i32) => void, maxConn: i64, drainMs: i64): void {
     let done = Channel<i32>.new(1)!
     Task.scope((s) => {
         while !terminated() {
@@ -2643,7 +2660,11 @@ fn acceptLoop(listenFd: i32, fds: &Channel<i32>, serve: (i32) => void, maxConn: 
         }
         // Draining. Closing stops new accepts here; connections already queued in the
         // kernel stay with whoever else holds the socket.
-        unsafe { sysClose(listenFd) }
+        // A listener the workers share is closed once, by its owner: a second close could
+        // hit a descriptor reused since.
+        if ownsListener {
+            unsafe { sysClose(listenFd) }
+        }
         let deadline = unrecordedEpochMillis() + drainMs
         while s.live() > 0 {
             if unrecordedEpochMillis() >= deadline {
@@ -2733,8 +2754,176 @@ pub fn serveConns(listenFd: i32, opts: &ServeOptions, serve: (i32) => void): Res
     // (and schedulerWaitRead parks it) even when the caller is not; the join below
     // then drives the scheduler for good, as schedulerRunToCompletion used to.
     Task.scope((s) => {
-        s.spawn(() => acceptLoop(listenFd, fds, serve, maxConn, drainMs))
+        s.spawn(() => acceptLoop(listenFd, true, fds, serve, maxConn, drainMs))
     })
+    if terminated() {
+        exit(0)
+    }
+    return Result.Err("server exited")
+}
+
+// Workers still draining, counted by atomics. The main thread's drain waits for it to reach 0 before the
+// process exits, so a SIGTERM does not cut off requests a worker is still answering.
+var gWorkersLive: i64 = 0
+
+fn workersLive(): i64 {
+    unsafe { return _atomicLoadI64(gWorkersLive.addrOf() as *u8) }
+}
+
+// One worker's server: its own Router (built here, on this worker's thread), its own
+// accept loop and connection tasks. `owns` is whether this worker closes `listenFd` when
+// draining (a listener of its own does; the shared one is closed by worker 0 only).
+// Call the router factory whose closure value sits at `addr`, on a frame of
+// serveRouterFactory that outlives every worker. Every worker reads the same closure value
+// (function pointer and environment) and calls it without owning it: forget() keeps this
+// copy from running the environment's drop glue, which the one owner does. Sound while the
+// factory only reads what it captured, which `@thread` on serveRouterFactory holds to Send
+// captures and no racy globals, and the doc on serveRouterFactory asks for.
+@unsafe
+fn callFactory(addr: i64): Router {
+    unsafe {
+        // A closure with no environment to overwrite: the memcpy replaces its (fn, env) pair.
+        var g: move () => Router = (): Router => Router.new()
+        memcpy(g.addrOf() as *u8, addr as *u8, 16)
+        let r = g()
+        forget(g)
+        return r
+    }
+}
+
+fn workerServe(makeAt: i64, conf: WorkerConf): void {
+    var router: Router = Router.new()
+    unsafe { router = callFactory(makeAt) }
+    let readMs = conf.readMs
+    let writeMs = conf.writeMs
+    let keepAlive = conf.keepAlive
+    let idleMs = conf.idleMs
+    let maxRequests = conf.maxRequests
+    let listenFd = conf.listenFd
+    let fds = Channel<i32>.new(64)!
+    unsafe { setNonblocking(listenFd) }
+    Task.scope((s) => {
+        s.spawn(() => acceptLoop(listenFd, conf.owns, fds, (clientFd: i32): void => handleConn(clientFd, router, readMs, writeMs, keepAlive, idleMs, maxRequests), conf.maxConn, conf.drainMs))
+    })
+}
+
+// The ServeOptions a worker needs, as plain numbers it can own (opts itself is a borrow).
+struct WorkerConf {
+    listenFd: i32,
+    owns: bool,
+    maxConn: i64,
+    drainMs: i64,
+    readMs: i64,
+    writeMs: i64,
+    keepAlive: bool,
+    idleMs: i64,
+    maxRequests: i64,
+}
+
+fn workerConf(opts: &ServeOptions, listenFd: i32, owns: bool, maxConn: i64): WorkerConf {
+    return WorkerConf {
+        listenFd: listenFd, owns: owns, maxConn: maxConn, drainMs: opts.drainMs, readMs: opts.readTimeoutMs, writeMs: opts.writeTimeoutMs, keepAlive: opts.keepAlive, idleMs: opts.idleTimeoutMs, maxRequests: opts.maxRequestsPerConn
+    }
+}
+
+// serveRouterWith for a server of ServeOptions.workers schedulers: `make` builds the
+// Router, once per worker and on that worker, so a handler's captured state belongs to one
+// scheduler. With workers 1 it builds the one Router and is serveRouterWith. The calling
+// thread is worker 0; the others are threads spawnWorker starts.
+//
+// Where the connections land: Linux gives each worker its own SO_REUSEPORT listener and
+// the kernel spreads connections across them. Darwin's SO_REUSEPORT does not spread (one
+// listener gets the traffic), and a socket-activated listener is one descriptor, so
+// there every worker accepts on the one shared listener: simple, correct, a little
+// uneven (whichever worker's loop wakes first wins the accept). A handoff acceptor was
+// the alternative; it adds a hop and a channel per connection for evenness the kernel
+// gives for free on Linux.
+@thread
+pub fn serveRouterFactory(host: &string, port: u16?, make: move () => Router, opts: &ServeOptions): Result<Unit> {
+    var n = opts.workers
+    if n == 0 {
+        n = cpuCount()
+    }
+    if n < 0 {
+        return Result.Err("ServeOptions.workers must be 0 (one per core) or more")
+    }
+    if n <= 1 {
+        return serveRouterWith(host, port, make(), opts)
+    }
+    if !replayOff() {
+        return Result.Err("ServeOptions.workers > 1 cannot be recorded or replayed: the trace is one thread-ordered log. Set workers: 1 (or unset MILO_RECORD/MILO_REPLAY)")
+    }
+    var perWorker = opts.maxConn / n
+    if perWorker * n < opts.maxConn {
+        perWorker += 1
+    }
+    // One listener descriptor per worker. Each worker closes the ones it owns; a shared
+    // listener (the same descriptor in every slot) is closed by worker 0 alone.
+    var listenFds: Vec<i32> = []
+    var shared = true
+    if !opts.socketActivation && @targetOs() == "linux" {
+        shared = false
+        var addr: u32 = 0
+        if host != "0.0.0.0" {
+            match parseBindHost(host) {
+                Option.Some(a) => {
+                    addr = a
+                }
+                Option.None => {
+                    return Result.Err($"bind() failed: '{host}' is not an IPv4 address")
+                }
+            }
+        }
+        var bindPort: u16 = 0
+        if let Option.Some(p) = port {
+            bindPort = p
+        }
+        for i in 0..n {
+            match TcpListener.bindAddrReusePort(addr, bindPort) {
+                Result.Err(e) => {
+                    return Result.Err(e.message())
+                }
+                Result.Ok(l) => {
+                    // Port 0: every later listener joins the port the first one got.
+                    if i == 0 {
+                        bindPort = l.port() as u16
+                        announce("http", host, port, addr, l.port(), l.addr4(), false)
+                    }
+                    listenFds.push(listenerFd(l))
+                    forget(l)
+                }
+            }
+        }
+    } else {
+        let sock = openListener(host, port, opts.socketActivation)?
+        let fd = listenerFd(sock)
+        forget(sock)
+        for i in 0..n {
+            listenFds.push(fd)
+        }
+    }
+    installDrain(true)
+    var makeAt: i64 = 0
+    unsafe { makeAt = make.addrOf() as i64 }
+    unsafe { _atomicStoreI64(gWorkersLive.addrOf() as *u8, n - 1) }
+    for i in 1..n {
+        let conf = workerConf(opts, listenFds[i], !shared, perWorker)
+        spawnWorker(move(): void => {
+            workerServe(makeAt, conf)
+            unsafe { _atomicSubI64(gWorkersLive.addrOf() as *u8, 1) }
+        })
+    }
+    // Worker 0 is this thread.
+    workerServe(makeAt, workerConf(opts, listenFds[0], true, perWorker))
+    // The others drain on their own; wait for them within the same deadline.
+    let deadline = unrecordedEpochMillis() + opts.drainMs
+    while workersLive() > 0 {
+        if unrecordedEpochMillis() >= deadline {
+            eprint("drain timeout: exiting with workers still draining")
+            exit(1)
+        }
+        sleepMs(5)
+    }
     if terminated() {
         exit(0)
     }
