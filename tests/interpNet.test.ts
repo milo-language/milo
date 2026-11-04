@@ -339,13 +339,13 @@ const FIXTURES = [
   // R-NET-PIPE R-NET-SIG: descriptors and signals
   // R-FNPTR: function pointers called from C and held in structs
   "fnToPtr", "typedFnPtr",
-  "sigpipeIgnored", "signalSigchld", "greenIoPipe", "fdWaitSharedFd",
+  "sigpipeIgnored", "signalSigchld", "greenIoPipe", "fdWaitSharedFd", "eventLoop", "httpWorkers",
   // R-SELECT: waiting on several sources
   "selectChannelVsTimeout", "selectFdVsChannel",
   // R-NET-IO R-NET-BLOCK: a connection served and answered
   "ioSocketStream", "greenThreadEcho",
 ];
-test("R-FNPTR, R-NET-SOCK, R-NET-PIPE, R-NET-SIG, R-SELECT: fixtures that use them are the same as the compiled run", async () => {
+test("R-FNPTR, R-NET-SOCK, R-NET-PIPE, R-NET-SIG, R-NET-KQUEUE, R-SELECT: fixtures that use them are the same as the compiled run", async () => {
   const results = [];
   for (const name of FIXTURES) results.push(await compareOne({ path: join(import.meta.dir, "fixtures", `${name}.milo`), name, kind: "fixtures" }, dir));
   expect(results.filter(r => r.verdict !== "same").map(r => `${r.name}: ${r.verdict} ${r.detail}`)).toEqual([]);

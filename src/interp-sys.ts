@@ -443,7 +443,7 @@ export const SYS: Record<string, SysFn> = {
 
 // Why an extern has no implementation, when it belongs to a group that is left out on purpose
 function unmodelled(sym: string): string {
-  if (/^(epoll_.*|kqueue|kevent|eventfd|select)$/.test(sym)) return " (event queues are not modelled)";
+  if (/^(epoll_.*|eventfd|select)$/.test(sym)) return " (event queues are not modelled)";
   if (/^(swapcontext|makecontext|getcontext)$/.test(sym)) return " (user-space context switches are not modelled)";
   if (/^(fork|exec.*|waitpid|posix_spawn.*|system|setsid|dlopen|dlsym|dlclose|dlerror)$/.test(sym)) return " (processes and dynamic loading are not modelled)";
   if (/^(sqlite3_.*|SSL_.*|TLS_.*|EVP_.*|EC_.*|BN_.*|CC_.*|CCCrypt.*|SHA.*|MD5)$/.test(sym)) return " (wrapped C libraries are not modelled)";

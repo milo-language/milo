@@ -379,8 +379,8 @@ ioctl usleep sleep nanosleep` when the descriptor or the program is one of these
 share it: a call that cannot return yet is a generator the task interpreter (`src/interp-co.ts`) drives, and
 under the plain interpreter, where no other task exists to change anything, it is a stuck state. Left out on
 purpose, and reported as unsupported with the function's name: `fork exec* waitpid posix_spawn system`
-(there are no other processes), `kqueue kevent epoll_* eventfd select` (std's green IO reaches readiness
-through `poll`-style natives, R-NET-BLOCK), `dlopen`, pty calls and TLS.
+(there are no other processes), `epoll_* eventfd select` (std's green IO reaches readiness
+through natives, R-NET-BLOCK), `dlopen`, pty calls and TLS.
 
 | Rule | Statement |
 |---|---|
@@ -398,4 +398,5 @@ through `poll`-style natives, R-NET-BLOCK), `dlopen`, pty calls and TLS.
 | R-NET-MUTEX | A `pthread_mutex_t` is an interpreter object keyed by the address of the memory the program gave (a zeroed one is an unlocked mutex). `lock` takes it or parks while another task holds it; `unlock` releases and wakes the waiters, who recheck in the order they parked; `trylock` returns EBUSY. `pthread_rwlock_*` is the same with many readers or one writer. |
 | R-NET-COND | `pthread_cond_wait` releases the mutex, parks until a signal or broadcast reaches it (`signal` wakes the longest waiter, `broadcast` all), then takes the mutex again. The timed forms give up after the span (darwin: relative `timespec`; linux: absolute against the wall clock, R-SYS-CLOCK) and return ETIMEDOUT, still holding the mutex. |
 | R-NET-SLEEP | `usleep`, `sleep` and `nanosleep` park the task for that many virtual milliseconds (R-TIME) once the program has created a thread, so others run meanwhile; before that they advance the clock and return (R-SYS-CLOCK). |
+| R-NET-KQUEUE | `kqueue` makes a descriptor holding a set of watches; `kevent` applies its change list (EV_ADD, EV_DELETE, EV_CLEAR, EV_ONESHOT) and returns up to `nevents` watches that are ready: EVFILT_READ and EVFILT_WRITE by the readiness of R-NET-POLL (level-triggered), EVFILT_USER once NOTE_TRIGGER has fired it (reset on delivery). With none ready it parks as R-NET-BLOCK until a change or the timeout; `ident` and `udata` come back as given. |
 | R-SELECT | `Select` is a native. Arms are kept in the order armed. `wait` returns the index of the first ready arm and parks until one is: a recv arm is ready when its channel holds a value or is closed, a send arm when it has room or is closed, an fd arm when a read (write) would not block (R-NET-POLL), a timer arm when the virtual clock has reached its deadline (set when armed, R-TIME). The value is fetched afterwards by the caller; an arm keeps its channel alive until the Select is dropped. `ensureTimersLive` does nothing: the task interpreter always has a scheduler. |

@@ -734,6 +734,7 @@ export function* builtinCall$g(it: InterpGen, e: CallE): Gen {
     }
     case "format": return it.newStr((yield* renderParts$g(it, e)));
     case "flush": return undefined;
+    case "isNull": { const v = (yield* it.peek$g(e.args[0]!)); return v === 0n || v === undefined; } // R-FNPTR: a null C function pointer or raw pointer
     case "exit": { const code = Number((yield* it.ev$g(e.args[0]!)) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if ((yield* it.peek$g(e.args[0]!)) === true) return undefined;

@@ -43,7 +43,8 @@ export class InterpCo extends InterpGen {
   runq: Task[] = [];
   cur!: Task;
   drainWaiter: Task | null = null;
-  sleepers: { t: Task; at: number }[] = [];
+  // quiet: a timed wait that is not sleepMs (a Select timer arm, poll's timeout) costs no sleep-select blocks when abandoned
+  sleepers: { t: Task; at: number; quiet?: boolean }[] = [];
   private nextTaskId = 1;
   // contexts of finished default-stack tasks the scheduler keeps for the next spawn (at most 64, as std/runtime)
   cachedContexts = 0;
@@ -182,12 +183,14 @@ export class InterpCo extends InterpGen {
   // transfer mutex, stack cache), three for each abandoned task (task, join cell, context) and three more
   // for one asleep (its select state). Idle stack contexts in the cache stay too. With no task left and
   // a green main the scheduler is torn down and nothing remains.
-  private leakRuntime(): void {
+  // exiting: the task that called exit. Measured on compiled programs: main exiting by itself accounts for 2 blocks, not 3.
+  private leakRuntime(exiting?: Task): void {
     // No task left: a green main tears the scheduler down; a plain main (scope-only programs) never does.
     if (this.tasks.size === 0 && (this.greenMain || !this.scopeSpawned)) return;
-    const asleep = new Set(this.sleepers.map(x => x.t));
+    const asleep = new Set(this.sleepers.filter(x => !x.quiet).map(x => x.t));
     let n = 5 + this.cachedContexts + (this.fdWaited ? 1 : 0);
     for (const t of this.tasks.values()) n += asleep.has(t) ? 6 : 3;
+    if (exiting?.isMain) n -= 1;
     for (let i = 0; i < n; i++) this.alloc();
   }
   private deadlock(): never {
@@ -213,7 +216,7 @@ export class InterpCo extends InterpGen {
       try { r = task.gen!.next(); }
       catch (e) {
         // R-TASK-ABANDON: exit from a task leaves the scheduler up and the other tasks where they stand, as main returning does
-        if (e instanceof ExitProgram && !e.killed) this.leakRuntime();
+        if (e instanceof ExitProgram && !e.killed) this.leakRuntime(task);
         // R-TASK-PANIC: a panic in a task that is not main and has no open scope retires that task, not the program
         if (!(e instanceof Panic) || task.isMain || task.scopesOpen > 0) throw e;
         this.err.push(...new TextEncoder().encode(e.message + "\n"));

@@ -329,7 +329,7 @@ export function nativeFor(name: string): Native | undefined {
 }
 
 // ── builtin functions (print, format, exit, assert, ...) ──
-export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min"]);
+export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "isNull"]);
 // Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
 // that part is evaluated, so output from evaluating a later part comes after it (print-order).
 function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
@@ -357,6 +357,7 @@ export function builtinCall(it: Interp, e: CallE): Value {
     }
     case "format": return it.newStr(renderParts(it, e));
     case "flush": return undefined;
+    case "isNull": { const v = it.peek(e.args[0]!); return v === 0n || v === undefined; } // R-FNPTR: a null C function pointer or raw pointer
     case "exit": { const code = Number(it.ev(e.args[0]!) as bigint); it.aborted = true; throw new ExitProgram(code); }
     case "assert": {
       if (it.peek(e.args[0]!) === true) return undefined;

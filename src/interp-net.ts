@@ -72,7 +72,10 @@ interface Sock {
   listening: boolean; backlog: Sock[]; backlogMax: number;
   peerSock: Sock | null; error: number; opts: Map<string, number>; shutRd: boolean; closed: boolean;
 }
-export type FdObj = PipeEnd | Sock;
+// a kqueue: what it watches (R-NET-KQUEUE)
+interface Watch { ident: number; filter: number; fflags: number; udata: Value; clear: boolean; oneshot: boolean; fired: boolean }
+interface KQueue { k: "kq"; nb: boolean; refs: number; watches: Map<string, Watch> }
+export type FdObj = PipeEnd | Sock | KQueue;
 
 interface Mutex { owner: Task | null; q: WaitQ }
 interface Cond { toks: { done: boolean }[]; q: WaitQ }
@@ -109,8 +112,8 @@ function* waitOn(s: Sys, q: WaitQ, why: string, timeoutMs?: number): Gen<boolean
   }
   const me = it.cur;
   q.ts.push(me);
-  let entry: { t: Task; at: number } | undefined;
-  if (timeoutMs !== undefined) { entry = { t: me, at: it.clock + timeoutMs }; it.sleepers.push(entry); }
+  let entry: { t: Task; at: number; quiet?: boolean } | undefined;
+  if (timeoutMs !== undefined) { entry = { t: me, at: it.clock + timeoutMs, quiet: true }; it.sleepers.push(entry); }
   it.touch(q);
   yield* it.park(why);
   q.ts = q.ts.filter(t => t !== me);
@@ -226,7 +229,8 @@ function sockOf(s: Sys, fd: Value): Sock | null {
 function release(s: Sys, o: FdObj): void {
   if (--o.refs > 0) return;
   const net = netOf(s);
-  if (o.k === "pipe") { if (o.read) o.q.broken = true; else o.q.eof = true; }
+  if (o.k === "kq") o.watches.clear();
+  else if (o.k === "pipe") { if (o.read) o.q.broken = true; else o.q.eof = true; }
   else {
     o.closed = true;
     net.socks.delete(o);
@@ -244,6 +248,7 @@ const POLLIN = 1, POLLOUT = 4, POLLERR = 8, POLLHUP = 16, POLLNVAL = 32;
 // R-NET-POLL
 function readiness(o: FdObj | undefined): number {
   if (!o) return POLLIN | POLLOUT; // a file is always ready
+  if (o.k === "kq") return 0;
   if (o.k === "pipe") {
     if (o.read) return (o.q.len > 0 ? POLLIN : 0) | (o.q.eof && o.q.len === 0 ? POLLHUP : 0);
     return o.q.broken ? POLLERR : o.q.len < BUF_CAP ? POLLOUT : 0;
@@ -263,6 +268,7 @@ function readiness(o: FdObj | undefined): number {
 // ── read and write ──
 // R-NET-IO R-NET-BLOCK
 function* readObj(s: Sys, o: FdObj, buf: Value, count: number): Gen<bigint> {
+  if (o.k === "kq") return fail(s, E().EINVAL);
   const q = o.k === "pipe" ? (o.read ? o.q : null) : o.rx;
   if (!q) return fail(s, E().EBADF);
   if (o.k === "sock") {
@@ -284,6 +290,7 @@ function* readObj(s: Sys, o: FdObj, buf: Value, count: number): Gen<bigint> {
 }
 // R-NET-IO R-NET-BLOCK
 function* writeObj(s: Sys, o: FdObj, buf: Value, count: number): Gen<bigint> {
+  if (o.k === "kq") return fail(s, E().EINVAL);
   const q = o.k === "pipe" ? (o.read ? null : o.q) : o.tx;
   if (o.k === "pipe" && !q) return fail(s, E().EBADF);
   if (o.k === "sock" && o.type === 2) return yield* sendDgram(s, o, buf, count, null);
@@ -594,6 +601,10 @@ export const NET: Record<string, NetFn> = {
     return fail(s, 25);
   },
 
+  // ── kqueue (darwin): level-triggered read and write readiness, and user events ──
+  kqueue: s => objFd(s, { k: "kq", nb: false, refs: 1, watches: new Map() }),
+  kevent: (s, a) => keventCall(s, a),
+
   // ── pipes ──
   pipe: (s, a) => pipeCall(s, a[0]!, 0),
   pipe2: (s, a) => pipeCall(s, a[0]!, n(a[1]!)),
@@ -768,6 +779,56 @@ export const NET: Record<string, NetFn> = {
 const newCond = (): Cond => ({ toks: [], q: new WaitQ() });
 const newRw = (): RwLock => ({ writer: false, readers: 0, q: new WaitQ() });
 
+// kevent(2): the change list is applied, then events are collected, parking until one exists or the timeout (virtual ms) passes.
+// struct kevent is {u64 ident; i16 filter; u16 flags; u32 fflags; i64 data; ptr udata}, 32 bytes.
+// R-NET-KQUEUE
+function* keventCall(s: Sys, a: Value[]): Gen<bigint> {
+  const f = fdOf(s, a[0]!);
+  if (!f || f.obj?.k !== "kq") return fail(s, E().EBADF);
+  const kq = f.obj, m = s.it.mem, net = netOf(s);
+  const U16 = { tag: "int", bits: 16, signed: false } as const, I16 = { tag: "int", bits: 16, signed: true } as const;
+  const EV_ADD = 1, EV_DELETE = 2, EV_ONESHOT = 16, EV_CLEAR = 32, NOTE_TRIGGER = 0x1000000;
+  for (let i = 0; i < n(a[2]!); i++) {
+    const at = m.advance(a[1]!, i * 32);
+    const ident = Number(m.load(at, I64) as bigint), filter = n(m.load(m.advance(at, 8), I16)), flags = n(m.load(m.advance(at, 10), U16));
+    const fflags = n(m.load(m.advance(at, 12), U32)), udata = m.load(m.advance(at, 24), PTR);
+    const key = `${ident}:${filter}`;
+    if (flags & EV_DELETE) { if (!kq.watches.delete(key)) return fail(s, 2); continue; }
+    if (flags & EV_ADD) kq.watches.set(key, { ident, filter, fflags: 0, udata, clear: !!(flags & EV_CLEAR), oneshot: !!(flags & EV_ONESHOT), fired: false });
+    const w = kq.watches.get(key);
+    if (!w) return fail(s, 2);
+    if (filter === -10 && fflags & NOTE_TRIGGER) { w.fired = true; kick(s, net.q); }
+  }
+  const cap = n(a[4]!);
+  if (cap <= 0) return 0n;
+  const ts = a[5] === 0n ? undefined : Number(m.load(a[5]!, I64) as bigint) * 1000 + Number(m.load(m.advance(a[5]!, 8), I64) as bigint) / 1e6;
+  const collect = (): Watch[] => {
+    const out: Watch[] = [];
+    for (const w of kq.watches.values()) {
+      const ready = w.filter === -10 ? w.fired : (() => { const g = s.fds.get(w.ident); return !!g && (readiness(g.obj) & (w.filter === -1 ? POLLIN | POLLHUP : POLLOUT | POLLERR)) !== 0; })();
+      if (ready) out.push(w);
+    }
+    return out.slice(0, cap);
+  };
+  let left = ts;
+  for (;;) {
+    const ready = collect();
+    if (ready.length > 0 || left === 0) {
+      ready.forEach((w, i) => {
+        const at = m.advance(a[3]!, i * 32);
+        m.store(at, I64, BigInt(w.ident)); m.store(m.advance(at, 8), I16, BigInt(w.filter)); m.store(m.advance(at, 10), U16, 0n);
+        m.store(m.advance(at, 12), U32, 0n); m.store(m.advance(at, 16), I64, 0n); m.store(m.advance(at, 24), PTR, w.udata);
+        if (w.filter === -10) w.fired = false;
+        if (w.oneshot) kq.watches.delete(`${w.ident}:${w.filter}`);
+      });
+      return BigInt(ready.length);
+    }
+    const t0 = coOf(s)?.clock ?? 0;
+    const timedOut = yield* waitOn(s, net.q, "kevent with nothing ready", left);
+    if (timedOut) return collect().length > 0 ? yield* keventCall(s, [a[0]!, 0n, 0n, a[3]!, a[4]!, m.staticBytes(new Uint8Array(16))]) : 0n;
+    if (left !== undefined) left = Math.max(0, left - ((coOf(s)?.clock ?? 0) - t0));
+  }
+}
 // R-NET-PIPE
 function pipeCall(s: Sys, out: Value, flags: number): bigint {
   const q = new ByteQ(), nb = !!(flags & CONST().O_NONBLOCK);
@@ -846,7 +907,7 @@ export function replyAndClose(it: Interp, fd: number, bytes: Uint8Array): void {
   const f = s.fds.get(fd);
   if (!f?.obj) return;
   const o = f.obj;
-  const q = o.k === "pipe" ? (o.read ? null : o.q) : o.tx;
+  const q = o.k === "kq" ? null : o.k === "pipe" ? (o.read ? null : o.q) : o.tx;
   if (q && !q.broken) q.push(bytes.slice(0, Math.max(0, BUF_CAP - q.len)));
   s.fds.delete(fd);
   release(s, o);

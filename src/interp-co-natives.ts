@@ -103,6 +103,7 @@ plain("sleepBlockingMs", (it, [ms]) => { (it as InterpCo).clock += Math.max(0, N
 // A blocking-pool job or OS thread runs as one more task (R-TASK-BLOCKING): the interpreter has no second thread.
 plain("runtime$blockingPoolSubmit", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 plain("spawnOsThreadDetached", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
+plain("spawnWorkerAudited", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 
 // ── Channel ──
 // R-CHAN: a bounded queue. send parks while it is full, recv while it is empty. A task that parks joins its
@@ -211,10 +212,18 @@ const armReady = (it: InterpCo, a: Arm): boolean => {
     case "timer": return it.clock >= a.at!;
   }
 };
+// a channel arm keeps its own reference to the channel (one block) and the arm list's buffer is made by the first one
+const armChan = (it: Interp, self: Value, ch: Value, kind: "recv" | "send"): Value => {
+  const c = chan(it, ch), o = sel(it, self);
+  c.rc++;
+  o.blocks.push(...count(it, o.arms.some(a => a.chan) ? 1 : 2));
+  o.arms.push({ kind, chan: c });
+  return undefined;
+};
 const SELECT_NATIVES: Record<string, Native> = {
-  new: it => handle("select", new SelObj(count(it, 2))), // the select state and the node array
-  onRecv: (it, [self, ch]) => { const c = chan(it, ch); c.rc++; sel(it, self).arms.push({ kind: "recv", chan: c }); return undefined; },
-  onSend: (it, [self, ch]) => { const c = chan(it, ch); c.rc++; sel(it, self).arms.push({ kind: "send", chan: c }); return undefined; },
+  new: it => handle("select", new SelObj(count(it, 3))), // measured on compiled programs: three blocks for the state and its node array
+  onRecv: (it, [self, ch]) => armChan(it, self, ch, "recv"),
+  onSend: (it, [self, ch]) => armChan(it, self, ch, "send"),
   onTimeout: (it, [self, ms]) => { sel(it, self).arms.push({ kind: "timer", at: (it as InterpCo).clock + Math.max(0, Number(ms as bigint)) }); return undefined; },
 };
 // onRead and onWrite are generic over AsFd: the descriptor is what the instantiated type's own rawFd method returns
@@ -225,6 +234,7 @@ const fdArm = (kind: "read" | "write", ty: string | undefined): Native => (it, [
 };
 const SELECT_WAIT: CoNative = function* (it, [self]) {
   const o = sel(it, self);
+  if (o.arms.some(a => a.kind === "read" || a.kind === "write")) it.fdWaited = true; // registering an fd arm makes the scheduler size its table of fd waiters
   for (;;) {
     for (let i = 0; i < o.arms.length; i++) if (armReady(it, o.arms[i]!)) return BigInt(i);
     const me = it.cur, net = netWaiters(it);
@@ -235,7 +245,7 @@ const SELECT_WAIT: CoNative = function* (it, [self]) {
       else if (a.kind === "timer") at = Math.min(at, a.at!);
       else if (!onNet) { net.ts.push(me); onNet = true; }
     }
-    const entry = at < Infinity ? { t: me, at } : undefined;
+    const entry = at < Infinity ? { t: me, at, quiet: true } : undefined;
     if (entry) it.sleepers.push(entry);
     yield* it.park("Select.wait");
     for (const a of o.arms) { if (a.chan) { a.chan.recvW = a.chan.recvW.filter(t => t !== me); a.chan.sendW = a.chan.sendW.filter(t => t !== me); } }
