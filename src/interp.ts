@@ -256,8 +256,8 @@ export class Interp {
       case "FieldAccess": return !this.isLen(e) && !floatNamespaceConst(e);
       case "IndexAccess": { const t = this.T(e.object).tag; return t !== "string" && t !== "hashmap"; }
       case "UnaryOp": return e.op === "*";
+      default: return false;
     }
-    return false;
   }
   // T-STUCK
   resolve(e: Expr): Place {
@@ -283,6 +283,7 @@ export class Interp {
           const pt = this.T(e.operand);
           if (pt.tag === "ptr") return this.memPlace(this.peek(e.operand), pt.inner);
           const b = this.resolve(e.operand); return { ...b, path: [...b.path, "*"] }; }
+        default: break; // isPlaceExpr admits only the four kinds above
       }
     }
     return { slot: this.tempOwn(this.ev(e)), path: [], ro: false, viaRef: false };
@@ -690,6 +691,7 @@ export class Interp {
       case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return this.matchCore(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue(a.body, owns) }))); }
       case "RangeExpr": return this.unsupported("range outside a for-in");
     }
+    const _exhaustive: never = e; return _exhaustive;
   }
 
   // E-FIELD-MOVE
@@ -1275,6 +1277,7 @@ export class Interp {
       case "UnsafeBlock": return this.runBlock(s.body);
       case "ForInStmt": return this.forIn(s);
     }
+    const _exhaustive: never = s; return _exhaustive;
   }
 
   // `let g = p else { ... }` over a `?&T` / `?&mut T` parameter: the null test, then g is a reference to the memory p names

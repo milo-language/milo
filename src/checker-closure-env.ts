@@ -87,6 +87,7 @@ export function checkPlainClosureEnv(host: ProgramPassHost, program: Program, _v
         if (elem?.tag === "fn" && !elem.owning) for (const a of n.args as Expr[]) sink(a, { what: "an element of this collection" });
         break;
       }
+      default: break; // every other kind only has children to visit (below)
     }
     for (const k of Object.keys(n)) if (!BLOCK_SKIP.has(k)) visit(n[k], ret);
   };

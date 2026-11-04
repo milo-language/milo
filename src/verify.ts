@@ -1799,6 +1799,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
         if (f) scanRte(f, [...conds, `(not ${c})`], env, line);
         return;
       }
+      default: break; // every other kind: the generic descent below visits its children
     }
     for (const key of Object.keys(e)) {
       if (key === "span" || /body|arms/i.test(key)) continue;

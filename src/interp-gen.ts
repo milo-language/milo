@@ -43,6 +43,7 @@ export class InterpGen extends Interp {
           const pt = this.T(e.operand);
           if (pt.tag === "ptr") return this.memPlace((yield* this.peek$g(e.operand)), pt.inner);
           const b = (yield* this.resolve$g(e.operand)); return { ...b, path: [...b.path, "*"] }; }
+        default: break; // isPlaceExpr admits only the four kinds above
       }
     }
     return { slot: this.tempOwn((yield* this.ev$g(e))), path: [], ro: false, viaRef: false };
@@ -249,6 +250,7 @@ export class InterpGen extends Interp {
       case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return (yield* this.matchCore$g(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue$g(a.body, owns) })))); }
       case "RangeExpr": return this.unsupported("range outside a for-in");
     }
+    const _exhaustive: never = e; return _exhaustive;
   }
   *fieldAccess$g(e: Expr & { kind: "FieldAccess" }): Gen {
     const fnc = floatNamespaceConst(e);
@@ -607,6 +609,7 @@ export class InterpGen extends Interp {
       case "UnsafeBlock": return (yield* this.runBlock$g(s.body));
       case "ForInStmt": return (yield* this.forIn$g(s));
     }
+    const _exhaustive: never = s; return _exhaustive;
   }
   *nullRefUnwrap$g(s: Stmt & { kind: "LetElseStmt" }, nr: { inner: TypeKind; mutable: boolean }): Gen {
     let v = (yield* this.peek$g(s.value));

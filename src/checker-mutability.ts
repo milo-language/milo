@@ -68,6 +68,7 @@ function writtenNames(host: ProgramPassHost, view: ProgramView, body: unknown, w
       case "Ident":
         if (watch !== null && n.name === watch && !readsOnly(host, view, n, parent, key)) escapes = true;
         break;
+      default: break; // every other kind is not a write or an escape
     }
   });
   return { written, escapes };
