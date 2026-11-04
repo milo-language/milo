@@ -12,9 +12,9 @@ const real = realTree();
 // a copy of the tree the gate reads, to damage
 function copyTree() {
   const root = mkdtempSync(join(tmpdir(), "milo-trace-"));
-  const t = { doc: join(root, "milo.md"), srcDir: join(root, "src"), testFile: join(root, "interp.test.ts"), fixtureDirs: real.fixtureDirs }; // read-only: the gate never writes them
+  const t = { doc: join(root, "milo.md"), srcDir: join(root, "src"), testFiles: [join(root, "interp.test.ts")], fixtureDirs: real.fixtureDirs }; // read-only: the gate never writes them
   cpSync(real.doc, t.doc);
-  cpSync(real.testFile, t.testFile);
+  cpSync(real.testFiles.find(f => f.endsWith("/interp.test.ts"))!, t.testFiles[0]!);
   cpSync(real.srcDir, t.srcDir, { recursive: true, filter: p => !p.includes("/src/") || /\/src\/interp[^/]*\.ts$|\/src$/.test(p) });
   return t;
 }
@@ -57,7 +57,7 @@ test("planted gap: a citation of a rule the doc does not define fails (d)", () =
 
 test("planted gap: a rule whose test tag is removed fails (c)", () => {
   const t = copyTree();
-  edit(t.testFile, s => s.split("R-ATOMIC and R-WG").join("atomics and wait groups"));
+  edit(t.testFiles[0]!, s => s.split("R-ATOMIC and R-WG").join("atomics and wait groups"));
   const p = trace(t).problems.filter(x => x.startsWith("(c)"));
   expect(p.some(x => x.includes("R-ATOMIC"))).toBe(true);
   expect(p.some(x => x.includes("R-WG"))).toBe(true);

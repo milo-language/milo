@@ -4,7 +4,7 @@
 //   (a) every rule ID the doc defines is cited by at least one interpreter function;
 //   (b) every interpreter function cites a rule, or is in ALLOW below with a reason (plumbing);
 //   (c) every rule ID is exercised by a test: its ID appears in a test title in
-//       tests/interp.test.ts, or a fixture carries a `// @rule: ID` line;
+//       tests/interp*.test.ts, or a fixture carries a `// @rule: ID` line;
 //   (d) every ID the interpreter cites is defined in the doc (a typo or a deleted rule fails).
 // A function "cites" a rule with `// [RULE-ID]` or `// RULE-ID` in a comment on the lines right
 // above it or anywhere in its body, or by naming it in code (`stuck("R-MEM-OOB", ...)`). Rule IDs are the E-, S-, T- and R- ones; MILO-O-* names
@@ -116,7 +116,7 @@ function fixtureTags(dirs: string[]): Set<string> {
   return tags;
 }
 
-export function trace(opts: { doc: string; srcDir: string; testFile: string; fixtureDirs: string[]; allow?: Record<string, string> }): Report {
+export function trace(opts: { doc: string; srcDir: string; testFiles: string[]; fixtureDirs: string[]; allow?: Record<string, string> }): Report {
   const allow = opts.allow ?? ALLOW;
   const problems: string[] = [];
   const rules = parseRules(readFileSync(opts.doc, "utf-8"));
@@ -139,8 +139,8 @@ export function trace(opts: { doc: string; srcDir: string; testFile: string; fix
   for (const id of cited.keys()) if (!defined.has(id)) problems.push(`(d) ${cited.get(id)![0]} cites ${id}, which the doc does not define`);
 
   const tested = new Set<string>(fixtureTags(opts.fixtureDirs));
-  for (const t of testTitles(readFileSync(opts.testFile, "utf-8"))) for (const id of idsIn(t)) tested.add(id);
-  for (const id of rules) if (!tested.has(id)) problems.push(`(c) rule ${id} is exercised by no test title in ${opts.testFile.split("/").pop()} and no fixture \`// @rule:\` tag`);
+  for (const f of opts.testFiles) for (const t of testTitles(readFileSync(f, "utf-8"))) for (const id of idsIn(t)) tested.add(id);
+  for (const id of rules) if (!tested.has(id)) problems.push(`(c) rule ${id} is exercised by no test title in tests/interp*.test.ts and no fixture \`// @rule:\` tag`);
 
   if (rules.length < 50) problems.push(`parsed only ${rules.length} rules from the doc (the parser stopped matching?)`);
   if (fns.length < 150) problems.push(`parsed only ${fns.length} interpreter functions (the parser stopped matching?)`);
@@ -150,7 +150,7 @@ export function trace(opts: { doc: string; srcDir: string; testFile: string; fix
 export const realTree = () => ({
   doc: join(ROOT, "docs", "semantics", "milo.md"),
   srcDir: join(ROOT, "src"),
-  testFile: join(ROOT, "tests", "interp.test.ts"),
+  testFiles: readdirSync(join(ROOT, "tests")).filter(f => /^interp.*\.test\.ts$/.test(f)).sort().map(f => join(ROOT, "tests", f)),
   fixtureDirs: [join(ROOT, "tests", "fixtures"), join(ROOT, "mlir", "test", "programs")],
 });
 
