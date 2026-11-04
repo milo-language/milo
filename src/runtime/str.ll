@@ -398,13 +398,17 @@ dloop:
   %room = icmp slt i32 %dig, 17
   %over = fcmp oge double %av, %pow
   %grow = and i1 %room, %over
+  ; From 1e17 up every %.*g with at most 17 digits is in exponent form, so the search
+  ; starts at 1 digit (1e300 is "1e+300", not the 17-digit "1.0000000000000001e+300").
+  %huge = fcmp oge double %av, 1.000000e+17
+  %start = select i1 %huge, i32 1, i32 %dig
   br i1 %grow, label %dnext, label %ploop
 dnext:
   %dignext = add i32 %dig, 1
   %pownext = fmul double %pow, 1.000000e+01
   br label %dloop
 ploop:
-  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %p = phi i32 [ %start, %dloop ], [ %pnext, %again ]
   %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
   %back = call double @strtod(ptr %buf, ptr null)
   %exact = fcmp oeq double %back, %v
@@ -434,13 +438,16 @@ dloop:
   %room = icmp slt i32 %dig, 9
   %over = fcmp oge double %av, %pow
   %grow = and i1 %room, %over
+  ; As in milo.fmt.f64: from 1e9 up every %.*g with at most 9 digits is in exponent form.
+  %huge = fcmp oge double %av, 1.000000e+09
+  %start = select i1 %huge, i32 1, i32 %dig
   br i1 %grow, label %dnext, label %ploop
 dnext:
   %dignext = add i32 %dig, 1
   %pownext = fmul double %pow, 1.000000e+01
   br label %dloop
 ploop:
-  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]
+  %p = phi i32 [ %start, %dloop ], [ %pnext, %again ]
   %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @milo.fmt.g, i32 %p, double %d)
   %back = call float @strtof(ptr %buf, ptr null)
   %exact = fcmp oeq float %back, %v

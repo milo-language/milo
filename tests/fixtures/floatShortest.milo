@@ -8,6 +8,7 @@ from "std/json" import { Json }
 // @expect: 0.1 | {"x":0.1} | {"x":0.1} | round-trips true
 // @expect: 0.3 | {"x":0.3} | {"x":0.3} | round-trips true
 // @expect: 1e+21 | {"x":1e+21} | {"x":1e+21} | round-trips true
+// @expect: 1e+300 | {"x":1e+300} | {"x":1e+300} | round-trips true
 // @expect: 5e-324 | {"x":5e-324} | {"x":5e-324} | round-trips true
 // @expect: 1.7976931348623157e+308 | {"x":1.7976931348623157e+308} | {"x":1.7976931348623157e+308} | round-trips true
 // @expect: -0 | {"x":-0} | {"x":-0} | round-trips true
@@ -26,7 +27,7 @@ struct P {
 }
 
 fn main(): i32 {
-    let vals: Vec<f64> = [0.1, 0.3, 1e21, 5e-324, 1.7976931348623157e308, -0.0, 0.0, 1.0 / 3.0, 100.0, 1e-7, 2.5e-5, 9007199254740993.0, -1.5, 2.2250738585072014e-308]
+    let vals: Vec<f64> = [0.1, 0.3, 1e21, 1e300, 5e-324, 1.7976931348623157e308, -0.0, 0.0, 1.0 / 3.0, 100.0, 1e-7, 2.5e-5, 9007199254740993.0, -1.5, 2.2250738585072014e-308]
     for v in vals {
         let s = v.toString()
         let back = s.parseF64() ?? 99.0

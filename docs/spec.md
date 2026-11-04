@@ -11993,6 +11993,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `0.1 | {"x":0.1} | {"x":0.1} | round-trips true`
 - `0.3 | {"x":0.3} | {"x":0.3} | round-trips true`
 - `1e+21 | {"x":1e+21} | {"x":1e+21} | round-trips true`
+- `1e+300 | {"x":1e+300} | {"x":1e+300} | round-trips true`
 - `5e-324 | {"x":5e-324} | {"x":5e-324} | round-trips true`
 - `1.7976931348623157e+308 | {"x":1.7976931348623157e+308} | {"x":1.7976931348623157e+308} | round-trips true`
 - `-0 | {"x":-0} | {"x":-0} | round-trips true`
