@@ -28,7 +28,7 @@ export interface SysOptions {
   argv0?: string;
 }
 
-interface Node { dir: boolean; data: Uint8Array; size: number; mode: number; mtimeMs: number }
+interface Node { dir: boolean; data: Uint8Array; size: number; mode: number; mtimeMs: number; dev?: "null" | "zero" | "random" }
 interface Fd { node: Node | null; path: string; pos: number; read: boolean; write: boolean; append: boolean; std?: 0 | 1 | 2 }
 interface DirStream { names: { name: string; dir: boolean }[]; i: number; ent: Value }
 
@@ -65,7 +65,11 @@ export class Sys {
   constructor(public it: Interp, public o: SysOptions) {
     this.cwd = o.cwd ?? "/";
     this.env = new Map(Object.entries(o.env ?? {}));
-    this.files.set("/", { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
+    for (const d of ["/", "/tmp", "/var", "/var/tmp"]) this.files.set(d, { dir: true, data: new Uint8Array(0), size: 0, mode: d === "/tmp" ? 0o777 : 0o755, mtimeMs: 0 });
+    this.files.set("/dev", { dir: true, data: new Uint8Array(0), size: 0, mode: 0o755, mtimeMs: 0 });
+    for (const [name, dev] of [["null", "null"], ["zero", "zero"], ["urandom", "random"], ["random", "random"]] as const) {
+      this.files.set("/dev/" + name, { dir: false, data: new Uint8Array(0), size: 0, mode: 0o666, mtimeMs: 0, dev });
+    }
     initStdio(this);
   }
 
@@ -101,7 +105,7 @@ export class Sys {
     this.gone.delete(p);
     return n;
   }
-  now(): number { return Date.now() + this.sleptMs; }
+  now(): number { return Date.now() + this.sleptMs + this.it.clock; }
   grow(n: Node, size: number): void {
     if (size > n.data.length) { const d = new Uint8Array(Math.max(size, n.data.length * 2, 64)); d.set(n.data.subarray(0, n.size)); n.data = d; }
     if (size > n.size) n.data.fill(0, n.size, size);
@@ -147,6 +151,11 @@ function readFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
     return BigInt(k);
   }
   if (!fd.node || fd.node.dir) return s.setErrno(ERRNO.EISDIR);
+  if (fd.node.dev) {
+    const k = fd.node.dev === "null" ? 0 : count;
+    s.it.mem.writeBytes(buf, fd.node.dev === "zero" ? new Uint8Array(k) : randomBytes(k), "read");
+    return BigInt(k);
+  }
   const k = Math.max(0, Math.min(count, fd.node.size - fd.pos));
   s.it.mem.writeBytes(buf, fd.node.data.subarray(fd.pos, fd.pos + k), "read");
   fd.pos += k;
@@ -158,6 +167,7 @@ function writeFd(s: Sys, fd: Fd, buf: Value, count: number): bigint {
   if (fd.std === 1) { for (const b of bytes) s.it.out.push(b); return BigInt(count); }
   if (fd.std === 2) { for (const b of bytes) s.it.err.push(b); return BigInt(count); }
   if (!fd.node) return s.setErrno(ERRNO.EBADF);
+  if (fd.node.dev) return BigInt(count); // /dev/null and friends swallow writes
   if (fd.append) fd.pos = fd.node.size;
   s.grow(fd.node, Math.max(fd.node.size, fd.pos + count));
   fd.node.data.set(bytes, fd.pos);
@@ -224,6 +234,22 @@ export const SYS: Record<string, SysFn> = {
     const i = x.indexOf(n(c) & 255);
     return i < 0 ? 0n : s.it.mem.advance(p!, i);
   },
+  // A private mapping is a copy: anonymous pages are zeroed, a file's are its bytes (zero-padded to the page).
+  // A mapping without PROT_WRITE is read-only, so a store into it is stuck where the binary takes SIGSEGV.
+  mmap: (s, [_addr, len, prot, _flags, fd, off]) => {
+    const size = n(len);
+    let bytes = new Uint8Array(size);
+    if (n(fd) >= 0) {
+      const f = s.fds.get(n(fd));
+      if (!f?.node) return s.setErrno(ERRNO.EBADF);
+      bytes.set(f.node.data.subarray(n(off), Math.min(f.node.size, n(off) + size)));
+    }
+    return s.it.mem.map(bytes, !(n(prot) & 2));
+  },
+  munmap: (s, [p]) => { s.it.mem.unmap(p!); return 0n; },
+  mprotect: (s, [p, _len, prot]) => { s.it.mem.protect(p!, !!(n(prot) & 2)); return 0n; },
+  fflush: () => 0n,
+  readlink: (s, [p]) => { const node = s.lookup(path(s, p!)); return s.setErrno(node ? ERRNO.EINVAL : ERRNO.ENOENT); }, // there are no symlinks
   strlen: (s, [p]) => BigInt(s.it.mem.cstring(p!, "strlen").length),
   strcmp: (s, [a, b]) => {
     const x = s.it.mem.cstring(a!, "strcmp"), y = s.it.mem.cstring(b!, "strcmp");
@@ -294,6 +320,12 @@ export const SYS: Record<string, SysFn> = {
     if (mkdirSys(s, norm(s.cwd, name), 0o700) !== 0n) return 0n;
     s.it.mem.writeBytes(tmpl!, new Uint8Array([...enc.encode(name), 0]), "mkdtemp");
     return tmpl;
+  },
+  mkstemp: (s, [tmpl]) => {
+    const name = new TextDecoder().decode(s.it.mem.cstring(tmpl!, "mkstemp")).replace(/X+$/, m => Array.from(randomBytes(m.length), b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join(""));
+    const fd = openPath(s, norm(s.cwd, name), 2 | OFLAGS().creat | OFLAGS().excl, 0o600);
+    if (fd >= 0n) s.it.mem.writeBytes(tmpl!, new Uint8Array([...enc.encode(name), 0]), "mkstemp");
+    return fd;
   },
   opendir: (s, [p]) => {
     const q = path(s, p!), node = s.lookup(q);
@@ -386,7 +418,9 @@ export function callExtern(it: Interp, fn: AstFn, args: Value[]): Value {
   if (!impl) return it.unsupported(`extern ${sym}`);
   const s = (it.sys ??= new Sys(it, it.sysOptions));
   const sig = it.cr.functions.get(fn.name);
-  const r = impl(s, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type)));
+  const held: Value[] = [];
+  const r = impl(s, args.map((a, i) => it.mem.decay(a, sig?.params[i]?.type, held)));
+  for (const h of held) it.dropValue(h);
   const rt = sig?.ret;
   return typeof r === "bigint" && rt?.tag === "int" ? wrapInt(r, rt) : r;
 }

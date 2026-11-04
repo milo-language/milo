@@ -23,7 +23,12 @@ export class InterpGen extends Interp {
     if (this.isPlaceExpr(e)) {
       switch (e.kind) {
         case "Ident": return this.resolveIdent(e.name);
-        case "FieldAccess": { const b = (yield* this.resolve$g(e.object)); return { ...b, path: [...b.path, e.field] }; }
+        case "FieldAccess": {
+          const fo = this.T(e.object);
+          if (fo.tag === "ptr") return { ...this.memPlace((yield* this.peek$g(e.object)), fo.inner), path: [e.field] }; // p.f on a `*S`: the field of the struct at p
+          const b = (yield* this.resolve$g(e.object));
+          return { ...b, path: [...b.path, e.field] };
+        }
         case "IndexAccess": {
           const ot = this.T(e.object);
           if (ot.tag === "ptr") return this.memPlace(this.mem.advance((yield* this.peek$g(e.object)), Number((yield* this.ev$g(e.index)) as bigint) * this.mem.sizeOf(ot.inner)), ot.inner);
@@ -65,7 +70,9 @@ export class InterpGen extends Interp {
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type) : args[i]!));
+      const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) (yield* this.enterContracts$g(fn));
       const c = (yield* this.runStmts$g(fn.body));
@@ -142,7 +149,7 @@ export class InterpGen extends Interp {
     if (!fn) this.unsupported(`call of unknown function ${name}`);
     return (yield* this.callFn$g(fn, args));
   }
-  *evalArgs$g(args: Expr[], flags?: { isRef: boolean; isRefMut: boolean }[], offset = 0): Gen {
+  *evalArgs$g(args: Expr[], flags?: { isRef: boolean; isRefMut: boolean; ptrParam?: boolean }[], offset = 0): Gen {
     const places: { slot: Slot; path: Step[]; mut: boolean }[] = [];
     const pm = this.pend.length;
     const out: Value[] = [];
@@ -155,13 +162,17 @@ export class InterpGen extends Interp {
     }
     return out;
   }
-  *evalArg$g(raw: Expr, i: number, flags: { isRef: boolean; isRefMut: boolean }[] | undefined, offset: number, places: { slot: Slot; path: Step[]; mut: boolean }[]): Gen {
+  *evalArg$g(raw: Expr, i: number, flags: { isRef: boolean; isRefMut: boolean; ptrParam?: boolean }[] | undefined, offset: number, places: { slot: Slot; path: Step[]; mut: boolean }[]): Gen {
     {
       const a = raw.kind === "UnaryOp" && raw.op === "&mut" ? raw.operand : raw; // a call-site marker only
       const f = flags?.[i + offset];
       const mark = this.cr.autoBorrowed.get(raw);
       const byRef = !!mark || !!f?.isRef || !!f?.isRefMut;
-      if (!byRef) return this.pending((yield* this.ev$g(a)));
+      if (!byRef) {
+        // R-MEM-DECAY: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
+        if (f?.ptrParam && this.isPlaceExpr(a) && (this.T(a).tag === "array" || this.T(a).tag === "string")) return this.refTo((yield* this.resolve$g(a)), true);
+        return this.pending((yield* this.ev$g(a)));
+      }
       const mut = mark?.mutable ?? !!f?.isRefMut;
       if (!this.isPlaceExpr(a) && !mark) {
         // a value given to a reference parameter (a slice view, a computed value): it lives in a temp
@@ -467,7 +478,8 @@ export class InterpGen extends Interp {
       this.dropTemps(mark);
       return r;
     }
-    if (this.cr.replaySites.has(e)) return this.unsupported("record/replay wrapper");
+    // R-REPLAY-OFF: a replay wrapper site (cr.replaySites) is the direct extern call while record/replay is off
+
     const name = this.cr.rewrittenCalls.get(e) ?? e.func;
     if (BUILTIN_FNS.has(name) && !shadow(name)) return (yield* builtinCall$g(this, e));
     return (yield* this.callResolved$g(name, e.args, e));
@@ -803,7 +815,8 @@ export function* methodNative$g(it: InterpGen, e: MethodE, ot0: TypeKind): Gen {
         return { k: "str", b: { bytes: s.b.bytes.slice(lo, hi), rc: 1, id: -1 } };
       }
       case "len": return BigInt(((yield* it.peek$g(e.object)) as Str).b.bytes.length);
-      case "cstr": return it.mem.cstr((yield* it.peek$g(e.object)) as Str);
+      // R-MEM-CSTR: C may write through the pointer, so the string first becomes the only handle to its buffer (copy on write); the pointer is the buffer itself
+      case "cstr": return it.isPlaceExpr(e.object) ? it.mem.cPtr((yield* it.peek$g(e.object)) as Str, it.refTo((yield* it.resolve$g(e.object)), true)) : it.mem.cPtr((yield* it.peek$g(e.object)) as Str);
     }
     const fn = STR_METHODS[m];
     if (fn) return (yield* it.callResolved$g(fn, e.args, e, undefined, e.object));

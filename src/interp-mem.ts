@@ -14,7 +14,8 @@ import type { Interp } from "./interp";
 import { Layout } from "./layout";
 import type { TypeKind } from "./types";
 import type { Expr } from "./ast";
-import { staticStr, type Place, type Slot, type Str, type Struct, type Value, type VecV } from "./interp-values";
+import { unique } from "./interp-natives";
+import { staticStr, type Place, type Ref, type Slot, type Str, type Struct, type Value, type VecV } from "./interp-values";
 
 export interface PtrV { k: "ptr"; a: Alloc; off: number }
 export const isPtr = (v: unknown): v is PtrV => !!v && typeof v === "object" && (v as { k?: string }).k === "ptr";
@@ -30,8 +31,8 @@ export class Alloc {
   live = true;
   freedBy = "";
   constructor(
-    readonly id: number, readonly base: number, readonly reserve: number, readonly kind: "heap" | "static" | "view",
-    readonly be: Backing, readonly ro: boolean, readonly block: number,
+    readonly id: number, readonly base: number, readonly reserve: number, readonly kind: "heap" | "static" | "view" | "map",
+    readonly be: Backing, public ro: boolean, readonly block: number,
   ) {}
   get size(): number { return this.be.size(); }
   isLive(): boolean { return this.live && (this.be.live ? this.be.live() : true); }
@@ -107,7 +108,7 @@ export class Mem {
   }
 
   // ── allocations ──
-  private make(kind: "heap" | "static" | "view", be: Backing, ro: boolean, block: number): Alloc {
+  private make(kind: "heap" | "static" | "view" | "map", be: Backing, ro: boolean, block: number): Alloc {
     const size = be.size();
     const reserve = kind === "view" ? Math.max(size, VIEW_RESERVE) : size + GAP;
     const a = new Alloc(++this.ids, this.next, reserve, kind, be, ro, block);
@@ -139,6 +140,19 @@ export class Mem {
     this.free(q);
     return np;
   }
+  // mmap: pages are not malloc blocks (a compiled run's live-block count does not see them); only munmap releases them
+  map(bytes: Uint8Array, ro: boolean): PtrV {
+    const r = new Raw(bytes.length);
+    r.bytes.set(bytes);
+    return this.ptr(this.make("map", r, ro, -1));
+  }
+  unmap(p: Value): void {
+    const q = this.asPtr(p, "munmap");
+    if (q.a.kind !== "map" || q.off !== 0) this.it.stuck("R-MEM-FREE-INVALID", `munmap of a pointer that mmap did not return (${this.describe(q)})`);
+    if (!q.a.live) this.it.stuck("R-MEM-DOUBLE-FREE", `${this.describe(q)} was already unmapped`);
+    q.a.live = false;
+  }
+  protect(p: Value, writable: boolean): void { const q = this.asPtr(p, "mprotect"); q.a.ro = !writable; }
   // bytes the interpreter hands out and nothing frees: a `cstr()` copy, a host buffer. Not a counted block.
   staticBytes(bytes: Uint8Array, ro = false): PtrV {
     const r = new Raw(bytes.length);
@@ -173,11 +187,23 @@ export class Mem {
     b.set(s.b.bytes);
     return this.staticBytes(b);
   }
+  // What C is given for a string: a literal (no heap buffer) is copied into a NUL-terminated block of its own, so
+  // the literal and every handle made from it stay intact; any other string is made the only handle to its buffer
+  // (when it sits in a place) and C gets the buffer itself.
+  cPtr(s: Str, place?: Ref): Value {
+    if (s.b.id < 0) return this.cstr(s);
+    return this.strPtr(place ? unique(this.it, place) : s);
+  }
   // a string's bytes as `*u8` (a literal's are read-only)
   strPtr(s: Str): Value {
     const sb = s.b;
-    if (sb.bytes.length === 0) return 0n;
-    const a = this.viewOf(sb, "bytes", U8, { count: () => sb.bytes.length, get: i => BigInt(sb.bytes[i]!), set: (i, v) => { sb.bytes[i] = Number(v as bigint); }, live: () => sb.id < 0 || this.it.blocks.has(sb.id) }, sb.id < 0);
+    // a string is NUL-terminated in memory: the view has one byte past the content, always 0
+    const a = this.viewOf(sb, "bytes", U8, {
+      count: () => sb.bytes.length + 1,
+      get: i => BigInt(i < sb.bytes.length ? sb.bytes[i]! : 0),
+      set: (i, v) => { if (i < sb.bytes.length) sb.bytes[i] = Number(v as bigint); },
+      live: () => sb.id < 0 || this.it.blocks.has(sb.id),
+    }, sb.id < 0);
     return this.ptr(a, 0);
   }
   // `x.addrOf()`: the bytes of a place. A fixed array is its elements, any other value one element of its type.
@@ -191,19 +217,25 @@ export class Mem {
       return this.ptr(a, 0);
     }
     if (!["int", "float", "bool", "ptr", "struct", "array"].includes(ty.tag)) return it.unsupported(`.addrOf() of a ${ty.tag}`);
-    const a = this.viewOf(pl.slot, key, ty, { count: () => 1, get: () => it.getPlace(pl), set: v => it.setPlace(pl, v), live: () => !pl.slot.dead });
+    const a = this.viewOf(pl.slot, key, ty, { count: () => 1, get: () => it.getPlace(pl), set: (_i, v) => it.setPlace(pl, v), live: () => !pl.slot.dead });
     return this.ptr(a, 0);
   }
   // R-MEM-DECAY: a string or fixed array (or a borrow of one) given to a `*T` parameter becomes a pointer to its bytes.
-  // A string gets a NUL-terminated copy, since C reads to the NUL and a Milo string need not carry one.
-  decay(v: Value, param: TypeKind | undefined): Value {
-    if (param?.tag !== "ptr" || !v || typeof v !== "object") return v;
+  // The pointer is to the string's own buffer, which a place argument first makes unique (as `cstr()` does) so a
+  // write through it reaches no other handle. A string passed by value is a share the call now owns: it goes in
+  // `hold`, and the caller drops it when the call is over, so the buffer outlives every use of the pointer.
+  decay(v: Value, param: TypeKind | undefined, hold: Value[]): Value {
+    if (!v || typeof v !== "object") return v;
+    // an extern's `&T` / `&mut T` parameter is the address of the place the reference names
+    if (param?.tag === "ref" && (v.k === "ref" || v.k === "mut")) return this.placePtr(this.it.derefPlace(v), param.inner);
+    if (param?.tag !== "ptr") return v;
     if (v.k === "ref" || v.k === "mut") {
       const inner = this.it.deref(v);
-      if (inner && typeof inner === "object" && (inner.k === "str" || inner.k === "arr")) return this.decay(inner, param);
+      if (inner && typeof inner === "object" && inner.k === "str") return this.cPtr(inner, v);
+      if (inner && typeof inner === "object" && inner.k === "arr") return this.decay(inner, param, hold);
       return v;
     }
-    if (v.k === "str") return this.cstr(v);
+    if (v.k === "str") { hold.push(v); return this.cPtr(v); }
     if (v.k === "arr") return this.castToPtr(v, { tag: "array", element: param.inner, size: v.e.length }, param);
     return v;
   }

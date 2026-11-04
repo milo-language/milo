@@ -42,7 +42,7 @@ export function display(it: Interp, v: Value, ty: TypeKind, nested = false): str
 // ── strings ──
 export function concat(it: Interp, a: Str, b: Str): Str { return it.newStr([...a.b.bytes, ...b.b.bytes]); }
 // Make the string in `r` the only handle to a heap buffer (copy on write), then return it.
-function unique(it: Interp, r: Ref): Str {
+export function unique(it: Interp, r: Ref): Str {
   const s = it.deref(r) as Str;
   if (s.b.id >= 0 && s.b.rc === 1) return s;
   const copy = it.newStr([...s.b.bytes]);
@@ -152,14 +152,34 @@ nat("string$substr", (it, [self, a, b]) => {
 // The compiler's own memory builtins (src/checker.ts registers them; src/emit-mlir.ts lowers them to a load or a copy).
 // Each reads or writes through the byte memory of src/interp-mem.ts; a string or array argument decays to a pointer first.
 const PTR_U8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
-nat("_loadU8", (it, [p]) => it.mem.load(it.mem.decay(p!, PTR_U8), { tag: "int", bits: 8, signed: false }));
-nat("_loadI32", (it, [p]) => it.mem.load(it.mem.decay(p!, PTR_U8), { tag: "int", bits: 32, signed: true }));
-nat("_bytesToString", (it, [p, n]) => it.newStr([...it.mem.readBytes(it.mem.decay(p!, PTR_U8), Number(n as bigint), "_bytesToString")]));
-nat("_cstrToString", (it, [p]) => it.newStr([...it.mem.cstring(it.mem.decay(p!, PTR_U8), "_cstrToString")]));
+function withPtr<T>(it: Interp, p: Value, f: (q: Value) => T): T {
+  const held: Value[] = [];
+  try { return f(it.mem.decay(p, PTR_U8, held)); } finally { for (const h of held) it.dropValue(h); }
+}
+nat("_loadU8", (it, [p]) => withPtr(it, p!, q => it.mem.load(q, { tag: "int", bits: 8, signed: false })));
+nat("_loadI32", (it, [p]) => withPtr(it, p!, q => it.mem.load(q, { tag: "int", bits: 32, signed: true })));
+nat("_bytesToString", (it, [p, n]) => withPtr(it, p!, q => it.newStr([...it.mem.readBytes(q, Number(n as bigint), "_bytesToString")])));
+nat("_cstrToString", (it, [p]) => withPtr(it, p!, q => it.newStr([...it.mem.cstring(q, "_cstrToString")])));
 nat("_strDataPtr", (it, [s]) => it.mem.strPtr(it.deref(s!) as Str));
 nat("_putByte", (it, [b]) => { it.out.push(Number(b as bigint)); return undefined; });
 nat("_miloArgCount", () => 1n);
 nat("_miloArgAt", (it, [i]) => (i === 0n ? it.newStr([...enc.encode(it.entryFile || "main")]) : it.panic("argument index out of range")));
+// rawSlice(p, len) / rawSliceMut(p, len) (std/foreign): a slice whose elements are the memory at p, read and written in place
+for (const name of ["rawSlice", "rawSliceMut"]) {
+  nat(name, (it, [p, len], e) => {
+    const t = it.T(e!);
+    const el = t.tag === "array" || t.tag === "vec" ? t.element : { tag: "unknown" as const };
+    const n = Number(len as bigint), es = it.mem.sizeOf(el);
+    if (n < 0) it.panic("rawSlice: negative length");
+    if (n === 0) return it.newVec([]);
+    const at = (i: number) => it.mem.advance(p!, i * es);
+    const elems = new Proxy([] as Value[], {
+      get: (tg, k, r) => (k === "length" ? n : typeof k === "string" && /^\d+$/.test(k) ? it.mem.load(at(Number(k)), el) : Reflect.get(tg, k, r)),
+      set: (tg, k, v, r) => { if (typeof k === "string" && /^\d+$/.test(k)) { it.mem.store(at(Number(k)), el, v as Value); return true; } return k === "length" || Reflect.set(tg, k, v, r); },
+    });
+    return { k: "vec", buf: { id: -1, elems }, start: 0, len: n, cap: n, view: true } as VecV;
+  });
+}
 nat("strWithCapacity", (it, [n]) => { const s = it.newStr([]); if ((n as bigint) > 0n) s.b.id = it.alloc(); return s; });
 
 // R-ATOMIC: one task runs at a time, so an atomic is a plain read-modify-write of the place its pointer names.
@@ -423,7 +443,8 @@ export function methodNative(it: Interp, e: MethodE, ot0: TypeKind): Value | typ
         return { k: "str", b: { bytes: s.b.bytes.slice(lo, hi), rc: 1, id: -1 } };
       }
       case "len": return BigInt((it.peek(e.object) as Str).b.bytes.length);
-      case "cstr": return it.mem.cstr(it.peek(e.object) as Str);
+      // R-MEM-CSTR: C may write through the pointer, so the string first becomes the only handle to its buffer (copy on write); the pointer is the buffer itself
+      case "cstr": return it.isPlaceExpr(e.object) ? it.mem.cPtr(it.peek(e.object) as Str, it.refTo(it.resolve(e.object), true)) : it.mem.cPtr(it.peek(e.object) as Str);
     }
     const fn = STR_METHODS[m];
     if (fn) return it.callResolved(fn, e.args, e, undefined, e.object);

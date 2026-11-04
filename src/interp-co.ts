@@ -41,8 +41,6 @@ export class InterpCo extends InterpGen {
   runq: Task[] = [];
   cur!: Task;
   drainWaiter: Task | null = null;
-  // R-TIME: a virtual clock in milliseconds. It moves only when no task is ready, to the earliest sleeper's wake time.
-  clock = 0;
   sleepers: { t: Task; at: number }[] = [];
   private nextTaskId = 1;
   // contexts of finished default-stack tasks the scheduler keeps for the next spawn (at most 64, as std/runtime)

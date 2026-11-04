@@ -50,6 +50,7 @@ export class Interp {
   depth = 0;
   dropImpls: Set<string>;
   mem = new Mem(this);
+  clock = 0; // R-TIME: virtual milliseconds the task scheduler has slept (src/interp-co.ts); the wall clock adds it (R-SYS-CLOCK)
   sysOptions: SysOptions = {};
   sys?: Sys; // the C functions std calls (src/interp-sys.ts), made on the first extern call
 
@@ -242,7 +243,12 @@ export class Interp {
     if (this.isPlaceExpr(e)) {
       switch (e.kind) {
         case "Ident": return this.resolveIdent(e.name);
-        case "FieldAccess": { const b = this.resolve(e.object); return { ...b, path: [...b.path, e.field] }; }
+        case "FieldAccess": {
+          const fo = this.T(e.object);
+          if (fo.tag === "ptr") return { ...this.memPlace(this.peek(e.object), fo.inner), path: [e.field] }; // p.f on a `*S`: the field of the struct at p
+          const b = this.resolve(e.object);
+          return { ...b, path: [...b.path, e.field] };
+        }
         case "IndexAccess": {
           const ot = this.T(e.object);
           if (ot.tag === "ptr") return this.memPlace(this.mem.advance(this.peek(e.object), Number(this.ev(e.index) as bigint) * this.mem.sizeOf(ot.inner)), ot.inner);
@@ -438,8 +444,8 @@ export class Interp {
   }
 
   // ── calls ──
-  paramFlags(fn: AstFn): { name: string; isRef: boolean; isRefMut: boolean }[] {
-    return fn.params.map(p => { const t = declaredType(p); return { name: p.name, isRef: t.isRef && !t.isNullableRef, isRefMut: t.isRefMut && !t.isNullableRef }; });
+  paramFlags(fn: AstFn): { name: string; isRef: boolean; isRefMut: boolean; ptrParam: boolean }[] {
+    return fn.params.map(p => { const t = declaredType(p); return { name: p.name, isRef: t.isRef && !t.isNullableRef, isRefMut: t.isRefMut && !t.isNullableRef, ptrParam: !!t.isPtr }; });
   }
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
@@ -448,7 +454,9 @@ export class Interp {
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-DECAY
-      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type) : args[i]!));
+      const held: Value[] = []; // strings given by value to a `*T` parameter: owned until the call returns
+      fn.params.forEach((p, i) => this.declare(p.name, sig ? this.mem.decay(args[i]!, sig.params[i]?.type, held) : args[i]!));
+      held.forEach((h, i) => this.declare(`$held${i}`, h));
       const checked = this.contractChecks && !!fn.contracts?.length;
       if (checked) this.enterContracts(fn);
       const c = this.runStmts(fn.body);
@@ -532,7 +540,7 @@ export class Interp {
   // [E-CALL] step 1: arguments left to right. by value: E-COPY / E-MOVE; &p: ref; &mut p: mut.
   // `borrow(i)` says how argument i is passed: the checker's autoBorrowed mark, or the
   // parameter's own reference type.
-  evalArgs(args: Expr[], flags?: { isRef: boolean; isRefMut: boolean }[], offset = 0): Value[] {
+  evalArgs(args: Expr[], flags?: { isRef: boolean; isRefMut: boolean; ptrParam?: boolean }[], offset = 0): Value[] {
     const places: { slot: Slot; path: Step[]; mut: boolean }[] = [];
     const pm = this.pend.length;
     const out: Value[] = [];
@@ -545,13 +553,17 @@ export class Interp {
     }
     return out;
   }
-  evalArg(raw: Expr, i: number, flags: { isRef: boolean; isRefMut: boolean }[] | undefined, offset: number, places: { slot: Slot; path: Step[]; mut: boolean }[]): Value {
+  evalArg(raw: Expr, i: number, flags: { isRef: boolean; isRefMut: boolean; ptrParam?: boolean }[] | undefined, offset: number, places: { slot: Slot; path: Step[]; mut: boolean }[]): Value {
     {
       const a = raw.kind === "UnaryOp" && raw.op === "&mut" ? raw.operand : raw; // a call-site marker only
       const f = flags?.[i + offset];
       const mark = this.cr.autoBorrowed.get(raw);
       const byRef = !!mark || !!f?.isRef || !!f?.isRefMut;
-      if (!byRef) return this.pending(this.ev(a));
+      if (!byRef) {
+        // R-MEM-DECAY: a string or array place given to a `*T` parameter is lent, so the pointer reaches the place itself and not a copy
+        if (f?.ptrParam && this.isPlaceExpr(a) && (this.T(a).tag === "array" || this.T(a).tag === "string")) return this.refTo(this.resolve(a), true);
+        return this.pending(this.ev(a));
+      }
       const mut = mark?.mutable ?? !!f?.isRefMut;
       if (!this.isPlaceExpr(a) && !mark) {
         // a value given to a reference parameter (a slice view, a computed value): it lives in a temp
@@ -1025,7 +1037,8 @@ export class Interp {
       this.dropTemps(mark);
       return r;
     }
-    if (this.cr.replaySites.has(e)) return this.unsupported("record/replay wrapper");
+    // R-REPLAY-OFF: a replay wrapper site (cr.replaySites) is the direct extern call while record/replay is off
+
     const name = this.cr.rewrittenCalls.get(e) ?? e.func;
     if (BUILTIN_FNS.has(name) && !shadow(name)) return builtinCall(this, e);
     return this.callResolved(name, e.args, e);
