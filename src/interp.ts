@@ -1360,7 +1360,7 @@ export class Interp {
     } finally { this.frame.scopes.pop(); this.dropScope(scope); }
   }
   // for-in: the loop variable is a reference to the element, or (consuming) the element moved out
-  // E-NEW-ITER
+  // E-NEW-ITER, E-FOR-IN (a Vec, slice, array or string: its length read once, each element bound in index order)
   forIn(s: Stmt & { kind: "ForInStmt" }): Completion {
     const fin = (r: Completion | "next"): Completion | "next" => (r === "next" ? "next" : r?.k === "break" ? undefined : r);
     if (s.iterable.kind === "RangeExpr") {

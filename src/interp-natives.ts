@@ -378,6 +378,7 @@ export function nativeFor(name: string): Native | undefined {
 export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "isNull"]);
 // Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
 // that part is evaluated, so output from evaluating a later part comes after it (print-order).
+// E-INTERP: each part's text appended in order (a string its bytes, anything else its display).
 function renderParts(it: Interp, e: CallE, sink?: number[]): number[] {
   let args = e.args;
   const only = args.length === 1 ? args[0]! : null;
