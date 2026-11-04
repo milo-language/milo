@@ -278,8 +278,7 @@ Properties the old LLVM-text codegen (deleted 2026-11-04) had that the MLIR back
 In order:
 
 1. first external application traced end to end (requirements, proofs, tests, object)
-2. line-coverage gate
-3. lock levels plus the channel wait-graph rule ([plans/parallelism.md](plans/parallelism.md))
+2. lock levels plus the channel wait-graph rule ([plans/parallelism.md](plans/parallelism.md))
 
 ## Planned
 
