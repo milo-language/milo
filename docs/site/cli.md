@@ -37,7 +37,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`fmt <file...>`](#fmt) | Format source files (to stdout unless -w). |
 | [`prove <file>`](#prove) | Prove contracts hold, via std/smt, the milo-native prover. |
 | [`safety <file> --safety=<level>`](#safety) | Check safety profile compliance. |
-| [`verify <file> --profile <level>`](#verify) | One pass over a certification profile: its rules, the strict requirements matrix, and prove --rte. |
+| [`verify --profile <level> <file.milo \| binary>`](#verify) | Check against a safety profile: a .milo source gets the profile's rules, the strict requirements matrix and prove --rte; a built binary gets its pinned build record, no allocation, no call cycles and the runtime-symbol allowlist. |
 | [`wcet <file> [-o out]`](#wcet) | Emit OTAWA flow facts (loop bounds) for WCET analysis. |
 | [`lsp`](#lsp) | Run the language server on stdio (what an editor launches). |
 | [`skill`](#skill) | Print language guide for LLMs. |
@@ -233,15 +233,18 @@ Check safety profile compliance.
 ### verify
 
 ```sh
-milo verify <file> --profile <level>
+milo verify --profile <level> <file.milo
+milo binary>
 ```
 
-One pass over a certification profile: its rules, the strict requirements matrix, and prove --rte.
+Check against a safety profile: a .milo source gets the profile's rules, the strict requirements matrix and prove --rte; a built binary gets its pinned build record, no allocation, no call cycles and the runtime-symbol allowlist.
 
 | Flag | Effect |
 |---|---|
 | `--profile <level>` | The safety profile (milo safety --list); do178 profiles make the requirements matrix strict. |
-| `--solver=z3` | Prove with z3 instead of std/smt. |
+| `--solver=z3` | Source: prove with z3 instead of std/smt. |
+| `--json` | Binary: machine-readable findings. |
+| `--all` | Binary: list every finding (default: first 8 per check). |
 
 ### wcet
 
