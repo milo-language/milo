@@ -41,6 +41,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-map.ts` | The std/hashmap intrinsics: FNV-1a hashing and key equality (_mapHash, _mapKeyEq), the structural copy of a stored value (_mapCopyOut), the seed source (_mapSeed) and the checked slot allocation (_ma… |
 | `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting, map buffers), kept as IR text in src/runtime/*.ll. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
+| `src/const-fold.ts` | Compile-time folding of module-global initializers: the one place that decides which globals get a static initializer and what it is. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct, plus `toJsonArray` / `fromJsonArray` for a document whose top level is an array of them. |

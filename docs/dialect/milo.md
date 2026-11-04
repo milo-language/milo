@@ -1391,6 +1391,38 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.global.def` (::milo::GlobalDefOp)
+
+_The definition of a module global, with its static initializer_
+
+Syntax:
+
+```
+operation ::= `milo.global.def` $sym_name (`thread_local` $tls^)? `:` $type (`=` $init^)? attr-dict
+```
+
+Module global `sym_name` of `type`, internal to the module (`thread_local`: one per OS
+thread), whose bytes `milo.global` and `milo.global.addr` name. `init` is the value it
+starts as, laid out by `type`: an integer or float attribute for a scalar (an integer is
+resized to the field's width, a float rounded to its precision), an array attribute for a
+struct (one entry per field, in order) or an array (one entry per element, or a single
+entry for all of them), `unit` for zero. Absent: all zero. A global whose initializer
+needs code is zero here and filled at run time.
+
+Interfaces: `Symbol`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>sym_name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+<tr><td><code>type</code></td><td>::mlir::TypeAttr</td><td>any type attribute</td></tr>
+<tr><td><code>init</code></td><td>::mlir::Attribute</td><td>any attribute</td></tr>
+<tr><td><code>tls</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+</table>
+
+
+
 ### `milo.global.init` (::milo::GlobalInitOp)
 
 _Fill a lazy global before its first read_

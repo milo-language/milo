@@ -2,6 +2,7 @@
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRStruct, HIRGlobal, HIRPattern } from "./hir";
 import { LlvmTextBuilder, asGen, Ty, val, type Block, type Param, type Val } from "./ir";
+import { isFullyConstInit } from "./const-fold";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind } from "./types";
 import type { TargetInfo } from "./target";
@@ -1222,7 +1223,7 @@ export class Codegen {
     // A global that nothing reads exists for what its initializer does (std/replay boots
     // record/replay that way), so that initializer still runs before main, in
     // `module.globals` order, which the checker sorted by dependency.
-    const runtimeInitGlobals = module.globals.filter(g => !this.isFullyConstInit(g));
+    const runtimeInitGlobals = module.globals.filter(g => !isFullyConstInit(g, this.structLayouts));
     const initFns: HIRFunction[] = runtimeInitGlobals.map(g => ({
       name: `${LAZY_INIT_PREFIX}${g.name}`,
       params: [],
@@ -1403,15 +1404,9 @@ export class Codegen {
       this.output.splice(1, 0, "@_milo_panic_hook = internal thread_local global ptr null");
     }
 
-    // emit module-level globals
-    for (const g of module.globals) {
-      const ty = this.llvmType(g.type);
-      const initVal = this.getConstantInitializer(g);
-      const tls = g.threadLocal ? "thread_local " : "";
-      this.output.splice(1, 0, `@${g.name} = internal ${tls}global ${ty} ${initVal}`);
-    }
-
-    // The itable globals are emitted by MLIR (emit-mlir.ts emitItables); what stays here is the
+    // Module globals are emitted by MLIR (emit-mlir.ts globalOps); const-fold.ts decides which
+    // are static and what they start as.
+    // The itable globals are emitted by MLIR (emit-mlir.ts itableOps); what stays here is the
     // destructor slot's target, which only this module can define.
     for (const itable of module.itables) {
       if (!this.structNeedsDrop(itable.concreteType)) continue;
@@ -3048,191 +3043,6 @@ export class Codegen {
   }
 
   private usedSatIntrinsics?: Set<string>;
-
-  // LLVM encodes a float or double constant as a raw 64-bit hex pattern, but a
-  // `float` operand only accepts a pattern that is exactly representable in
-  // single precision. Emitting the double bits of 0.1 for an f32 field is a hard
-  // LLVM error ("floating point constant invalid for type"), so round through
-  // f32 first when that is the operand type.
-  public formatFloatBits(v: number, llvmTy = "double"): string {
-    const buf = new ArrayBuffer(8);
-    new Float64Array(buf)[0] = llvmTy === "float" ? Math.fround(v) : v;
-    const bits = new BigUint64Array(buf)[0];
-    return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
-  }
-
-  // Fold a compile-time-constant numeric expression (literals + arithmetic on
-  // them) to an int/float value. The checker's isConstGlobalInit already admits
-  // BinOp/UnaryOp of constants as valid global initializers, but without this
-  // fold codegen fell through to "0" and silently zeroed them (e.g. a global
-  // `let x: f64 = a / b` became 0.0). Int math stays in bigint to preserve i64
-  // precision; float math promotes to Number.
-  private tryConstNumeric(
-    expr: import("./hir").HIRExpr,
-  ): { kind: "int"; v: bigint } | { kind: "float"; v: number } | null {
-    switch (expr.kind) {
-      case "IntLit": return { kind: "int", v: BigInt(expr.value) };
-      case "FloatLit": return { kind: "float", v: expr.value };
-      case "BoolLit": return { kind: "int", v: expr.value ? 1n : 0n };
-      case "UnaryOp": {
-        const o = this.tryConstNumeric(expr.operand);
-        if (!o) return null;
-        if (expr.op === "-") return o.kind === "float" ? { kind: "float", v: -o.v } : { kind: "int", v: -o.v };
-        if (expr.op === "~" && o.kind === "int") return { kind: "int", v: -o.v - 1n }; // two's-complement bitwise-not
-        if (expr.op === "!" && o.kind === "int") return { kind: "int", v: o.v === 0n ? 1n : 0n };
-        return null;
-      }
-      case "Cast": {
-        const o = this.tryConstNumeric(expr.operand);
-        if (!o) return null;
-        if (expr.targetType.tag === "float") return { kind: "float", v: o.kind === "float" ? o.v : Number(o.v) };
-        if (expr.targetType.tag === "int") return { kind: "int", v: o.kind === "float" ? BigInt(Math.trunc(o.v)) : o.v };
-        return null;
-      }
-      case "BinOp": {
-        const l = this.tryConstNumeric(expr.left);
-        const r = this.tryConstNumeric(expr.right);
-        if (!l || !r) return null;
-        const asFloat = expr.type.tag === "float" || l.kind === "float" || r.kind === "float";
-        if (asFloat) {
-          const a = l.kind === "float" ? l.v : Number(l.v);
-          const b = r.kind === "float" ? r.v : Number(r.v);
-          switch (expr.op) {
-            case "+": return { kind: "float", v: a + b };
-            case "-": return { kind: "float", v: a - b };
-            case "*": return { kind: "float", v: a * b };
-            case "/": return { kind: "float", v: a / b };
-            default: return null;
-          }
-        }
-        const a = l.v as bigint, b = r.v as bigint;
-        switch (expr.op) {
-          case "+": return { kind: "int", v: a + b };
-          case "-": return { kind: "int", v: a - b };
-          case "*": return { kind: "int", v: a * b };
-          case "/": return b === 0n ? null : { kind: "int", v: a / b };  // bigint / truncates toward zero, matches sdiv
-          case "%": return b === 0n ? null : { kind: "int", v: a % b };
-          case "<<": return { kind: "int", v: a << b };
-          case ">>": return { kind: "int", v: a >> b };
-          case "&": return { kind: "int", v: a & b };
-          case "|": return { kind: "int", v: a | b };
-          case "^": return { kind: "int", v: a ^ b };
-          default: return null;
-        }
-      }
-      default: return null;
-    }
-  }
-
-  private tryConstantExpr(expr: import("./hir").HIRExpr): string | null {
-    switch (expr.kind) {
-      case "IntLit": return expr.value.toString();
-      case "FloatLit": return this.formatFloatBits(expr.value);
-      case "BoolLit": return expr.value ? "1" : "0";
-      case "BinOp":
-      case "UnaryOp": {
-        const n = this.tryConstNumeric(expr);
-        if (n === null) return null;
-        return n.kind === "float" ? this.formatFloatBits(n.v) : n.v.toString();
-      }
-      case "Cast":
-        if (expr.type.tag === "ptr") return "null";
-        if (expr.type.tag === "int" || expr.type.tag === "float") {
-          const n = this.tryConstNumeric(expr);
-          if (n !== null) return n.kind === "float" ? this.formatFloatBits(n.v) : n.v.toString();
-        }
-        return null;
-      case "StructLit": {
-        const layout = this.structLayouts.get(expr.name);
-        // A struct-update base is a run-time value even when every field is listed.
-        if (!layout || expr.base) return null;
-        const fieldVals: string[] = [];
-        for (const lf of layout.fields) {
-          const ef = expr.fields.find(f => f.name === lf.name);
-          if (!ef) return null;
-          const val = this.tryConstantExpr(ef.value);
-          if (val === null) return null;
-          fieldVals.push(`${lf.type} ${val}`);
-        }
-        return `{ ${fieldVals.join(", ")} }`;
-      }
-      case "ArrayLit": {
-        if (expr.type.tag !== "array" || expr.type.size === null) return null;
-        const elemTy = this.llvmType(expr.type.element);
-        const elemVals: string[] = [];
-        for (const elem of expr.elements) {
-          const val = this.tryConstantExpr(elem);
-          if (val === null) return null;
-          elemVals.push(`${elemTy} ${val}`);
-        }
-        return `[${elemVals.join(", ")}]`;
-      }
-      case "ArrayRepeat": {
-        const elemKind = expr.type.tag === "array" ? expr.type.element : { tag: "int" as const, bits: 32, signed: true };
-        const elemTy = this.llvmType(elemKind);
-        const val = this.tryConstantExpr(expr.value);
-        if (val === null) return null;
-        if (val === "0" || val === "zeroinitializer") return "zeroinitializer";
-        const elems = Array(expr.count).fill(`${elemTy} ${val}`);
-        return `[${elems.join(", ")}]`;
-      }
-      default:
-        return null;
-    }
-  }
-
-  // Whether the LLVM constant initializer captures the whole value. A struct literal
-  // with a non-const field lowers to a *partial* constant (that field zeroed), so it
-  // still needs the runtime pass — this is the check that decides which globals go in
-  // @__milo_global_init, and answering "yes" for a partial init is how a field silently
-  // stays empty.
-  private isFullyConstInit(g: import("./hir").HIRGlobal): boolean {
-    if (this.tryConstantExpr(g.value) !== null) return true;
-    if (g.value?.kind !== "StructLit" || g.value.base) return false;
-    const layout = this.structLayouts.get(g.type.tag === "struct" ? g.type.name : "");
-    if (!layout) return false;
-    const byName = new Map(g.value.fields.map(f => [f.name, f.value]));
-    return layout.fields.every(f => {
-      const e = byName.get(f.name);
-      return !e || this.tryConstantExpr(e) !== null;
-    });
-  }
-
-  private getConstantInitializer(g: import("./hir").HIRGlobal): string {
-    const constVal = this.tryConstantExpr(g.value);
-    if (constVal !== null) return constVal;
-    // A struct literal is not a single constant expression, but its fields usually
-    // are. Falling straight through to zeroinitializer silently discarded them —
-    // `S { a: -1, c: 42 }` came out as all zeros, which is the exact failure the
-    // non-const module-scope check exists to prevent.
-    const structInit = this.tryConstantStructInit(g.value, g.type);
-    if (structInit !== null) return structInit;
-    // zeroinitializer is valid for every LLVM type, scalars included. Classifying by
-    // type tag here to pick between "0"/"null"/"zeroinitializer" is what got a
-    // `double 0` (and `{ ptr, ptr } 0`) past codegen and into a clang parse error:
-    // "0" is only legal for integer and i1, and the tag list only covered aggregates.
-    return "zeroinitializer";
-  }
-
-  // Build an LLVM constant struct from a struct-literal global. Fields that are not
-  // compile-time constants (Vec.new(), String literals needing a heap buffer, any
-  // computed scalar) fall back to zeroinitializer for that field alone, which is their
-  // correct empty form; the runtime global-init pass fills them in.
-  private tryConstantStructInit(value: import("./hir").HIRExpr, type: TypeKind): string | null {
-    if (!value || value.kind !== "StructLit" || value.base || type.tag !== "struct") return null;
-    const layout = this.structLayouts.get(type.name);
-    if (!layout) return null;
-    const byName = new Map(value.fields.map(f => [f.name, f.value]));
-    const parts: string[] = [];
-    for (const f of layout.fields) {
-      const expr = byName.get(f.name);
-      const c = expr ? this.tryConstantExpr(expr) : null;
-      // Same reason as getConstantInitializer: zeroinitializer covers every field type,
-      // so there is nothing to classify. A `double`/`float` field used to emit `0`.
-      parts.push(`${f.type} ${c !== null ? c : "zeroinitializer"}`);
-    }
-    return `{ ${parts.join(", ")} }`;
-  }
 
   // ---- Field-move flags.
   //

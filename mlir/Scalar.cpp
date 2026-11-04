@@ -780,15 +780,15 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
 // carry types, and the splice drops the declaration for a name the module already has.
 Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name, bool threadLocal = false) {
   auto module = op->getParentOfType<ModuleOp>();
-  auto g = module.lookupSymbol<LLVM::GlobalOp>(name);
-  if (!g) {
+  // Any symbol of that name is the definition: a milo.global.def may not be lowered yet.
+  if (!module.lookupSymbol(name)) {
     OpBuilder::InsertionGuard guard(rw);
     rw.setInsertionPointToStart(module.getBody());
-    g = LLVM::GlobalOp::create(rw, op->getLoc(), rw.getI64Type(), /*isConstant=*/false,
-                               LLVM::Linkage::External, name, Attribute(), /*alignment=*/0,
-                               /*addrSpace=*/0, /*dsoLocal=*/false, threadLocal);
+    LLVM::GlobalOp::create(rw, op->getLoc(), rw.getI64Type(), /*isConstant=*/false,
+                           LLVM::Linkage::External, name, Attribute(), /*alignment=*/0,
+                           /*addrSpace=*/0, /*dsoLocal=*/false, threadLocal);
   }
-  return LLVM::AddressOfOp::create(rw, op->getLoc(), g);
+  return LLVM::AddressOfOp::create(rw, op->getLoc(), LLVM::LLVMPointerType::get(rw.getContext()), name);
 }
 
 // The shape of legacy codegen's replayEngineScope: depth += 1 at entry when the heap
@@ -1401,6 +1401,76 @@ struct ItableLowering : ConvertOpToLLVMPattern<ItableOp> {
   }
 };
 
+// `init` is built against the converted type: a struct's entries are its fields, an array's
+// its elements (one entry: all of them); scalars come in as i64 / f64 and are resized.
+static Value globalInitValue(OpBuilder &b, Location loc, Type ty, Attribute a) {
+  if (!a || isa<UnitAttr>(a))
+    return LLVM::ZeroOp::create(b, loc, ty);
+  if (auto i = dyn_cast<IntegerAttr>(a)) {
+    APInt v = i.getValue().sextOrTrunc(cast<IntegerType>(ty).getWidth());
+    return LLVM::ConstantOp::create(b, loc, ty, IntegerAttr::get(ty, v));
+  }
+  if (auto f = dyn_cast<FloatAttr>(a)) {
+    APFloat v = f.getValue();
+    bool lost;
+    v.convert(cast<FloatType>(ty).getFloatSemantics(), APFloat::rmNearestTiesToEven, &lost);
+    return LLVM::ConstantOp::create(b, loc, ty, FloatAttr::get(ty, v));
+  }
+  auto items = cast<ArrayAttr>(a).getValue();
+  if (auto st = dyn_cast<LLVM::LLVMStructType>(ty)) {
+    Value agg = LLVM::UndefOp::create(b, loc, ty);
+    for (auto [i, field] : llvm::enumerate(st.getBody()))
+      agg = LLVM::InsertValueOp::create(b, loc, agg, globalInitValue(b, loc, field, items[i]), ArrayRef<int64_t>{(int64_t)i});
+    return agg;
+  }
+  auto at = cast<LLVM::LLVMArrayType>(ty);
+  Type elem = at.getElementType();
+  uint64_t n = at.getNumElements();
+  if (isa<IntegerType, FloatType>(elem)) {
+    // Scalars: one dense constant, not an insertvalue per element.
+    SmallVector<Attribute> vals;
+    for (uint64_t i = 0; i < n; ++i) {
+      Attribute e = items.size() == 1 ? items[0] : items[i];
+      if (!e || isa<UnitAttr>(e))
+        e = isa<IntegerType>(elem) ? Attribute(IntegerAttr::get(elem, 0)) : Attribute(FloatAttr::get(elem, 0.0));
+      else if (auto ie = dyn_cast<IntegerAttr>(e))
+        e = IntegerAttr::get(elem, ie.getValue().sextOrTrunc(cast<IntegerType>(elem).getWidth()));
+      else {
+        APFloat v = cast<FloatAttr>(e).getValue();
+        bool lost;
+        v.convert(cast<FloatType>(elem).getFloatSemantics(), APFloat::rmNearestTiesToEven, &lost);
+        e = FloatAttr::get(elem, v);
+      }
+      vals.push_back(e);
+    }
+    auto dense = DenseElementsAttr::get(RankedTensorType::get({(int64_t)n}, elem), vals);
+    return LLVM::ConstantOp::create(b, loc, ty, dense);
+  }
+  Value agg = LLVM::UndefOp::create(b, loc, ty);
+  Value one = items.size() == 1 ? globalInitValue(b, loc, elem, items[0]) : Value();
+  for (uint64_t i = 0; i < n; ++i)
+    agg = LLVM::InsertValueOp::create(b, loc, agg, one ? one : globalInitValue(b, loc, elem, items[i]), ArrayRef<int64_t>{(int64_t)i});
+  return agg;
+}
+
+struct GlobalDefLowering : ConvertOpToLLVMPattern<GlobalDefOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(GlobalDefOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    Type ty = getTypeConverter()->convertType(op.getType());
+    if (!ty)
+      return rw.notifyMatchFailure(op, "global type does not convert");
+    auto g = LLVM::GlobalOp::create(rw, op.getLoc(), ty, /*isConstant=*/false, LLVM::Linkage::Internal,
+                                    op.getSymName(), Attribute(), /*alignment=*/0, /*addrSpace=*/0,
+                                    /*dsoLocal=*/false, op.getTls());
+    Block *init = rw.createBlock(&g.getInitializerRegion());
+    rw.setInsertionPointToStart(init);
+    LLVM::ReturnOp::create(rw, op.getLoc(), globalInitValue(rw, op.getLoc(), ty, op.getInitAttr()));
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1923,7 +1993,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, ItableLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, ItableLowering, GlobalDefLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

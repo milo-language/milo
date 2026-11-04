@@ -6,7 +6,8 @@
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
 // covers, so the build fails with the reason.
 
-import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRModule, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
+import { globalInit, type ConstVal } from "./const-fold";
+import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRGlobal, HIRModule, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
 type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
@@ -5419,6 +5420,32 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
     if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");
     throw err;
   }
+}
+
+// A folded constant as a milo.global.def init attribute (see Milo.td): ints as i64 (the
+// lowering resizes), floats as their f64 bit pattern, zero as `unit`.
+function constAttr(v: ConstVal): string {
+  switch (v.k) {
+    case "int": return `${BigInt.asIntN(64, v.v)} : i64`;
+    case "float": {
+      const buf = new ArrayBuffer(8);
+      new Float64Array(buf)[0] = v.v;
+      return `0x${new BigUint64Array(buf)[0].toString(16).toUpperCase().padStart(16, "0")} : f64`;
+    }
+    case "zero": return "unit";
+    case "agg": return `[${v.items.map(constAttr).join(", ")}]`;
+    case "splat": return `[${constAttr(v.item)}]`;
+  }
+}
+
+/** Every module global: storage (zero where its initializer runs code) plus the constant part. */
+export function globalOps(globals: HIRGlobal[], cx: MlirEmitCtx): string {
+  return globals.map(g => {
+    const ty = placeType(cx, g.type);
+    if (ty === null) throw new MlirUnsupported(`global ${g.name} of type ${placeBlocker(cx, g.type)}`);
+    const init = globalInit(g, cx.structLayouts);
+    return `milo.global.def @${quote(g.name)}${g.threadLocal ? " thread_local" : ""} : ${ty}${init.k === "zero" ? "" : ` = ${constAttr(init)}`}\n`;
+  }).join("");
 }
 
 /** The module-level itable ops: one per (concrete type, interface), methods in interface order. */

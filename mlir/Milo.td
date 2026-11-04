@@ -1035,6 +1035,21 @@ def Milo_ItableOp : Milo_Op<"itable", [Symbol]> {
   let assemblyFormat = "$sym_name $methods (`drop` $drop^)? attr-dict";
 }
 
+def Milo_GlobalDefOp : Milo_Op<"global.def", [Symbol]> {
+  let summary = "the definition of a module global, with its static initializer";
+  let description = [{
+    Module global `sym_name` of `type`, internal to the module (`thread_local`: one per OS
+    thread), whose bytes `milo.global` and `milo.global.addr` name. `init` is the value it
+    starts as, laid out by `type`: an integer or float attribute for a scalar (an integer is
+    resized to the field's width, a float rounded to its precision), an array attribute for a
+    struct (one entry per field, in order) or an array (one entry per element, or a single
+    entry for all of them), `unit` for zero. Absent: all zero. A global whose initializer
+    needs code is zero here and filled at run time.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type, OptionalAttr<AnyAttr>:$init, UnitAttr:$tls);
+  let assemblyFormat = "$sym_name (`thread_local` $tls^)? `:` $type (`=` $init^)? attr-dict";
+}
+
 def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {
   let summary = "the code address of a named function";
   let description = [{
