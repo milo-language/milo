@@ -35,6 +35,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
+| `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |

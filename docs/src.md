@@ -77,6 +77,12 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/parser.ts` | Recursive-descent parser: token stream -> AST. |
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
 | `src/pkgcli.ts` | milo package-manager CLI verbs: init/new/add/remove/install/update/tree/why/ vendor/publish and the `tool` namespace (install/uninstall/list/run). |
+| `src/playground-entry.ts` | Browser entry for the docs playground: lex, parse, resolve, check, then the reference interpreter (src/interp.ts), all in-page. |
+| `src/playground-fs.ts` | `fs` as the playground bundle sees it: a read-only view of the in-memory file map in playground-host.ts. |
+| `src/playground-host.ts` | Browser host for the playground bundle: the one place that stands in for the node APIs the frontend reads (process, fs). |
+| `src/playground-os.ts` | `os` for the playground bundle: target.ts imports these for getHostTarget, which the playground never calls (it passes an explicit linux-x64 target). |
+| `src/playground-std.d.ts` | Virtual module scripts/build-playground.ts generates: std/*.milo keyed by /milo/std/<name>. |
+| `src/playground-stubs.ts` | Seams the playground bundle cuts: pkg.ts (git/tarball dependency fetching, child_process), bun:sqlite (the @sql attribute's schema check) and stdlibBundle.ts (std comes from the in-memory file map). |
 | `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
