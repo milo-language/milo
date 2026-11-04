@@ -10,6 +10,10 @@ export function readFileSync(p: string, _enc?: string): string {
   return t;
 }
 export const readdirSync = (_p: string): string[] => [];
+// Only `milo trace --write-baseline` writes, and the playground never runs it.
+export function writeFileSync(p: string, _data: string): never {
+  throw Object.assign(new Error(`EROFS: the playground filesystem is read-only: ${p}`), { code: "EROFS" });
+}
 export function statSync(p: string): never {
   throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
 }
