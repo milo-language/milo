@@ -97,9 +97,10 @@ test("S-TEMP-CALL: a temporary lent to a by-ref parameter dies when the call ret
   const r = run(`${NOISY}
 fn peek(n: &Noisy): i64 { return n.id * 2 }
 fn main() {
-    print("got ", peek(mk(7)))
+    let r = peek(mk(7)) + peek(mk(8))
+    print("got ", r)
 }`);
-  expect(r.out).toBe("drop 7\ngot 14\n");
+  expect(r.out).toBe("drop 7\ndrop 8\ngot 30\n");
 });
 
 test("panics exit 134 and run no drops", () => {
@@ -132,9 +133,10 @@ fn main() {
 
 // Fixtures the interpreter must run exactly as the compiled golden does (stdout, exit, live blocks).
 const FIXTURES = [
-  "arithmetic", "arrayCombinators", "closureCapture", "enumMatch", "forLoop", "structs", "stringOps", "vecBasics",
-  "optionBasics", "resultPropagate", "ownershipMove", "whileLoop", "recursion", "nestedStructs", "stringInterp",
-  "dropOrder", "shadowing", "floatMath", "matchLiteral", "genericsBasic",
+  "arithmetic", "closureCaptureFlexInt", "closureCapture", "closureCaptureDropMatrix", "closureCapturesDropped", "dropOrderFieldsVec",
+  "forkTempReceiver", "forLoopReuse", "hashmapBasic", "hashmapGet", "hashmapGetOrDefault", "heapTempBoxRead",
+  "matchLiteralExact", "matchLiterals", "resultPropagate", "resultPropagateDiffT", "structs", "vecTruncateClearStd", "whileLoop",
+  "closureCaptureSelf",
 ];
 test("interp-vs-golden: a slice of the fixtures is the same as the compiled run", async () => {
   const results = [];

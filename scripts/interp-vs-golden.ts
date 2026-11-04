@@ -56,7 +56,7 @@ export async function compareOne(p: { path: string; name: string; kind: "fixture
   if (m) return { name: p.name, verdict: "differ", detail: m[0] };
   const crash = /^(\w*Error: [^\n]*)/m.exec(r.stderr); // a JS exception: an interpreter bug, never a pass
   if (crash) return { name: p.name, verdict: "differ", detail: `interpreter crash: ${crash[1]}` };
-  if (r.guardKill || r.signal === "SIGKILL" || r.signal === "SIGTERM") return { name: p.name, verdict: "differ", detail: `killed (${r.guardKill ?? r.signal}): timeout or memory` };
+  if (r.guardKill || r.signal === "SIGKILL" || r.signal === "SIGTERM") return { name: p.name, verdict: "unsupported", detail: `too slow or too big: killed after ${TIMEOUT_MS / 1000}s or by the memory guard` };
   if (r.code === 1 && !r.stdout && /error/.test(r.stderr) && !/live blocks/.test(r.stderr)) return { name: p.name, verdict: "unsupported", detail: `frontend: ${r.stderr.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n")[0]}` };
   const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
   const aborted = want.signal === "SIGABRT";

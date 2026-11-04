@@ -210,9 +210,13 @@ Each is implemented in `src/interp.ts` under its ID, and was needed to match a r
 | E-MATCH | An owned, moved subject goes into a holder the match owns, and an arm's bindings move their payloads out of it (a Copy payload is copied). A borrowed subject binds references (`&mut` when the checker says so). The first arm that matches wins; a binding marked escaping (let-else) is declared in the enclosing scope. |
 | E-CLOSURE | A closure value holds an environment: a reference to each lent capture, the moved or shared value for a `move`, consumed or shared-string capture. Dropping an owning closure drops the moved captures. |
 | E-IFACE | An interface value is the concrete value with its type name, and a method call dispatches on that name. A `&T` given to `&Interface` makes a view pair borrowing the place. |
+| E-MATCH-INDEX | A `match` on a container element (`w[i]`) matches a view of the element, so an arm may overwrite the element and its bindings stay valid. |
+| E-GLOBAL | A module global with a non-constant initializer runs at its first mention; one no function mentions runs before `main`, in declaration order. |
+| E-HASHMAP | A HashMap owns one table block while non-empty and its entries (key, then value, dropped in that order). Iteration order is unspecified; `get`/`m[k]` yield copies. |
+| E-NEW-ITER | The iterator temporary of a `next()` for-in (`for x in gen()`) is dropped once, when the scope around the loop ends. |
 | S-PANIC-ABORT | A panic, failed assert, `exit` or trap stops the run at once: no drops run, no live count is reported, and the exit status is 134 for a panic. |
 | T-STUCK | Reading a moved slot, writing through a shared reference, two overlapping `&mut` arguments, a dangling reference or a double free stop the interpreter, naming the rule that failed. |
 
 Not modelled (reported as `InterpUnsupported`): extern and FFI calls, raw pointers and `unsafe`
-memory operations, tasks and async, HashMap, contract checks, `sizeOf`/`zeroed`, record/replay
+memory operations, tasks and async, atomics, contract checks, `sizeOf`/`zeroed`, record/replay
 wrappers.

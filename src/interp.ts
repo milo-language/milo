@@ -15,7 +15,7 @@ import { declaredType, floatNamespaceConst, patternLeafNames } from "./ast";
 import type { CheckResult } from "./checker";
 import type { TypeKind } from "./types";
 import {
-  ExitProgram, InterpStuck, InterpUnsupported, MOVED, Panic, staticStr,
+  ExitProgram, InterpStuck, type MapV, InterpUnsupported, MOVED, Panic, staticStr,
   type ClosureV, type EnumV, type Place, type Ref, type Slot, type Step, type Str, type Struct, type Value, type VecBuf, type VecV,
 } from "./interp-values";
 import { BUILTIN_FNS, builtinCall, concat, methodNative, nativeFor, numberToString, sliceView } from "./interp-natives";
@@ -188,6 +188,11 @@ export class Interp {
         return;
       case "box": this.dropValue(v.cell.v); this.free(v.id); return;
       case "iface": this.dropValue(v.inner); return;
+      case "map":
+        if (v.view) return;
+        for (const e of v.m.values()) { this.dropValue(e.key.v); this.dropValue(e.val.v); }
+        if (v.buf !== null) this.free(v.buf);
+        return;
       case "closure": if (v.owning) for (const c of v.env) if (!isRef(c.slot.v)) this.dropValue(c.slot.v); return;
       default: return;
     }
@@ -371,8 +376,26 @@ export class Interp {
       case "enum": return { ...v, a: v.a.map(x => this.viewOf(x)), ghost: true };
       case "arr": return { k: "arr", e: v.e.map(x => this.viewOf(x)) };
       case "box": return { ...v, ghost: true };
+      case "map": return { ...v, view: true };
       default: return v;
     }
+  }
+  // HashMap keys compare by value: a canonical text of the key
+  keyOf(v: Value): string {
+    if (v === undefined || typeof v !== "object") return typeof v + String(v);
+    switch (v.k) {
+      case "str": return "s" + new TextDecoder().decode(Uint8Array.from(v.b.bytes));
+      case "struct": return "{" + Object.keys(v.f).map(n => n + ":" + this.keyOf(v.f[n]!)).join(",") + "}";
+      case "enum": return v.variant + "(" + v.a.map(x => this.keyOf(x)).join(",") + ")";
+      case "arr": return "[" + v.e.map(x => this.keyOf(x)).join(",") + "]";
+      default: return this.unsupported(`hashmap key of ${v.k}`);
+    }
+  }
+  mapPut(m: MapV, key: Value, val: Value): void {
+    const k = this.keyOf(key), old = m.m.get(k);
+    if (old) { this.dropValue(key); this.dropValue(old.val.v); old.val.v = val; return; }
+    if (m.buf === null) m.buf = this.alloc();
+    m.m.set(k, { key: { v: key }, val: { v: val } });
   }
   // An independent owned copy (no user Clone is run): what `[x; n]` makes of the repeated element.
   deepClone(v: Value): Value {
@@ -384,6 +407,11 @@ export class Interp {
       case "enum": return { ...v, a: v.a.map(x => this.deepClone(x)) };
       case "arr": return { k: "arr", e: v.e.map(x => this.deepClone(x)) };
       case "box": return { k: "box", id: this.alloc(), cell: { v: this.deepClone(v.cell.v) } };
+      case "map": {
+        const c: MapV = { k: "map", buf: null, m: new Map() };
+        for (const e of v.m.values()) this.mapPut(c, this.deepClone(e.key.v), this.deepClone(e.val.v));
+        return c;
+      }
       default: return v;
     }
   }
@@ -538,7 +566,7 @@ export class Interp {
     if (this.isLen(e)) {
       const v = this.peek(e.object);
       if (v && typeof v === "object" && v.k === "str") return BigInt(v.b.bytes.length);
-      if (this.T(e.object).tag === "hashmap") return this.unsupported("hashmap len");
+      if (v && typeof v === "object" && v.k === "map") return BigInt(v.m.size);
       return BigInt(this.seqLen(v));
     }
     if (this.tempRooted(e)) return this.readTempRooted(e);
@@ -551,7 +579,11 @@ export class Interp {
       if (i < 0n || i >= BigInt(s.b.bytes.length)) this.panic(`index out of bounds: ${i}`);
       return BigInt(s.b.bytes[Number(i)]!);
     }
-    if (ot.tag === "hashmap") return this.unsupported("hashmap index");
+    if (ot.tag === "hashmap") { // m[k]: a copy of the value, or a panic when the key is absent
+      const m = this.peek(e.object) as MapV, ent = m.m.get(this.keyOf(this.peek(e.index)));
+      if (!ent) this.panic("key not found");
+      return this.copyable(ent.val.v) || isStr(ent.val.v) ? this.share(ent.val.v, "m[k]") : this.deepClone(ent.val.v);
+    }
     const pl = this.resolve(e);
     const v = this.getPlace(pl);
     if (v === MOVED) this.stuck("E-STUCK", `${describeExpr(e)} was moved`);
@@ -1038,7 +1070,10 @@ export class Interp {
   assign(s: Stmt & { kind: "Assign" }): Completion {
     const v = this.ev(s.value);
     const t = s.target;
-    if (t.kind === "IndexAccess" && this.T(t.object).tag === "hashmap") return this.unsupported("hashmap index assignment");
+    if (t.kind === "IndexAccess" && this.T(t.object).tag === "hashmap") { // m[k] = v: insert or replace
+      this.mapPut(this.peek(t.object) as MapV, this.ev(t.index), v);
+      return undefined;
+    }
     const pl = this.resolve(t);
     if (pl.ro) this.stuck("S-ASSIGN-REF", `write to ${describeExpr(t)} through a shared reference`);
     const old = this.getPlace(pl);
@@ -1113,7 +1148,17 @@ export class Interp {
       let iterE = s.iterable;
       if (delegate) iterE = { kind: "FieldAccess", object: s.iterable, field: delegate } as Expr;
       const it = this.T(iterE);
-      if (it.tag === "hashmap") return this.unsupported("for over a hashmap");
+      if (it.tag === "hashmap") {
+        const mv = (this.isPlaceExpr(iterE) ? this.peek(iterE) : this.declare("<iterable>", this.ev(iterE), holder).v) as MapV;
+        for (const ent of [...mv.m.values()]) {
+          const r = fin(loopBody(sc => {
+            this.declare(s.varName, { k: "ref", slot: ent.key, path: [] }, sc);
+            if (s.varName2) this.declare(s.varName2, { k: s.mutRef ? "mut" : "ref", slot: ent.val, path: [] }, sc);
+          }));
+          if (r !== "next") return r;
+        }
+        return undefined;
+      }
       const consume = this.cr.consumingForIns.has(s) && (it.tag === "vec" || it.tag === "array");
       let pl: Place;
       if (consume || !this.isPlaceExpr(iterE)) pl = { slot: this.declare("<iterable>", this.ev(iterE), holder), path: [], ro: false, viaRef: false };

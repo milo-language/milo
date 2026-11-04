@@ -36,6 +36,9 @@ export interface VecBuf { id: number; elems: Value[] }
 export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number; cap: number; view: boolean }
 export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true }
 export interface IfaceV { k: "iface"; concrete: string; inner: Value }
+// HashMap: one table block while non-empty; entries keep their key and value in slots so a reference can name them
+export interface MapEntry { key: Slot; val: Slot }
+export interface MapV { k: "map"; buf: number | null; m: Map<string, MapEntry>; view?: true }
 export interface FnRef { k: "fn"; name: string }
 export interface Slot { v: Value; dead?: boolean; stmt?: boolean }
 export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[] }
@@ -49,7 +52,7 @@ export interface ClosureV {
   ret: import("./types").TypeKind;
 }
 export type Step = string | number;
-export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | IfaceV | FnRef | ClosureV | Ref;
+export type Value = bigint | number | boolean | undefined | Moved | Str | Struct | EnumV | ArrV | VecV | BoxV | MapV | IfaceV | FnRef | ClosureV | Ref;
 export interface Place { slot: Slot; path: Step[]; ro: boolean; viaRef: boolean }
 
 export const enc = new TextEncoder();

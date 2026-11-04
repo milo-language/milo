@@ -5,7 +5,7 @@
 import type { Expr } from "./ast";
 import { ARRAY_COMBINATORS, SLICE_COMBINATORS, type TypeKind } from "./types";
 import { NOT_NATIVE, wrapInt, type Interp } from "./interp";
-import { ExitProgram, MOVED, enc, fmtFloat, strText, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
+import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
 
 export type Native = (it: Interp, args: Value[], e?: Expr) => Value;
 type CallE = Expr & { kind: "Call" };
@@ -206,7 +206,54 @@ const VEC: Record<string, Native> = {
 for (const [m, f] of Object.entries(VEC)) nat(`Vec$${m}`, f);
 
 // Vec_<elem>$method -> Vec$method
+const MAPS: Record<string, Native> = {
+  insert: (it, [self, key, val]) => { it.mapPut(it.deref(self) as MapV, key, val); return undefined; },
+  remove: (it, [self, key]) => {
+    const m = it.deref(self) as MapV, k = it.keyOf(it.deref(key)), ent = m.m.get(k);
+    if (ent) { m.m.delete(k); it.dropValue(ent.key.v); it.dropValue(ent.val.v); }
+    return undefined;
+  },
+  contains: (it, [self, key]) => (it.deref(self) as MapV).m.has(it.keyOf(it.deref(key))),
+  isEmpty: (it, [self]) => (it.deref(self) as MapV).m.size === 0,
+  get: (it, [self, key], e) => {
+    const ent = (it.deref(self) as MapV).m.get(it.keyOf(it.deref(key)));
+    return opt(it, e, ent ? it.deepClone(ent.val.v) : NONE);
+  },
+  getOrDefault: (it, [self, key, fallback]) => {
+    const ent = (it.deref(self) as MapV).m.get(it.keyOf(it.deref(key)));
+    if (!ent) return fallback;
+    it.dropValue(fallback);
+    return it.deepClone(ent.val.v);
+  },
+  keys: (it, [self]) => it.newVec([...(it.deref(self) as MapV).m.values()].map(x => it.deepClone(x.key.v))),
+  values: (it, [self]) => it.newVec([...(it.deref(self) as MapV).m.values()].map(x => it.deepClone(x.val.v))),
+  clear: (it, [self]) => {
+    const m = it.deref(self) as MapV;
+    for (const x of m.m.values()) { it.dropValue(x.key.v); it.dropValue(x.val.v); }
+    m.m.clear();
+    return undefined;
+  },
+  clone: (it, [self]) => it.deepClone(it.deref(self)),
+  modify: (it, [self, key, f]) => {
+    const ent = (it.deref(self) as MapV).m.get(it.keyOf(it.deref(key)));
+    if (!ent) { it.dropValue(f); return false; }
+    it.callValue(f, [{ k: "mut", slot: ent.val, path: [] } as Ref]);
+    it.dropValue(f);
+    return true;
+  },
+  getOrInsertWith: (it, [self, key, init]) => {
+    const m = it.deref(self) as MapV;
+    if (m.m.has(it.keyOf(key))) { it.dropValue(key); it.dropValue(init); return false; }
+    const v = it.callValue(init, []);
+    it.dropValue(init);
+    it.mapPut(m, key, v);
+    return true;
+  },
+};
 export function nativeFor(name: string): Native | undefined {
+  if (/(^|\$)(mapNew|mapWithCapacity|mapWithSlots)/.test(name)) return () => ({ k: "map", buf: null, m: new Map() });
+  const hm = /^HashMap_.+?\$([A-Za-z0-9_]+)$/.exec(name);
+  if (hm && MAPS[hm[1]!]) return MAPS[hm[1]!];
   if (/(^|\$)vecWithCapacity/.test(name)) return (it, [n]) => { const h = it.newVec([]); if ((n as bigint) > 0n) { h.buf = it.newBuf(Number(n)); h.cap = Number(n); } return h; };
   if (/(^|\$)vecFilled/.test(name)) return (it, [n, x]) => { const h = it.newVec([]); const k = Number(n as bigint); if (k > 0) { h.buf = it.newBuf(k); h.cap = k; for (let i = 0; i < k; i++) h.buf.elems[i] = it.share(x, "filled"); h.len = k; } return h; };
   const m = /^Vec_.+?\$([A-Za-z0-9_]+)$/.exec(name);
