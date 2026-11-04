@@ -231,7 +231,7 @@ parks, yields or ends: nothing preempts it, so no operation needs a lock.
 | Rule | Statement |
 |---|---|
 | R-TASK-MAIN | `main` is the first task. The program ends when it returns and every other task is abandoned where it stands: no drops run for it. |
-| R-TASK-ABANDON | Tasks left when main returns keep the library's own blocks allocated, because it leaves its scheduler up: five for the scheduler, three per abandoned task, three more for one asleep, one per idle stack context in its cache (at most 64). With no task left the scheduler is torn down and none remain. Counted so the live-block comparison with a compiled run holds. |
+| R-TASK-ABANDON | Tasks left when main returns keep the library's own blocks allocated, because it leaves its scheduler up: five for the scheduler, three per abandoned task, three more for one asleep, one per idle stack context in its cache (at most 64). With no task left the scheduler is torn down and none remain, but only when the compiled `main` is a green task (`Task.spawn` reachable from it); a program that only uses `Task.scope` keeps its five scheduler blocks, plus one per idle stack context (a task reaped with no other task left does not leave one). Counted so the live-block comparison with a compiled run holds. |
 | R-TASK-SPAWN | A spawned task is ready at the back of the run queue. It does not run until the spawner parks, yields or ends. |
 | R-TASK-PICK | Which ready task runs next is one method, `pickNext(ready)`, the hook for exploring schedules. The default is the front of the queue (FIFO, as std/runtime's run queue). Like the library's scheduler, the front task moves to the back after 32 task turns in a row. |
 | R-TASK-YIELD | `schedulerYield` puts the caller at the back of the queue. |

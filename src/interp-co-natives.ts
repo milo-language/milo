@@ -33,10 +33,13 @@ class TaskH { constructor(public t: Task) {} release(): void {} }
 class ScopeObj { live = 0; waiter: Task | null = null; release(): void {} }
 
 // R-TASK-SPAWN: a new task is ready at the back of the run queue; it does not run until the spawner parks, yields or ends.
-const spawn = (it: Interp, [f]: Value[]): Value => handle("task", new TaskH((it as InterpCo).spawnTask(f as ClosureV)));
+const spawn = (it: Interp, [f]: Value[]): Value => {
+  (it as InterpCo).greenMain = true;
+  return handle("task", new TaskH((it as InterpCo).spawnTask(f as ClosureV)));
+};
 plain("Task$spawn", spawn);
 // a task with a stack of its own size cannot reuse a cached one, and its context is not cached when it ends
-plain("Task$spawnWithStack", (it, [f, bytes]) => handle("task", new TaskH((it as InterpCo).spawnTask(f as ClosureV, null, (bytes as bigint) === 1048576n))));
+plain("Task$spawnWithStack", (it, [f, bytes]) => ((it as InterpCo).greenMain = true, handle("task", new TaskH((it as InterpCo).spawnTask(f as ClosureV, null, (bytes as bigint) === 1048576n)))));
 plain("Task$raw", (it, [self]) => BigInt(objOf<TaskH>(it, self).t.id));
 plain("Task$Drop$drop", () => undefined);
 // R-TASK-JOIN: join parks the caller until the task ends; a task that already ended returns at once.
@@ -61,6 +64,7 @@ co("Task$scope", function* (it, [body]) {
 });
 plain("TaskScope$spawn", (it, [self, f]) => {
   const sc = objOf<ScopeObj>(it, self);
+  (it as InterpCo).scopeSpawned = true;
   (it as InterpCo).spawnTask(f as ClosureV, sc);
   sc.live++;
   return undefined;

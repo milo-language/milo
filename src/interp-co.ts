@@ -45,6 +45,11 @@ export class InterpCo extends InterpGen {
   private nextTaskId = 1;
   // contexts of finished default-stack tasks the scheduler keeps for the next spawn (at most 64, as std/runtime)
   cachedContexts = 0;
+  // The compiled program runs `main` as a green task only when Task.spawn / spawnWithStack is reachable from it
+  // (startup.ts mainCanSpawnGreenTasks), and only then is the scheduler torn down at exit. Task.scope spawns
+  // through spawnRaw and does not count. Approximated by whether either of those natives ran.
+  greenMain = false;
+  scopeSpawned = false;
 
   // R-TASK-PICK: the scheduling decision. Takes the ready tasks, front of the queue first, and returns
   // the index to run. FIFO by default, as the library's run queue is.
@@ -116,7 +121,10 @@ export class InterpCo extends InterpGen {
   }
   private reap(t: Task): void {
     this.tasks.delete(t.id);
-    if (t.cacheable && this.cachedContexts < 64) this.cachedContexts++;
+    // Measured on compiled programs with a plain main: the stack of a task reaped with no other task left does not
+    // end up in the cache. (With a green main the main task is always still there.)
+    const othersLeft = this.greenMain || [...this.tasks.values()].some(x => !x.isMain);
+    if (t.cacheable && othersLeft && this.cachedContexts < 64) this.cachedContexts++;
     if (t.joiner) this.unpark(t.joiner);
     const sc = t.scope;
     if (sc && --sc.live === 0 && sc.waiter) { const w = sc.waiter; sc.waiter = null; this.unpark(w); }
@@ -125,10 +133,11 @@ export class InterpCo extends InterpGen {
   // R-TASK-ABANDON: when main returns with tasks left, the library leaves its scheduler up (a worker thread
   // may still use it), so its own blocks stay allocated: the scheduler's five (header, context, event loop,
   // transfer mutex, stack cache), three for each abandoned task (task, join cell, context) and three more
-  // for one asleep (its select state). Idle stack contexts in the cache stay too. With no task left the
-  // scheduler is torn down and nothing remains.
+  // for one asleep (its select state). Idle stack contexts in the cache stay too. With no task left and
+  // a green main the scheduler is torn down and nothing remains.
   private leakRuntime(): void {
-    if (this.tasks.size === 0) return;
+    // No task left: a green main tears the scheduler down; a plain main (scope-only programs) never does.
+    if (this.tasks.size === 0 && (this.greenMain || !this.scopeSpawned)) return;
     const asleep = new Set(this.sleepers.map(x => x.t));
     let n = 5 + this.cachedContexts;
     for (const t of this.tasks.values()) n += asleep.has(t) ? 6 : 3;
