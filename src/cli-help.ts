@@ -144,6 +144,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     flags: [
       { flag: "--strict", help: "(.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause" },
       { flag: "--safety=<do178 profile>", help: "(.milo) same as --strict" },
+      { flag: "--baseline <file>", help: "(.milo) gaps listed in <file> stay warnings under --strict; new gaps fail (write one with --write-baseline <file>)" },
       { flag: "--requirements <file>", help: "(.milo) requirements.json elsewhere than next to the entry" },
       { flag: "--tests <file|dir>", help: "(.milo) where the @req tests live (default: *_test.milo beside the entry)" },
       { flag: "--json", help: "(.milo) the matrix as data; (trace file) {version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },

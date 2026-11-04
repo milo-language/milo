@@ -44,6 +44,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`lang`](#lang) | The language's vocabulary as data: keywords, types, operators, builtins, warnings, attributes, commands. |
 | [`explain <name>`](#explain) | What one warning, @attribute or keyword means, with an example and how to silence it. |
 | [`trace <file>`](#trace) | A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any other file: list a record/replay trace's records. |
+| [`trace-object <binary>`](#trace-object) | Per function of a binary built with -g: address range -\> source line -\> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
 | [`upgrade \| update`](#upgrade) | Replace this milo binary with the newest release (deps: `pkg update`). |
@@ -303,11 +304,29 @@ A .milo entry: the requirements matrix (@req, milo prove verdicts, tests); any o
 |---|---|
 | `--strict` | (.milo) fail on an untraced fn, a requirement with no implementation or test, an UNKNOWN or FAILED clause. |
 | `--safety=<do178 profile>` | (.milo) same as --strict. |
+| `--baseline <file>` | (.milo) gaps listed in \<file\> stay warnings under --strict; new gaps fail (write one with --write-baseline \<file\>). |
 | `--requirements <file>` | (.milo) requirements.json elsewhere than next to the entry. |
 | `--tests <file\|dir>` | (.milo) where the @req tests live (default: \*\_test.milo beside the entry). |
 | `--json` | (.milo) the matrix as data; (trace file) {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
 | `--kind <prefix>` | Only records whose kind starts with \<prefix\> (net., sched.). |
 | `--payload <seq>` | Write one record's payload bytes to stdout. |
+| `--object <binary>` | (.milo) add the address ranges of a binary built with -g that implement each requirement. |
+
+### trace-object
+
+```sh
+milo trace-object <binary>
+```
+
+Per function of a binary built with -g: address range -\> source line -\> @req, plus a MILO-O rule ID on bounds checks, overflow traps, contract checks and drops; the percentage of code that traces.
+
+| Flag | Effect |
+|---|---|
+| `--strict` | Fail on object code with no source line and no rule (untraced object code). |
+| `--safety=<do178 profile>` | Same as --strict. |
+| `--entry <file.milo>` | The source, when the binary's DWARF does not name it. |
+| `--fn <name>` | List only this function (repeatable); the totals still cover the whole binary. |
+| `--json` | The trace as data. |
 
 ### api
 
