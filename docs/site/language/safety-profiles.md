@@ -68,3 +68,35 @@ milo safety src/controller.milo --safety=do178c-a || exit 1
 ```
 
 The command exits with code 1 if any errors are found, making it suitable for CI gates.
+
+## Checked on the binary
+
+A profile is also a claim about the program you ship, so the same profile is re-checked on
+the linked binary. `--safety` on `build` fixes the toolchain (`-O2`, the milo-opt pass
+pipeline, no LTO, one codegen unit, LLVM 23), writes that record into the binary, runs the
+checks below on the result and deletes the binary if any fails:
+
+```bash
+milo build controller.milo --target=cortex-m3 --safety=do178c-a -o controller.elf
+milo verify --profile do178c-a controller.elf     # any binary, any time; --json, --all
+```
+
+`verify` refuses a binary with no record, one built for another profile, or one whose
+opt level, pass pipeline, LTO, codegen units or LLVM version differ from the pin. Then:
+
+- **noDynamicAllocation**: no call path from `main` (or the reset handler) to `malloc`,
+  `calloc`, `realloc`, `free`, `mmap` and friends. Each path is printed and labelled
+  program or runtime.
+- **noRecursion**: the object's call graph has no cycle (direct calls and tail jumps).
+  Indirect calls have no static target; they are listed, and fail at DAL A, ASIL D, SIL 4
+  and NASA A.
+- **Runtime symbol allowlist**: any libc import (or libc shim the image defines) not on the
+  profile's list fails. No-allocation profiles allow only the freestanding core, `printf`
+  and `exit` for the fail-stop trap path, pure libm and compiler helpers.
+
+A hosted binary (Linux, macOS) links the full Milo runtime: scheduler, replay heap, string and
+Vec growth. It allocates and has indirect calls, so it fails `do178c-a`, and the report shows
+where. A bare-metal image (`--target=cortex-m3`) has a bump allocator, no scheduler and no
+libc, and `examples/embedded/pidStep.milo` passes. Limits: indirect tail jumps are not call
+edges, a dynamic binary's libc is opaque, and the record is evidence of an honest build, not
+tamper-proofing.
