@@ -2064,16 +2064,17 @@ class FnEmitter {
       case "ForRange": {
         const ty = scalar(s.varType, "for var");
         if (ty === "i1" || ty === PTR || ty.startsWith("f")) throw new MlirUnsupported("for over a non-int");
-        // A bound of another width is extended by the loop variable's
-        // signedness, not the bound's (a u32 bound of an i64 loop is sign extended), so the
-        // bound's bits are first read as that signedness, then extended.
+        // A narrower bound is extended by the bound's own signedness (a u8 bound of an i32
+        // loop is zero extended: 200 stays 200), to the loop variable's width and then
+        // reinterpreted as the loop variable's type. A same-width bound of the other
+        // signedness keeps its bits.
         const widen = (v: Val): Val => {
           if (v.ty === ty) return v;
-          const vm = /^[su]i(\d+)$/.exec(v.ty), tm = /^([su])i(\d+)$/.exec(ty)!;
-          if (!vm || Number(vm[1]) > Number(tm[2])) throw new MlirUnsupported("for bound of a different type");
-          const same = `${tm[1]}i${vm[1]}`;
-          const r = same === v.ty ? v : this.def(`milo.cast ${v.ref} : ${v.ty} to ${same}`, same);
-          return same === ty ? r : this.def(`milo.cast ${r.ref} : ${same} to ${ty}`, ty);
+          const vm = /^([su])i(\d+)$/.exec(v.ty), tm = /^([su])i(\d+)$/.exec(ty)!;
+          if (!vm || Number(vm[2]) > Number(tm[2])) throw new MlirUnsupported("for bound of a different type");
+          const wide = `${vm[1]}i${tm[2]}`;
+          const r = wide === v.ty ? v : this.def(`milo.cast ${v.ref} : ${v.ty} to ${wide}`, wide);
+          return wide === ty ? r : this.def(`milo.cast ${r.ref} : ${wide} to ${ty}`, ty);
         };
         const start = widen(this.expr(s.start));
         const end = widen(this.expr(s.end));
