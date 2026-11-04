@@ -90,23 +90,41 @@ pub fn winLoopTableCap(): i32 {
     return 16
 }
 
+// Shared by every scheduler thread of a multi-worker program, so it is only ever touched
+// through atomics: the table is installed by one compare-and-swap (a thread that loses the
+// race frees its copy), and a slot is claimed by a compare-and-swap on that slot.
 var winLoopTable: i64 = 0
+
+fn winLoopCell(tbl: *i64, slot: i32): *u8 {
+    unsafe {
+        return (tbl as i64 + slot as i64 * 8) as *u8
+    }
+}
+
+fn winLoopTablePtr(): *i64 {
+    unsafe {
+        return _atomicLoadI64(winLoopTable.addrOf() as *u8) as *i64
+    }
+}
 
 fn winLoopTableInit(): void {
     unsafe {
-        if winLoopTable == 0 {
+        let word = winLoopTable.addrOf() as *u8
+        if _atomicLoadI64(word) == 0 {
             let bytes = winLoopTableCap() as i64 * 8
             let t = malloc(bytes)
             memset(t, 0, bytes)
-            winLoopTable = t as i64
+            if _atomicCasI64(word, 0, t as i64) != 0 {
+                free(t)
+            }
         }
     }
 }
 
 fn winLoopAt(slot: i32): *u8 {
     unsafe {
-        let tbl = winLoopTable as *i64
-        return tbl[slot as i64] as *u8
+        let tbl = winLoopTablePtr()
+        return _atomicLoadI64(winLoopCell(tbl, slot)) as *u8
     }
 }
 
@@ -214,20 +232,20 @@ pub struct EventLoop {
 pub fn eventLoopNew(): Result<EventLoop, string> {
     winLoopTableInit()
     unsafe {
-        let tbl = winLoopTable as *i64
+        let tbl = winLoopTablePtr()
+        let st = malloc(wlSize())
+        memset(st, 0, wlSize())
         var slot: i32 = 0
         while slot < winLoopTableCap() {
-            if tbl[slot as i64] == 0 {
+            if _atomicCasI64(winLoopCell(tbl, slot), 0, st as i64) == 0 {
                 break
             }
             slot += 1
         }
         if slot >= winLoopTableCap() {
+            free(st)
             return Result.Err("windows event-loop table full")
         }
-        let st = malloc(wlSize())
-        memset(st, 0, wlSize())
-        tbl[slot as i64] = st as i64
         return Result.Ok(EventLoop {
             _slot: slot
         })
@@ -475,8 +493,7 @@ pub fn eventLoopClose(el: &EventLoop): void {
                 i += 1
             }
             free(st)
-            let tbl = winLoopTable as *i64
-            tbl[el._slot as i64] = 0
+            _atomicStoreI64(winLoopCell(winLoopTablePtr(), el._slot), 0)
         }
     }
 }
