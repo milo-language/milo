@@ -13,7 +13,7 @@
   "src/checker-program-passes.ts": 2288,
   "src/checker-sql.ts": 360,
   "src/checker.ts": 15648,
-  "src/cli-help.ts": 310,
+  "src/cli-help.ts": 306,
   "src/const-fold.ts": 167,
   "src/contract-tests.ts": 706,
   "src/csig.ts": 59,
