@@ -870,10 +870,10 @@ fn main() {
   }
 }
 
-// The checker's verdict, without paying for clang. `emit-hir` runs lexer → parser →
-// checker → lowering and exits nonzero on any error diagnostic.
+// The checker's verdict, without paying for clang. `check` runs lexer → parser →
+// checker and exits nonzero on any error diagnostic.
 function accepts(file: string) {
-  const r = sh(`bun ${MILO} emit-hir ${file}`);
+  const r = sh(`bun ${MILO} check ${file}`);
   const clean = (r.stderr + r.stdout).replace(/\x1b\[[0-9;]*m/g, "");
   return { accepted: r.ok, output: clean };
 }

@@ -4,7 +4,8 @@
 // and parameter attributes, and the panic-message paths. src/emit-mlir.ts asks it through
 // MlirEmitCtx; src/scaffold.ts and src/mlir-backend.ts read it directly.
 import { isAbsolute, relative, resolve } from "path";
-import type { HIRExpr, HIRFunction, HIRGlobal, HIRModule, HIRStruct } from "./hir";
+import type { BackendProgram, FnDecl, GlobalDecl, StructDecl } from "./backend-program";
+import type { FormOf } from "./emit-forms";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { TargetInfo } from "./target";
@@ -47,11 +48,11 @@ export class ModuleCtx implements MlirEmitCtx {
   readonly layout = new Layout();
   readonly fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
   readonly sretFns = new Set<string>();
-  readonly hirFns = new Map<string, HIRFunction>();
+  readonly fns = new Map<string, FnDecl>();
   readonly externAbi = new Map<string, ExternAbi>();
   /** Externs whose C ABI shim (`milo.cabi.<f>`) a body calls: src/scaffold.ts defines them. */
   readonly cAbiShims = new Set<string>();
-  readonly globals = new Map<string, HIRGlobal>();
+  readonly globals = new Map<string, GlobalDecl>();
   readonly own: Ownership;
   readonly exportedFnNames: Set<string>;
   readonly displayNames?: Map<string, string>;
@@ -61,12 +62,12 @@ export class ModuleCtx implements MlirEmitCtx {
   private noalias = new Map<string, Set<number>>();
   private readonly userDeclaredFns = new Set<string>();
   private readonly userFnNames: Set<string>;
-  private readonly cLayoutStructs: HIRStruct[] = [];
+  private readonly cLayoutStructs: StructDecl[] = [];
   private readonly cSigs: CSigClaim[];
   private readonly cValues: CValueClaim[];
   private readonly opaqueTypes: Set<string>;
 
-  constructor(readonly module: HIRModule, readonly target: TargetInfo, readonly opts: BuildOptions) {
+  constructor(readonly module: BackendProgram, readonly target: TargetInfo, readonly opts: BuildOptions) {
     this.layout.ptrBytes = target.arch === "arm" ? 4 : 8;
     this.layout.build(module);
     for (const s of module.structs) if (s.cLayout) this.cLayoutStructs.push(s);
@@ -78,7 +79,7 @@ export class ModuleCtx implements MlirEmitCtx {
     this.displayNames = module.displayNames;
     for (const g of module.globals) this.globals.set(g.name, g);
     for (const fn of module.functions) {
-      this.hirFns.set(fn.name, fn);
+      this.fns.set(fn.name, fn);
       this.userDeclaredFns.add(fn.name);
       this.fnSigs.set(fn.name, {
         paramTypes: fn.params.map(p => {
@@ -92,7 +93,7 @@ export class ModuleCtx implements MlirEmitCtx {
       });
       if (fn.isExtern) this.classifyExtern(fn);
     }
-    this.own = new Ownership(this.layout, this.hirFns);
+    this.own = new Ownership(this.layout, this.fns, module.facts);
     // A big aggregate is never a first-class SSA value (Ownership.isBigAgg): a fn returning
     // one writes it through a hidden first `ptr` param. Exported fns keep their C signature.
     for (const fn of module.functions) {
@@ -102,6 +103,9 @@ export class ModuleCtx implements MlirEmitCtx {
   }
 
   // ── what emit-mlir asks (MlirEmitCtx) ──
+  get facts() { return this.module.facts; }
+  calleesOf(name: string) { return this.module.callees.get(name); }
+  get lazyGlobals(): ReadonlySet<string> { return new Set(this.plan.lazyGlobals.keys()); }
   get trapOnOverflow() { return this.opts.trapOnOverflow; }
   get emitDebug() { return this.opts.emitDebug; }
   get contractChecks() { return this.opts.contractChecks; }
@@ -112,7 +116,7 @@ export class ModuleCtx implements MlirEmitCtx {
   get hasVecType() { return this.layout.hasVecType; }
   set hasVecType(v: boolean) { this.layout.hasVecType = v; }
   get retainingLibc(): ReadonlySet<string> { return RETAINING_LIBC; }
-  // A record/replay engine fn (HIRFunction.replayEngine) raises its thread's engine depth on
+  // A record/replay engine fn (FnDecl.replayEngine) raises its thread's engine depth on
   // entry and lowers it before every return, while the fixed heap is on.
   get replayScope(): boolean { return this.globals.has("replay$rrDepth") && this.globals.has("replay$rrHeapOn"); }
   get mlirMainOk(): boolean { return !this.plan.greenMain; }
@@ -123,7 +127,7 @@ export class ModuleCtx implements MlirEmitCtx {
   mapSlotLayout(k: TypeKind, v: TypeKind) { return this.layout.mapSlotLayout(k, v); }
   /** A builtin the program has not shadowed with its own fn of the same name. */
   isBuiltinName(name: string): boolean { return BUILTINS.has(name) && !this.userDeclaredFns.has(name); }
-  mlirBlockValueOwnsResult(e: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean { return this.own.blockValueOwnsResult(e); }
+  mlirBlockValueOwnsResult(e: FormOf<"IfExpr" | "MatchExpr">): boolean { return this.own.blockValueOwnsResult(e); }
   mlirClosureParamEscapes(fnName: string, idx: number): boolean { return this.own.closureParamEscapes(fnName, idx); }
   mlirStrViewStep(): string { return "rtStrViewStep"; }
   mlirOutWrite(stderr: boolean): string { return stderr ? "milo.err.write" : "milo.out.write"; }
@@ -140,7 +144,7 @@ export class ModuleCtx implements MlirEmitCtx {
   // Set by MlirPlan: the drop glue an itable of `concrete` ends in (src/mlir-glue.ts), or null.
   mlirItableDrop: (concrete: string) => string | null = () => null;
   // Set by MlirPlan under -g (src/mlir-debug.ts).
-  debugFnLoc: (fn: HIRFunction, loc: string) => string = (_fn, loc) => loc;
+  debugFnLoc: (fn: FnDecl, loc: string) => string = (_fn, loc) => loc;
   debugClosureLoc: (name: string, span: Span | undefined, loc: string) => string = (_n, _s, loc) => loc;
 
   /** `milo.cabi.<f>`, the shim that crosses the C ABI for extern f, or null when f needs none. */
@@ -209,7 +213,7 @@ export class ModuleCtx implements MlirEmitCtx {
   // address (an element of a Vec of ZSTs), and dereferenceable(0) says nothing anyway.
   // Callers that are not Milo get nothing either: extern decls and exported symbols keep the
   // plain C ABI, since a C caller makes none of these promises.
-  private refParamAttrs(fn: HIRFunction, p: HIRFunction["params"][number]): string[] | null {
+  private refParamAttrs(fn: FnDecl, p: FnDecl["params"][number]): string[] | null {
     if (!(p.isRef || p.isRefMut) || fn.isExtern || fn.name === "main" || this.exportedFnNames.has(fn.name)) return null;
     const ty = this.llvmType(p.type);
     if (!this.layout.layoutExact(ty)) return null;
@@ -219,7 +223,7 @@ export class ModuleCtx implements MlirEmitCtx {
   }
 
   /** Decides noalias for every `&mut` param of `fns` (src/noalias.ts); before any body is emitted. */
-  planAttributes(fns: HIRFunction[]): void {
+  planAttributes(fns: FnDecl[]): void {
     const candidates = new Map<string, number[]>();
     for (const fn of fns) {
       const attrs = fn.params.map(p => this.refParamAttrs(fn, p));
@@ -233,6 +237,9 @@ export class ModuleCtx implements MlirEmitCtx {
       externs,
       mutableGlobals: new Set(this.module.globals.filter(g => g.mutable).map(g => g.name)),
       exported: this.exportedFnNames,
+      facts: this.module.facts,
+      callees: this.module.callees,
+      lazyGlobals: new Set(this.plan.lazyGlobals.keys()),
       replayGlobals: this.replayScope ? ["replay$rrDepth", "replay$rrHeapOn"] : [],
       dropRuns: t => this.dropRuns(t),
     }, candidates);
@@ -246,7 +253,7 @@ export class ModuleCtx implements MlirEmitCtx {
   }
 
   /** The `attributes {...}` of `fn`'s func.func: linkage and pass-through LLVM attributes. */
-  fnAttrs(fn: HIRFunction, name: string): string {
+  fnAttrs(fn: FnDecl, name: string): string {
     const a: string[] = [];
     // Non-root fns are internal (like globals): each object carries its own copy.
     // linkonce_odr let the linker merge same-named fns across separately-compiled objects
@@ -289,7 +296,7 @@ export class ModuleCtx implements MlirEmitCtx {
 
   // ── the C ABI of externs passing a struct by value ──
 
-  private classifyExtern(fn: HIRFunction): void {
+  private classifyExtern(fn: FnDecl): void {
     // A `&Struct`/`*Struct` param crosses by reference (already "ptr"), so only bare
     // struct-tagged params/returns need classification.
     const byValStruct = (t: TypeKind, isRef: boolean) => t.tag === "struct" && !isRef;

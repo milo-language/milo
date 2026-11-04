@@ -1,4 +1,4 @@
-// MLIR driver (the build path) (docs/mlir-backend.md): HIR -> milo MLIR (src/emit-mlir.ts),
+// MLIR driver (the build path) (docs/mlir-backend.md): checked AST -> milo MLIR (src/emit-mlir.ts),
 // one module holding every function, the module globals and itables, the type-directed glue
 // (src/mlir-glue.ts) and the process scaffold (src/scaffold.ts) -> milo-opt (the passes, then
 // LLVM IR with the runtime sections linked in, mlir/Link.cpp). milo-opt's LLVM IR is the
@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
 import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import type { HIRFunction, HIRModule } from "./hir";
+import type { BackendProgram, FnDecl } from "./backend-program";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
@@ -181,15 +181,15 @@ const mlirString = (s: string) => `"${mlirStringBody(new TextEncoder().encode(s)
 /** One build's module: every function through the milo dialect, then milo-opt. */
 export class MlirPlan {
   readonly cx: ModuleCtx;
-  private readonly fns = new Map<string, HIRFunction>();
+  private readonly fns = new Map<string, FnDecl>();
   private readonly glue: MlirGlue;
   private readonly debug: DebugInfo | null;
 
-  constructor(private hir: HIRModule, private target: TargetInfo, opts: BuildOptions) {
-    const cx = this.cx = new ModuleCtx(hir, target, opts);
-    cx.plan = planStartup(hir, cx.layout, target);
+  constructor(private prog: BackendProgram, private target: TargetInfo, opts: BuildOptions) {
+    const cx = this.cx = new ModuleCtx(prog, target, opts);
+    cx.plan = planStartup(prog, cx.layout, target);
     this.glue = new MlirGlue(cx);
-    for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
+    for (const f of prog.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
     for (const f of cx.plan.initFns) this.fns.set(f.name, f);
     this.debug = opts.emitDebug ? new DebugInfo(cx.dwarfPath(opts.filePath), s => cx.mlirDisplayName(s), f => cx.dwarfPath(f)) : null;
     cx.debugFnLoc = (fn, loc) => this.debug ? this.debug.fnLoc(fn, loc) : loc;
@@ -201,10 +201,12 @@ export class MlirPlan {
   /** Runtime-initialized globals nothing reads: they are filled before main. */
   get startupGlobals(): string[] { return this.cx.plan.startupGlobals; }
 
-  /** The LLVM IR of the whole module. */
-  compile(): string {
+  /** Every function in the dialect (the scaffold and glue not included). */
+  private emitted: MlirFunction[] | null = null;
+  private functions(): MlirFunction[] {
+    if (this.emitted) return this.emitted;
     const cx = this.cx;
-    const functions = [...this.hir.functions.filter(f => !f.isExtern), ...cx.plan.initFns];
+    const functions = [...this.prog.functions.filter(f => !f.isExtern), ...cx.plan.initFns];
     cx.planAttributes(functions);
     const log: string[] = [];
     const taken: MlirFunction[] = [];
@@ -221,18 +223,20 @@ export class MlirPlan {
       log.push(`${fn.name}\tok`);
     }
     flushLog(log);
-    mlirClang();
-    const optPath = tool(MILO_OPT, "milo-opt");
-    // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
-    // elsewhere (a planted-bug build under build/) has no sources beside it to compare.
-    // An installed milo-opt (beside the compiler) has no sources to compare with.
-    const stale = basename(dirname(optPath)).startsWith("build") ? staleMiloOpt(optPath, dirname(dirname(optPath))) : null;
-    if (stale) {
-      console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
-      process.exit(1);
-    }
+    return (this.emitted = taken);
+  }
+
+  /** The text of the functions named in `names` and their closures, as milo-opt receives them. */
+  functionTexts(names: ReadonlySet<string>): string[] {
+    return this.functions().filter(f => names.has(f.name)).map(f => f.text);
+  }
+
+  /** The whole module milo-opt receives: the top layer of the milo dialect, before any pass. */
+  moduleText(): string {
+    const cx = this.cx;
+    const taken = this.functions();
     // Before the glue's text is taken: an itable's drop slot asks the glue for its drop.
-    const itables = itableOps(this.hir.itables, cx);
+    const itables = itableOps(this.prog.itables, cx);
     const glue = this.glue.module();
     const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
     const all = [...taken, ...glueFn];
@@ -251,7 +255,23 @@ export class MlirPlan {
     if (cx.opts.sanitize) attrs.push(`milo.sanitize = "${sanitizerKind()}"`);
     if (this.fns.get("replayHeapMalloc")?.isExtern === false) attrs.push("milo.replay_heap");
     const flags = this.debug ? `llvm.module_flags [#llvm.mlir.module_flag<warning, "Dwarf Version", 4 : i32>]\n` : "";
-    const text = `${this.debug?.aliases() ?? ""}module attributes {${attrs.join(", ")}} {\n${globalOps(this.hir.globals, cx)}${itables}${flags}${mlirModuleText(all)}${scaffold}}${this.debug ? ` ${this.debug.moduleLoc()}` : ""}\n`;
+    return `${this.debug?.aliases() ?? ""}module attributes {${attrs.join(", ")}} {\n${globalOps(this.prog.globals, cx)}${itables}${flags}${mlirModuleText(all)}${scaffold}}${this.debug ? ` ${this.debug.moduleLoc()}` : ""}\n`;
+  }
+
+  /** The LLVM IR of the whole module. */
+  compile(): string {
+    const cx = this.cx;
+    const text = this.moduleText();
+    mlirClang();
+    const optPath = tool(MILO_OPT, "milo-opt");
+    // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
+    // elsewhere (a planted-bug build under build/) has no sources beside it to compare.
+    // An installed milo-opt (beside the compiler) has no sources to compare with.
+    const stale = basename(dirname(optPath)).startsWith("build") ? staleMiloOpt(optPath, dirname(dirname(optPath))) : null;
+    if (stale) {
+      console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
+      process.exit(1);
+    }
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
     return run(optPath, ["--emit-llvmir", cx.emitDebug ? MLIR_PIPELINE_DEBUG : MLIR_PIPELINE], text);

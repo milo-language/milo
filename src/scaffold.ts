@@ -8,7 +8,7 @@
 //   - the lazy-global machinery (src/lazy-globals.ts places the guards);
 //   - a shim per extern passing a struct by value, which does the C ABI's coercion.
 // Everything is defined on demand (src/mlir-llvm.ts): milo-opt deletes what nothing uses.
-import type { HIRFunction } from "./hir";
+import type { FnDecl } from "./backend-program";
 import { LlvmModule, type LlvmFn, type LVal, type LTy, type Callee, type ArgAttrs, I1, I8, I32, I64, PTR } from "./mlir-llvm";
 import type { ModuleCtx } from "./mlir-ctx";
 import { processGlobalNames } from "./mlir-ctx";
@@ -339,7 +339,7 @@ class Scaffold {
   private lazyGlobals(): void {
     const bare = this.bare;
     const tls = !bare;
-    const has = (n: string) => this.cx.hirFns.get(n)?.isExtern === false;
+    const has = (n: string) => this.cx.fns.get(n)?.isExtern === false;
     const green = !bare && has("schedulerCurrent") && has("schedulerYield") && has("schedulerExists") && has("schedulerPollMain");
     const tid = this.m.global("__milo_lazy_tid", I8, { threadLocal: tls });
     // What this thread is initializing, for the panic note. Values, not a list of frames:
@@ -516,7 +516,7 @@ class Scaffold {
     const cx = this.cx;
     const abi = cx.externAbi.get(name)!;
     const sig = cx.fnSigs.get(name)!;
-    const fn = cx.hirFns.get(name) as HIRFunction;
+    const fn = cx.fns.get(name) as FnDecl;
     const ty = (t: string) => cx.dialectType(t)!;
     const align = (t: string) => cx.layout.typeAlign(t);
     const params: LTy[] = [], attrs: (ArgAttrs | null)[] = [];

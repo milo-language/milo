@@ -7,7 +7,7 @@
 // lowering lands — a by-value struct param/return) is skipped with a comment so the
 // header stays valid and the gap is visible.
 
-import type { HIRModule, HIRFunction } from "./hir";
+import type { BackendProgram, FnDecl } from "./backend-program";
 import type { TypeKind } from "./types";
 
 function intName(bits: number, signed: boolean): string {
@@ -65,11 +65,11 @@ function cParam(t: TypeKind, name: string): string | null {
 
 // Order struct definitions so a by-value-embedded struct is defined before its user.
 // Pointer references don't constrain order (the forward typedef covers them).
-function depOrder(structs: HIRModule["structs"]): HIRModule["structs"] {
+function depOrder(structs: BackendProgram["structs"]): BackendProgram["structs"] {
   const byName = new Map(structs.map(s => [s.name, s]));
-  const out: HIRModule["structs"] = [];
+  const out: BackendProgram["structs"] = [];
   const seen = new Set<string>();
-  const visit = (s: HIRModule["structs"][number]) => {
+  const visit = (s: BackendProgram["structs"][number]) => {
     if (seen.has(s.name)) return;
     seen.add(s.name);
     for (const f of s.fields) {
@@ -84,12 +84,12 @@ function depOrder(structs: HIRModule["structs"]): HIRModule["structs"] {
 }
 
 // Does an exported fn have a by-value struct param or return? (skipped until stage 6.)
-function hasByValueStruct(fn: HIRFunction): boolean {
+function hasByValueStruct(fn: FnDecl): boolean {
   if (fn.retType.tag === "struct") return true;
   return fn.params.some(p => p.type.tag === "struct" && !p.isRef && !p.isRefMut);
 }
 
-export function generateHeader(module: HIRModule, headerName: string): string {
+export function generateHeader(module: BackendProgram, headerName: string): string {
   const guard = `MILO_${headerName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_H`;
   const L: string[] = [];
   L.push(`#ifndef ${guard}`);

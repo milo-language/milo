@@ -27,7 +27,7 @@ bun run src/main.ts run examples/hello.milo               # compile + run (no ar
 bun run src/main.ts build examples/hello.milo -o hello    # compile to binary
 bun run src/main.ts emit-ir examples/hello.milo           # emit LLVM IR
 bun run src/main.ts emit-ast foo.milo                     # parsed AST as JSON (--all imports; --spans keep spans)
-bun run src/main.ts emit-hir foo.milo                     # typed HIR as JSON (--all full module; every expr carries its type)
+bun run src/main.ts emit-mlir foo.milo                    # the milo dialect before milo-opt: the source-faithful top layer (--all whole module)
 bun run src/main.ts build foo.milo --release              # -O3 (default -O2; --debug for -O0)
 bun run src/main.ts build foo.milo -o foo -g --debug      # DWARF for lldb/hades (-g composes with any -O)
 bun test                                                  # full test suite
@@ -60,7 +60,7 @@ Add a new test by dropping a `.milo` file with the appropriate annotation in the
 ### Architecture
 
 ```
-Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → emit-mlir (milo dialect) + scaffold (LLVM dialect) → milo-opt passes → LLVM IR (runtime sections linked in) → clang → Binary
+Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → emit-mlir (milo dialect top layer, read off AST + CheckResult) → milo-desugar + scaffold (LLVM dialect) → milo-opt passes → LLVM IR (runtime sections linked in) → clang → Binary
 ```
 
 | File | Purpose |
@@ -72,9 +72,9 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/types.ts` | Internal type representations (`TypeKind` tagged union) |
 | `src/resolver.ts` | Import resolution — recursive parse + merge of imported files |
 | `src/checker.ts` | Type checking, move checking, scope validation → `CheckResult` |
-| `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
-| `src/lower.ts` | AST + CheckResult → HIRModule lowering |
-| `src/emit-mlir.ts` | HIR → milo MLIR dialect text (milo-opt then lowers it to LLVM IR; `src/mlir-backend.ts` drives it) |
+| `src/backend-program.ts` | AST + CheckResult → the declarations the backend compiles (layouts, signatures, globals, itables); bodies stay AST |
+| `src/emit-forms.ts` | Each AST expression as the op family it lowers to, read off the checker's facts on each visit (no tree of its own) |
+| `src/emit-mlir.ts` | Checked AST → milo dialect text: the source-faithful top layer (`milo.for_in`, `milo.try`, `milo.interp`), which `milo-desugar` (mlir/Desugar.cpp) lowers to core ops; `src/mlir-backend.ts` drives it |
 | `src/scaffold.ts` | Process scaffold as an LLVM-dialect module: entry point, panic routines, lazy globals, stdio, C ABI shims (`src/mlir-ctx.ts` holds the module facts, `src/startup.ts` the init plan) |
 | `src/diagnostics.ts` | Elm-style error formatting with source context and carets |
 | `src/target.ts` | Host platform detection, target triple resolution |
@@ -297,7 +297,7 @@ If none fits, write the gate before you write the claim. Two rules that follow f
   it and thereby rewrites the file it is checking proves nothing.
 
 And the corollary for *tools*: read the compiler through its machine-readable surfaces
-(`milo api --json`, `milo lang --json`, `milo check --json`, `emit-ast`, `emit-hir`), not
+(`milo api --json`, `milo lang --json`, `milo check --json`, `emit-ast`, `emit-mlir`), not
 by importing `src/*.ts`. An importer can only ever be a file inside this repo written in
 this repo's current host language — which is TypeScript today and is planned to be Rust or
 Milo. See [docs/json-api.md](docs/json-api.md) for the payloads and the rules that keep

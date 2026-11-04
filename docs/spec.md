@@ -10005,7 +10005,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `inherited`
 - `second`
 
-**Rationale.** Command's environment, observed from inside the child on every platform: an override the parent never had, a value the parent set with Env.set, and the last-wins rule when one name is set twice. Every line is echoed by the child.
+**Rationale.** @rule: E-TARGET Command's environment, observed from inside the child on every platform: an override the parent never had, a value the parent set with Env.set, and the last-wins rule when one name is set twice. Every line is echoed by the child.
 
 *Program:* [`tests/fixtures/commandEnv.milo`](../tests/fixtures/commandEnv.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -14796,7 +14796,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `replaced`
 - `second clause failed, moved payload dropped`
 
-**Rationale.** Let-chains: `let` clauses and boolean conditions joined by `&&`, in any order. A clause runs only when every clause before it held, a `let` clause's bindings reach the later clauses and the then-body, and the else runs once, when any clause fails, with none of those bindings in scope (so it may reuse their names, and write a subject a borrowing clause had frozen). Works in `while` too.
+**Rationale.** @rule: S-IF-CHAIN Let-chains: `let` clauses and boolean conditions joined by `&&`, in any order. A clause runs only when every clause before it held, a `let` clause's bindings reach the later clauses and the then-body, and the else runs once, when any clause fails, with none of those bindings in scope (so it may reuse their names, and write a subject a borrowing clause had frozen). Works in `while` too.
 
 *Program:* [`tests/fixtures/ifLetChain.milo`](../tests/fixtures/ifLetChain.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

@@ -4,7 +4,7 @@
 // Milo function it takes the call's line, as C's libc calls do, and never shows up as a
 // frame of its own.
 import { basename, dirname } from "path";
-import type { HIRFunction } from "./hir";
+import type { FnDecl } from "./backend-program";
 
 const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
@@ -34,7 +34,7 @@ export class DebugInfo {
   // linkageName on purpose: lldb DISPLAYS the linkage name in every backtrace frame when it
   // is present. The DIE is matched to code by DW_AT_low_pc, not by name.
   /** `loc` (the function's `"file":line:col`) fused with fn's subprogram. */
-  fnLoc(fn: HIRFunction, loc: string): string {
+  fnLoc(fn: FnDecl, loc: string): string {
     return this.subprogram(fn.name, this.name(fn.name), fn.sourceFile, fn.line ?? 0, loc);
   }
 

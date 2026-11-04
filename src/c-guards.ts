@@ -2,17 +2,17 @@
 // against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by
 // verifyCDecls, then discarded). It needs nothing from the build but the recorded claims
 // and the layout math that placed the structs (src/layout.ts).
-import type { HIRStruct } from "./hir";
+import type { StructDecl } from "./backend-program";
 import { type TypeKind, typeName } from "./types";
 import { cSigParams, headerLabel } from "./csig";
 import { must } from "./must";
 
-// One `@cSig` claim, as codegen records it from the HIR.
+// One `@cSig` claim, as codegen records it from the program.
 export interface CSigClaim { fnName: string; header: string; sig: string; retType: TypeKind; params?: { type: TypeKind }[] }
 export interface CValueClaim { global: string; cName: string; header: string; value: string; signed: boolean }
 
 interface CGuardInput {
-  cLayoutStructs: HIRStruct[];
+  cLayoutStructs: StructDecl[];
   cSigs: CSigClaim[];
   cValues: CValueClaim[];
   // `extern type` names: a pointer to one is a handle C declares incomplete.

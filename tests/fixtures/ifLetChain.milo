@@ -1,3 +1,4 @@
+// @rule: S-IF-CHAIN
 // @expect: got 3
 // @expect: no
 // @expect: n2 child

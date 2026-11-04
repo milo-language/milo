@@ -64,7 +64,7 @@ milo build file.milo -o myapp   # compile to binary
 milo check file.milo --json     # type-check only; diagnostics as JSON
 milo fix file.milo              # apply every mechanical fix the checker reports
 milo emit-ir file.milo          # emit LLVM IR
-milo emit-hir file.milo         # typed HIR as JSON (every expr carries its type)
+milo emit-mlir file.milo        # the milo dialect module before milo-opt (the source-faithful top layer)
 milo build file.milo --release  # -O3 optimized
 milo explain <warning|@attr|kw> # what a warning/attribute/keyword means and how to fix it
 \`\`\`

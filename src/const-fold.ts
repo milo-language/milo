@@ -2,8 +2,9 @@
 // globals get a static initializer and what it is. Codegen asks `isFullyConstInit` to split
 // static globals from the run-time-initialized ones; emit-mlir turns `globalInit` into the
 // `milo.global.def` init attribute (types and layout come from the MLIR side, so a folded
-// value carries none).
-import type { HIRExpr, HIRGlobal } from "./hir";
+// value carries none). Initializers are read through their forms (src/emit-forms.ts).
+import type { GlobalDecl } from "./backend-program";
+import type { Facts, Node } from "./emit-forms";
 
 export type ConstVal =
   | { k: "int"; v: bigint }
@@ -16,18 +17,22 @@ export type ConstVal =
 
 export type FoldLayouts = Map<string, { fields: { name: string }[] }>;
 
+// A global's initializer sits in no function: nothing for a `?` to return to.
+const AT_MODULE = { ret: { tag: "void" as const } };
+
 // Fold a compile-time-constant numeric expression (literals + arithmetic on
 // them) to an int/float value. The checker's isConstGlobalInit already admits
 // BinOp/UnaryOp of constants as valid global initializers, but without this
 // fold a global `let x: f64 = a / b` was silently zeroed. Int math stays in bigint to
 // preserve i64 precision; float math promotes to Number.
-function numeric(expr: HIRExpr): { kind: "int"; v: bigint } | { kind: "float"; v: number } | null {
+function numeric(n: Node, fx: Facts): { kind: "int"; v: bigint } | { kind: "float"; v: number } | null {
+  const expr = fx.form(n, AT_MODULE);
   switch (expr.kind) {
     case "IntLit": return { kind: "int", v: BigInt(expr.value) };
     case "FloatLit": return { kind: "float", v: expr.value };
     case "BoolLit": return { kind: "int", v: expr.value ? 1n : 0n };
     case "UnaryOp": {
-      const o = numeric(expr.operand);
+      const o = numeric(expr.operand, fx);
       if (!o) return null;
       if (expr.op === "-") return o.kind === "float" ? { kind: "float", v: -o.v } : { kind: "int", v: -o.v };
       if (expr.op === "~" && o.kind === "int") return { kind: "int", v: -o.v - 1n }; // two's-complement bitwise-not
@@ -35,17 +40,17 @@ function numeric(expr: HIRExpr): { kind: "int"; v: bigint } | { kind: "float"; v
       return null;
     }
     case "Cast": {
-      const o = numeric(expr.operand);
+      const o = numeric(expr.operand, fx);
       if (!o) return null;
       if (expr.targetType.tag === "float") return { kind: "float", v: o.kind === "float" ? o.v : Number(o.v) };
       if (expr.targetType.tag === "int") return { kind: "int", v: o.kind === "float" ? BigInt(Math.trunc(o.v)) : o.v };
       return null;
     }
     case "BinOp": {
-      const l = numeric(expr.left);
-      const r = numeric(expr.right);
+      const l = numeric(expr.left, fx);
+      const r = numeric(expr.right, fx);
       if (!l || !r) return null;
-      const asFloat = expr.type.tag === "float" || l.kind === "float" || r.kind === "float";
+      const asFloat = fx.ty(expr.node).tag === "float" || l.kind === "float" || r.kind === "float";
       if (asFloat) {
         const a = l.kind === "float" ? l.v : Number(l.v);
         const b = r.kind === "float" ? r.v : Number(r.v);
@@ -78,21 +83,23 @@ function numeric(expr: HIRExpr): { kind: "int"; v: bigint } | { kind: "float"; v
 
 const num = (n: NonNullable<ReturnType<typeof numeric>>): ConstVal => n.kind === "float" ? { k: "float", v: n.v } : { k: "int", v: n.v };
 
-export function foldConst(expr: HIRExpr, layouts: FoldLayouts): ConstVal | null {
+export function foldConst(n: Node, layouts: FoldLayouts, fx: Facts): ConstVal | null {
+  const expr = fx.form(n, AT_MODULE);
   switch (expr.kind) {
     case "IntLit":
     case "FloatLit":
     case "BoolLit":
     case "BinOp":
     case "UnaryOp": {
-      const n = numeric(expr);
-      return n === null ? null : num(n);
+      const v = numeric(expr.node, fx);
+      return v === null ? null : num(v);
     }
     case "Cast": {
-      if (expr.type.tag === "ptr") return { k: "zero" };
-      if (expr.type.tag !== "int" && expr.type.tag !== "float") return null;
-      const n = numeric(expr);
-      return n === null ? null : num(n);
+      const t = fx.ty(expr.node);
+      if (t.tag === "ptr") return { k: "zero" };
+      if (t.tag !== "int" && t.tag !== "float") return null;
+      const v = numeric(expr.node, fx);
+      return v === null ? null : num(v);
     }
     case "StructLit": {
       const layout = layouts.get(expr.name);
@@ -102,24 +109,25 @@ export function foldConst(expr: HIRExpr, layouts: FoldLayouts): ConstVal | null 
       for (const lf of layout.fields) {
         const ef = expr.fields.find(f => f.name === lf.name);
         if (!ef) return null;
-        const v = foldConst(ef.value, layouts);
+        const v = foldConst(ef.value, layouts, fx);
         if (v === null) return null;
         items.push(v);
       }
       return { k: "agg", items };
     }
     case "ArrayLit": {
-      if (expr.type.tag !== "array" || expr.type.size === null) return null;
+      const at = fx.ty(expr.node);
+      if (at.tag !== "array" || at.size === null) return null;
       const items: ConstVal[] = [];
       for (const elem of expr.elements) {
-        const v = foldConst(elem, layouts);
+        const v = foldConst(elem, layouts, fx);
         if (v === null) return null;
         items.push(v);
       }
       return { k: "agg", items };
     }
     case "ArrayRepeat": {
-      const item = foldConst(expr.value, layouts);
+      const item = foldConst(expr.value, layouts, fx);
       if (item === null) return null;
       const isZero = item.k === "zero" || (item.k === "int" && item.v === 0n);
       return isZero ? { k: "zero" } : { k: "splat", item };
@@ -133,15 +141,16 @@ export function foldConst(expr: HIRExpr, layouts: FoldLayouts): ConstVal | null 
 // so it still needs the run-time pass: this is the check that decides which globals are
 // filled at run time, and answering "yes" for a partial init is how a field silently stays
 // empty. Fields a partial literal leaves out count as const: they are zero.
-export function isFullyConstInit(g: HIRGlobal, layouts: FoldLayouts): boolean {
-  if (foldConst(g.value, layouts) !== null) return true;
-  if (g.value?.kind !== "StructLit" || g.value.base) return false;
+export function isFullyConstInit(g: GlobalDecl, layouts: FoldLayouts, fx: Facts): boolean {
+  if (foldConst(g.value, layouts, fx) !== null) return true;
+  const value = fx.form(g.value, AT_MODULE);
+  if (value.kind !== "StructLit" || value.base) return false;
   const layout = layouts.get(g.type.tag === "struct" ? g.type.name : "");
   if (!layout) return false;
-  const byName = new Map(g.value.fields.map(f => [f.name, f.value]));
+  const byName = new Map(value.fields.map(f => [f.name, f.value]));
   return layout.fields.every(f => {
     const e = byName.get(f.name);
-    return !e || foldConst(e, layouts) !== null;
+    return !e || foldConst(e, layouts, fx) !== null;
   });
 }
 
@@ -149,11 +158,11 @@ export function isFullyConstInit(g: HIRGlobal, layouts: FoldLayouts): boolean {
  * The static initializer of `g`: its folded value, or for a struct literal with run-time
  * fields the constant fields with the rest zeroed (the run-time pass fills them), else zero.
  */
-export function globalInit(g: HIRGlobal, layouts: FoldLayouts): ConstVal {
-  const whole = foldConst(g.value, layouts);
+export function globalInit(g: GlobalDecl, layouts: FoldLayouts, fx: Facts): ConstVal {
+  const whole = foldConst(g.value, layouts, fx);
   if (whole !== null) return whole;
-  const value = g.value;
-  if (!value || value.kind !== "StructLit" || value.base || g.type.tag !== "struct") return { k: "zero" };
+  const value = fx.form(g.value, AT_MODULE);
+  if (value.kind !== "StructLit" || value.base || g.type.tag !== "struct") return { k: "zero" };
   const layout = layouts.get(g.type.name);
   if (!layout) return { k: "zero" };
   const byName = new Map(value.fields.map(f => [f.name, f.value]));
@@ -161,7 +170,7 @@ export function globalInit(g: HIRGlobal, layouts: FoldLayouts): ConstVal {
     k: "agg",
     items: layout.fields.map(f => {
       const e = byName.get(f.name);
-      return (e && foldConst(e, layouts)) || { k: "zero" as const };
+      return (e && foldConst(e, layouts, fx)) || { k: "zero" as const };
     }),
   };
 }
