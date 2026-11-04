@@ -131,7 +131,7 @@ fn main(): i32 {
     moveOutOfBorrow: `
 fn peek(a: &[string; 2]): string { return a[0] }
 fn main(): i32 {
-    var a: [string; 2] = [$"heap {0}", $"heap {1}"]
+    let a: [string; 2] = [$"heap {0}", $"heap {1}"]
     print(peek(a))
     return 0
 }`,
@@ -146,7 +146,7 @@ fn main(): i32 {
 }`,
     consumeInline: `
 fn main(): i32 {
-    var a: [string; 2] = [$"heap {0}", $"heap {1}"]
+    let a: [string; 2] = [$"heap {0}", $"heap {1}"]
     var n = 0
     var i = 0
     while i < 50 {
