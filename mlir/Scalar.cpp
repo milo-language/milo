@@ -1356,6 +1356,51 @@ struct GlobalAddrLowering : ConvertOpToLLVMPattern<GlobalAddrOp> {
   }
 };
 
+// The table is a constant struct of pointers built in the global's initializer region. A
+// symbol nothing in the module names (the scaffold's drop helper, a method MLIR did not take)
+// is declared as `void()`; the splice keeps the defining module's own symbol.
+struct ItableLowering : ConvertOpToLLVMPattern<ItableOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ItableOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    auto module = op->getParentOfType<ModuleOp>();
+    MLIRContext *ctx = rw.getContext();
+    Type ptrTy = LLVM::LLVMPointerType::get(ctx);
+    Location loc = op.getLoc();
+    SmallVector<StringRef> syms;
+    for (Attribute a : op.getMethods())
+      syms.push_back(cast<FlatSymbolRefAttr>(a).getValue());
+    if (op.getDrop())
+      syms.push_back(*op.getDrop());
+    for (StringRef s : syms) {
+      if (module.lookupSymbol(s))
+        continue;
+      OpBuilder::InsertionGuard g(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      LLVM::LLVMFuncOp::create(rw, loc, s, LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(ctx), {}));
+    }
+    SmallVector<Type> slotTys(syms.size() + (op.getDrop() ? 0 : 1), ptrTy);
+    auto structTy = LLVM::LLVMStructType::getLiteral(ctx, slotTys);
+    auto global = LLVM::GlobalOp::create(rw, loc, structTy, /*isConstant=*/true, LLVM::Linkage::Private,
+                                         op.getSymName(), Attribute());
+    global.setUnnamedAddr(LLVM::UnnamedAddr::Global);
+    Block *init = rw.createBlock(&global.getInitializerRegion());
+    rw.setInsertionPointToStart(init);
+    Value agg = LLVM::UndefOp::create(rw, loc, structTy);
+    for (auto [i, s] : llvm::enumerate(syms)) {
+      Value p = LLVM::AddressOfOp::create(rw, loc, ptrTy, s);
+      agg = LLVM::InsertValueOp::create(rw, loc, agg, p, ArrayRef<int64_t>{(int64_t)i});
+    }
+    if (!op.getDrop()) {
+      Value z = LLVM::ZeroOp::create(rw, loc, ptrTy);
+      agg = LLVM::InsertValueOp::create(rw, loc, agg, z, ArrayRef<int64_t>{(int64_t)syms.size()});
+    }
+    LLVM::ReturnOp::create(rw, loc, agg);
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1878,7 +1923,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, CallPtrLowering, CCallLowering, GlobalAddrLowering, ItableLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

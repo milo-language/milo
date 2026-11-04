@@ -6,7 +6,7 @@
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
 // covers, so the build fails with the reason.
 
-import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
+import type { HIRContract, HIRContractCheck, HIRExpr, HIRFunction, HIRModule, HIRPatStep, HIRPatTest, HIRPattern, HIRStmt as HIRStmtBase } from "./hir";
 type HIRStmt = HIRStmtBase | HIRContractCheck;
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
@@ -42,6 +42,7 @@ export interface MlirEmitCtx {
   mlirCAbiShim(name: string, variadic: boolean): string | null;
   mlirVecGrow(elemSize: number): string;
   mlirItable(from: string, iface: string): string;
+  mlirItableDrop(concrete: string): string | null;
   mlirProcessGlobal(which: "argc" | "argv" | "scheduler" | "panicHook"): string;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
@@ -5418,6 +5419,14 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
     if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");
     throw err;
   }
+}
+
+/** The module-level itable ops: one per (concrete type, interface), methods in interface order. */
+export function itableOps(itables: HIRModule["itables"], cx: MlirEmitCtx): string {
+  return itables.map(it => {
+    const drop = cx.mlirItableDrop(it.concreteType);
+    return `milo.itable @${quote(cx.mlirItable(it.concreteType, it.ifaceName))} [${it.methods.map(m => `@${quote(m)}`).join(", ")}]${drop ? ` drop @${quote(drop)}` : ""}\n`;
+  }).join("");
 }
 
 /** One module: the functions, plus a declaration for every callee not among them. */

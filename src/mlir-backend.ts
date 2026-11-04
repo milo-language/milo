@@ -20,7 +20,7 @@ import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
 import { mapSymbols } from "./cgu";
 import type { TargetInfo } from "./target";
-import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
+import { emitMlirFunction, itableOps, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
 
 
@@ -192,7 +192,7 @@ export class MlirPlan {
   // to the module as closure bodies are.
   private readonly glue: MlirGlue;
 
-  constructor(hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
+  constructor(private hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
     this.glue = new MlirGlue(cx);
     for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
   }
@@ -246,7 +246,7 @@ export class MlirPlan {
     const dl = targetDataLayout(triple);
     const glue = this.glue.module();
     const glueFn: MlirFunction[] = glue ? [{ name: "milo.glue", text: glue.text, callees: this.glue.callees, calls: [], closures: glue.names }] : [];
-    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText([...this.taken, ...glueFn])}}\n`;
+    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${itableOps(this.hir.itables, this.cx)}${mlirModuleText([...this.taken, ...glueFn])}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
     // A per-module extern is one more typed view of a C symbol: codegen.ts renames its

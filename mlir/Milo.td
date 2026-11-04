@@ -1021,6 +1021,20 @@ def Milo_GlobalAddrOp : Milo_Op<"global.addr", [Pure]> {
   let assemblyFormat = "$name attr-dict";
 }
 
+def Milo_ItableOp : Milo_Op<"itable", [Symbol]> {
+  let summary = "an interface's method table for one concrete type";
+  let description = [{
+    Module-level constant `sym_name`: one pointer per method of the interface, in interface
+    order, then a destructor slot, which is the `drop` function or null when the concrete
+    type has none. The slot comes last so every method index stays valid; dispatch indexes
+    the table and never reads its struct type. `milo.global.addr` reaches it by symbol.
+    A method or drop symbol nothing in the module defines is declared at lowering and
+    resolves against the rest of the module after the textual splice.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, ArrayAttr:$methods, OptionalAttr<FlatSymbolRefAttr>:$drop);
+  let assemblyFormat = "$sym_name $methods (`drop` $drop^)? attr-dict";
+}
+
 def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {
   let summary = "the code address of a named function";
   let description = [{

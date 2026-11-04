@@ -266,7 +266,8 @@ export class Codegen {
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
   // use defined modular arithmetic instead of trapping. Div-by-zero, bounds, ranged still trap.
   public currentFnWrapping = false;
-  private itableLayouts = new Map<string, { globalName: string; methodCount: number }>();
+  // Concrete types whose itables end in a destructor slot (a drop helper exists for them).
+  private itableDrops = new Set<string>();
 
   private filePath?: string;
 
@@ -1410,29 +1411,12 @@ export class Codegen {
       this.output.splice(1, 0, `@${g.name} = internal ${tls}global ${ty} ${initVal}`);
     }
 
-    // emit itable globals for interface dispatch
+    // The itable globals are emitted by MLIR (emit-mlir.ts emitItables); what stays here is the
+    // destructor slot's target, which only this module can define.
     for (const itable of module.itables) {
-      const globalName = `@itable.${itable.concreteType}.${itable.ifaceName}`;
-      // One extra slot after the methods: the concrete type's destructor, or null when it
-      // has none. Behind an interface the concrete type is erased, so this is the only
-      // route by which a boxed value's `Drop` impl can run — without it `Heap<Iface>`
-      // freed the box and never destroyed what was in it. Appended rather than prepended
-      // so every existing method index stays valid; dispatch GEPs by index and never
-      // reads the struct type.
-      const slots = itable.methods.map(m => `ptr @${m}`);
-      if (this.structNeedsDrop(itable.concreteType)) {
-        ensureStructDropHelper(this, itable.concreteType);
-        slots.push(`ptr @milo.drop.struct.${itable.concreteType}`);
-      } else {
-        slots.push("ptr null");
-      }
-      const ptrs = slots.join(", ");
-      const structTy = `{ ${slots.map(() => "ptr").join(", ")} }`;
-      this.output.splice(1, 0, `${globalName} = private unnamed_addr constant ${structTy} { ${ptrs} }`);
-      this.itableLayouts.set(`${itable.concreteType}.${itable.ifaceName}`, {
-        globalName,
-        methodCount: itable.methods.length,
-      });
+      if (!this.structNeedsDrop(itable.concreteType)) continue;
+      ensureStructDropHelper(this, itable.concreteType);
+      this.itableDrops.add(itable.concreteType);
     }
 
     // insert string constants
@@ -2682,9 +2666,10 @@ export class Codegen {
   }
 
   /** MLIR path: the itable global of type `from` as interface `iface`. */
-  public mlirItable(from: string, iface: string): string {
-    return (this.itableLayouts.get(`${from}.${iface}`)?.globalName ?? `@itable.${from}.${iface}`).slice(1);
-  }
+  public mlirItable(from: string, iface: string): string { return `itable.${from}.${iface}`; }
+
+  /** MLIR path: the drop helper an itable of `concrete` ends in, or null when it needs none. */
+  public mlirItableDrop(concrete: string): string | null { return this.itableDrops.has(concrete) ? `milo.drop.struct.${concrete}` : null; }
 
   /** MLIR path: std's _vecGrowBuf as a runtime section, realloc where the target has it. */
   public mlirVecGrow(elemSize: number): string {

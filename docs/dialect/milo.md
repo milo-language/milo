@@ -1611,6 +1611,36 @@ vec.len, bounds_check and vec.store.
 
 
 
+### `milo.itable` (::milo::ItableOp)
+
+_An interface's method table for one concrete type_
+
+Syntax:
+
+```
+operation ::= `milo.itable` $sym_name $methods (`drop` $drop^)? attr-dict
+```
+
+Module-level constant `sym_name`: one pointer per method of the interface, in interface
+order, then a destructor slot, which is the `drop` function or null when the concrete
+type has none. The slot comes last so every method index stays valid; dispatch indexes
+the table and never reads its struct type. `milo.global.addr` reaches it by symbol.
+A method or drop symbol nothing in the module defines is declared at lowering and
+resolves against the rest of the module after the textual splice.
+
+Interfaces: `Symbol`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>sym_name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+<tr><td><code>methods</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
+<tr><td><code>drop</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+</table>
+
+
+
 ### `milo.len` (::milo::LenOp)
 
 _Len of a Vec reference, as Milo's si64_
