@@ -121,6 +121,10 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   strcmp: pure(man(3, "strcmp")),
   strncmp: pure(man(3, "strncmp")),
   strtoll: pure(man(3, "strtoll")),
+  strtod: pure(man(3, "strtod")),
+  strtof: pure(man(3, "strtof")),
+  // Ends the process with the overflow message (milo's own runtime, src/scaffold.ts); no input.
+  __milo_overflow_fail: local("src/scaffold.ts __milo_overflow_fail"),
   atof: pure(man(3, "atof")),
   strerror: pure(man(3, "strerror")),
   snprintf: pure(man(3, "snprintf")),
