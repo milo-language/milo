@@ -70,6 +70,9 @@ export function fixFor(d: Diagnostic, source: string): Fix | null {
       if (!m) return null;
       return { title: `Import '${m[2]}' from '${m[1]}'`, edits: [addImportName(source, m[1]!, m[2]!)] };
     }
+    case "plain-closure-env":
+      // The span is the declared type, which starts at its `(`: `(T) => R` -> `move (T) => R`.
+      return source[at] === "(" ? { title: "Declare the type 'move'", edits: [{ offset: at, len: 0, newText: "move " }] } : null;
     case "var-never-reassigned":
       // The span is the `var` keyword; only that word changes, so the rest of the line,
       // comments included, stays as written.

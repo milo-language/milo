@@ -1,0 +1,10 @@
+// A Vec whose element type is a plain function keeps no owner for a pushed closure's
+// environment. The element type has to be `move (T) => R`.
+// @error: this closure owns its captures, so an element of this collection cannot be a plain function type
+
+fn main() {
+    let n = 6
+    var v: Vec<(i64) => i64> = Vec.new()
+    v.push(move (x: i64): i64 => x + n)
+    print(v.len())
+}

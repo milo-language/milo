@@ -1,0 +1,13 @@
+// A `move` closure that captures `n` owns a heap environment. A plain `(i64) => i64` is
+// Copy and owns nothing, so returning the closure under that type left its environment
+// without an owner and it was never freed. The return type has to say `move`.
+// @error: this closure owns its captures, so the return value cannot be a plain function type
+
+fn makeAdder(n: i64): (i64) => i64 {
+    return move (x: i64): i64 => x + n
+}
+
+fn main() {
+    let f = makeAdder(2)
+    print(f(1))
+}

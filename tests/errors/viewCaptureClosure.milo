@@ -1,6 +1,6 @@
 // a closure stores its captures and can outlive the frame that owns the Vec, so a view
 // captured by one dangles — this returned garbage from freed memory before the check
-fn makeGetter(): () => i64 {
+fn makeGetter(): move () => i64 {
     var v: Vec<i64> = Vec.new()
     v.push(111)
     let s = v[0..1]

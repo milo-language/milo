@@ -6,7 +6,7 @@
 // @expect: 20
 
 struct Holder {
-    f: (i64) => i64,
+    f: move (i64) => i64,
 }
 
 pub fn makeHolder(): Holder {
@@ -16,9 +16,9 @@ pub fn makeHolder(): Holder {
     }
 }
 
-pub fn makeVec(): Vec<(i64) => i64> {
+pub fn makeVec(): Vec<move (i64) => i64> {
     let n = 6
-    var v: Vec<(i64) => i64> = Vec.new()
+    var v: Vec<move (i64) => i64> = Vec.new()
     v.push(move(x: i64) => x + n)
     return v
 }
@@ -31,15 +31,13 @@ pub fn makeFree(): Holder {
 
 pub fn main(): i32 {
     let h = makeHolder()
-    let g = h.f
-    print(g(1))
+    print(h.f(1))
 
-    let v = makeVec()
-    let g2 = v[0]
+    var v = makeVec()
+    let g2 = v.remove(0)
     print(g2(1))
 
     let free = makeFree()
-    let g3 = free.f
-    print(g3(10))
+    print(free.f(10))
     return 0
 }

@@ -1918,9 +1918,9 @@ class FnEmitter {
           this.ret(`milo.return ${v.ref} : ${v.ty}`, { kind: "ssa", v });
           return true;
         }
-        // A `move` closure returned as a plain `(T) => R`: a plain fn value is Copy and owns
-        // nothing, so its environment has no owner and leaks (the env
-        // drop header is docs/backlog.md #23). fnAs's `leak` casts it. [MILO-O-returnedPlainClosure]
+        // Returned as a plain `(T) => R`: a plain fn value is Copy and owns nothing. The checker
+        // rejects an env-owning closure here (plain-closure-env), so what reaches this is a
+        // capture-free closure with a null env; fnAs's `leak` casts it. [MILO-O-returnedPlainClosure]
         const plainFn = this.retTy!.startsWith("!milo.fn<") && !this.retTy!.startsWith("!milo.fn<owning ");
         const v = plainFn ? this.take(this.expr(s.value), this.retTy!, "return", true) : this.operand(s.value, this.retTy!, "return", this.retPlaceOnly);
         this.ret(`milo.return ${v.ref} : ${v.ty}`, { kind: "ssa", v: { ...v, own: v.own === "owned" ? "view" : v.own } });

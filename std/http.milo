@@ -1603,21 +1603,27 @@ fn parseRange(v: &string, size: i64): RangeSpec {
 pub struct StreamRoute {
     pattern: string,
     paramNames: Vec<string>,
-    handler: (&mut Context, &mut Stream) => void,
+    handler: move (&mut Context, &mut Stream) => void,
 }
 
 // A GET route that upgrades to a WebSocket (see Router.ws).
 pub struct WsRoute {
     pattern: string,
     paramNames: Vec<string>,
-    handler: (&mut Context, &mut WebSocket) => void,
+    handler: move (&mut Context, &mut WebSocket) => void,
 }
 
 pub struct Route {
     method: string,
     pattern: string,
     paramNames: Vec<string>,
-    handler: (&mut Context) => Response,
+    handler: move (&mut Context) => Response,
+}
+
+// One middleware. A struct, because a call through a Vec element (`mws[i](...)`) has no syntax
+// and a field call (`mws[i].f(...)`) does.
+struct Middleware {
+    f: move (&mut Context, (&mut Context) => Response) => Response,
 }
 
 // Routes requests to handlers by method and path pattern (`/users/:id`), with
@@ -1626,7 +1632,7 @@ pub struct Router {
     routes: Vec<Route>,
     streams: Vec<StreamRoute>,
     sockets: Vec<WsRoute>,
-    middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
+    middleware: Vec<Middleware>,
     maxBodyBytes: i64,
     // 0: the same as maxBodyBytes
     maxInflatedBytes: i64,
@@ -1724,7 +1730,7 @@ impl Router {
     // Add middleware. It receives the context and `next`, the rest of the chain, and
     // returns the response.
     fn use(self: &mut Self, mw: move (&mut Context, (&mut Context) => Response) => Response): void {
-        self.middleware.push(mw)
+        self.middleware.push(Middleware { f: mw })
     }
 
     fn addRoute(self: &mut Self, method: string, pattern: string, h: move (&mut Context) => Response): void {
@@ -1742,10 +1748,9 @@ impl Router {
         var matchIdx: i64 = -1
         var matchedParams: Vec<Param> = []
         for i in 0..self.routes.len {
-            let route = self.routes[i]
             // a GET route answers HEAD too; the server then sends its headers only
-            if route.method == "*" || route.method == req.method || (route.method == "GET" && req.method == "HEAD") {
-                let params = matchRoute(route.pattern, route.paramNames, req.path)
+            if self.routes[i].method == "*" || self.routes[i].method == req.method || (self.routes[i].method == "GET" && req.method == "HEAD") {
+                let params = matchRoute(self.routes[i].pattern, self.routes[i].paramNames, req.path)
                 if let Option.Some(matched) = params {
                     matchIdx = i
                     matchedParams = matched
@@ -1766,38 +1771,20 @@ impl Router {
             statusCode: 200,
             respHeaders: [],
         }
-        let handler = self.routes[matchIdx].handler
-        if self.middleware.len == 0 {
-            let resp = handler(&mut ctx)
-            return HandledResponse {
-                response: resp, headers: ctx.respHeaders
-            }
-        }
-        // `final` owns the chain: each link owns the next one (captured as `next`) and
-        // gives it to its middleware, which runs it; the caller frees it once that call
-        // returns. A plain `(&mut Context) => Response` slot owns nothing, so the links
-        // assigned into one were freed by nobody, one environment per request. The
-        // innermost link wraps `handler` rather than being it: the route table owns the
-        // handler, and an owning slot would free any environment it carries.
-        var final: move (&mut Context) => Response = move(c: &mut Context) => {
-            return handler(&mut c)
-        }
-        var m: i64 = self.middleware.len - 1
-        while m >= 0 {
-            let mw = self.middleware[m]
-            let next = final
-            // `move`: `mw` and `next` are this iteration's locals and `final` outlives
-            // them. Captured by reference, every link read the last iteration's slots,
-            // so two or more middleware recursed forever.
-            final = move(c: &mut Context) => {
-                return mw(&mut c, next)
-            }
-            m -= 1
-        }
-        let resp = final(&mut ctx)
+        let resp = self.runChain(&mut ctx, matchIdx, 0)
         return HandledResponse {
             response: resp, headers: ctx.respHeaders
         }
+    }
+
+    // Link `i` of the chain: middleware `i` with the rest of the chain as its `next`, or the
+    // route's handler past the last one. The route table and the middleware list own the
+    // closures; each link only borrows them, so no environment is built per request.
+    fn runChain(self: &Self, ctx: &mut Context, routeIdx: i64, i: i64): Response {
+        if i >= self.middleware.len {
+            return self.routes[routeIdx].handler(&mut ctx)
+        }
+        return self.middleware[i].f(&mut ctx, (c: &mut Context): Response => self.runChain(&mut c, routeIdx, i + 1))
     }
 }
 
@@ -2501,8 +2488,7 @@ fn runLongRoute(req: &Request, fd: i32, router: &Router): bool {
             var conn = Stream {
                 _fd: fd, _state: streamFresh, _head: "", _out: Option.None
             }
-            let handler = router.streams[i].handler
-            handler(&mut ctx, &mut conn)
+            router.streams[i].handler(&mut ctx, &mut conn)
             streamPump(&mut conn)
             finishStream(&mut conn)
             return true

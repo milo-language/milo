@@ -1,0 +1,14 @@
+// The store spellings of plainClosureEnvReturn: a struct field and a Vec element typed as a
+// plain function. A closure that captures nothing has no environment and stays allowed
+// (tests/fixtures/closureStoredMove.milo, makeFree).
+// @error: this closure owns its captures, so field 'f' cannot be a plain function type
+
+struct Holder {
+    f: (i64) => i64,
+}
+
+fn main() {
+    let n = 5
+    let h = Holder { f: move (x: i64): i64 => x + n }
+    print(h.f(1))
+}

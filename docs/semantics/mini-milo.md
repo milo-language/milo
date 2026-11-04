@@ -184,7 +184,7 @@ the informal versions:
 | temporaries in expressions | tempFieldRead: an owning field of a temporary is cloned, the temporary dropped right after | MILO-O-tempFieldRead |
 | `if`/`match` as expressions | a fork owns its result iff some arm yields an owned value | MILO-O-forkOwnership |
 | struct update `..base` | the base's listed fields drop, unlisted ones move | MILO-O-structUpdate |
-| closures | lent vs. owned environments | MILO-O-lentClosure, MILO-O-returnedPlainClosure |
+| closures | lent vs. owned environments; an env-owning closure under a plain fn type is rejected, so no env is ever left without an owner | MILO-O-lentClosure, MILO-O-returnedPlainClosure |
 | `?`, Option/Result combinators | consume the receiver iff an owned payload is forwarded | MILO-O-propagate, MILO-O-combinatorReceiver |
 | `for in` | a consumed iterable is dropped at loop exit | MILO-O-consumedForIn |
 | `swap`/`replace` | two places exchange values with no drop | MILO-O-replaceSwap |

@@ -58,6 +58,7 @@ export interface ProgramPassHost {
   cfnFieldCalls: Set<Expr>;
   interfaceMethodCalls: Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>;
   error(msg: string, span?: Span, hint?: string): void;
+  errorCode(code: string, msg: string, span?: Span, hint?: string): void;
   warn(code: string, msg: string, span?: Span, hint?: string, len?: number): void;
   show(t: TypeKind): string;
   isSend(ty: TypeKind): boolean;

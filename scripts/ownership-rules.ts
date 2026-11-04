@@ -41,8 +41,8 @@ export const OWNERSHIP_RULES: OwnershipRule[] = [
   },
   {
     id: "MILO-O-returnedPlainClosure",
-    rule: "A `move` closure returned as a plain `(T) => R` is a plain value, which is Copy and owns nothing: its environment is never freed.",
-    fixtures: ["escapingClosures"],
+    rule: "A `move` closure that captures anything owns a heap environment, and a plain `(T) => R` is Copy and owns nothing, so storing or returning such a closure under a plain function type is rejected (`plain-closure-env`; the declared type must be `move (T) => R`). A closure that captures nothing stays a plain value.",
+    fixtures: ["escapingClosures", "closureStoredMove"],
   },
   {
     id: "MILO-O-fieldMove",

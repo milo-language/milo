@@ -20,6 +20,7 @@ import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
 import { checkMutability } from "./checker-mutability";
+import { checkPlainClosureEnv } from "./checker-closure-env";
 import { checkPurity,checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
@@ -4595,6 +4596,7 @@ export class TypeChecker {
     // Also needs the finished maps: `closureCaptures` is filled as each closure body is
     // checked, and the auto-`move` promotions have all settled by now.
     checkEscapingClosures(host, program, view);
+    checkPlainClosureEnv(host, program, view);
     checkNonEscapingParams(host, program, view);
     checkTaskScopes(host, program, view);
 
@@ -5249,6 +5251,7 @@ export class TypeChecker {
       fnFieldCalls: this.fnFieldCalls, cfnFieldCalls: this.cfnFieldCalls,
       interfaceMethodCalls: this.interfaceMethodCalls,
       error: (msg, span, hint) => this.error(msg, span, hint),
+      errorCode: (code, msg, span, hint) => { this.diagnostics.push({ severity: "error", span, message: msg, hint, code }); },
       warn: (code, msg, span, hint, len) => this.warn(code, msg, span, hint, len),
       show: (t) => this.show(t),
       isSend: (ty) => this.isSend(ty),

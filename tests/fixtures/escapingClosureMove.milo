@@ -11,20 +11,20 @@
 // @expect: heap-owned!
 // @expect: bound!
 
-pub fn makeAdder(base: i64): (i64) => i64 {
+pub fn makeAdder(base: i64): move (i64) => i64 {
     return move(p: i64) => {
         return base + p
     }
 }
 
-pub fn makeGreeter(): () => string {
+pub fn makeGreeter(): move () => string {
     let s = "heap-owned"
     return move(): string => {
         return s + "!"
     }
 }
 
-pub fn makeBound(): () => string {
+pub fn makeBound(): move () => string {
     let s = "bound"
     let f = move(): string => {
         return s + "!"

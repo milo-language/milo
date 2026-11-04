@@ -3,7 +3,7 @@
 // re-enters while its loop over `log` is live. The inner run's push reallocates `log`,
 // and the outer loop variable dangles (heap-use-after-free under ASan before the rule).
 struct Node {
-    f: (&Node) => void,
+    f: move (&Node) => void,
 }
 
 fn main(): void {
@@ -15,13 +15,11 @@ fn main(): void {
             log.push("x".clone())
             for l in log {
                 if depth < 2 {
-                    let g = self2.f
-                    g(self2)
+                    self2.f(self2)
                 }
                 print(l)
             }
         },
     }
-    let g = h.f
-    g(h)
+    h.f(h)
 }

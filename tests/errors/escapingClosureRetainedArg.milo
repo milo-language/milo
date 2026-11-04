@@ -6,7 +6,7 @@
 // @error: cannot pass a closure that captures 'n' by reference to 'wrap', which keeps it
 
 struct Box {
-    f: (i64) => i64,
+    f: move (i64) => i64,
 }
 
 fn wrap(g: move (i64) => i64): Box {

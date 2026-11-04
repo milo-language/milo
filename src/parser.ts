@@ -972,7 +972,7 @@ export class Parser {
     this.advance();
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
-    if (this.match(TokenKind.Colon)) type = this.parseType();
+    if (this.match(TokenKind.Colon)) type = this.parseSpannedType();
     this.expect(TokenKind.Eq);
     const value = this.parseExpr();
     return { kind: "GlobalDecl", name, type, value, mutable, threadLocal, span: s };
@@ -1021,7 +1021,7 @@ export class Parser {
     }
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
-    if (this.match(TokenKind.Colon)) type = this.parseType();
+    if (this.match(TokenKind.Colon)) type = this.parseSpannedType();
     this.expect(TokenKind.Eq);
     this.requireBindingValue("let", name, letTok);
     const value = this.parseExpr();
@@ -1045,7 +1045,7 @@ export class Parser {
     const s = this.span(varTok);
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
-    if (this.match(TokenKind.Colon)) type = this.parseType();
+    if (this.match(TokenKind.Colon)) type = this.parseSpannedType();
     this.expect(TokenKind.Eq);
     this.requireBindingValue("var", name, varTok);
     const value = this.parseExpr();

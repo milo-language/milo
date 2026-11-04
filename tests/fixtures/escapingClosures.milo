@@ -4,19 +4,19 @@
 // @expect: triple(7) = 21
 // @expect: composed = 16
 
-pub fn makeAdder(n: i32): (i32) => i32 {
+pub fn makeAdder(n: i32): move (i32) => i32 {
     return move(x: i32): i32 => {
         return x + n
     }
 }
 
-pub fn makeMultiplier(factor: i32): (i32) => i32 {
+pub fn makeMultiplier(factor: i32): move (i32) => i32 {
     return move(x: i32): i32 => {
         return x * factor
     }
 }
 
-pub fn compose(f: move (i32) => i32, g: move (i32) => i32): (i32) => i32 {
+pub fn compose(f: move (i32) => i32, g: move (i32) => i32): move (i32) => i32 {
     return move(x: i32): i32 => {
         return f(g(x))
     }

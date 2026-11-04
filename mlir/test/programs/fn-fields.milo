@@ -8,7 +8,7 @@ from "./lib/ctx" import { Req, Ctx, mkCtx }
 
 enum Reply { Text(string), Code(i64) }
 
-struct Route { path: string, handler: (&mut Ctx) => Reply }
+struct Route { path: string, handler: move (&mut Ctx) => Reply }
 
 struct Router { routes: Vec<Route>, fallback: (&Ctx) => i64 }
 
