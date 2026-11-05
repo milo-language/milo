@@ -238,7 +238,7 @@ Each is implemented in `src/interp.ts` under its ID, and was needed to match a r
 | `assert` | 134 | `assertion failed at FILE:LINE:COL: MSG` | `assertion failed: MSG` |
 | `todo` | 134 | `todo: 'FN' is not implemented (FILE:LINE:COL)` | `not yet implemented` |
 | contract clause (R-CONTRACT-FAIL) | 134 | `runtime error: requires clause violated at FILE:LINE` | the same text |
-| call stack too deep | 139 | none: the process dies of SIGSEGV | none, status 139 (the depth limit is 3000 frames, not the OS stack) |
+| call stack too deep | 139 | none: the process dies of SIGSEGV | none, status 139 (the depth limit is 2000 frames, not the OS stack) |
 | `exit(n)` | `n & 255` | none | none |
 
 Only the status and stdout are compared between a compiled run and the interpreter; the stderr text is

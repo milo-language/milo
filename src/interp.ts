@@ -39,6 +39,10 @@ export const strip = (t: TypeKind | undefined): TypeKind => (!t ? { tag: "unknow
 
 export interface RunResult { stdout: Uint8Array; stderr: string; code: number; live: number | null }
 
+// Well below where the host JS stack gives out (about 3046 frames, less on a smaller runner stack), so
+// the semantics' depth limit is what a program hits, not the host's.
+export const MAX_FRAMES = 2000;
+
 export class Interp {
   fns = new Map<string, AstFn>();
   globals = new Map<string, { decl: Program["globals"][number]; slot: Slot | null }>();
@@ -493,7 +497,7 @@ export class Interp {
   // [E-CALL] steps 2 and 3: push a frame, run the body, drop the frame's variables, pop.
   callFn(fn: AstFn, args: Value[]): Value {
     if (fn.isExtern) return this.runNative(externNative(fn), args);
-    if (++this.depth > 3000) this.stackOverflow();
+    if (++this.depth > MAX_FRAMES) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn, ret: this.cr.functions.get(fn.name)?.ret ?? { tag: "void" } });
     try {
       const sig = fn.params.some(p => p.type?.isPtr) ? this.cr.functions.get(fn.name) : undefined; // R-MEM-CSTR
@@ -554,7 +558,7 @@ export class Interp {
   }
   // E-CLOSURE
   callClosure(c: ClosureV, args: Value[]): Value {
-    if (++this.depth > 3000) this.stackOverflow();
+    if (++this.depth > MAX_FRAMES) this.stackOverflow();
     this.frames.push({ scopes: [[]], fn: this.frames.length ? this.frame.fn : null, ret: c.ret });
     const envScope = this.frame.scopes[0]!;
     try {
