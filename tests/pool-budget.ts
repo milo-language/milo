@@ -21,8 +21,10 @@ export function poolTimeoutMs(n: number, isWindows: boolean): number {
   // Generous against the ~0.2s a warm compile takes on a dev machine: the number that has
   // to fit is the slowest runner in CI, not the fastest laptop. ubuntu-latest (4 vCPU, so
   // 2 compile jobs) measured 754ms a fixture at 907 fixtures (684s), past the 700 that
-  // used to be here; 1000 puts that run at 75%, under the margin warning.
-  return Math.max(300_000, n * 1000);
+  // used to be here. After the MLIR backend the same runner took about 1170ms a fixture at
+  // 1068 fixtures and spent a 1000ms budget, failing every unreached fixture in under a
+  // millisecond; 1500 puts that run near 78%, under the margin warning.
+  return Math.max(300_000, n * 1500);
 }
 
 /**
