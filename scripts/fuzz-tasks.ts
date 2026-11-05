@@ -848,7 +848,6 @@ function reentrantPark(p: Program) {
   p.use("std/runtime", "Task", "TaskScope", "schedulerYield");
   const log = p.fresh("log"), f = p.fresh("rf"), show = p.fresh("showAll");
   p.fn(`fn ${show}(v: &Vec<string>): void {\n    for l in v {\n        schedulerYield()\n        print(l)\n    }\n}`);
-  p.body.push(`var ${log}: Vec<string> = ["${pick(WORDS)} a heap string long enough to be on the heap".clone()]`);
   // The safe twins must be accepted and run clean: lending a clone, or writing nothing
   // the lent value aliases.
   const lend = chance(0.2) ? `${log}.clone()` : log;
@@ -856,6 +855,8 @@ function reentrantPark(p: Program) {
     `${log}.push("x".clone())`,
     `var k: i64 = 0\n        while k < 64 {\n            ${log}.push("y".clone())\n            k = k + 1\n        }`,
   ]);
+  const keyword = write.startsWith("let ") ? "let" : "var"; // a var nothing writes is a checker error
+  p.body.push(`${keyword} ${log}: Vec<string> = ["${pick(WORDS)} a heap string long enough to be on the heap".clone()]`);
   const ordered = chance(0.5) ? [write, `${show}(${lend})`] : [`${show}(${lend})`, write];
   p.body.push(`let ${f} = move () => {`, ...ordered.map(l => `    ${l}`.replace(/\n {8}/g, "\n        ")), `}`);
   switch (pick(["helper", "scope", "generic"])) {
@@ -994,6 +995,7 @@ fn main() {
 const SOUNDNESS_DIAGNOSTICS = [
   // finding #5 and its relatives: element views of a global across a park
   "can park this task while",
+  "borrows from '",
   // finding #6: pointer views
   "may reallocate here while",
   "still points into",
