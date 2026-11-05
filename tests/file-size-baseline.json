@@ -53,7 +53,7 @@
   "src/lang-info.ts": 217,
   "src/layout.ts": 406,
   "src/lazy-globals.ts": 59,
-  "src/lexer.ts": 379,
+  "src/lexer.ts": 483,
   "src/lsp.ts": 2412,
   "src/main.ts": 2568,
   "src/mangle.ts": 596,
