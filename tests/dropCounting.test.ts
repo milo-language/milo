@@ -55,7 +55,7 @@ const SHAPES: Record<string, { decl: string; mk: (n: string) => string }> = {
 // destroy both — the overwritten value is the one a compiler forgets.
 const ROUTES: Record<string, { decls?: string; body: string; expect?: number }> = {
   "held in a local": {
-    body: `    var r = MK
+    body: `    let r = MK
     print("use ", r.id)`,
   },
   "moved into a fn": {
@@ -63,13 +63,13 @@ const ROUTES: Record<string, { decls?: string; body: string; expect?: number }> 
     body: `    eat(MK)`,
   },
   "moved into another local": {
-    body: `    var a = MK
-    var b = a
+    body: `    let a = MK
+    let b = a
     print("moved ", b.id)`,
   },
   "stored in a struct field": {
     decls: `struct Box { r: Res }`,
-    body: `    var bx = Box { r: MK }
+    body: `    let bx = Box { r: MK }
     print("in ", bx.r.id)`,
   },
   "pushed into a Vec": {
@@ -79,11 +79,11 @@ const ROUTES: Record<string, { decls?: string; body: string; expect?: number }> 
   },
   "returned from a fn": {
     decls: `fn make(): Res { return MK }`,
-    body: `    var r = make()
+    body: `    let r = make()
     print("got ", r.id)`,
   },
   "matched out of an Option local": {
-    body: `    var o: Option<Res> = Option.Some(MK)
+    body: `    let o: Option<Res> = Option.Some(MK)
     match o {
         Option.Some(r) => { print("got ", r.id) }
         Option.None => { print("none") }
@@ -91,14 +91,14 @@ const ROUTES: Record<string, { decls?: string; body: string; expect?: number }> 
   },
   "matched out of an Option field": {
     decls: `struct Bag { o: Option<Res> }`,
-    body: `    var b = Bag { o: Option.Some(MK) }
+    body: `    let b = Bag { o: Option.Some(MK) }
     match b.o {
         Option.Some(r) => { print("got ", r.id) }
         Option.None => { print("none") }
     }`,
   },
   "bound by if-let from an Option": {
-    body: `    var o: Option<Res> = Option.Some(MK)
+    body: `    let o: Option<Res> = Option.Some(MK)
     if let Option.Some(r) = o { print("got ", r.id) }`,
   },
   // Two resources, two destructor runs. The overwritten value is the one that gets
@@ -114,12 +114,12 @@ const ROUTES: Record<string, { decls?: string; body: string; expect?: number }> 
   "nested two structs deep": {
     decls: `struct Inner { r: Res }
 struct Outer { i: Inner }`,
-    body: `    var o = Outer { i: Inner { r: MK } }
+    body: `    let o = Outer { i: Inner { r: MK } }
     print("deep ", o.i.r.id)`,
   },
   "alive across an early return": {
     decls: `fn go(flag: bool): i64 {
-    var r = MK
+    let r = MK
     if flag { return r.id }
     return 0
 }`,
@@ -127,7 +127,7 @@ struct Outer { i: Inner }`,
     print("ret ", n)`,
   },
   "captured by a move closure that runs": {
-    body: `    var r = MK
+    body: `    let r = MK
     let f = move () => { print("cap ", r.id) }
     f()`,
   },
