@@ -1,5 +1,5 @@
 // Planted for scripts/ts2milo-mut-diff.ts: each `&mut` param below is never written through, so
-// unwritten-mut-param fires once per param (24 sites), most with explicit `&mut` call-site notes.
+// unwritten-mut-param fires once per param (21 sites), most with explicit `&mut` call-site notes.
 struct P { x: i64, y: i64 }
 
 fn p1(v: &mut Vec<i64>) {

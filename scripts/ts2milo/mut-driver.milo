@@ -1,0 +1,68 @@
+// Driver for scripts/ts2milo-mut-diff.ts: reads each JSON input named in a list file (the
+// program's mutability facts and function bodies, dumped from the TypeScript front end), decodes it
+// with the generated decoder, runs the generated pass, and prints its findings.
+//   mut-driver <list-file>   one `== path` block of finding lines per input, then `#pass-ns N`:
+//                            the time spent in the pass itself, JSON load and decode excluded
+from "std/args" import { args }
+from "std/fs" import { readFile }
+from "std/json" import { Json }
+from "std/time" import { now, since }
+from "./ts2milo_runtime" import { jsToUtf8 }
+from "./ast" import { Span }
+from "./ast_decode" import { decodeMutInput }
+from "./checker-mutability" import { Finding, MutInput, mutabilityFindings }
+
+fn spanText(s: &Span): string {
+    var file = "undefined"
+    if let Option.Some(f) = s.file {
+        file = jsToUtf8(f)
+    }
+    return file + ":" + s.line.toString() + ":" + s.col.toString()
+}
+
+fn findingLine(f: &Finding): string {
+    var notes = ""
+    var first = true
+    for n in f.notes {
+        if !first {
+            notes.pushStr(";")
+        }
+        first = false
+        notes.pushStr(jsToUtf8(n.message) + "@" + spanText(n.span))
+    }
+    return jsToUtf8(f.code) + "\t" + spanText(f.span) + "\t" + jsToUtf8(f.message) + "\t" + jsToUtf8(f.hint) + "\t" + f.len.toString() + "\t" + notes
+}
+
+fn load(path: &string): Option<MutInput> {
+    let text = readFile(path)!
+    match Json.parse(text) {
+        Result.Ok(j) => { return Option.Some(decodeMutInput(j, j.curRoot())) }
+        Result.Err(e) => { return Option.None }
+    }
+}
+
+fn main() {
+    let argv = args()
+    var listPath = ""
+    for a in argv {
+        listPath = a
+    }
+    let list = readFile(listPath)!
+    var totalNs: i64 = 0
+    for p in list.lines() {
+        if p.len > 0 {
+            print("== " + p)
+            if let Option.Some(input) = load(p) {
+                let t0 = now()
+                let fs = mutabilityFindings(input)
+                totalNs += since(t0).toNanos()
+                for f in fs {
+                    print(findingLine(f))
+                }
+            } else {
+                print("DECODE-ERROR")
+            }
+        }
+    }
+    print($"#pass-ns {totalNs}")
+}

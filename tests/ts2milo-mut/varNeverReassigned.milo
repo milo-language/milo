@@ -1,5 +1,5 @@
 // Planted for scripts/ts2milo-mut-diff.ts: every `var` below is never written, so
-// var-never-reassigned fires once per declaration (28 sites). The corpus has almost none.
+// var-never-reassigned fires once per declaration (22 sites). The corpus has almost none.
 struct P { x: i64, y: i64 }
 
 fn a1(): i64 {

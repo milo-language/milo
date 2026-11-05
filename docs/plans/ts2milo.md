@@ -3,8 +3,8 @@ system: ts2milo
 purpose: plan and rules for generating the Milo frontend from src/*.ts with a thin transpiler, fixed before the stage 1 (lexer) result
 key-files: scripts/ts2milo.ts, scripts/ts2milo/subset.ts, scripts/ts-portable.ts, scripts/ts2milo-lexer-diff.ts, scripts/ts2milo/runtime.milo
 update-when: a stage result is measured, the portable subset changes, or the approach is dropped
-last-verified: 2026-11-04 (stage 1 measured; stages 2 and 3 not started)
-status: spike, stage 1 passed
+last-verified: 2026-11-04 (stage 1 and the stage 3 checker-mutability probe measured; stage 2 not started)
+status: spike, stage 1 passed, stage 3 probe go by the rule with the full AST not building
 -->
 
 # ts2milo: generate the Milo frontend from `src/*.ts`
@@ -176,3 +176,75 @@ union, a reflective walker, and facts keyed by object identity. Small, so a bad 
 - Recorded, not a threshold: the `milo prove --rte` proved / unknown / failed counts on the
   generated slice. This measures the payoff, which is assurance on the compiler itself. A slice
   that is nearly all unknown is stated plainly as weakening the case.
+
+### Stage 3 probe result (checker-mutability), measured 2026-11-04
+
+**Verdict: GO by the rule above, as written.** The rule did not test the thing that decides the
+checker, though: whether the full AST builds in Milo. It does not (below). Read the GO as "this
+slice passes", not "the checker follows".
+
+Gate `bun scripts/ts2milo-mut-diff.ts`: **same 2136 / 2136**, findings 45 on both sides (22
+`unwritten-mut-param`, 23 `var-never-reassigned`), byte for byte, notes included. Corpus: 2177
+programs (tests/fixtures, tests/errors, std, examples, tests/ts2milo-mut); 41 skipped, all "does not
+parse or resolve" (tests/errors files that fail before the checker). The natural corpus has 2
+findings (1 + 1); the other 43 are planted in `tests/ts2milo-mut/` (21 and 22), plus a file of
+writes that must not fire. Neuter check: rewriting one rule in the generated pass (FieldAccess as a
+read parent) gives `same 2 / 3` on the planted files; restored, 3 / 3.
+
+- **Automatic: 40 / 40 functions, 0 overrides = 100%** (rule: >= 90%). `ast.ts` helpers the slice
+  needs: 0 of 6. Nothing is hand-written in `runtime.milo` (230 lines before and after). Hand-written
+  Milo: `mut-driver.milo`, 80 lines of file reading and printing.
+- **Identity rule: met.** A fact keyed by node object becomes a fact keyed by the node's pre-order
+  position, which the generated walker (`scripts/gen-ast-walk.ts`, `--check`) computes in TS and
+  Milo alike. `src/checker-mutability-host.ts` (85 lines, hand-written) is the one place that still
+  sees objects: it numbers each body with the same traversal and restates the checker's sets as id
+  lists. The pass itself is plain data in, findings out. The precedent is `ExprNode.id` in
+  src-milo/ast.milo. Caveat: this works for a pass that runs after the checker; the checker, which
+  produces the facts, would need ids at node creation. Rollout count, from
+  `bun scripts/ts2milo-identity-census.ts`: 140 collection declarations keyed by a node (checker.ts
+  113, checker-program-passes.ts 22, emit-forms.ts 4, emit-mlir.ts 1), 367 `get/set/has/add/delete`
+  sites on them (checker.ts 213, emit-forms.ts 69, checker-program-passes.ts 66), 49 assignments to
+  AST fields (parser.ts 25, resolver.ts 12, checker.ts 7, checker-derive.ts 5).
+- **`milo prove --rte`** on the generated files: proven 17, failed 12, unknown 90 (errors 5), of 119
+  obligations. The slice proper (checker-mutability, mutability-scan, ast-walk): 17 / 12 / 71. 76%
+  unknown weakens the payoff case. Unknowns are missing SMT rules, not bad code: `HashSet.contains`,
+  `Vec` indexing, `Option` tags. The 12 failures are real, unconstrained preconditions
+  (`self.next + 1` overflow, `kids[0]`, `f.params[i]`).
+- **Speed**, whole corpus, pass only (JSON load and decode excluded): TS 3.4 s, Milo 5.5 s, 1.65x
+  slower, over 24.3M nodes. The lexer's `s[i]` allocation does not recur: this pass never loops over
+  characters. The string costs here are equality and hashing of UTF-16 names and `spanKey` building a
+  string per call argument. Building the generated pass takes about 25 s (the lexer took seconds).
+- **Tool cost.** `ts2milo.ts` 686 -> 920 lines, `subset.ts` +54, `ast-model.ts` 412 and
+  `gen-ast-walk.ts` 266 new: about +970 lines, against a stage 1 tool that was 686. Not thin any more.
+  New rules, each needed by this slice: tagged unions (enum, one struct-carrying variant per kind,
+  common-field accessors), `if (x.kind === "K")` and `if (x !== undefined)` as `if let` narrowing
+  (also through `&&`), borrowed parameters with `&mut` inferred to a fixpoint and `&mut x` at call
+  sites, `.clone()` where a non-Copy value leaves a borrowed place (refused when the type has no
+  Clone), `Heap<T>` fields and reads, `for (const x of array)`, `Map` and `Set.add`. The subset
+  baseline total falls 19484 -> 15768; part of that is the widened subset, not refactors.
+  `checker-mutability.ts` 195 -> 0, `ast.ts` 99 -> 32.
+
+What the slice hit in the Milo compiler, none visible from the TypeScript:
+
+1. **MLIR type text is structural and unrolled.** The full `ast.ts` types (58 types, 431 lines of
+   Milo) exhaust the JS string limit in `moduleText` ("Out of memory") while building even the
+   decoder; one operand line of the pass was 1.4 MB. The slice builds only because the generator
+   carries just the AST fields the input files read (313 lines). A checker reads nearly every field.
+   This is the finding that matters for stage 3.
+2. A value of 128 bytes or more cannot be a `Heap` deref passed as an argument, so the generator
+   boxes the largest optional or struct fields of any variant until the estimate is under 112 bytes
+   (10 fields). `Vec<Heap<T>>` cannot be indexed and dereffed (`*v[i]` is "a temporary box"); arrays
+   of cyclic types are walked with `for x in v`.
+3. `@derive(Clone)` fails on mutually recursive types, so AST nodes have no `clone`.
+4. `Option == Option` is refused, `unwrapOr` on `Option<string>` is refused, `Json.curHolds` is true
+   for a JSON `null`.
+
+**Estimate for the checker: unknown, leaning to months, not days.** The slice is 40 functions and
+took most of the work in tool rules and in finding the compiler limits above; the checker is about
+15,000 lines (checker.ts 8,500) with 140 node-keyed collections, and it needs the whole AST, which
+today does not build. Before any checker work the AST representation needs a different shape: a
+flat node table (ids and arrays, which is also what the data-oriented direction wants) or a Milo
+backend change so that recursive struct types print by name. Either is a decision for the owner
+before stage 2 (the parser), not a mechanical step. The gate builds
+and deletes everything it generates (`bun scripts/ts2milo-mut-diff.ts`, about 25 minutes over the
+whole corpus, mostly the Milo process over multi-MB dumps).
