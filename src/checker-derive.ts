@@ -57,7 +57,7 @@ export class DeriveSynth {
   // reason canAutoClone gives for Vec<closure>; a raw pointer payload would make the
   // clone a second owner of the pointee, the same hazard the struct path's pointerField
   // check refuses. An empty enum has nothing to match on.
-  enumCloneBlocker(name: string, pending?: Set<string>): { variant: string; index: number; type: TypeKind; why: string } | null {
+  enumCloneBlocker(name: string, pending?: Set<string>, top = true): { variant: string; index: number; type: TypeKind; why: string } | null {
     const info = this.host.enums.get(name);
     if (!info || info.variants.size === 0) return { variant: "", index: -1, type: { tag: "void" }, why: "it has no variants" };
     for (const [vname, v] of info.variants) {
@@ -65,7 +65,7 @@ export class DeriveSynth {
         const ft = v.fields[i]!;
         const why = ft.tag === "fn" ? "a closure's environment cannot be duplicated"
           : ft.tag === "ptr" ? "a clone would be a second owner of what the raw pointer addresses"
-          : !this.canAutoClone(ft, pending) ? "it has no clone" : null;
+          : !this.canAutoClone(ft, pending, top) ? "it has no clone" : null;
         if (why) return { variant: vname, index: i, type: ft, why };
       }
     }
@@ -94,8 +94,7 @@ export class DeriveSynth {
     for (const [vname, v] of info.variants) {
       const bindings = v.fields.map((_, i) => `a${i}`);
       const args: Expr[] = v.fields.map((ft, i) => {
-        const bound: Expr = { kind: "Ident" as const, name: bindings[i]! };
-        return this.host.isCopyType(ft) ? bound : { kind: "MethodCall" as const, object: bound, method: "clone", args: [] };
+        return this.cloneOf(ft, { kind: "Ident" as const, name: bindings[i]! });
       });
       arms.push({
         pattern: { kind: "EnumPattern", enumName: e.name, variant: vname, bindings, bindingSpans: [] },
@@ -127,9 +126,13 @@ export class DeriveSynth {
   // `pending` carries the structs and enums still standing in the derive fixpoint: they are
   // not in traitImpls yet (registration happens after synthesis), and without them the
   // fixpoint can never close over `struct A { b: B }`.
-  canAutoClone(t: TypeKind, pending?: Set<string>): boolean {
+  // A Heap<T> has no clone() of its own: the synthesized body rebuilds it (cloneOf), so it
+  // clones only as a field or payload itself (`top`), never inside a container or Option,
+  // whose generic clone calls the element's.
+  canAutoClone(t: TypeKind, pending?: Set<string>, top = true): boolean {
     if (this.host.isCopyType(t)) return true;
     if (t.tag === "string") return true;
+    if (t.tag === "heap") return top && t.inner.tag !== "interface" && t.inner.tag !== "fn" && this.canAutoClone(t.inner, pending, true);
     // A container clones only what its contents can: Vec<closure> has no clone (an owning
     // closure's environment cannot be duplicated), and letting it through synthesized a
     // clone() whose body failed to compile inside std/http.
@@ -137,18 +140,26 @@ export class DeriveSynth {
     // rejects every closure: the element would be duplicated OUT of the frame that owns
     // that slot. So "the element is Copy" is not sufficient here — a closure element
     // disqualifies the container even when the closure itself is copyable.
-    if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending);
-    if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending) && this.canAutoClone(t.value, pending);
+    if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending, false);
+    if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending, false) && this.canAutoClone(t.value, pending, false);
     if (t.tag === "struct" || t.tag === "enum") {
       if (this.host.typeImplementsTrait(t.name, "Clone") || this.host.handWrittenClone().has(t.name) || !!pending?.has(t.name)) return true;
       // An Option/Result instance is judged by its payloads, the way a container is: its
       // own impl is conditional on them and may not exist yet when a field asks.
       if (t.tag === "enum") {
         const base = this.host.enums.get(t.name)?.baseName;
-        if (base && CONDITIONAL_CLONE_BASES.has(base)) return this.enumCloneBlocker(t.name, pending) === null;
+        if (base && CONDITIONAL_CLONE_BASES.has(base)) return this.enumCloneBlocker(t.name, pending, false) === null;
       }
     }
     return false;
+  }
+
+  // The expression that copies the value `x` of type `t`: bare when Copy, `Heap(*x ...)` for
+  // a box (rebuilt around a copy of its payload), `x.clone()` otherwise.
+  private cloneOf(t: TypeKind, x: Expr): Expr {
+    if (this.host.isCopyType(t)) return x;
+    if (t.tag === "heap") return { kind: "Call" as const, func: "Heap", args: [this.cloneOf(t.inner, { kind: "UnaryOp" as const, op: "*", operand: x })] };
+    return { kind: "MethodCall" as const, object: x, method: "clone", args: [] };
   }
 
   deriveClone(s: StructDecl, skipValidation = false, pending?: Set<string>): ImplDecl {
@@ -174,10 +185,7 @@ export class DeriveSynth {
     const fields = s.fields.map(f => {
       const ft = this.host.resolve(f.type);
       const access: Expr = { kind: "FieldAccess" as const, object: { kind: "Ident" as const, name: "self" }, field: f.name };
-      const value: Expr = this.host.isCopyType(ft)
-        ? access
-        : { kind: "MethodCall" as const, object: access, method: "clone", args: [] };
-      return { name: f.name, value };
+      return { name: f.name, value: this.cloneOf(ft, access) };
     });
     const body: Expr = { kind: "StructLit", name: s.name, fields };
 

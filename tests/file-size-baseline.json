@@ -9,7 +9,7 @@
   "src/cdeclcache.ts": 104,
   "src/cgu.ts": 606,
   "src/checker-closure-env.ts": 100,
-  "src/checker-derive.ts": 655,
+  "src/checker-derive.ts": 663,
   "src/checker-mutability.ts": 173,
   "src/checker-program-passes.ts": 2288,
   "src/checker-sql.ts": 360,
