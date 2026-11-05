@@ -21,7 +21,7 @@ import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkMutability } from "./checker-mutability";
+import { checkMutability } from "./checker-mutability-host";
 import { checkPlainClosureEnv } from "./checker-closure-env";
 import { checkPurity,checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";

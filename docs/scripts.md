@@ -67,6 +67,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/fuzz-tasks.ts` | Differential falsifier for SHARED STATE ACROSS TASKS: hunts for programs with zero `unsafe` that the checker accepts and AddressSanitizer then rejects. |
 | `scripts/fuzz-vec.ts` | Differential falsifier for the built-in VEC — the growable array codegen.ts emits. |
 | `scripts/fuzz-worker.ts` | Case runner for scripts/fuzz-frontend.ts. |
+| `scripts/gen-ast-walk.ts` | Generates the explicit AST traversal from the types in src/ast.ts, so a hand-written walk over about 60 node kinds cannot drift from the tree. |
 | `scripts/gen-benchmarks.ts` | Renders the benchmark table in benchmarks/README.md and the docs-site chart data from benchmarks/results.json, the one place the numbers live. |
 | `scripts/gen-case-map.ts` | Regenerates the simple case mapping tables at the bottom of std/unicode.milo from the Unicode Character Database. |
 | `scripts/gen-error-catalog.ts` | Generates docs/site/language/errors.md, every compile error the test suite pins, with the program that provokes it. |

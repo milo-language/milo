@@ -1,0 +1,147 @@
+// Planted for scripts/ts2milo-mut-diff.ts: every `var` and `&mut` param here is written (or lent
+// out) by one of the shapes the pass has to recognize, so no warning may fire. Each shape is a
+// rule in src/mutability-scan.ts: assignment, field and index writes, `&mut x`, for-in over a
+// struct or `&mut`, closure write-back, swap/replace/take, method calls, forwarding.
+struct P { x: i64, y: i64 }
+
+struct Counter { n: i64 }
+
+impl Counter {
+    fn next(self: &mut Counter): i64 {
+        self.n += 1
+        return self.n
+    }
+}
+
+fn w1(): i64 {
+    var x = 1
+    x = 2
+    return x
+}
+
+fn w2(): i64 {
+    var x = 1
+    x += 1
+    return x
+}
+
+fn w3(): i64 {
+    var p = P { x: 1, y: 2 }
+    p.x = 5
+    return p.x
+}
+
+fn w4(): i64 {
+    var v: Vec<i64> = [1, 2, 3]
+    v[0] = 9
+    return v[0]
+}
+
+fn w5(): i64 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    return v.len
+}
+
+fn bump(n: &mut i64) {
+    n += 1
+}
+
+fn w6(): i64 {
+    var n: i64 = 1
+    bump(&mut n)
+    return n
+}
+
+fn w7(): i64 {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = x + 1
+    }
+    return v[0]
+}
+
+fn w8(): i64 {
+    var c = Counter { n: 0 }
+    return c.next()
+}
+
+fn w9(): i64 {
+    var a = 1
+    var b = 2
+    swap(&mut a, &mut b)
+    return a
+}
+
+fn w10(): i64 {
+    var n = 0
+    let inc = () => {
+        n += 1
+    }
+    inc()
+    return n
+}
+
+fn w11(c: &mut Counter): i64 {
+    return c.next()
+}
+
+fn w12(p: &mut P) {
+    p.x = 3
+}
+
+fn w13(v: &mut Vec<i64>) {
+    v.push(1)
+}
+
+fn w14(v: &mut Vec<i64>) {
+    w13(&mut v)
+}
+
+fn w15(p: &mut P): i64 {
+    let q = p
+    return q.x
+}
+
+fn w16(n: &mut i64) {
+    n = 4
+}
+
+fn w17(p: &mut P) {
+    bump(&mut p.x)
+}
+
+fn w18(o: &mut Option<i64>) {
+    match o {
+        Option.Some(v) => {
+            v = 1
+        }
+        Option.None => {}
+    }
+}
+
+fn main() {
+    print(w1())
+    print(w2())
+    print(w3())
+    print(w4())
+    print(w5())
+    print(w6())
+    print(w7())
+    print(w8())
+    print(w9())
+    print(w10())
+    var c = Counter { n: 0 }
+    print(w11(&mut c))
+    var p = P { x: 1, y: 2 }
+    w12(&mut p)
+    var v: Vec<i64> = Vec.new()
+    w13(&mut v)
+    w14(&mut v)
+    print(w15(&mut p))
+    var n: i64 = 1
+    w16(&mut n)
+    w17(&mut p)
+    var o: Option<i64> = Option.Some(1)
+    w18(&mut o)
+}

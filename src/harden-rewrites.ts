@@ -13,7 +13,7 @@ import { Lexer } from "./lexer";
 import type { Token } from "./tokens";
 import type { TextEdit } from "./fixes";
 import type { ProgramPassHost, ProgramView } from "./checker-program-passes";
-import { writtenNames } from "./checker-mutability";
+import { writtenNames } from "./checker-mutability-host";
 
 export type RewriteName = "index-loop" | "match-to-try" | "if-let" | "last-use-clone";
 export const REWRITES: RewriteName[] = ["index-loop", "match-to-try", "if-let", "last-use-clone"];

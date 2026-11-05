@@ -1,0 +1,127 @@
+// Planted for scripts/ts2milo-mut-diff.ts: each `&mut` param below is never written through, so
+// unwritten-mut-param fires once per param (24 sites), most with explicit `&mut` call-site notes.
+struct P { x: i64, y: i64 }
+
+fn p1(v: &mut Vec<i64>) {
+    print(v.len)
+}
+
+fn p2(p: &mut P) {
+    print(p.x)
+}
+
+fn p3(s: &mut string) {
+    print(s.len)
+}
+
+fn p4(n: &mut i64) {
+    print(n)
+}
+
+fn p5(v: &mut Vec<i64>, w: &mut Vec<i64>) {
+    print(v.len + w.len)
+}
+
+fn p6(p: &mut P): i64 {
+    return p.x + p.y
+}
+
+fn p7(v: &mut Vec<i64>): i64 {
+    var t = 0
+    for x in v {
+        t += x
+    }
+    return t
+}
+
+fn p8(v: &mut Vec<i64>, i: i64): i64 {
+    return v[i]
+}
+
+fn p9(p: &mut P) {
+    let q = p.x
+    print(q)
+}
+
+fn p10(v: &mut Vec<i64>) {
+    if v.len > 0 {
+        print(1)
+    }
+}
+
+fn p11(p: &mut P) {
+    while p.x > 100 {
+        print(0)
+    }
+}
+
+fn p12(s: &mut string, t: &mut string) {
+    print(s.len + t.len)
+}
+
+fn p13(v: &mut Vec<i64>): bool {
+    return v.len == 0
+}
+
+fn p14(p: &mut P): i64 {
+    return -p.x
+}
+
+fn p15(a: &mut Vec<i64>) {
+    print(a.len)
+}
+
+fn p16(a: &mut P) {
+    print(a.y)
+}
+
+fn p17(a: &mut Vec<i64>) {
+    print(a.len)
+}
+
+fn p18(a: &mut P) {
+    print(a.x)
+}
+
+fn p19(a: &mut Vec<i64>) {
+    print(a.len)
+}
+
+fn p20(a: &mut P) {
+    print(a.y)
+}
+
+fn main() {
+    var v: Vec<i64> = [1, 2, 3]
+    var w: Vec<i64> = [4]
+    var p = P { x: 1, y: 2 }
+    var s = "ab"
+    var t = "cd"
+    var n: i64 = 5
+    p1(&mut v)
+    p2(&mut p)
+    p3(&mut s)
+    p4(&mut n)
+    p5(&mut v, &mut w)
+    print(p6(&mut p))
+    print(p7(&mut v))
+    print(p8(&mut v, 0))
+    p9(&mut p)
+    p10(&mut v)
+    p11(&mut p)
+    p12(&mut s, &mut t)
+    print(p13(&mut v))
+    print(p14(&mut p))
+    p15(&mut v)
+    p16(&mut p)
+    p17(&mut v)
+    p18(&mut p)
+    p19(&mut v)
+    p20(&mut p)
+    v.push(1)
+    p.x = 2
+    s = "x"
+    t = "y"
+    n = 6
+    w.push(2)
+}

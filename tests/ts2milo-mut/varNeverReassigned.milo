@@ -1,0 +1,135 @@
+// Planted for scripts/ts2milo-mut-diff.ts: every `var` below is never written, so
+// var-never-reassigned fires once per declaration (28 sites). The corpus has almost none.
+struct P { x: i64, y: i64 }
+
+fn a1(): i64 {
+    var x = 1
+    return x
+}
+
+fn a2(): i64 {
+    var x: i64 = 2
+    var y = x + 1
+    return y
+}
+
+fn a3(n: i64): i64 {
+    var total = n * 2
+    if n > 0 {
+        var inner = n + 1
+        return total + inner
+    }
+    return total
+}
+
+fn a4(n: i64): i64 {
+    var i = 0
+    while i < n {
+        var step = 3
+        print(step)
+        i += 1
+    }
+    return i
+}
+
+fn a5(v: Vec<i64>): i64 {
+    var sum = 0
+    for x in v {
+        var doubled = x * 2
+        sum += doubled
+    }
+    return sum
+}
+
+fn a6(p: P): i64 {
+    var q = P { x: p.x, y: p.y }
+    return q.x + q.y
+}
+
+fn a7(): i64 {
+    var s = "hello"
+    return s.len
+}
+
+fn a8(o: Option<i64>): i64 {
+    match o {
+        Option.Some(v) => {
+            var w = v + 1
+            return w
+        }
+        Option.None => {
+            var z = 0
+            return z
+        }
+    }
+}
+
+fn a9(): i64 {
+    var f = (n: i64) => n + 1
+    return f(1)
+}
+
+fn a10(): i64 {
+    let f = (n: i64) => {
+        var t = n * n
+        return t
+    }
+    return f(3)
+}
+
+fn a11(): bool {
+    var b = true
+    return b
+}
+
+fn a12(): f64 {
+    var r = 1.5
+    return r
+}
+
+fn a13(n: i64): i64 {
+    if n > 1 {
+        var a = 1
+        var b = 2
+        return a + b
+    }
+    return 0
+}
+
+fn a14(): i64 {
+    var v: Vec<i64> = Vec.new()
+    return v.len
+}
+
+fn a15(): i64 {
+    unsafe {
+        var u = 7
+        return u
+    }
+}
+
+fn a16(): i64 {
+    var k = 5
+    var l = k
+    var m = l
+    return m
+}
+
+fn main() {
+    print(a1())
+    print(a2())
+    print(a3(1))
+    print(a4(2))
+    print(a5([1, 2, 3]))
+    print(a6(P { x: 1, y: 2 }))
+    print(a7())
+    print(a8(Option.Some(1)))
+    print(a9())
+    print(a10())
+    print(a11())
+    print(a12())
+    print(a13(2))
+    print(a14())
+    print(a15())
+    print(a16())
+}

@@ -69,13 +69,14 @@ export interface TypeParam {
   bounds: string[];
 }
 
+export type ArgKind = "ident" | "string";
 export interface Attribute {
   name: string;
   args: string[];
   // Parallel to `args`: how each was spelled. `@derive(Clone)` is an ident,
   // `@cLayout("sys/stat.h")` is a string — the values alone can't be told apart,
   // and an attribute that wants a path or a C type name must reject a bare ident.
-  argKinds?: ("ident" | "string")[];
+  argKinds?: ArgKind[];
   // `@!name` (inner attribute, Rust `#![...]` analog) applies to the enclosing file/module
   // rather than the next declaration. Currently only `@!wrapping` uses it.
   inner?: boolean;
@@ -106,7 +107,8 @@ export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: Mil
 // that visits `fields` must visit `base` too, or it misses the moves and borrows in it.
 // A field with `fromDefault` was not written: the checker copied it from the field's
 // declared default, so its names belong to the struct's file, not the literal's.
-export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr; fromDefault?: true }[]; typeArgs?: MiloType[]; base?: Expr; span?: Span }
+export interface StructLitField { name: string; value: Expr; fromDefault?: true }
+export interface StructLit { kind: "StructLit"; name: string; fields: StructLitField[]; typeArgs?: MiloType[]; base?: Expr; span?: Span }
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
 
 // `f64.NAN` / `f64.INF` / `f64.NEG_INF` (and f32) parse as a FieldAccess whose object is a
@@ -159,9 +161,11 @@ export type Pattern =
   // i is matched against that sub-pattern (an enum or literal pattern) instead of being
   // bound, and `bindings[i]` holds the placeholder `_`. A pattern with no `args` is the flat
   // form every pass has always handled; `patternLeafNames` lists the bindings of either.
-  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; bindingSpans?: Span[]; args?: (Pattern | null)[]; span?: Span }
-  | { kind: "LiteralPattern"; value: bigint | number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; span?: Span }
-  | { kind: "WildcardPattern"; span?: Span };
+  EnumPattern | LiteralPattern | WildcardPattern;
+export interface EnumPattern { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; bindingSpans?: Span[]; args?: (Pattern | null)[]; span?: Span }
+export type LiteralKind = "int" | "float" | "string" | "char" | "bool";
+export interface LiteralPattern { kind: "LiteralPattern"; value: bigint | number | string | boolean; literalKind: LiteralKind; span?: Span }
+export interface WildcardPattern { kind: "WildcardPattern"; span?: Span }
 
 export function isNestedPattern(p: Pattern): boolean {
   return p.kind === "EnumPattern" && !!p.args && p.args.some(a => a !== null);
@@ -185,9 +189,9 @@ export function patternLeafNames(p: Pattern): string[] {
 
 // Every enum pattern inside `p`, `p` included: what a walker that resolves or renames
 // enum names has to visit.
-export function enumPatternsIn(p: Pattern): (Pattern & { kind: "EnumPattern" })[] {
+export function enumPatternsIn(p: Pattern): EnumPattern[] {
   if (p.kind !== "EnumPattern") return [];
-  const out: (Pattern & { kind: "EnumPattern" })[] = [p];
+  const out: EnumPattern[] = [p];
   for (const a of p.args ?? []) if (a) out.push(...enumPatternsIn(a));
   return out;
 }
@@ -207,9 +211,9 @@ export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr;
 // scope in the later clauses and the then-body, never in the else, which runs when any
 // clause fails. A lone `if let` stays an IfLetStmt, and a chain with no `let` clause is
 // an ordinary IfStmt with `&&`.
-export type ChainClause =
-  | { kind: "LetClause"; pattern: Pattern; subject: Expr; span?: Span }
-  | { kind: "CondClause"; cond: Expr; span?: Span };
+export type ChainClause = LetClause | CondClause;
+export interface LetClause { kind: "LetClause"; pattern: Pattern; subject: Expr; span?: Span }
+export interface CondClause { kind: "CondClause"; cond: Expr; span?: Span }
 export interface IfChainStmt { kind: "IfChainStmt"; clauses: ChainClause[]; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 export interface LetElseStmt { kind: "LetElseStmt"; pattern: Pattern; value: Expr; elseBody: Stmt[]; bindName?: string; span?: Span }
 
