@@ -1318,6 +1318,13 @@ class FnEmitter {
       const pp = this.ptrPlace(e)!;
       return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
     }
+    // A plain-data payload read out of a held box: copied from the box's own place. An
+    // owning one would have to empty the box (a move) and a temporary box is freed after
+    // the read: neither is a place to copy from.
+    if (e.kind === "HeapDeref" && !this.hasDrop(ty) && !isTempBox(this.f(e.operand))) {
+      const p = this.heapPlace(e);
+      return p.ty === ty ? { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
+    }
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
