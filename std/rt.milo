@@ -222,14 +222,20 @@ pub fn rtStrUnique(s: &mut string) {
 // Resize a buffer this handle holds alone; the count (1) moves with the block.
 fn rtStrRealloc(d: *u8, n: i64): *u8 {
     unsafe {
-        if (n as u64) > 18446744073709551607 {
+        // Compile-time, not rtHasRealloc(): at -O0 the caller's check is a run-time call, so
+        // this body stays in the object and a bare-metal link has no realloc to resolve.
+        if @targetOs() == "none" {
             return 0 as *u8
+        } else {
+            if (n as u64) > 18446744073709551607 {
+                return 0 as *u8
+            }
+            let p = realloc(d[-8].addrOf(), n.wrappingAdd(8))
+            if (p as i64) == 0 {
+                return p
+            }
+            return p[8].addrOf()
         }
-        let p = realloc(d[-8].addrOf(), n.wrappingAdd(8))
-        if (p as i64) == 0 {
-            return p
-        }
-        return p[8].addrOf()
     }
 }
 
@@ -804,11 +810,11 @@ pub fn rtStringPushJson(s: &mut string, d: *u8, n: i64): *u8 {
 @unsafe
 pub fn rtClosureDrop(c: *u8) {
     unsafe {
-        let env = (c as *i64) [1] as *u8
+        let env = (c as **u8) [1]
         if (env as i64) == 0 {
             return
         }
-        let f = (env as *i64) [0] as *u8
+        let f = (env as **u8) [0]
         if (f as i64) != 0 {
             _callClosureVoid(f, env)
         }
@@ -821,12 +827,12 @@ pub fn rtClosureDrop(c: *u8) {
 @unsafe
 pub fn rtIfaceDrop(h: *u8, slot: i64) {
     unsafe {
-        let data = (h as *i64) [0] as *u8
+        let data = (h as **u8) [0]
         if (data as i64) == 0 {
             return
         }
-        let itable = (h as *i64) [1] as *u8
-        let f = (itable as *i64) [slot] as *u8
+        let itable = (h as **u8) [1]
+        let f = (itable as **u8) [slot]
         if (f as i64) != 0 {
             _callClosureVoid(f, data)
         }
