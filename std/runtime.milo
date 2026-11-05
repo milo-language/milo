@@ -1073,8 +1073,9 @@ pub fn spawnWorker(f: move () => void): void {
 // checked where the user's closure entered (std/http's serveRouterFactory). The closure
 // crosses as a raw (fn, env) pair, so the thread scan does not follow it here. A user
 // program uses spawnWorker. Not numbered for record/replay: the caller refuses to run there.
+// Deliberately not @thread: the tag would scan the whole server path a second time and reject
+// every program with a mutable global, workers or not.
 @unsafe
-@thread
 pub fn spawnWorkerAudited(f: move () => void): void {
     unsafe {
         let packed = malloc(16)

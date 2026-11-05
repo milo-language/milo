@@ -684,6 +684,8 @@ spawnWorker without the checker's thread rules, for a std caller whose closure w
 checked where the user's closure entered (std/http's serveRouterFactory). The closure
 crosses as a raw (fn, env) pair, so the thread scan does not follow it here. A user
 program uses spawnWorker. Not numbered for record/replay: the caller refuses to run there.
+Deliberately not @thread: the tag would scan the whole server path a second time and reject
+every program with a mutable global, workers or not.
 
 #### `sRunHead`
 
