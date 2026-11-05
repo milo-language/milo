@@ -44,7 +44,7 @@ const TRAP_TARGETS: [RegExp, string][] = [
 // Code that is not the program: the startup/semihosting shim (tools/cortex-m/startup.c), libc
 // shims, the process scaffold and the glibc crt objects. It has no line table by design;
 // reported apart, not gated.
-const RUNTIME_FN = /^(_*milo|\.Lmilo|__)|^(Reset_Handler|exit|_exit|printf|semihost\w*|print_exit_code|_start|start|_init|_fini|call_weak_fn|frame_dummy|(de)?register_tm_clones|_dl_relocate_static_pie|malloc|calloc|realloc|free|mem\w+|str\w+|abort)$|^_*(replay|scheduler)/;
+const RUNTIME_FN = /^(_*milo|\.Lmilo|__)|^(Reset_Handler|exit|_exit|printf|semihost\w*|print_exit_code|_start|start|_init|_fini|call_weak_fn|init_have_lse_atomics|frame_dummy|(de)?register_tm_clones|_dl_relocate_static_pie|malloc|calloc|realloc|free|mem\w+|str\w+|abort)$|^_*(replay|scheduler)/;
 
 export interface FnSite { name: string; file: string; line: number; ids: string[] }
 
