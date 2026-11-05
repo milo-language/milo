@@ -16,6 +16,28 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `std/smt` is removed; z3 is the only solver (2026-11-04)
+
+`import "std/smt"` no longer resolves, and `milo prove --solver native` is gone. The module was
+a Fourier-Motzkin decision procedure over linear integers; it could not represent quantifiers
+or the sequence theory `milo prove` needs, and a second solver was a second place for
+overflow bugs to turn into false proofs. Obligations are discharged by z3 (`brew install z3` /
+`apt install z3`); `milo prove --emit-smt` prints the SMT-LIB2 for any other solver. There is
+no replacement library API, so a program that built its own constraint problems should emit
+SMT-LIB2 text and run z3 itself.
+
+Removed with it, all from `std/smt`:
+
+- Types: `Constraint`, `SmtProblem`, `Verdict` (and its printer `verdictName`).
+- Problem building: `newProblem`, `newProblemMixed`, `addAtom`, `nAtom`, `nAnd`, `nOr`, `nNot`.
+- Deciding: `decide`, `findWitness`, `satisfiesAll`, `evalNode`, `allReal`, `feasibleRational`.
+- Elimination internals: `eliminateVar`, `inducedConstraints`, `combine`, `combineTerm`,
+  `reduceConstraint`, `reduceRational`, `cloneRow`, `rowAllInt`, `witnessBound`, `zigzag`,
+  `ceilDiv`, `gcd2`.
+
+Also in this window: the raw-pointer helpers of `std/rt` are `@unsafe`. That module is the
+compiler's runtime and not public API (no program should call it), so it is not a break.
+
 ## A capturing closure can't become a plain fn value (2026-11-03)
 
 A closure whose environment owns heap memory (it captures a `Vec`, a string, a struct that
