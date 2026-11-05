@@ -121,6 +121,9 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/stamp-version.ts` | Stamps the current commit into src/version.ts so a released binary can report which commit built it. |
 | `scripts/strip-string-clones.ts` | Deletes `.clone()` calls on strings: strings are values (copy on write, shared by count where the code reads them again), so every string clone is redundant and removing one changes no behaviour. |
 | `scripts/trace-semantics.ts` | Two-way trace between docs/semantics/milo.md and the reference interpreter (src/interp*.ts). |
+| `scripts/ts-portable.ts` | Counts, per frontend file, the TypeScript constructs outside the portable subset that scripts/ts2milo.ts can translate (rule list: scripts/ts2milo/subset.ts, shared with it). |
+| `scripts/ts2milo-lexer-diff.ts` | Differential token gate for the ts2milo spike: lex every corpus file with src/lexer.ts and with the transpiled Milo lexer (compiled by `milo build`), compare the dumps byte for byte. |
+| `scripts/ts2milo.ts` | TypeScript -> Milo transpiler for the portable subset (scripts/ts2milo/subset.ts). |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |

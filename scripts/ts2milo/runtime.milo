@@ -1,0 +1,230 @@
+// Hand-written support for the output of scripts/ts2milo.ts. Not generated.
+//
+// A TypeScript `string` is a Milo `string` holding UTF-16LE: two bytes per code unit. That is
+// the one choice that keeps `.length`, `s[i]`, `charCodeAt` and column counts identical to
+// JavaScript for non-ASCII source, and `==`, `+`, `pushStr` and HashSet keys still work as
+// byte operations. jsFromUtf8 / jsToUtf8 convert at the program edges.
+//
+// Declarations of types the transpiled files import from untranspiled TypeScript
+// (src/diagnostics.ts, src/ast.ts) also live here, mirroring those interfaces.
+from "std/unicode" import { decodeCodepoint }
+
+pub fn jsLen(s: &string): i64 {
+    return s.len / 2
+}
+
+fn unitAt(s: &string, i: i64): i64 {
+    return (s[2 * i] as i64) + (s[2 * i + 1] as i64) * 256
+}
+
+fn pushUnit(out: &mut string, u: i64) {
+    out.push((u % 256) as u8)
+    out.push(((u / 256) % 256) as u8)
+}
+
+fn pushCp(out: &mut string, cp: i64) {
+    if cp >= 65536 {
+        let c = cp - 65536
+        pushUnit(&mut out, 55296 + c / 1024)
+        pushUnit(&mut out, 56320 + c % 1024)
+    } else {
+        pushUnit(&mut out, cp)
+    }
+}
+
+// "" past the end where JavaScript has undefined: every comparison against a real char is
+// false either way. Differs only if the undefined itself is printed.
+pub fn jsAt(s: &string, i: i64): string {
+    var out: string = ""
+    if i >= 0 && i < jsLen(s) {
+        out.push(s[2 * i])
+        out.push(s[2 * i + 1])
+    }
+    return out
+}
+
+// -1 stands for NaN: it fails every range test the same way.
+pub fn jsCharCodeAt(s: &string, i: i64): i64 {
+    if i < 0 || i >= jsLen(s) {
+        return -1
+    }
+    return unitAt(s, i)
+}
+
+pub fn jsSlice(s: &string, a: i64, b: i64): string {
+    var out: string = ""
+    var i = if a < 0 { 0 } else { a }
+    let end = if b > jsLen(s) { jsLen(s) } else { b }
+    while i < end {
+        out.push(s[2 * i])
+        out.push(s[2 * i + 1])
+        i += 1
+    }
+    return out
+}
+
+pub fn jsSliceFrom(s: &string, a: i64): string {
+    return jsSlice(s, a, jsLen(s))
+}
+
+pub fn jsFromCharCode(n: i64): string {
+    var out: string = ""
+    pushUnit(&mut out, n % 65536)
+    return out
+}
+
+pub fn jsFromCodePoint(cp: i64): string {
+    var out: string = ""
+    pushCp(&mut out, cp)
+    return out
+}
+
+pub fn jsFromUtf8(s: &string): string {
+    var out: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let d = decodeCodepoint(s, i)
+        i += d.size
+        pushCp(&mut out, d.value as i64)
+    }
+    return out
+}
+
+// Lone surrogates become U+FFFD, as a TextEncoder does.
+pub fn jsToUtf8(s: &string): string {
+    var out: string = ""
+    let n = jsLen(s)
+    var i: i64 = 0
+    while i < n {
+        var cp = unitAt(s, i)
+        i += 1
+        if cp >= 55296 && cp < 56320 && i < n && unitAt(s, i) >= 56320 && unitAt(s, i) < 57344 {
+            cp = 65536 + (cp - 55296) * 1024 + (unitAt(s, i) - 56320)
+            i += 1
+        } else if cp >= 55296 && cp < 57344 {
+            cp = 65533
+        }
+        if cp < 128 {
+            out.push(cp as u8)
+        } else if cp < 2048 {
+            out.push((192 + cp / 64) as u8)
+            out.push((128 + cp % 64) as u8)
+        } else if cp < 65536 {
+            out.push((224 + cp / 4096) as u8)
+            out.push((128 + (cp / 64) % 64) as u8)
+            out.push((128 + cp % 64) as u8)
+        } else {
+            out.push((240 + cp / 262144) as u8)
+            out.push((128 + (cp / 4096) % 64) as u8)
+            out.push((128 + (cp / 64) % 64) as u8)
+            out.push((128 + cp % 64) as u8)
+        }
+    }
+    return out
+}
+
+pub fn jsNum(n: i64): string {
+    return jsFromUtf8(n.toString())
+}
+
+pub fn jsNumRadix(n: i64, radix: i64): string {
+    if n == 0 {
+        return jsFromUtf8("0")
+    }
+    var digits: string = ""
+    var v = if n < 0 { 0 - n } else { n }
+    while v > 0 {
+        let d = v % radix
+        digits.push((if d < 10 { 48 + d } else { 87 + d }) as u8)
+        v = v / radix
+    }
+    var ascii: string = if n < 0 { "-" } else { "" }
+    var i = digits.len - 1
+    while i >= 0 {
+        ascii.push(digits[i])
+        i -= 1
+    }
+    return jsFromUtf8(ascii)
+}
+
+fn digitOf(c: i64): i64 {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 122 {
+        return c - 87
+    }
+    if c >= 65 && c <= 90 {
+        return c - 55
+    }
+    return 99
+}
+
+// JavaScript parseInt: longest valid prefix, 0x allowed for radix 16. NaN is returned as 0,
+// which every caller's range test treats the way NaN would.
+pub fn jsParseInt(s: &string, radix: i64): i64 {
+    let n = jsLen(s)
+    var i: i64 = 0
+    while i < n && (unitAt(s, i) == 32 || unitAt(s, i) == 9 || unitAt(s, i) == 10 || unitAt(s, i) == 13) {
+        i += 1
+    }
+    var neg = false
+    if i < n && (unitAt(s, i) == 45 || unitAt(s, i) == 43) {
+        neg = unitAt(s, i) == 45
+        i += 1
+    }
+    if radix == 16 && i + 1 < n && unitAt(s, i) == 48 && (unitAt(s, i + 1) == 120 || unitAt(s, i + 1) == 88) {
+        i += 2
+    }
+    var v: i64 = 0
+    while i < n && digitOf(unitAt(s, i)) < radix {
+        v = v * radix + digitOf(unitAt(s, i))
+        i += 1
+    }
+    return if neg { 0 - v } else { v }
+}
+
+// ---- mirrors of src/ast.ts and src/diagnostics.ts ----
+
+pub enum Severity { Error, Warning, Hint }
+
+pub struct Span {
+    line: i64,
+    col: i64,
+    file: Option<string>,
+}
+
+pub struct DiagnosticNote {
+    message: string,
+    span: Option<Span>,
+    len: Option<i64>,
+}
+
+pub struct Diagnostic {
+    severity: Severity,
+    span: Option<Span>,
+    len: Option<i64>,
+    message: string,
+    hint: Option<string>,
+    code: Option<string>,
+    notes: Option<Vec<DiagnosticNote>>,
+}
+
+pub struct ParseError {
+    diagnostic: Diagnostic,
+    source: Option<string>,
+    filePath: Option<string>,
+    message: string,
+}
+
+impl ParseError {
+    fn new(diagnostic: Diagnostic, source: Option<string>, filePath: Option<string>): ParseError {
+        var loc: string = ""
+        if let Option.Some(sp) = diagnostic.span.clone() {
+            loc = jsNum(sp.line) + jsFromUtf8(":") + jsNum(sp.col) + jsFromUtf8(": ")
+        }
+        let code = diagnostic.code.clone() ?? jsFromUtf8("parse")
+        let message = jsFromUtf8("error[") + code + jsFromUtf8("]: ") + loc + diagnostic.message
+        return ParseError { diagnostic: diagnostic, source: source, filePath: filePath, message: message }
+    }
+}

@@ -1,0 +1,139 @@
+// Driver for scripts/ts2milo-lexer-diff.ts: lexes each file named in a list file with the
+// transpiled lexer and prints the same dump scripts/ts2milo-lexer-diff.ts prints for src/lexer.ts.
+//   lexer-driver <list-file>            dump
+//   lexer-driver --bench <list-file>    lex only, print elapsed time
+from "std/args" import { args }
+from "std/fs" import { readFile }
+from "std/time" import { now, since }
+from "./tokens" import { Token, TokenKind_value, Trivia, Trivia_kind }
+from "./lexer" import { Lexer }
+from "./ts2milo_runtime" import { jsFromUtf8, jsToUtf8, jsLen, jsCharCodeAt, jsSlice, jsNumRadix }
+
+fn hex4(u: i64): string {
+    var h = jsToUtf8(jsNumRadix(u, 16))
+    while h.len < 4 {
+        h = "0" + h
+    }
+    return h
+}
+
+// JSON.stringify of a JS string, as UTF-8 text.
+fn jsonQuote(s: &string): string {
+    var out: string = "\""
+    let n = jsLen(s)
+    var i: i64 = 0
+    while i < n {
+        let u = jsCharCodeAt(s, i)
+        if u == 34 {
+            out.pushStr("\\\"")
+        } else if u == 92 {
+            out.pushStr("\\\\")
+        } else if u == 8 {
+            out.pushStr("\\b")
+        } else if u == 12 {
+            out.pushStr("\\f")
+        } else if u == 10 {
+            out.pushStr("\\n")
+        } else if u == 13 {
+            out.pushStr("\\r")
+        } else if u == 9 {
+            out.pushStr("\\t")
+        } else if u < 32 {
+            out.pushStr("\\u" + hex4(u))
+        } else if u >= 55296 && u < 56320 && i + 1 < n && jsCharCodeAt(s, i + 1) >= 56320 && jsCharCodeAt(s, i + 1) < 57344 {
+            out.pushStr(jsToUtf8(jsSlice(s, i, i + 2)))
+            i += 1
+        } else if u >= 55296 && u < 57344 {
+            out.pushStr("\\u" + hex4(u))
+        } else {
+            out.pushStr(jsToUtf8(jsSlice(s, i, i + 1)))
+        }
+        i += 1
+    }
+    out.pushStr("\"")
+    return out
+}
+
+fn triviaText(ts: &Vec<Trivia>): string {
+    var out: string = ""
+    var first = true
+    for t in ts {
+        if !first {
+            out.pushStr(",")
+        }
+        first = false
+        let k = match t.kind {
+            Trivia_kind.Comment => "comment"
+            Trivia_kind.Blank => "blank"
+        }
+        out.pushStr(k + "/" + t.line.toString() + "/" + jsonQuote(t.text))
+    }
+    return out
+}
+
+fn tokenLine(t: &Token): string {
+    var raw = "-"
+    if let Option.Some(r) = t.raw.clone() {
+        raw = jsonQuote(r)
+    }
+    var lead = ""
+    if let Option.Some(l) = t.leadingTrivia.clone() {
+        lead = triviaText(l)
+    }
+    var trail = ""
+    if let Option.Some(l) = t.trailingTrivia.clone() {
+        trail = triviaText(l)
+    }
+    return jsToUtf8(TokenKind_value(t.kind)) + "\t" + jsonQuote(t.value) + "\t" + t.line.toString() + "\t" + t.col.toString() + "\t" + raw + "\t" + lead + "\t" + trail
+}
+
+fn main() {
+    let argv = args()
+    var bench = false
+    var listPath = ""
+    for a in argv {
+        if a == "--bench" {
+            bench = true
+        } else {
+            listPath = a
+        }
+    }
+    let list = readFile(listPath)!
+    var sources: Vec<string> = Vec.new()
+    var names: Vec<string> = Vec.new()
+    for p in list.lines() {
+        if p.len > 0 {
+            let path = p.substr(0, p.len)
+            let text = readFile(path)!
+            sources.push(jsFromUtf8(text))
+            names.push(path)
+        }
+    }
+    if bench {
+        var tokens: i64 = 0
+        let t0 = now()
+        for s in sources {
+            var lx = Lexer.new(s, false)
+            match lx.tokenize() {
+                Result.Ok(ts) => { tokens += ts.len }
+                Result.Err(e) => {}
+            }
+        }
+        print($"{since(t0).toMillis()} ms ({tokens} tokens)")
+        return
+    }
+    var i: i64 = 0
+    while i < names.len {
+        print("== " + names[i])
+        var lx = Lexer.new(sources[i], false)
+        match lx.tokenize() {
+            Result.Ok(ts) => {
+                for t in ts {
+                    print(tokenLine(t))
+                }
+            }
+            Result.Err(e) => { print("ERROR\t" + jsToUtf8(e.message)) }
+        }
+        i += 1
+    }
+}

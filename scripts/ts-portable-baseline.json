@@ -1,0 +1,23 @@
+{
+  "src/ast.ts": 99,
+  "src/backend-program.ts": 286,
+  "src/checker-closure-env.ts": 137,
+  "src/checker-derive.ts": 463,
+  "src/checker-mutability.ts": 195,
+  "src/checker-program-passes.ts": 2282,
+  "src/checker-sql.ts": 337,
+  "src/checker.ts": 8497,
+  "src/emit-forms.ts": 985,
+  "src/emit-mlir.ts": 3489,
+  "src/lexer.ts": 0,
+  "src/mlir-backend.ts": 180,
+  "src/mlir-ctx.ts": 324,
+  "src/mlir-debug.ts": 21,
+  "src/mlir-glue.ts": 309,
+  "src/mlir-llvm.ts": 224,
+  "src/parser.ts": 548,
+  "src/resolver.ts": 725,
+  "src/scaffold.ts": 200,
+  "src/tokens.ts": 0,
+  "src/types.ts": 183
+}
