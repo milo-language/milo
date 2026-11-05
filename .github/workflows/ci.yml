@@ -56,7 +56,9 @@ jobs:
           done
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
-      - run: bun test
+      # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
+      # slower); a test that needs a tighter limit sets its own.
+      - run: bun test --timeout 30000
       # Dialect gates (FileCheck, hygiene, round-trip, test/programs against the reference interpreter). Until
       # 2026-11-03 they lived only in mlir/run.sh, which CI never ran.
       - name: MLIR dialect gates
@@ -193,7 +195,9 @@ jobs:
           done
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
-      - run: bun test
+      # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
+      # slower); a test that needs a tighter limit sets its own.
+      - run: bun test --timeout 30000
       # Reads this runner's headers, so it's the only thing that can check the Linux decls.
       - run: bun run scripts/audit-extern-returns.ts
       # Same sweep as macOS. The seed is fixed, so this is not a second draw: it is the

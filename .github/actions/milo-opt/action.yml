@@ -30,7 +30,13 @@ runs:
           sleep $((i * 20))
         done
         echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
-        sudo bash /tmp/llvm.sh 23
+        # apt.llvm.org's nightly repo is briefly inconsistent while it publishes ("Unable to
+        # satisfy dependencies" on clangd-23); the same install works minutes later.
+        for i in 1 2 3; do
+          sudo bash /tmp/llvm.sh 23 && break
+          [ "$i" = 3 ] && exit 1
+          sleep $((i * 120))
+        done
         sudo apt-get install -y llvm-23-dev libmlir-23-dev mlir-23-tools cmake ninja-build libzstd-dev zlib1g-dev
         echo "MILO_LLVM_BIN=/usr/lib/llvm-23/bin" >> "$GITHUB_ENV"
     - name: LLVM version (cache key)

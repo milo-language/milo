@@ -54,7 +54,9 @@ jobs:
       - run: brew install lld
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
-      - run: bun test
+      # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
+      # slower); a test that needs a tighter limit sets its own.
+      - run: bun test --timeout 30000
 
   build:
     needs: test
