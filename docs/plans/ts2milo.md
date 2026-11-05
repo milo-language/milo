@@ -161,3 +161,18 @@ parser also keeps lookahead state and error recovery in classes, which fit the c
 already works. My estimate: the parser reaches the gate only after the AST tagged-union rule
 exists; with it, the work is a few days of refactors; without it, stop at stage 2 and write
 down why.
+
+## Stage 3 probe: checker-mutability
+
+Fixed before any work on it, unchanged by anything measured after. The slice is
+`src/checker-mutability.ts`, chosen because it hits the hard class on purpose: AST as a tagged
+union, a reflective walker, and facts keyed by object identity. Small, so a bad answer is cheap.
+
+- GO needs all of: findings 100% identical to TS across the corpus; at least 90% of the
+  slice's functions automatic, counting the `ast.ts` helpers it needs; the object-identity
+  refactor expressible as a repeatable rule, not a one-off.
+- NO-GO if any fails after a real effort. Then the project stops, useful cleanups stay, and
+  src-milo stays frozen.
+- Recorded, not a threshold: the `milo prove --rte` proved / unknown / failed counts on the
+  generated slice. This measures the payoff, which is assurance on the compiler itself. A slice
+  that is nearly all unknown is stated plainly as weakening the case.
