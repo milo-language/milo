@@ -62,7 +62,8 @@ function livecount(scratch: string): string | null {
 }
 
 async function runInterp(path: string, cwd: string): Promise<Obs> {
-  const r = await guardedRun("bun", ["run", MAIN, "interp", path, "--live"], { timeoutMs: 120_000, cwd, memMb: MEM_MB });
+  // bun reserves sparse address space: on linux arm64 a 1 GB ulimit -v kills it before main runs.
+  const r = await guardedRun("bun", ["run", MAIN, "interp", path, "--live"], { timeoutMs: 120_000, cwd, memMb: MEM_MB, virtualMemMb: 8192 });
   const m = /^interp: (unsupported|stuck at)[^\n]*/m.exec(r.stderr);
   const crash = /^(\w*Error: [^\n]*)/m.exec(r.stderr);
   const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;

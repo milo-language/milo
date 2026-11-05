@@ -171,6 +171,15 @@ jobs:
       # `bun test`, at which point this job was the only one that could not link it. The
       # alternative was `@skip-os: linux`, which buys a green tick by deleting the coverage.
       - run: sudo apt-get update && sudo apt-get install -y clang z3 lld qemu-system-arm libssl-dev libsqlite3-dev libgl1-mesa-dev
+      # Noble's z3 4.8.12 hangs on arm64 on a linear query with bounds near 2^63 (tests/prove/
+      # rteCalleeNoEnsures, `n + 100` in i64) under every solver option tried; 4.13.4 answers in ms.
+      - name: Replace apt z3 on arm64
+        if: runner.arch == 'ARM64'
+        run: |
+          curl -fsSL -o /tmp/z3.zip https://github.com/Z3Prover/z3/releases/download/z3-4.13.4/z3-4.13.4-arm64-glibc-2.34.zip
+          unzip -qo /tmp/z3.zip -d /tmp/z3
+          sudo install /tmp/z3/z3-4.13.4-arm64-glibc-2.34/bin/z3 /usr/local/bin/z3
+          /usr/local/bin/z3 --version
       # When this job goes red, the toolchain it actually resolved is the first thing you
       # need and the most annoying to get after the fact (mirrors the Windows job).
       - name: Toolchain info
