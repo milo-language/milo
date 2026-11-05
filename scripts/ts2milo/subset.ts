@@ -2,6 +2,7 @@
 // anything outside it) and scripts/ts-portable.ts (which counts what is outside it). The
 // transpiler only has emit code for what this file allows, so the two cannot disagree.
 import ts from "typescript";
+import { guardUnion, registerUnions, taggedUnionOf, unionOfType } from "./ast-model";
 
 export interface Violation {
   file: string;
@@ -13,7 +14,7 @@ export interface Violation {
 // Library members the transpiler maps to runtime calls, keyed "<Owner>.<member>".
 export const BUILTIN_CALLS = new Set([
   "String.charCodeAt", "String.slice", "StringConstructor.fromCharCode", "StringConstructor.fromCodePoint",
-  "Number.toString", "Array.push", "Set.has", "parseInt", "String()",
+  "Number.toString", "Array.push", "Set.has", "Set.add", "Map.get", "Map.set", "Map.has", "parseInt", "String()",
 ]);
 
 const K = ts.SyntaxKind;
@@ -29,7 +30,7 @@ const PLAIN = new Set<ts.SyntaxKind>([
   K.ExportKeyword, K.PrivateKeyword, K.PublicKeyword, K.ProtectedKeyword, K.ReadonlyKeyword, K.ConditionalExpression,
   K.NumberKeyword, K.StringKeyword, K.BooleanKeyword, K.VoidKeyword, K.NeverKeyword, K.UndefinedKeyword,
   K.ArrayType, K.LiteralType, K.ParenthesizedType, K.PrefixUnaryExpression, K.PostfixUnaryExpression,
-  K.ImportKeyword, K.TypeKeyword, K.ColonToken, K.QuestionToken, K.EqualsToken,
+  K.ImportKeyword, K.TypeKeyword, K.ColonToken, K.QuestionToken, K.EqualsToken, K.NullKeyword,
 ]);
 
 const BINARY_OK = new Set<ts.SyntaxKind>([
@@ -77,6 +78,7 @@ export function calleeKey(program: ts.Program, checker: ts.TypeChecker, call: ts
 
 export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: ts.SourceFile): Violation[] {
   const out: Violation[] = [];
+  registerUnions(program, checker);
   const bad = (n: ts.Node, construct: string) => {
     const p = sf.getLineAndCharacterOfPosition(n.getStart(sf));
     out.push({ file: sf.fileName, line: p.line + 1, col: p.character + 1, construct });
@@ -90,22 +92,38 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     return !!d && !isLibDecl(program, d) && pred(d);
   };
   const isArr = (t: ts.Type) => checker.isArrayType(t);
+  const isNullishExpr = (e: ts.Expression) => (ts.isIdentifier(e) && e.text === "undefined") || e.kind === K.NullKeyword;
+  // The expression is the condition of an if statement, or a conjunct of it (through parens and &&).
+  const inIfGuard = (e: ts.Node): boolean => {
+    let c: ts.Node = e;
+    while (c.parent && (ts.isParenthesizedExpression(c.parent) || (ts.isBinaryExpression(c.parent) && c.parent.operatorToken.kind === K.AmpersandAmpersandToken))) c = c.parent;
+    return !!c.parent && ts.isIfStatement(c.parent) && c.parent.expression === c;
+  };
+  // `x.kind` is only read as `x.kind === "K"` in a guard.
+  const isKindGuard = (access: ts.Node): boolean => {
+    const b = access.parent;
+    return !!b && ts.isBinaryExpression(b) && b.operatorToken.kind === K.EqualsEqualsEqualsToken && b.left === access && ts.isStringLiteral(b.right) && inIfGuard(b);
+  };
 
   const typeNode = (n: ts.TypeNode) => {
     if (ts.isTypeReferenceNode(n)) {
       const t = checker.getTypeFromTypeNode(n);
       const name = n.typeName.getText();
-      if (name === "Array" || name === "Set") { return; }
+      if (name === "Array" || name === "Set" || name === "Map") { return; }
       if (n.typeArguments) bad(n, `generic type ${name}`);
       else if (!isProjectSymbolType(t, (d) => ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d) || ts.isEnumDeclaration(d) || ts.isTypeAliasDeclaration(d))) {
         bad(n, `type ${name}`);
       }
     } else if (ts.isUnionTypeNode(n)) {
       const lits = n.types.every((x) => ts.isLiteralTypeNode(x) && ts.isStringLiteral(x.literal));
-      const nonUndef = n.types.filter((x) => x.kind !== K.UndefinedKeyword);
-      if (!lits && !(nonUndef.length === 1 && n.types.length === 2)) bad(n, "union type");
+      const isNullish = (x: ts.TypeNode) => x.kind === K.UndefinedKeyword || (ts.isLiteralTypeNode(x) && x.literal.kind === K.NullKeyword);
+      const rest = n.types.filter((x) => !isNullish(x));
+      // The body of a tagged union declaration is the union rule itself, not a union type use.
+      const taggedBody = ts.isTypeAliasDeclaration(n.parent) && taggedUnionOf(checker, n.parent) !== null;
+      if (!lits && !taggedBody && !(rest.length === 1 && n.types.length === 2)) bad(n, "union type");
     } else if (ts.isLiteralTypeNode(n)) {
-      if (!ts.isStringLiteral(n.literal)) bad(n, "non-string literal type");
+      const inOption = ts.isUnionTypeNode(n.parent) && n.parent.types.length === 2 && n.literal.kind === K.NullKeyword;
+      if (!ts.isStringLiteral(n.literal) && !inOption) bad(n, "non-string literal type");
     }
   };
 
@@ -166,7 +184,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.TypeAliasDeclaration: {
         const a = n as ts.TypeAliasDeclaration;
         if (a.typeParameters) bad(n, "generic type alias");
-        else if (!ts.isUnionTypeNode(a.type) && !(ts.isLiteralTypeNode(a.type))) bad(n, "type alias other than string literals");
+        else if (taggedUnionOf(checker, a) === null && !ts.isUnionTypeNode(a.type) && !(ts.isLiteralTypeNode(a.type))) bad(n, "type alias other than string literals");
         return;
       }
       case K.VariableDeclaration: {
@@ -180,6 +198,14 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.PropertyAccessExpression: {
         const p = n as ts.PropertyAccessExpression;
         if (p.questionDotToken) { bad(n, "optional chaining"); return; }
+        const u = p.name.text === "kind" ? guardUnion(checker, p.expression) : unionOfType(checker, checker.getTypeAtLocation(p.expression));
+        if (u) {
+          // A tagged union value has no fields of its own: `kind` only in a guard, and a field only
+          // if every variant has it (the transpiler emits an accessor for those).
+          if (p.name.text === "kind") { if (!isKindGuard(p)) bad(n, "tagged union kind read outside an if guard"); }
+          else if (!u.variants.every((v) => v.iface.members.some((m) => ts.isPropertySignature(m) && (m.name as ts.Identifier).text === p.name.text))) bad(n, `field ${p.name.text} is not on every variant of ${u.name}`);
+          return;
+        }
         const sym = checker.getSymbolAtLocation(p.name);
         const d = sym?.declarations?.[0];
         if (d && isLibDecl(program, d)) {
@@ -208,13 +234,18 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.NewExpression: {
         const e = n as ts.NewExpression;
         const t = checker.getTypeAtLocation(e);
-        const isSet = (t.symbol?.name === "Set");
+        const isSet = (t.symbol?.name === "Set" || t.symbol?.name === "Map");
         if (!isSet && !isProjectSymbolType(t, (d) => ts.isClassDeclaration(d))) bad(n, "new of a non-project class");
         return;
       }
       case K.BinaryExpression: {
         const b = n as ts.BinaryExpression;
         const op = b.operatorToken.kind;
+        // `x !== undefined` (or null) binds the Option's payload, so it is a guard or nothing.
+        if ((op === K.EqualsEqualsEqualsToken || op === K.ExclamationEqualsEqualsToken) && (isNullishExpr(b.left) || isNullishExpr(b.right))) {
+          if (!inIfGuard(b) || op === K.EqualsEqualsEqualsToken) bad(n, "undefined or null comparison outside a positive if guard");
+          return;
+        }
         if (!BINARY_OK.has(op)) { bad(n, `operator ${b.operatorToken.getText()}`); return; }
         if (ASSIGN_OPS.has(op) && !ts.isExpressionStatement(b.parent)) bad(n, "assignment as expression");
         if (op === K.AmpersandAmpersandToken || op === K.BarBarToken) { needBool(b.left, "operand of &&/||"); needBool(b.right, "operand of &&/||"); }
@@ -256,6 +287,13 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       }
       case K.ArrayLiteralExpression: {
         for (const e of (n as ts.ArrayLiteralExpression).elements) if (ts.isSpreadElement(e) || ts.isOmittedExpression(e)) bad(e, "array literal spread or hole");
+        return;
+      }
+      case K.ForOfStatement: {
+        // `for (const x of array)` borrows each element in turn: the way to walk a Vec of boxed nodes.
+        const f = n as ts.ForOfStatement;
+        const one = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 && ts.isIdentifier(f.initializer.declarations[0].name);
+        if (!one || !isArr(checker.getTypeAtLocation(f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
         return;
       }
       case K.IfStatement: needBool((n as ts.IfStatement).expression, "if condition"); return;

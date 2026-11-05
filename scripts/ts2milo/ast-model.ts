@@ -32,10 +32,46 @@ export function taggedUnionOf(checker: ts.TypeChecker, d: ts.TypeAliasDeclaratio
   return { name: d.name.text, decl: d, variants };
 }
 
-// The tagged union a type is (by its alias name), or null.
+// Variant interface -> its union, per program, so a union narrowed by earlier `else if` branches
+// (which TS gives no alias name) is still recognized by its members.
+const byVariant = new WeakMap<ts.TypeChecker, Map<ts.Declaration, TaggedUnion>>();
+export function registerUnions(program: ts.Program, checker: ts.TypeChecker): void {
+  if (byVariant.has(checker)) return;
+  const m = new Map<ts.Declaration, TaggedUnion>();
+  for (const sf of program.getSourceFiles()) {
+    if (sf.isDeclarationFile) continue;
+    for (const s of sf.statements) {
+      if (!ts.isTypeAliasDeclaration(s)) continue;
+      const u = taggedUnionOf(checker, s);
+      if (u) for (const v of u.variants) m.set(v.iface, u);
+    }
+  }
+  byVariant.set(checker, m);
+}
+
+// The tagged union a type is, whole or narrowed to some of its variants, or null. A single variant
+// (an interface) is not a union.
 export function unionOfType(checker: ts.TypeChecker, t: ts.Type): TaggedUnion | null {
   const d = t.aliasSymbol?.declarations?.[0];
-  return d && ts.isTypeAliasDeclaration(d) ? taggedUnionOf(checker, d) : null;
+  if (d && ts.isTypeAliasDeclaration(d)) return taggedUnionOf(checker, d);
+  if (!t.isUnion()) return null;
+  const reg = byVariant.get(checker);
+  let found: TaggedUnion | null = null;
+  for (const m of t.types) {
+    const decl = m.symbol?.declarations?.[0];
+    const u = decl && reg?.get(decl);
+    if (!u || (found && found !== u)) return null;
+    found = u;
+  }
+  return found;
+}
+
+// The union an expression is a value of by declaration: after earlier `else if` branches TS has
+// narrowed the last variant down to a lone interface, but the next `x.kind === "K"` still guards the
+// union it was declared as.
+export function guardUnion(checker: ts.TypeChecker, e: ts.Expression): TaggedUnion | null {
+  const sym = ts.isIdentifier(e) ? checker.getSymbolAtLocation(e) : undefined;
+  return (sym && unionOfType(checker, checker.getTypeOfSymbol(sym))) ?? unionOfType(checker, checker.getTypeAtLocation(e));
 }
 
 // ---- field boxing: a by-value cycle needs a Heap ----
@@ -43,8 +79,13 @@ export function unionOfType(checker: ts.TypeChecker, t: ts.Type): TaggedUnion | 
 export interface AstModel {
   unions: Map<string, TaggedUnion>;
   ifaces: Map<string, ts.InterfaceDeclaration>;
+  // The file each interface or union is declared in.
+  fileOf: Map<string, string>;
   // Fields whose Milo type is `Heap<...>` (the field closes a by-value cycle).
   boxed: Set<ts.PropertySignature>;
+  cloneable: Set<string>;
+  // Types on a cycle: an array of them holds Heap<T> elements, or the text of the type grows with every level of nesting.
+  cyclic: Set<string>;
   // Fields with no Milo type (an untagged union of primitives). Counted and reported.
   dropped: { iface: string; field: string; type: string }[];
 }
@@ -58,13 +99,16 @@ const stripOptional = (t: ts.TypeNode): ts.TypeNode => {
   return t;
 };
 
-export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, astFile: string): AstModel {
-  const sf = program.getSourceFile(astFile)!;
+// `files`: the AST file and every other input file whose interfaces a decoder must reach.
+export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, files: string[]): AstModel {
   const unions = new Map<string, TaggedUnion>();
   const ifaces = new Map<string, ts.InterfaceDeclaration>();
-  for (const s of sf.statements) {
-    if (ts.isInterfaceDeclaration(s)) ifaces.set(s.name.text, s);
-    if (ts.isTypeAliasDeclaration(s)) { const u = taggedUnionOf(checker, s); if (u) unions.set(u.name, u); }
+  const fileOf = new Map<string, string>();
+  for (const file of files) {
+    for (const s of program.getSourceFile(file)!.statements) {
+      if (ts.isInterfaceDeclaration(s)) { ifaces.set(s.name.text, s); fileOf.set(s.name.text, file); }
+      if (ts.isTypeAliasDeclaration(s)) { const u = taggedUnionOf(checker, s); if (u) { unions.set(u.name, u); fileOf.set(u.name, file); } }
+    }
   }
   // Direct (non-array) edges between named types. A union points at its variants, an interface at
   // the types its non-array fields name. A field on a cycle is boxed.
@@ -94,7 +138,31 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, astF
   };
   const boxed = new Set<ts.PropertySignature>();
   for (const [from, es] of edges) for (const e of es) if (e.field && reaches(e.to, from)) boxed.add(e.field);
-  return { unions, ifaces, boxed, dropped };
+  // Types `@derive(Clone)` can be put on: no cycle through them, and none among the types they hold
+  // (the derive cannot be applied to mutually recursive types, so a clone of one is a Milo error).
+  const all = new Map<string, Set<string>>();
+  for (const u of unions.values()) all.set(u.name, new Set(u.variants.map((v) => v.iface.name.text)));
+  for (const i of ifaces.values()) {
+    const s = new Set<string>();
+    for (const m of i.members) {
+      if (!ts.isPropertySignature(m) || !m.type) continue;
+      let t = stripOptional(m.type);
+      if (ts.isArrayTypeNode(t)) t = stripOptional(t.elementType);
+      if (ts.isTypeReferenceNode(t)) { const n = t.typeName.getText(); if (ifaces.has(n) || unions.has(n)) s.add(n); }
+    }
+    all.set(i.name.text, s);
+  }
+  const closure = (n: string): Set<string> => {
+    const out = new Set<string>();
+    const go = (x: string) => { for (const y of all.get(x) ?? []) if (!out.has(y)) { out.add(y); go(y); } };
+    go(n);
+    return out;
+  };
+  const cyclic = new Set<string>();
+  for (const n of all.keys()) if (closure(n).has(n)) cyclic.add(n);
+  const cloneable = new Set<string>();
+  for (const n of all.keys()) if (!cyclic.has(n) && [...closure(n)].every((x) => !cyclic.has(x))) cloneable.add(n);
+  return { unions, ifaces, fileOf, boxed, dropped, cloneable, cyclic };
 }
 
 // ---- Milo AST types and the JSON decoder, from the types ----
@@ -103,17 +171,22 @@ const RESERVED = new Set("fn extern let var return if else while true false stru
 const field_ = (n: string) => (RESERVED.has(n) ? n + "_" : n);
 const pascal = (s: string) => s.replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase());
 
-export interface AstEmit { types: string; decoder: string; typeNames: string[]; dropped: AstModel["dropped"] }
+export interface AstEmit { types: string; decoder: string; typeNames: string[]; dropped: AstModel["dropped"]; sizeBoxed: string[] }
+export interface LitName { name: string; lits: string[]; file: string }
 
-// Emits Milo for every type reachable from `roots`. `litName(typeNode, ownerIface, field)` names a
-// string-literal union the same way the function emitter does, so both sides agree on the enum.
-export function emitAst(program: ts.Program, checker: ts.TypeChecker, model: AstModel, roots: string[], litName: (t: ts.TypeNode, owner: string, field: string) => { name: string; lits: string[] } | null): AstEmit {
-  const need = new Set<string>();
-  const enums = new Map<string, string[]>();
+// Milo for every type reachable from `roots`: struct and enum declarations for the types declared
+// in `astFile`, and a JSON decoder (cursors into a std/json document) for all of them wherever
+// declared. `litName` names a string-literal union the way the function emitter does, so both
+// sides agree on the enum; `modOf` gives the Milo module a file's declarations live in.
+export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>): AstEmit {
+  const enums = new Map<string, LitName>();
   const order: string[] = [];
+  const seen = new Set<string>();
+  const variantOf = new Map<string, string>();
+  for (const u of model.unions.values()) for (const v of u.variants) variantOf.set(v.iface.name.text, u.name);
   const visit = (name: string) => {
-    if (need.has(name)) return;
-    need.add(name);
+    if (seen.has(name)) return;
+    seen.add(name);
     order.push(name);
     const u = model.unions.get(name);
     if (u) { for (const v of u.variants) visit(v.iface.name.text); return; }
@@ -121,160 +194,219 @@ export function emitAst(program: ts.Program, checker: ts.TypeChecker, model: Ast
     if (!i) return;
     for (const m of i.members) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
-      if ((m.name as ts.Identifier).text === "kind" && inVariant(name)) continue;
+      if ((m.name as ts.Identifier).text === "kind" && variantOf.has(name)) continue;
+      if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
       const base = stripOptional(m.type);
       const elem = ts.isArrayTypeNode(base) ? stripOptional(base.elementType) : base;
       if (ts.isTypeReferenceNode(elem)) visit(elem.typeName.getText());
     }
   };
-  const variantOf = new Map<string, string>();
-  for (const u of model.unions.values()) for (const v of u.variants) variantOf.set(v.iface.name.text, u.name);
-  const inVariant = (iface: string) => variantOf.has(iface);
   for (const r of roots) visit(r);
 
-  // Milo type of a field, or null when the field has no Milo type (and why).
-  const typeOf = (owner: string, m: ts.PropertySignature): string | null => {
-    const fname = (m.name as ts.Identifier).text;
-    const opt = (s: string, node: ts.TypeNode, question: boolean): string => (question || stripOptional(node) !== node ? `Option<${s}>` : s);
+  // Milo type of a field, or null when it has none (an untagged union of primitives).
+  const typeOf = (m: ts.PropertySignature): string | null => {
+    const wrap = (s: string, node: ts.TypeNode, question: boolean) => (question || stripOptional(node) !== node ? `Option<${s}>` : s);
     const conv = (n: ts.TypeNode, boxedHere: boolean): string | null => {
       n = stripOptional(n);
       if (ts.isArrayTypeNode(n)) {
-        const inner = n.elementType;
-        const e = conv(inner, false);
+        const e = conv(n.elementType, false);
         if (e === null) return null;
-        return `Vec<${opt(e, inner, false)}>`;
+        const el = stripOptional(n.elementType);
+        const name = ts.isTypeReferenceNode(el) ? el.typeName.getText() : "";
+        return `Vec<${wrap(model.cyclic.has(name) ? `Heap<${e}>` : e, n.elementType, false)}>`;
       }
       if (n.kind === ts.SyntaxKind.NumberKeyword) return "i64";
-      if (n.kind === ts.SyntaxKind.StringKeyword) return "string";
-      if (n.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
-      if (ts.isLiteralTypeNode(n) && n.literal.kind === ts.SyntaxKind.TrueKeyword) return "bool";
-      if (n.kind === ts.SyntaxKind.BigIntKeyword) return "string";
+      if (n.kind === ts.SyntaxKind.StringKeyword || n.kind === ts.SyntaxKind.BigIntKeyword) return "string";
+      if (n.kind === ts.SyntaxKind.BooleanKeyword || (ts.isLiteralTypeNode(n) && n.literal.kind === ts.SyntaxKind.TrueKeyword)) return "bool";
       if (ts.isTypeReferenceNode(n)) {
         const name = n.typeName.getText();
-        if (model.ifaces.has(name) || model.unions.has(name)) return boxedHere ? `Heap<${name}>` : name;
-        const decl = checker.getSymbolAtLocation(n.typeName)?.declarations?.[0];
-        if (decl && ts.isTypeAliasDeclaration(decl)) {
-          const l = litName(decl.type, owner, fname);
-          if (l) { enums.set(l.name, l.lits); return l.name; }
-        }
-        return null;
+        if (model.ifaces.has(name) || model.unions.has(name)) return name;
       }
-      const l = litName(n, owner, fname);
-      if (l) { enums.set(l.name, l.lits); return l.name; }
+      const l = litName(n) ?? (ts.isTypeReferenceNode(n) ? (() => { const d = checker.getSymbolAtLocation(n.typeName)?.declarations?.[0]; return d && ts.isTypeAliasDeclaration(d) ? litName(d.type) : null; })() : null);
+      if (l) { enums.set(l.name, l); return l.name; }
       return null;
     };
-    const full = conv(m.type!, model.boxed.has(m));
-    if (full === null) return null;
-    return opt(full, m.type!, !!m.questionToken);
+    const base = conv(m.type!, false);
+    const full = base === null ? null : model.boxed.has(m) ? `Heap<${base}>` : base;
+    return full === null ? null : wrap(full, m.type!, !!m.questionToken);
   };
 
-  const t: string[] = ["// GENERATED by scripts/ts2milo.ts from src/ast.ts. Do not edit; change the TypeScript."];
-  const d: string[] = [];
-  const typeNames: string[] = [];
-  const decodeField: string[] = [];
-  void decodeField;
-  const droppedHere: AstModel["dropped"] = [];
   const structFields = new Map<string, { name: string; ty: string; node: ts.PropertySignature }[]>();
-  for (const name of order) {
-    const i = model.ifaces.get(name);
-    if (!i) continue;
+  const dropped: AstModel["dropped"] = [];
+  const fieldsOf = (name: string, report: boolean) => {
+    const i = model.ifaces.get(name)!;
     const fs: { name: string; ty: string; node: ts.PropertySignature }[] = [];
     for (const m of i.members) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       const fname = (m.name as ts.Identifier).text;
-      if (fname === "kind" && inVariant(name)) continue;
-      const ty = typeOf(name, m);
-      if (ty === null) { droppedHere.push({ iface: name, field: fname, type: m.type.getText() }); continue; }
-      fs.push({ name: fname, ty, node: m });
+      if (fname === "kind" && variantOf.has(name)) continue;
+      // A field no input file reads is not carried: a smaller type, a smaller dump, a smaller decoder.
+      if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
+      const t = typeOf(m);
+      if (t === null) { if (report && model.fileOf.get(name) === astFile) dropped.push({ iface: name, field: fname, type: m.type.getText() }); continue; }
+      fs.push({ name: fname, ty: t, node: m });
     }
     structFields.set(name, fs);
+  };
+  for (const name of order) if (model.ifaces.has(name)) fieldsOf(name, true);
+
+  // The Milo backend only passes a value of 128 bytes or more by reference when it is a literal or a
+  // call result, so a Heap<Expr> read as a `&Expr` argument fails once the enum is that big. An enum
+  // is as big as its largest variant: box the largest fields of any variant struct until the
+  // estimate (with the tag) is under a limit that leaves room for the estimate being rough.
+  const LIMIT = 112;
+  const sizeOf = (ty: string): number => {
+    if (ty === "i64" || ty === "bool") return 8;
+    if (ty === "string" || ty.startsWith("Vec<")) return 24;
+    if (ty.startsWith("Heap<")) return 8;
+    if (ty.startsWith("Option<")) return sizeOf(ty.slice(7, -1)) + 8;
+    if (enums.has(ty)) return 8;
+    const u = model.unions.get(ty);
+    if (u) return Math.max(...u.variants.map((v) => sizeOf(v.iface.name.text))) + 8;
+    return (structFields.get(ty) ?? []).reduce((a, f) => a + sizeOf(f.ty), 0);
+  };
+  const sizeBoxed: string[] = [];
+  for (const u of model.unions.values()) {
+    if (!seen.has(u.name)) continue;
+    const names = new Set<string>();
+    for (const v of u.variants) {
+      const s = v.iface.name.text;
+      // Optionals and structs first (a string or a Vec is already a handle, a Heap<string> buys
+      // nothing); a Vec only when nothing else is left.
+      for (const allowVec of [false, true]) {
+        for (;;) {
+          if (sizeOf(s) + 8 <= LIMIT) break;
+          const aggregate = (ty: string) => structFields.has(ty) || model.unions.has(ty);
+          const cand = (structFields.get(s) ?? []).filter((f) => (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
+          if (!cand) break;
+          model.boxed.add(cand.node);
+          if (!allowVec) names.add(cand.name);
+          sizeBoxed.push(`${s}.${cand.name}`);
+          fieldsOf(s, false);
+        }
+      }
+    }
+    // (The structs below that are not variants get the same treatment after this loop.)
+    // A field boxed in one variant is boxed in all of them, so the common-field accessor and every
+    // read of it agree.
+    for (const v of u.variants) {
+      const s = v.iface.name.text;
+      let changed = false;
+      for (const f of structFields.get(s) ?? []) {
+        if (names.has(f.name) && !model.boxed.has(f.node) && sizeOf(f.ty) > 8) { model.boxed.add(f.node); changed = true; }
+      }
+      if (changed) fieldsOf(s, false);
+    }
   }
-  for (const [en, lits] of enums) {
-    t.push(`@derive(Clone)`, `pub enum ${en} { ${lits.map(pascal).join(", ")} }`);
-  }
+
+  // A struct held in a Heap (an array element on a cycle) is read as a value too: same limit.
   for (const name of order) {
+    if (variantOf.has(name) || !model.ifaces.has(name) || !model.cyclic.has(name)) continue;
+    for (const allowVec of [false, true]) {
+      for (;;) {
+        if (sizeOf(name) + 8 <= LIMIT) break;
+        const aggregate = (ty: string) => structFields.has(ty) || model.unions.has(ty);
+        const cand = (structFields.get(name) ?? []).filter((f) => (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
+        if (!cand) break;
+        model.boxed.add(cand.node);
+        sizeBoxed.push(`${name}.${cand.name}`);
+        fieldsOf(name, false);
+      }
+    }
+  }
+
+  // A Heap field has no Clone, and neither has anything holding one.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const n of [...model.cloneable]) {
+      const bad = (structFields.get(n) ?? []).some((f) => f.ty.includes("Heap<") || (f.ty.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).some((w) => (model.ifaces.has(w) || model.unions.has(w)) && !model.cloneable.has(w)));
+      if (bad) { model.cloneable.delete(n); changed = true; }
+    }
+  }
+
+  // ---- types (only those declared in astFile; the rest are declared by their own files) ----
+  const t: string[] = ["// GENERATED by scripts/ts2milo.ts from src/ast.ts. Do not edit; change the TypeScript."];
+  const typeNames: string[] = [];
+  for (const l of enums.values()) if (l.file === astFile) t.push(`@derive(Clone)`, `pub enum ${l.name} { ${l.lits.map(pascal).join(", ")} }`);
+  for (const name of order) {
+    if (model.fileOf.get(name) !== astFile) continue;
     const u = model.unions.get(name);
     if (u) {
       typeNames.push(name);
-      t.push(`@derive(Clone)`, `pub enum ${name} {`, ...u.variants.map((v) => `    ${pascal(v.kind)}(${v.iface.name.text}),`), `}`);
+      t.push(...(model.cloneable.has(name) ? ["@derive(Clone)"] : []), `pub enum ${name} {`, ...u.variants.map((v) => `    ${pascal(v.kind)}(${v.iface.name.text}),`), `}`);
+      // A field every variant has, read through one accessor (`Expr_span(e)`): a union has no fields of its own.
+      // A boxed field is returned unboxed (cloned out of its Heap).
+      const per = u.variants.map((v) => structFields.get(v.iface.name.text) ?? []);
+      const unbox = (ty: string) => (ty.startsWith("Option<Heap<") ? `Option<${ty.slice(12, -2)}>` : ty.startsWith("Heap<") ? ty.slice(5, -1) : ty);
+      for (const f of per[0] ?? []) {
+        const plain = unbox(f.ty);
+        if (plain.includes("Heap<") || !per.every((p) => p.some((x) => x.name === f.name && unbox(x.ty) === plain))) continue;
+        const arm = (v: Variant) => {
+          const x = structFields.get(v.iface.name.text)!.find((y) => y.name === f.name)!;
+          const read = `p.${field_(f.name)}`;
+          if (x.ty.startsWith("Option<Heap<")) return `match ${read} { Option.Some(h) => Option.Some((*h).clone()), Option.None => Option.None }`;
+          if (x.ty.startsWith("Heap<")) return `(*${read}).clone()`;
+          return `${read}.clone()`;
+        };
+        t.push(`pub fn ${name}_${f.name}(e: &${name}): ${plain} {`, `    return match e {`, ...u.variants.map((v) => `        ${name}.${pascal(v.kind)}(p) => ${arm(v)},`), `    }`, `}`);
+      }
       continue;
     }
     const fs = structFields.get(name);
     if (!fs) continue;
     typeNames.push(name);
-    t.push(`@derive(Clone)`, `pub struct ${name} {`, ...fs.map((f) => `    ${field_(f.name)}: ${f.ty},`), `}`);
+    t.push(...(model.cloneable.has(name) ? ["@derive(Clone)"] : []), `pub struct ${name} {`, ...fs.map((f) => `    ${field_(f.name)}: ${f.ty},`), `}`);
   }
 
-  // ---- decoder: one function per type, cursors into a parsed std/json document ----
-  d.push("// GENERATED by scripts/ts2milo.ts from src/ast.ts. Do not edit; change the TypeScript.");
-  d.push(`from "std/json" import { Json }`);
-  d.push(`from "./ts2milo_runtime" import { jsFromUtf8 }`);
-  d.push(`from "./ast" import { ${[...typeNames, ...enums.keys()].flatMap((n) => (enums.has(n) ? [n] : [n])).join(", ")} }`);
-  d.push("");
-  const dec = (ty: string, node: ts.TypeNode, cur: string, depth: number): string => {
-    // An expression decoding the value at cursor `cur` as the Milo type `ty`.
-    const pad = `d${depth}`;
-    void pad;
-    return `decode_${ty.replace(/[<>]/g, "_")}(j, ${cur})`;
-  };
-  void dec;
-  // Decoders are emitted by hand-rolled shape: scalars, enums, Vec<T>, Option<T>, Heap<T>, named.
-  const decoderFor = (ty: string): string => {
-    if (ty === "i64") return "j.curInt(CUR).unwrapOr(0)";
-    if (ty === "bool") return "j.curBool(CUR).unwrapOr(false)";
-    if (ty === "string") return "jsFromUtf8(j.curStr(CUR).unwrapOr(\"\"))";
-    return `decode${ty}(j, CUR)`;
-  };
-  void decoderFor;
-  const helpers = new Set<string>();
-  const need2 = (ty: string): string => {
-    // Name of the decoder for `ty`, emitting a wrapper for Vec/Option/Heap on first use.
+  // ---- decoder ----
+  const d: string[] = [];
+  const done = new Set<string>();
+  const dec = (ty: string): string => {
     const name = "dec_" + ty.replace(/[<>, ]/g, "_");
-    if (helpers.has(name)) return name;
-    helpers.add(name);
-    if (ty === "i64") d.push(`fn ${name}(j: &Json, c: i64): i64 {`, `    return j.curInt(c).unwrapOr(0)`, `}`, "");
-    else if (ty === "bool") d.push(`fn ${name}(j: &Json, c: i64): bool {`, `    return j.curBool(c).unwrapOr(false)`, `}`, "");
-    else if (ty === "string") d.push(`fn ${name}(j: &Json, c: i64): string {`, `    return jsFromUtf8(j.curStr(c).unwrapOr(""))`, `}`, "");
+    if (done.has(name)) return name;
+    done.add(name);
+    const head = `fn ${name}(j: &Json, c: i64): ${ty} {`;
+    const lines: string[] = [];
+    if (ty === "i64") lines.push(head, `    return j.curInt(c).unwrapOr(0)`, `}`, "");
+    else if (ty === "bool") lines.push(head, `    return j.curBool(c).unwrapOr(false)`, `}`, "");
+    else if (ty === "string") lines.push(head, `    return jsFromUtf8(rawStr(j, c))`, `}`, "");
     else if (ty.startsWith("Vec<")) {
-      const inner = ty.slice(4, -1);
-      const f = need2(inner);
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`, `    var out: ${ty} = Vec.new()`, `    let n = j.curLen(c)`, `    var i: i64 = 0`, `    while i < n {`, `        out.push(${f}(j, j.curChild(c, i)))`, `        i += 1`, `    }`, `    return out`, `}`, "");
+      const f = dec(ty.slice(4, -1));
+      lines.push(head, `    var out: ${ty} = Vec.new()`, `    let n = j.curLen(c)`, `    var i: i64 = 0`, `    while i < n {`, `        out.push(${f}(j, j.curChild(c, i)))`, `        i += 1`, `    }`, `    return out`, `}`, "");
     } else if (ty.startsWith("Option<")) {
-      const inner = ty.slice(7, -1);
-      const f = need2(inner);
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`, `    if !j.curHolds(c) {`, `        return Option.None`, `    }`, `    return Option.Some(${f}(j, c))`, `}`, "");
+      const f = dec(ty.slice(7, -1));
+      lines.push(head, `    if j.curKind(c) <= 0 {`, `        return Option.None`, `    }`, `    return Option.Some(${f}(j, c))`, `}`, "");
     } else if (ty.startsWith("Heap<")) {
-      const inner = ty.slice(5, -1);
-      const f = need2(inner);
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`, `    return Heap(${f}(j, c))`, `}`, "");
+      const f = dec(ty.slice(5, -1));
+      lines.push(head, `    return Heap(${f}(j, c))`, `}`, "");
     } else if (enums.has(ty)) {
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`);
-      const lits = enums.get(ty)!;
-      d.push(`    let s = jsFromUtf8(j.curStr(c).unwrapOr(""))`);
-      for (const l of lits.slice(0, -1)) d.push(`    if s == ${JSON.stringify(l)} {`, `        return ${ty}.${pascal(l)}`, `    }`);
-      d.push(`    return ${ty}.${pascal(lits[lits.length - 1])}`, `}`, "");
+      const lits = enums.get(ty)!.lits;
+      lines.push(head, `    let s = rawStr(j, c)`);
+      for (const l of lits.slice(0, -1)) lines.push(`    if s == ${JSON.stringify(l)} {`, `        return ${ty}.${pascal(l)}`, `    }`);
+      lines.push(`    return ${ty}.${pascal(lits[lits.length - 1])}`, `}`, "");
     } else if (model.unions.has(ty)) {
       const u = model.unions.get(ty)!;
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`, `    let k = j.curStr(j.curField(c, "kind")).unwrapOr("")`);
-      for (const v of u.variants.slice(0, -1)) d.push(`    if k == ${JSON.stringify(v.kind)} {`, `        return ${ty}.${pascal(v.kind)}(${need2(v.iface.name.text)}(j, c))`, `    }`);
+      lines.push(head, `    let k = rawStr(j, j.curField(c, "kind"))`);
+      for (const v of u.variants.slice(0, -1)) lines.push(`    if k == ${JSON.stringify(v.kind)} {`, `        return ${ty}.${pascal(v.kind)}(${dec(v.iface.name.text)}(j, c))`, `    }`);
       const last = u.variants[u.variants.length - 1];
-      d.push(`    return ${ty}.${pascal(last.kind)}(${need2(last.iface.name.text)}(j, c))`, `}`, "");
+      lines.push(`    return ${ty}.${pascal(last.kind)}(${dec(last.iface.name.text)}(j, c))`, `}`, "");
     } else {
       const fs = structFields.get(ty) ?? [];
-      const body: string[] = [];
-      for (const f of fs) {
-        const fn = need2(f.ty);
-        body.push(`        ${field_(f.name)}: ${fn}(j, j.curField(c, ${JSON.stringify(f.name)})),`);
-      }
-      d.push(`fn ${name}(j: &Json, c: i64): ${ty} {`, `    return ${ty} {`, ...body, `    }`, `}`, "");
+      lines.push(head, `    return ${ty} {`, ...fs.map((f) => `        ${field_(f.name)}: ${dec(f.ty)}(j, j.curField(c, ${JSON.stringify(f.name)})),`), `    }`, `}`, "");
     }
+    d.push(...lines);
     return name;
   };
-  const exported: string[] = [];
-  for (const r of roots) exported.push(need2(r));
-  d.push(`pub fn decodeRoot(j: &Json, c: i64): ${roots[0]} {`, `    return ${exported[0]}(j, c)`, `}`);
-  return { types: t.join("\n") + "\n", decoder: d.join("\n") + "\n", typeNames, dropped: droppedHere };
+  const rootFns = roots.map(dec);
+  const mods = new Map<string, Set<string>>();
+  const importFrom = (file: string, name: string) => { const m = modOf(file); if (!mods.has(m)) mods.set(m, new Set()); mods.get(m)!.add(name); };
+  for (const name of order) if (!variantOf.has(name) || true) { const f = model.fileOf.get(name); if (f && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
+  for (const l of enums.values()) importFrom(l.file, l.name);
+  const out: string[] = ["// GENERATED by scripts/ts2milo.ts from the TypeScript types. Do not edit; change the TypeScript.", `from "std/json" import { Json }`, `from "./ts2milo_runtime" import { jsFromUtf8 }`];
+  for (const [m, names] of [...mods.entries()].sort(([a], [b]) => a.localeCompare(b))) out.push(`from "${m}" import { ${[...names].sort().join(", ")} }`);
+  out.push("");
+  out.push(`fn rawStr(j: &Json, c: i64): string {`, `    match j.curStr(c) {`, `        Option.Some(s) => { return s }`, `        Option.None => { return "" }`, `    }`, `}`, "");
+  out.push(...d);
+  roots.forEach((r, i) => out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
+  return { types: t.join("\n") + "\n", decoder: out.join("\n") + "\n", typeNames, dropped, sizeBoxed };
 }
-
-// Variant payload struct names are the interface names; the enum variant of each is `pascal(kind)`.
-export { pascal as pascalCase };

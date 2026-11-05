@@ -27,10 +27,14 @@ export interface MutFacts {
 export interface CallSite { callee: string; span: Span; explicit: boolean; idx: number }
 export interface VarEntry { name: string; span: Span; ok: boolean }
 
+// A span with no file reads as "", as in every key and comparison here.
+export function fileOf(s: Span): string {
+  if (s.file !== undefined) { return s.file; }
+  return "";
+}
+
 export function spanKey(s: Span): string {
-  let file = "";
-  if (s.file !== undefined) { file = s.file; }
-  return `${file}:${s.line}:${s.col}`;
+  return `${fileOf(s)}:${s.line}:${s.col}`;
 }
 
 export function isTrue(b: boolean | undefined): boolean {
@@ -129,8 +133,8 @@ export class MutScan {
     const at = this.callIdx.get(id);
     if (this.mode === 2 && at !== undefined && this.facts.calls[at].callee !== "") {
       let k = 0;
-      while (k < n.args.length) {
-        const sp = n.args[k].span;
+      for (const a of n.args) {
+        const sp = a.span;
         if (sp !== undefined) {
           const kk = this.facts.calls[at].callee + "\n" + spanKey(sp);
           const entry: CallSite = { callee: this.facts.calls[at].callee, span: sp, explicit: this.facts.calls[at].explicitArgs[k], idx: k };

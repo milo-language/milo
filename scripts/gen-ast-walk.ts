@@ -142,8 +142,9 @@ export function generate(): Map<string, string> {
     const emitLoop = (i1: string) => {
       const i = `i${uid++}`;
       w.push(`${i1}let ${i} = 0;`);
-      w.push(`${i1}while (${i} < ${path}.length) {`);
-      single(i1 + "  ", `${path}[${i}]`, i, e.elemOptional);
+      const x = `x${uid++}`;
+      w.push(`${i1}for (const ${x} of ${path}) {`);
+      single(i1 + "  ", x, i, e.elemOptional);
       w.push(`${i1}  ${i}++;`);
       w.push(`${i1}}`);
     };
@@ -163,9 +164,9 @@ export function generate(): Map<string, string> {
     w.push(`  const id = v.enter();`);
     if (hooks.has("node")) w.push(`  v.node(id);`);
     ns.forEach((n, ni) => {
-      const single = ns.length === 1;
-      const open = single ? "  {" : `  ${ni === 0 ? "" : "} else "}if (${varName}.kind === "${n.kind}") {`;
-      w.push(open);
+      const single = nodes.filter((x) => x.family === fam).length === 1;
+      const open = single ? "" : `  ${ni === 0 ? "" : "} else "}if (${varName}.kind === "${n.kind}") {`;
+      if (open) w.push(open);
       const hasAfter = hooks.has(`after${n.kind}`);
       if (hooks.has(`visit${n.kind}`)) w.push(`    v.visit${n.kind}(${varName}, id, parent, key, index);`);
       if (n.edges.length > 0) {
@@ -176,7 +177,7 @@ export function generate(): Map<string, string> {
       } else if (hasAfter) {
         w.push(`    v.after${n.kind}(${varName}, id, []);`);
       }
-      if (single) w.push("  }"); else if (ni === ns.length - 1) w.push("  }");
+      if (!single && ni === ns.length - 1) w.push("  }");
     });
     w.push("}");
     w.push("");
@@ -184,8 +185,8 @@ export function generate(): Map<string, string> {
   for (const fam of [...FAMILIES, "Contract"]) {
     w.push(`export function ${fn(fam)}s(v: ${VISITOR.cls}, list: ${fam}[], parent: Parent, key: EdgeKey): void {`);
     w.push(`  let i = 0;`);
-    w.push(`  while (i < list.length) {`);
-    w.push(`    ${fn(fam)}(v, list[i], parent, key, i);`);
+    w.push(`  for (const x of list) {`);
+    w.push(`    ${fn(fam)}(v, x, parent, key, i);`);
     w.push(`    i++;`);
     w.push(`  }`);
     w.push(`}`);
@@ -196,7 +197,7 @@ export function generate(): Map<string, string> {
   const types = [
     header("walker types"),
     `export type NodeKind = "None" | ${kinds.map((k) => `"${k}"`).join(" | ")};`,
-    `export type EdgeKey = "" | ${[...keys].sort().map((k) => `"${k}"`).join(" | ")};`,
+    `export type EdgeKey = "root" | ${[...keys].sort().map((k) => `"${k}"`).join(" | ")};`,
     `// What a child needs to know about the nearest ancestor that is a node. \`op\` is the operator of a`,
     `// BinOp or UnaryOp and "" otherwise. A parent of kind "None" stands for the root of a walk.`,
     `export interface Parent { kind: NodeKind; id: number; op: string }`,

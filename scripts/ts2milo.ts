@@ -6,6 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { calleeKey, isLibDecl, makeProgram, violationsOf } from "./ts2milo/subset";
+import { buildAstModel, emitAst, guardUnion, registerUnions, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
@@ -17,14 +18,20 @@ export interface Report {
   files: Map<string, string>;
   functions: { file: string; name: string; override: boolean }[];
   constructs: Map<string, { count: number; how: string }>;
+  // src/ast.ts is types-only: Milo types and a JSON decoder are generated from its interfaces
+  // and tagged unions. Fields with no Milo type are listed, not silently lost.
+  ast?: { types: number; dropped: { iface: string; field: string; type: string }[]; sizeBoxed: string[] };
 }
 
 export class Unsupported extends Error {}
 
-export function transpile(inputs: string[], opts: { overridesDir?: string } = {}): Report {
+// `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
+export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[] } = {}): Report {
   const files = inputs.map((f) => resolve(ROOT, f));
+  const astFile = files.find((f) => basename(f) === "ast.ts");
   const program = makeProgram(ROOT, files);
   const checker = program.getTypeChecker();
+  registerUnions(program, checker);
   const runtimeSrc = readFileSync(RUNTIME_FILE, "utf8");
   const runtimeNames = new Set([...runtimeSrc.matchAll(/^pub (?:fn|struct|enum) (\w+)/gm)].map((m) => m[1]));
   const rel = (f: string) => f.startsWith(ROOT + "/") ? f.slice(ROOT.length + 1) : f;
@@ -43,7 +50,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
   };
 
   // 1. The subset gate: nothing outside it reaches the emitter.
-  const viol = files.flatMap((f) => violationsOf(program, checker, program.getSourceFile(f)!));
+  const viol = files.filter((f) => f !== astFile).flatMap((f) => violationsOf(program, checker, program.getSourceFile(f)!));
   if (viol.length) {
     const v = viol[0];
     throw new Unsupported(`${rel(v.file)}:${v.line}: ${v.construct}` + (viol.length > 1 ? ` (and ${viol.length - 1} more)` : ""));
@@ -55,7 +62,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
   const litUnions = new Map<string, { name: string; lits: string[]; file: string }>();
   const litsOf = (t: ts.Type): string[] | null => {
     if (!t.isUnion() || (t.flags & ts.TypeFlags.EnumLike)) return null;
-    const ls = t.types.filter((x) => !(x.flags & ts.TypeFlags.Undefined));
+    const ls = t.types.filter((x) => !(x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)));
     if (ls.length < 2 && !(ls.length === 1 && ls[0].isStringLiteral())) return null;
     return ls.every((x) => x.isStringLiteral()) ? ls.map((x) => (x as ts.StringLiteralType).value) : null;
   };
@@ -81,12 +88,19 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     };
     visit(sf);
   }
-  const unionName = (t: ts.Type, at: ts.Node): string => {
+  // A union narrowed by earlier `||` operands (`k === "A" || k === "B"`) has fewer members than the
+  // declared one: the smallest declared union containing all of them names it.
+  const resolveUnion = (t: ts.Type, at: ts.Node) => {
     const lits = litsOf(t);
-    const u = lits && litUnions.get(unionKey(lits));
+    let u = lits && litUnions.get(unionKey(lits));
+    if (!u && lits) {
+      const cands = [...litUnions.values()].filter((c) => lits.every((l) => c.lits.includes(l))).sort((a, b) => a.lits.length - b.lits.length);
+      if (cands.length > 0 && (cands.length === 1 || cands[0].lits.length < cands[1].lits.length)) u = cands[0];
+    }
     if (!u) return fail(at, "string-literal union without a declared name");
-    return u.name;
+    return u;
   };
+  const unionName = (t: ts.Type, at: ts.Node): string => resolveUnion(t, at).name;
 
   const declOf = (call: ts.CallExpression | ts.NewExpression): ts.SignatureDeclaration | undefined => checker.getResolvedSignature(call)?.declaration as ts.SignatureDeclaration | undefined;
   const isThrower = (d: ts.Node) => (ts.isFunctionDeclaration(d) || ts.isMethodDeclaration(d)) && d.type?.kind === ts.SyntaxKind.NeverKeyword;
@@ -122,22 +136,50 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) {
       return ts.isIdentifier(n.operand) ? null : rootOf(n.operand);
     }
-    if (ts.isCallExpression(n) && calleeKey(program, checker, n) === "Array.push") return rootOf((n.expression as ts.PropertyAccessExpression).expression);
+    if (ts.isCallExpression(n)) {
+      const k = calleeKey(program, checker, n);
+      if (k === "Array.push" || k === "Set.add" || k === "Map.set") return rootOf((n.expression as ts.PropertyAccessExpression).expression);
+    }
     return null;
   };
+  // Types that are copied, not borrowed, when passed: numbers, bools and unit enums.
+  const isOptionT = (t: ts.Type) => t.isUnion() && t.types.some((x) => x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) && !(t.flags & ts.TypeFlags.Boolean);
+  const enumDeclOf = (t: ts.Type): ts.EnumDeclaration | null => {
+    let d = (t.aliasSymbol ?? t.symbol)?.declarations?.[0];
+    if (d && ts.isEnumMember(d)) d = d.parent;
+    return d && ts.isEnumDeclaration(d) ? d : null;
+  };
+  const isScalar = (t: ts.Type) => !isOptionT(t) && (!!(t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Void | ts.TypeFlags.Never)) || !!enumDeclOf(t) || !!litsOf(t));
+  // A method takes `&mut self` when it writes through `this`, and a parameter is `&mut` when the
+  // body writes through it, calls a mutating method on it, or hands it to a `&mut` parameter.
+  // One fixpoint: each answer feeds the others.
   const mutating = new Set<ts.Node>();
+  const mutParams = new Map<ts.Node, Set<number>>();
   for (let changed = true; changed;) {
     changed = false;
     for (const fn of allFns) {
-      if (mutating.has(fn) || !ts.isMethodDeclaration(fn)) continue;
+      const symIdx = new Map<ts.Symbol, number>();
+      fn.parameters.forEach((p, i) => { const s = checker.getSymbolAtLocation(p.name); if (s) symIdx.set(s, i); });
+      const hitRoot = (r: ts.Expression) => {
+        if (r.kind === ts.SyntaxKind.ThisKeyword) {
+          if (ts.isMethodDeclaration(fn) && !mutating.has(fn)) { mutating.add(fn); changed = true; }
+          return;
+        }
+        const s = ts.isIdentifier(r) ? checker.getSymbolAtLocation(r) : undefined;
+        const i = s && symIdx.get(s);
+        if (i === undefined || i === null || isScalar(checker.getTypeAtLocation(fn.parameters[i]))) return;
+        const set = mutParams.get(fn) ?? new Set<number>();
+        if (!set.has(i)) { set.add(i); mutParams.set(fn, set); changed = true; }
+      };
       walkBody(fn.body!, (n) => {
         const w = writes(n);
-        let hitIt = !!w && w.kind === ts.SyntaxKind.ThisKeyword;
-        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.expression.kind === ts.SyntaxKind.ThisKeyword) {
+        if (w) hitRoot(w);
+        if (ts.isCallExpression(n)) {
           const d = declOf(n);
-          if (d && mutating.has(d)) hitIt = true;
+          if (d && mutating.has(d) && ts.isPropertyAccessExpression(n.expression)) hitRoot(rootOf(n.expression.expression));
+          const mp = d && mutParams.get(d);
+          if (mp) n.arguments.forEach((a, j) => { if (mp.has(j)) hitRoot(rootOf(a)); });
         }
-        if (hitIt && !mutating.has(fn)) { mutating.add(fn); changed = true; }
       });
     }
   }
@@ -148,8 +190,38 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     return sym?.declarations?.[0]?.getSourceFile().fileName;
   };
 
+  // src/ast.ts: Milo types and a decoder from its interfaces and tagged unions; no functions.
+  const astModel = buildAstModel(program, checker, astFile ? [astFile, ...files.filter((f) => f !== astFile)] : files);
+
+  // Emitted before any function: sizing the variant structs boxes fields, and reads of a boxed
+  // field in the functions must deref.
+  if (astFile) {
+    if (!opts.astRoots?.length) throw new Unsupported("ts2milo: src/ast.ts given without --ast-root");
+    const litName = (t: ts.TypeNode) => {
+      const lits = litsOf(checker.getTypeFromTypeNode(t));
+      const u = lits && litUnions.get(unionKey(lits));
+      return u ? { name: u.name, lits: u.lits, file: u.file } : null;
+    };
+    // The AST fields the input files read (a union property read names every variant's declaration).
+    const used = new Set<ts.Node>();
+    // TS2MILO_AST_ALL_FIELDS=1 carries every field (what a checker that reads the whole tree needs): a probe of whether the full AST builds.
+    if (process.env.TS2MILO_AST_ALL_FIELDS) for (const d of astModel.ifaces.values()) for (const m of d.members) used.add(m);
+    for (const f of files) if (f !== astFile) {
+      const visitUse = (n: ts.Node) => {
+        if (ts.isPropertyAccessExpression(n)) for (const d of checker.getSymbolAtLocation(n.name)?.declarations ?? []) if (ts.isPropertySignature(d)) used.add(d);
+        ts.forEachChild(n, visitUse);
+      };
+      visitUse(program.getSourceFile(f)!);
+    }
+    const em = emitAst(checker, astModel, astFile, opts.astRoots, litName, modOf, used);
+    report.files.set("ast.milo", em.types);
+    report.files.set("ast_decode.milo", em.decoder);
+    report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
+  }
+
   for (const file of files) {
     const sf = program.getSourceFile(file)!;
+    if (file === astFile) continue;
     const imports = new Map<string, Set<string>>();
     const use = (mod: string, name: string) => { if (!imports.has(mod)) imports.set(mod, new Set()); imports.get(mod)!.add(name); };
     const useRuntime = (name: string, at?: ts.Node) => {
@@ -199,23 +271,38 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     };
 
     // ---- types ----
-    const isOptionT = (t: ts.Type) => t.isUnion() && t.types.some((x) => x.flags & ts.TypeFlags.Undefined) && !(t.flags & ts.TypeFlags.Boolean);
-    const enumDeclOf = (t: ts.Type): ts.EnumDeclaration | null => {
-      let d = (t.aliasSymbol ?? t.symbol)?.declarations?.[0];
-      if (d && ts.isEnumMember(d)) d = d.parent;
-      return d && ts.isEnumDeclaration(d) ? d : null;
+    const onCycle = (t: ts.Type): boolean => {
+      const tu = unionOfType(checker, t);
+      if (tu) return astModel.cyclic.has(tu.name);
+      const d = t.symbol?.declarations?.[0];
+      return !!d && ts.isInterfaceDeclaration(d) && astModel.cyclic.has(d.name.text);
     };
+    // Whether `e` reads an array element held as Heap<T> (see `ty`).
+    const boxedElem = (e: ts.Expression): boolean => ts.isElementAccessExpression(e) && checker.isArrayType(tOf(e.expression)) && onCycle(checker.getNonNullableType(checker.getTypeArguments(tOf(e.expression) as ts.TypeReference)[0]));
     const ty = (t: ts.Type, at: ts.Node): string => {
       if (isOptionT(t)) { hit("T | undefined", "Option<T>"); return `Option<${ty(checker.getNonNullableType(t), at)}>`; }
       const ed = enumDeclOf(t);
       if (ed) return useDeclared(ed.name.text, ed.getSourceFile().fileName, at);
+      const tu = unionOfType(checker, t);
+      if (tu) { hit("tagged union", "enum with one struct-carrying variant per kind"); return useDeclared(tu.name, tu.decl.getSourceFile().fileName, at); }
+      if (t.symbol?.name === "Map") {
+        const [k, v] = checker.getTypeArguments(t as ts.TypeReference);
+        hit("Map<K, V>", "HashMap<K, V>");
+        return `HashMap<${ty(k, at)}, ${ty(v, at)}>`;
+      }
       if (t.flags & ts.TypeFlags.Boolean || t.flags & ts.TypeFlags.BooleanLiteral) return "bool";
       if (t.flags & ts.TypeFlags.NumberLike) return "i64";
-      if (litsOf(t)) { const n = unionName(t, at); const u = litUnions.get(unionKey(litsOf(t)!))!; return useDeclared(n, u.file, at); }
+      if (litsOf(t)) { const u = resolveUnion(t, at); return useDeclared(u.name, u.file, at); }
       if (t.flags & ts.TypeFlags.StringLike) return "string";
       if (t.flags & ts.TypeFlags.Void) return "void";
       if (t.flags & ts.TypeFlags.Never) return "never";
-      if (checker.isArrayType(t)) return `Vec<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
+      if (checker.isArrayType(t)) {
+        // An element on a type cycle is a Heap<T>: inlined, the type text grows with every level of nesting.
+        const el = checker.getTypeArguments(t as ts.TypeReference)[0];
+        const core = isOptionT(el) ? checker.getNonNullableType(el) : el;
+        const inner = onCycle(core) ? `Heap<${ty(core, at)}>` : ty(core, at);
+        return `Vec<${isOptionT(el) ? `Option<${inner}>` : inner}>`;
+      }
       if (t.symbol?.name === "Set") return `${std("HashSet")}<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
       const d = t.symbol?.declarations?.[0];
       if (d && (ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d))) return useDeclared(d.name!.text, d.getSourceFile().fileName, at);
@@ -234,13 +321,53 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     const isNum = (e: ts.Node) => !!(tOf(e).flags & ts.TypeFlags.NumberLike);
     const isUndefinedId = (e: ts.Expression) => ts.isIdentifier(e) && e.text === "undefined";
 
-    const conv = (e: ts.Expression, want?: ts.Type): string => {
+    // Narrowing. Inside `if (x.kind === "K")` the guarded expression reads as the variant's struct,
+    // and inside `if (p !== undefined)` as the Option's payload; both are bound by an `if let`.
+    // Keyed by source text, so a path like `e.args[i]` narrows as a whole.
+    const narrow = new Map<string, { name: string; deref: boolean }>();
+    // Locals bound by `for (const x of array)` over boxed elements: each reads as `*x`.
+    const elemBoxed = new Set<ts.Symbol>();
+    const fresh = (text: string) => {
+      const ids = text.match(/[A-Za-z_][A-Za-z0-9_]*/g);
+      const base = ids ? ids[ids.length - 1] : "v";
+      let name = RESERVED.has(base) ? base + "_" : base;
+      for (let i = 2; usedNames.some((s) => s.has(name)); i++) name = `${base}_${i}`;
+      usedNames[usedNames.length - 1].add(name);
+      return name;
+    };
+    // A value read out of a place that is not Copy would be a move out of a borrow: it is cloned
+    // wherever the result is owned (a struct field, a push, a let, a return, a by-value parameter).
+    const isPlace = (e: ts.Expression): boolean => {
+      while (ts.isParenthesizedExpression(e)) e = e.expression;
+      // A common field of a tagged union is read by an accessor call, which returns an owned value.
+      if (ts.isPropertyAccessExpression(e) && unionOfType(checker, tOf(e.expression)) && !narrow.has(e.expression.getText())) return false;
+      return ts.isIdentifier(e) || ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e);
+    };
+    const isCopyT = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike | ts.TypeFlags.Void | ts.TypeFlags.Never | ts.TypeFlags.Undefined | ts.TypeFlags.Null)) || !!enumDeclOf(t) || !!litsOf(t);
+    const needsClone = (e: ts.Expression) => isPlace(e) && !isCopyT(tOf(e));
+    const canClone = (t: ts.Type): boolean => {
+      if (isCopyT(t)) return true;
+      if (isOptionT(t)) return canClone(checker.getNonNullableType(t));
+      if (checker.isArrayType(t)) return canClone(checker.getTypeArguments(t as ts.TypeReference)[0]);
+      if (t.symbol?.name === "Set" || t.symbol?.name === "Map") return true;
+      const tu = unionOfType(checker, t);
+      if (tu) return astModel.cloneable.has(tu.name);
+      const d = t.symbol?.declarations?.[0];
+      return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
+    };
+    const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
+      const owned = (s: string) => {
+        if (!own || !needsClone(e)) return s;
+        if (!canClone(tOf(e))) fail(e, `a value of type ${checker.typeToString(tOf(e))} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+        return `${s}.clone()`;
+      };
       if (want && isOptionT(want) && !isOptionT(tOf(e))) {
         if (isUndefinedId(e)) return "Option.None";
-        return `Option.Some(${ex(e, checker.getNonNullableType(want))})`;
+        return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)))})`;
       }
-      return ex(e, want);
+      return owned(ex(e, want));
     };
+    const ownConv = (e: ts.Expression, want?: ts.Type) => conv(e, want, true);
 
     const memberAccess = (e: ts.PropertyAccessExpression): string => {
       const sym = checker.getSymbolAtLocation(e.name);
@@ -254,18 +381,31 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         hit("array .length", "Vec .len");
         return `${ex(e.expression)}.len`;
       }
+      // A field every variant of a tagged union has (`span`) is read through a generated accessor.
+      const tu = unionOfType(checker, tOf(e.expression));
+      if (tu) {
+        hit("tagged union common field", "generated accessor Union_field(&u)");
+        return `${useDeclared(`${tu.name}_${e.name.text}`, tu.decl.getSourceFile().fileName, e)}(${ex(e.expression)})`;
+      }
       const base = e.expression.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(e.expression);
-      return `${base}.${RESERVED.has(e.name.text) ? e.name.text + "_" : e.name.text}`;
+      const code = `${base}.${RESERVED.has(e.name.text) ? e.name.text + "_" : e.name.text}`;
+      // A field that closes a by-value cycle is a Heap<T> in Milo: reading it derefs.
+      if (d && ts.isPropertySignature(d) && astModel.boxed.has(d) && !isOptionT(tOf(e))) { hit("boxed field", "Heap<T> field read as *field"); return `(*${code})`; }
+      return code;
     };
 
-    const args = (call: ts.CallExpression | ts.NewExpression): string => {
+    // `byValue`: a constructor takes ownership of its arguments; every other parameter is borrowed,
+    // and one the callee writes through is passed as `&mut x`.
+    const args = (call: ts.CallExpression | ts.NewExpression, byValue = false): string => {
       const sig = checker.getResolvedSignature(call);
       const decl = sig?.declaration as ts.SignatureDeclaration | undefined;
       const parts: string[] = [];
       const given = call.arguments ?? [];
+      const mp = decl && mutParams.get(decl);
       decl?.parameters.forEach((p, i) => {
         const pt = checker.getTypeAtLocation(p);
-        if (i < given.length) parts.push(conv(given[i], pt));
+        if (i < given.length && mp?.has(i)) { hit("&mut parameter", "argument written `&mut x`"); parts.push(`&mut ${conv(given[i], pt)}`); }
+        else if (i < given.length) parts.push(conv(given[i], pt, byValue));
         else if (p.initializer) { hit("default parameter", "default expression filled in at the call site"); parts.push(ex(p.initializer)); }
         else if (p.questionToken) parts.push("Option.None");
         else fail(call, "missing argument");
@@ -290,8 +430,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           case "StringConstructor.fromCharCode": return `${useRuntime("jsFromCharCode", c)}(${ex(a[0])})`;
           case "StringConstructor.fromCodePoint": return `${useRuntime("jsFromCodePoint", c)}(${ex(a[0])})`;
           case "Number.toString": return a.length ? `${useRuntime("jsNumRadix", c)}(${ex(recv!)}, ${ex(a[0])})` : `${useRuntime("jsNum", c)}(${ex(recv!)})`;
-          case "Array.push": return `${ex(recv!)}.push(${conv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
+          case "Array.push": return `${ex(recv!)}.push(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
           case "Set.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
+          case "Set.add": return `${ex(recv!)}.add(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
+          case "Map.get": return `${ex(recv!)}.get(${ex(a[0])})`;
+          case "Map.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
+          case "Map.set": { const [kt, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${ownConv(a[0], kt)}, ${ownConv(a[1], vt)})`; }
           case "parseInt": return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
         }
@@ -310,11 +454,16 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     };
 
     const ex = (e: ts.Expression, want?: ts.Type): string => {
+      if (narrow.size > 0 && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression || e.kind === ts.SyntaxKind.ElementAccessExpression)) {
+        const nb = narrow.get(e.getText());
+        if (nb) return nb.deref ? `(*${nb.name})` : nb.name;
+      }
       switch (e.kind) {
         case ts.SyntaxKind.ParenthesizedExpression: return `(${ex((e as ts.ParenthesizedExpression).expression, want)})`;
         case ts.SyntaxKind.ThisKeyword: return "self";
         case ts.SyntaxKind.TrueKeyword: return "true";
         case ts.SyntaxKind.FalseKeyword: return "false";
+        case ts.SyntaxKind.NullKeyword: return "Option.None";
         case ts.SyntaxKind.NumericLiteral: return e.getText();
         case ts.SyntaxKind.NoSubstitutionTemplateLiteral: return jsLit((e as ts.NoSubstitutionTemplateLiteral).text);
         case ts.SyntaxKind.StringLiteral: {
@@ -327,7 +476,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           if (id.text === "undefined") return "Option.None";
           const sym = symOf(id);
           const local = sym && lookupLocal(sym);
-          if (local) return local;
+          if (local) return sym && elemBoxed.has(sym) && !isOptionT(tOf(e)) ? `(*${local})` : local;
           return useDeclared(id.text, symDeclFile(sym), e);
         }
         case ts.SyntaxKind.TemplateExpression: {
@@ -345,7 +494,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         case ts.SyntaxKind.ElementAccessExpression: {
           const el = e as ts.ElementAccessExpression;
           if (isStr(el.expression)) { hit("string[i]", "jsAt: one-unit js string, empty past the end"); return `${useRuntime("jsAt", e)}(${ex(el.expression)}, ${ex(el.argumentExpression)})`; }
-          return `${ex(el.expression)}[${ex(el.argumentExpression)}]`;
+          const at = `${ex(el.expression)}[${ex(el.argumentExpression)}]`;
+          if (boxedElem(el) && !isOptionT(tOf(el))) { hit("boxed element", "Vec<Heap<T>> element read as *v[i]"); return `(*${at})`; }
+          return at;
         }
         case ts.SyntaxKind.CallExpression: return callEx(e as ts.CallExpression);
         case ts.SyntaxKind.NewExpression: {
@@ -353,11 +504,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           const t = tOf(n);
           if (t.symbol?.name === "Set") {
             hit("new Set([...])", "HashSet.fromVec");
-            return `${std("HashSet")}.fromVec(${n.arguments?.length ? ex(n.arguments[0]) : "Vec.new()"})`;
+            return n.arguments?.length ? `${std("HashSet")}.fromVec(${ownConv(n.arguments[0])})` : `${std("HashSet")}.new()`;
           }
+          if (t.symbol?.name === "Map") { hit("new Map()", "HashMap.new()"); return "HashMap.new()"; }
           hit("new Class(...)", "Class.new(...), defaults filled");
           const d = t.symbol.declarations![0] as ts.ClassDeclaration;
-          return `${useDeclared(d.name!.text, d.getSourceFile().fileName, e)}.new(${args(n)})`;
+          return `${useDeclared(d.name!.text, d.getSourceFile().fileName, e)}.new(${args(n, true)})`;
         }
         case ts.SyntaxKind.BinaryExpression: {
           const b = e as ts.BinaryExpression;
@@ -395,7 +547,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
-            const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? conv(prop.name, pt) : conv((prop as ts.PropertyAssignment).initializer, pt);
+            const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
             return `${RESERVED.has(fname) ? fname + "_" : fname}: ${v}`;
           });
           return `${name} { ${fields.join(", ")} }`;
@@ -404,7 +556,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           const a = e as ts.ArrayLiteralExpression;
           if (a.elements.length === 0) return "Vec.new()";
           const et = want && checker.isArrayType(want) ? checker.getTypeArguments(want as ts.TypeReference)[0] : undefined;
-          return `[${a.elements.map((x) => conv(x, et)).join(", ")}]`;
+          return `[${a.elements.map((x) => ownConv(x, et)).join(", ")}]`;
         }
       }
       return fail(e, `expression ${ts.SyntaxKind[e.kind]}`);
@@ -420,7 +572,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           for (const d of (s as ts.VariableStatement).declarationList.declarations) {
             const sym = symOf(d.name as ts.Identifier)!;
             const t = checker.getTypeAtLocation(d.name);
-            const init = d.initializer ? conv(d.initializer, t) : defaultOf(t, d);
+            const init = d.initializer ? ownConv(d.initializer, t) : defaultOf(t, d);
             const isVar = mutated.has(sym) || !d.initializer;
             hit("const/let", "let, or var when reassigned or mutated");
             const name = declareLocal(sym, (d.name as ts.Identifier).text);
@@ -432,13 +584,36 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           let n: ts.Statement | undefined = s;
           let first = true;
           while (n && ts.isIfStatement(n)) {
-            line(`${first ? "" : "} else "}if ${ex(n.expression)} {`);
+            const g = ifHead(n.expression);
+            if (g.heads.length > 1 && (n.elseStatement || !first)) fail(n, "guard chain in an else-if or with an else");
+            line(`${first ? "" : "} else "}${g.heads[0]}`);
             first = false;
-            ind++; body(n.thenStatement); ind--;
+            ind++;
+            for (const h of g.heads.slice(1)) { line(h); ind++; }
+            body(n.thenStatement);
+            for (let i = 1; i < g.heads.length; i++) { ind--; line("}"); }
+            ind--;
+            g.undo();
             n = n.elseStatement;
           }
           if (n) { line("} else {"); ind++; body(n); ind--; }
           line("}");
+          return;
+        }
+        case ts.SyntaxKind.ForOfStatement: {
+          const f = s as ts.ForOfStatement;
+          const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
+          const sym = symOf(d.name as ts.Identifier)!;
+          const arr = ex(f.expression);
+          const el = checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
+          hit("for-of over an array", "for x in array (borrowed elements)");
+          push();
+          const name = declareLocal(sym, (d.name as ts.Identifier).text);
+          if (onCycle(isOptionT(el) ? checker.getNonNullableType(el) : el)) elemBoxed.add(sym);
+          line(`for ${name} in ${arr} {`);
+          ind++; body(f.statement); ind--;
+          line("}");
+          pop();
           return;
         }
         case ts.SyntaxKind.WhileStatement: {
@@ -453,8 +628,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         case ts.SyntaxKind.ReturnStatement: {
           const r = s as ts.ReturnStatement;
           const rt = curFn ? checker.getSignatureFromDeclaration(curFn)!.getReturnType() : undefined;
-          if (curFn && retWrap(curFn)) line(`return Result.Ok(${r.expression ? conv(r.expression, rt) : "true"})`);
-          else line(r.expression ? `return ${conv(r.expression, rt)}` : "return");
+          if (curFn && retWrap(curFn)) line(`return Result.Ok(${r.expression ? ownConv(r.expression, rt) : "true"})`);
+          else line(r.expression ? `return ${ownConv(r.expression, rt)}` : "return");
           return;
         }
         case ts.SyntaxKind.ThrowStatement: {
@@ -467,13 +642,50 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
       }
       fail(s, `statement ${ts.SyntaxKind[s.kind]}`);
     };
+    // The opening lines of an if: each narrowing guard among the `&&` conjuncts becomes a nested
+    // `if let` (binding set until `undo`), and the plain conjuncts around them an ordinary `if`.
+    const unparen = (e: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(e) ? unparen(e.expression) : e);
+    const conjuncts = (e: ts.Expression): ts.Expression[] => {
+      e = unparen(e);
+      return ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ? [...conjuncts(e.left), ...conjuncts(e.right)] : [e];
+    };
+    const ifHead = (cond: ts.Expression): { heads: string[]; undo: () => void } => {
+      const heads: string[] = [];
+      const saved: [string, { name: string; deref: boolean } | undefined][] = [];
+      let plain: string[] = [];
+      const flush = () => { if (plain.length) { heads.push(`if ${plain.join(" && ")} {`); plain = []; } };
+      for (const c of conjuncts(cond)) {
+        let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string } | null = null;
+        if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isPropertyAccessExpression(c.left) && c.left.name.text === "kind" && ts.isStringLiteral(c.right)) {
+          const tu = guardUnion(checker, c.left.expression);
+          if (tu) {
+            const useName = useDeclared(tu.name, tu.decl.getSourceFile().fileName, c);
+            const kind = c.right.text;
+            bind = { scrut: c.left.expression, pat: (n) => `${useName}.${pascal(kind)}(${n})`, deref: false, what: "tagged union kind guard" };
+          }
+        } else if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && (isUndefinedId(c.right) || c.right.kind === ts.SyntaxKind.NullKeyword)) {
+          const d = ts.isPropertyAccessExpression(c.left) ? checker.getSymbolAtLocation(c.left.name)?.declarations?.[0] : undefined;
+          bind = { scrut: c.left, pat: (n) => `Option.Some(${n})`, deref: !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(c.left) || (ts.isIdentifier(c.left) && elemBoxed.has(symOf(c.left)!)), what: "undefined guard" };
+        }
+        if (!bind) { plain.push(ex(c)); continue; }
+        flush();
+        hit(bind.what, "if let binding the payload, which replaces the guarded expression inside");
+        const key = bind.scrut.getText();
+        const name = fresh(key);
+        heads.push(`if let ${bind.pat(name)} = ${ex(bind.scrut)} {`);
+        saved.push([key, narrow.get(key)]);
+        narrow.set(key, { name, deref: bind.deref });
+      }
+      flush();
+      return { heads, undo: () => { for (const [k, v] of saved.reverse()) { if (v) narrow.set(k, v); else narrow.delete(k); } } };
+    };
     const body = (s: ts.Statement) => { push(); if (ts.isBlock(s)) block(s); else stmt(s); pop(); };
     const block = (b: ts.Block) => { for (const s of b.statements) stmt(s); };
     const exprStmt = (e: ts.Expression) => {
       if (ts.isBinaryExpression(e)) {
         const op = e.operatorToken.kind;
         const lt = tOf(e.left);
-        if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${conv(e.right, lt)}`); return; }
+        if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${ownConv(e.right, lt)}`); return; }
         if (op === ts.SyntaxKind.PlusEqualsToken && isStr(e.left)) { hit("string +=", "pushStr in place"); line(`${ex(e.left)}.pushStr(${ex(e.right)})`); return; }
         line(`${ex(e.left)} ${e.operatorToken.getText()} ${ex(e.right)}`);
         return;
@@ -497,7 +709,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     const fileBase = basename(file).replace(/\.ts$/, "");
     const fnHeader = (fn: ts.FunctionLikeDeclaration, name: string, selfKind: "" | "&" | "&mut "): string => {
       const sig = checker.getSignatureFromDeclaration(fn)!;
-      const ps = fn.parameters.map((p) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
+      // Parameters other than numbers, bools and unit enums are borrowed; one the body writes
+      // through is `&mut`.
+      const ps = fn.parameters.map((p, i) => {
+        const t = checker.getTypeAtLocation(p);
+        const borrow = isScalar(t) ? "" : mutParams.get(fn)?.has(i) ? "&mut " : "&";
+        return `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${borrow}${ty(t, p)}`;
+      });
       if (selfKind) ps.unshift(`self: ${selfKind}${(fn.parent as ts.ClassDeclaration).name!.text}`);
       let r = sig.getReturnType();
       let rs = isThrower(fn) ? errNameFor(fn) : ty(r, fn);
@@ -522,7 +740,15 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         const consider = (target: ts.Expression) => { const r = rootOf(target); if (ts.isIdentifier(r)) { const s = symOf(r); if (s) mutated.add(s); } };
         if (ts.isBinaryExpression(n) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken].includes(n.operatorToken.kind)) consider(n.left);
         if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) consider(n.operand);
-        if (ts.isCallExpression(n) && calleeKey(program, checker, n) === "Array.push") consider((n.expression as ts.PropertyAccessExpression).expression);
+        if (ts.isCallExpression(n)) {
+          const k = calleeKey(program, checker, n);
+          if (k === "Array.push" || k === "Set.add" || k === "Map.set") consider((n.expression as ts.PropertyAccessExpression).expression);
+          // A local lent to a `&mut` parameter, or the receiver of a mutating method, is a `var`.
+          const d = declOf(n);
+          const mp = d && mutParams.get(d);
+          if (mp) n.arguments.forEach((a, j) => { if (mp.has(j)) consider(a); });
+          if (d && mutating.has(d) && ts.isPropertyAccessExpression(n.expression)) consider(n.expression.expression);
+        }
       });
     };
     const emitFn = (fn: ts.FunctionLikeDeclaration, name: string, isMethod: boolean, exported: boolean) => {
@@ -568,8 +794,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         line(`todo("${name}_fromValue: no such value")`);
         ind--; line("}");
       } else if (ts.isTypeAliasDeclaration(n)) {
-        const u = litUnions.get(unionKey(litsOf(checker.getTypeFromTypeNode(n.type))!))!;
-        if (u.name === n.name.text && u.file === file) emitUnion(u);
+        const lits = litsOf(checker.getTypeFromTypeNode(n.type));
+        const u = lits && litUnions.get(unionKey(lits));
+        if (u && u.name === n.name.text && u.file === file) emitUnion(u);
       } else if (ts.isInterfaceDeclaration(n)) {
         hit("interface", "struct");
         for (const m of n.members) if (ts.isPropertySignature(m)) {
@@ -577,6 +804,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
           const u = litsOf(t) && litUnions.get(unionKey(litsOf(t)!));
           if (u && u.file === file && u.name === `${n.name.text}_${mname(m.name)}`) emitUnion(u);
         }
+        if (astModel.cloneable.has(n.name.text)) line("@derive(Clone)");
         line(`${pub}struct ${n.name.text} {`);
         ind++;
         for (const m of n.members.filter(ts.isPropertySignature)) {
@@ -593,7 +821,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
         for (const m of n.members) {
           if (ts.isPropertyDeclaration(m)) {
             const t = checker.getTypeAtLocation(m);
-            props.push({ name: mname(m.name), type: ty(t, m), init: m.initializer ? conv(m.initializer, t) : null, param: null });
+            props.push({ name: mname(m.name), type: ty(t, m), init: m.initializer ? ownConv(m.initializer, t) : null, param: null });
           }
         }
         for (const p of ctor?.parameters ?? []) if (p.modifiers?.length) {
@@ -632,6 +860,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string } = {}
     }
     function emitUnion(u: { name: string; lits: string[] }) {
       hit("string-literal union", "generated enum + Name_value");
+      line("@derive(Clone)");
       line(`pub enum ${u.name} { ${u.lits.map(pascal).join(", ")} }`);
     }
 
@@ -649,6 +878,11 @@ export function summary(r: Report): string {
   const auto = total - ov.length;
   let s = `functions: ${total} total, ${auto} automatic, ${ov.length} overrides = ${total ? ((auto / total) * 100).toFixed(1) : "0"}% automatic\n`;
   for (const o of ov) s += `override: ${o.file} ${o.name}\n`;
+  if (r.ast) {
+    s += `ast types: ${r.ast.types} generated from src/ast.ts (fields no input reads are not carried)\n`;
+    for (const d of r.ast.dropped) s += `ast field without a Milo type: ${d.iface}.${d.field}: ${d.type}\n`;
+    if (r.ast.sizeBoxed.length) s += `ast fields boxed to keep a value under 128 bytes: ${r.ast.sizeBoxed.length} (${r.ast.sizeBoxed.slice(0, 4).join(", ")}, ...)\n`;
+  }
   s += "constructs hit:\n";
   for (const [k, v] of [...r.constructs.entries()].sort(([a], [b]) => a.localeCompare(b))) s += `  ${String(v.count).padStart(5)}  ${k}  ->  ${v.how}\n`;
   return s;
@@ -658,15 +892,17 @@ if (import.meta.main) {
   const argv = process.argv.slice(2);
   const inputs: string[] = [];
   let outDir = "", check = false, overridesDir: string | undefined;
+  const astRoots: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "-o") outDir = argv[++i];
     else if (argv[i] === "--check") check = true;
     else if (argv[i] === "--overrides") overridesDir = argv[++i];
+    else if (argv[i] === "--ast-root") astRoots.push(argv[++i]);
     else inputs.push(argv[i]);
   }
-  if (!inputs.length || !outDir) { console.error("usage: ts2milo.ts <files.ts...> -o <dir> [--check] [--overrides <dir>]"); process.exit(2); }
+  if (!inputs.length || !outDir) { console.error("usage: ts2milo.ts <files.ts...> -o <dir> [--check] [--overrides <dir>] [--ast-root <Type>]"); process.exit(2); }
   try {
-    const r = transpile(inputs, { overridesDir });
+    const r = transpile(inputs, { overridesDir, astRoots });
     console.log(summary(r).trimEnd());
     if (check) {
       let stale = 0;

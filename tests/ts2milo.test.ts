@@ -1,7 +1,7 @@
 // scripts/ts2milo.ts: a function that maps, an unsupported construct that fails with
 // file:line, an override that is counted, and the frontend files that must stay portable.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Unsupported, summary, transpile } from "../scripts/ts2milo";
@@ -33,10 +33,10 @@ describe("ts2milo", () => {
   });
 
   test("an unsupported construct fails with file:line and its name", () => {
-    const { file } = tmpTs("tsm_bad.ts", "export function f(xs: number[]): number {\n  let n = 0;\n  for (const x of xs) { n += x; }\n  return n;\n}\n");
+    const { file } = tmpTs("tsm_bad.ts", "export function f(xs: number[]): number {\n  let n = 0;\n  for (let i = 0; i < xs.length; i++) { n += xs[i]; }\n  return n;\n}\n");
     let msg = "";
     try { transpile([file]); } catch (e) { expect(e).toBeInstanceOf(Unsupported); msg = (e as Error).message; }
-    expect(msg).toContain("tsm_bad.ts:3: ForOfStatement");
+    expect(msg).toContain("tsm_bad.ts:3: ForStatement");
   });
 
   test("an override replaces one function and is counted as not automatic", () => {
@@ -50,6 +50,49 @@ describe("ts2milo", () => {
     expect(out).not.toContain("return 2\n");
     expect(summary(r)).toContain("functions: 2 total, 1 automatic, 1 overrides = 50.0% automatic");
     expect(summary(r)).toContain("override:");
+  });
+});
+
+describe("tagged unions", () => {
+  test("a union of kind-tagged interfaces becomes an enum, and a kind guard an if let", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "ast.ts"), [
+      "export interface Span { line: number }",
+      "export interface Num { kind: \"Num\"; n: number; span?: Span }",
+      "export interface Neg { kind: \"Neg\"; e: Expr; span?: Span }",
+      "export type Expr = Num | Neg;",
+    ].join("\n"));
+    writeFileSync(join(dir, "use.ts"), [
+      "import type { Expr } from \"./ast\";",
+      "export function eval2(e: Expr): number {",
+      "  if (e.kind === \"Num\") { return e.n; } else if (e.kind === \"Neg\") { return 0 - eval2(e.e); }",
+      "  return 0;",
+      "}",
+    ].join("\n"));
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
+    const ast = r.files.get("ast.milo")!;
+    expect(ast).toContain("pub enum Expr {");
+    expect(ast).toContain("Neg(Neg),");
+    expect(ast).toContain("e: Heap<Expr>,");
+    const use = r.files.get("use.milo")!;
+    expect(use).toContain("if let Expr.Num(");
+    expect(use).toContain("} else if let Expr.Neg(");
+    expect(use).toContain("(*");
+    expect(summary(r)).toContain("0 overrides");
+  });
+
+  test("a kind read outside an if guard is refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "ast.ts"), "export interface A { kind: \"A\" }\nexport interface B { kind: \"B\" }\nexport type U = A | B;\n");
+    writeFileSync(join(dir, "use.ts"), "import type { U } from \"./ast\";\nexport function f(u: U): boolean {\n  return u.kind === \"A\";\n}\n");
+    expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["U"] })).toThrow("tagged union kind read outside an if guard");
+  });
+});
+
+describe("generated ast walk", () => {
+  test("the committed walker is what the generator writes from src/ast.ts", async () => {
+    const { generate } = await import("../scripts/gen-ast-walk");
+    for (const [f, text] of generate()) expect(readFileSync(join(import.meta.dir, "..", f), "utf8")).toBe(text);
   });
 });
 

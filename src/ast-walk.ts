@@ -24,18 +24,18 @@ export function walkExpr(v: MutScan, e: Expr, parent: Parent, key: EdgeKey, inde
     const p: Parent = { kind: "Call", id: id, op: "" };
     const kids: number[] = [];
     let i0 = 0;
-    while (i0 < e.args.length) {
+    for (const x1 of e.args) {
       kids.push(v.next);
-      walkExpr(v, e.args[i0], p, "args", i0);
+      walkExpr(v, x1, p, "args", i0);
       i0++;
     }
     v.afterCall(e, id, kids);
   } else if (e.kind === "StructLit") {
     const p: Parent = { kind: "StructLit", id: id, op: "" };
-    let i1 = 0;
-    while (i1 < e.fields.length) {
-      walkExpr(v, e.fields[i1].value, p, "value", -1);
-      i1++;
+    let i2 = 0;
+    for (const x3 of e.fields) {
+      walkExpr(v, x3.value, p, "value", -1);
+      i2++;
     }
     if (e.base !== undefined) {
       walkExpr(v, e.base, p, "base", -1);
@@ -45,10 +45,10 @@ export function walkExpr(v: MutScan, e: Expr, parent: Parent, key: EdgeKey, inde
     walkExpr(v, e.object, p, "object", -1);
   } else if (e.kind === "ArrayLit") {
     const p: Parent = { kind: "ArrayLit", id: id, op: "" };
-    let i2 = 0;
-    while (i2 < e.elements.length) {
-      walkExpr(v, e.elements[i2], p, "elements", i2);
-      i2++;
+    let i4 = 0;
+    for (const x5 of e.elements) {
+      walkExpr(v, x5, p, "elements", i4);
+      i4++;
     }
   } else if (e.kind === "ArrayRepeat") {
     const p: Parent = { kind: "ArrayRepeat", id: id, op: "" };
@@ -59,10 +59,10 @@ export function walkExpr(v: MutScan, e: Expr, parent: Parent, key: EdgeKey, inde
     walkExpr(v, e.index, p, "index", -1);
   } else if (e.kind === "EnumLit") {
     const p: Parent = { kind: "EnumLit", id: id, op: "" };
-    let i3 = 0;
-    while (i3 < e.args.length) {
-      walkExpr(v, e.args[i3], p, "args", i3);
-      i3++;
+    let i6 = 0;
+    for (const x7 of e.args) {
+      walkExpr(v, x7, p, "args", i6);
+      i6++;
     }
   } else if (e.kind === "Unwrap") {
     const p: Parent = { kind: "Unwrap", id: id, op: "" };
@@ -85,20 +85,20 @@ export function walkExpr(v: MutScan, e: Expr, parent: Parent, key: EdgeKey, inde
     const kids: number[] = [];
     kids.push(v.next);
     walkExpr(v, e.object, p, "object", -1);
-    let i4 = 0;
-    while (i4 < e.args.length) {
+    let i8 = 0;
+    for (const x9 of e.args) {
       kids.push(v.next);
-      walkExpr(v, e.args[i4], p, "args", i4);
-      i4++;
+      walkExpr(v, x9, p, "args", i8);
+      i8++;
     }
     v.afterMethodCall(e, id, kids);
   } else if (e.kind === "Closure") {
     v.visitClosure(e, id, parent, key, index);
     const p: Parent = { kind: "Closure", id: id, op: "" };
-    let i5 = 0;
-    while (i5 < e.body.length) {
-      walkStmt(v, e.body[i5], p, "body", i5);
-      i5++;
+    let i10 = 0;
+    for (const x11 of e.body) {
+      walkStmt(v, x11, p, "body", i10);
+      i10++;
     }
   } else if (e.kind === "RangeExpr") {
     const p: Parent = { kind: "RangeExpr", id: id, op: "" };
@@ -111,28 +111,28 @@ export function walkExpr(v: MutScan, e: Expr, parent: Parent, key: EdgeKey, inde
   } else if (e.kind === "IfExpr") {
     const p: Parent = { kind: "IfExpr", id: id, op: "" };
     walkExpr(v, e.cond, p, "cond", -1);
-    let i6 = 0;
-    while (i6 < e.thenBody.length) {
-      walkStmt(v, e.thenBody[i6], p, "thenBody", i6);
-      i6++;
+    let i12 = 0;
+    for (const x13 of e.thenBody) {
+      walkStmt(v, x13, p, "thenBody", i12);
+      i12++;
     }
-    let i7 = 0;
-    while (i7 < e.elseBody.length) {
-      walkStmt(v, e.elseBody[i7], p, "elseBody", i7);
-      i7++;
+    let i14 = 0;
+    for (const x15 of e.elseBody) {
+      walkStmt(v, x15, p, "elseBody", i14);
+      i14++;
     }
   } else if (e.kind === "MatchExpr") {
     const p: Parent = { kind: "MatchExpr", id: id, op: "" };
     walkExpr(v, e.subject, p, "subject", -1);
-    let i8 = 0;
-    while (i8 < e.arms.length) {
-      walkPattern(v, e.arms[i8].pattern, p, "pattern", -1);
-      let i9 = 0;
-      while (i9 < e.arms[i8].body.length) {
-        walkStmt(v, e.arms[i8].body[i9], p, "body", i9);
-        i9++;
+    let i16 = 0;
+    for (const x17 of e.arms) {
+      walkPattern(v, x17.pattern, p, "pattern", -1);
+      let i18 = 0;
+      for (const x19 of x17.body) {
+        walkStmt(v, x19, p, "body", i18);
+        i18++;
       }
-      i8++;
+      i16++;
     }
   }
 }
@@ -163,30 +163,30 @@ export function walkStmt(v: MutScan, s: Stmt, parent: Parent, key: EdgeKey, inde
   } else if (s.kind === "IfStmt") {
     const p: Parent = { kind: "IfStmt", id: id, op: "" };
     walkExpr(v, s.cond, p, "cond", -1);
-    let i10 = 0;
-    while (i10 < s.thenBody.length) {
-      walkStmt(v, s.thenBody[i10], p, "thenBody", i10);
-      i10++;
+    let i20 = 0;
+    for (const x21 of s.thenBody) {
+      walkStmt(v, x21, p, "thenBody", i20);
+      i20++;
     }
     if (s.elseBody !== null) {
-      let i11 = 0;
-      while (i11 < s.elseBody.length) {
-        walkStmt(v, s.elseBody[i11], p, "elseBody", i11);
-        i11++;
+      let i22 = 0;
+      for (const x23 of s.elseBody) {
+        walkStmt(v, x23, p, "elseBody", i22);
+        i22++;
       }
     }
   } else if (s.kind === "WhileStmt") {
     const p: Parent = { kind: "WhileStmt", id: id, op: "" };
     walkExpr(v, s.cond, p, "cond", -1);
-    let i12 = 0;
-    while (i12 < s.invariants.length) {
-      walkContract(v, s.invariants[i12], p, "invariants", i12);
-      i12++;
+    let i24 = 0;
+    for (const x25 of s.invariants) {
+      walkContract(v, x25, p, "invariants", i24);
+      i24++;
     }
-    let i13 = 0;
-    while (i13 < s.body.length) {
-      walkStmt(v, s.body[i13], p, "body", i13);
-      i13++;
+    let i26 = 0;
+    for (const x27 of s.body) {
+      walkStmt(v, x27, p, "body", i26);
+      i26++;
     }
   } else if (s.kind === "ExprStmt") {
     const p: Parent = { kind: "ExprStmt", id: id, op: "" };
@@ -194,83 +194,83 @@ export function walkStmt(v: MutScan, s: Stmt, parent: Parent, key: EdgeKey, inde
   } else if (s.kind === "MatchStmt") {
     const p: Parent = { kind: "MatchStmt", id: id, op: "" };
     walkExpr(v, s.subject, p, "subject", -1);
-    let i14 = 0;
-    while (i14 < s.arms.length) {
-      walkPattern(v, s.arms[i14].pattern, p, "pattern", -1);
-      let i15 = 0;
-      while (i15 < s.arms[i14].body.length) {
-        walkStmt(v, s.arms[i14].body[i15], p, "body", i15);
-        i15++;
+    let i28 = 0;
+    for (const x29 of s.arms) {
+      walkPattern(v, x29.pattern, p, "pattern", -1);
+      let i30 = 0;
+      for (const x31 of x29.body) {
+        walkStmt(v, x31, p, "body", i30);
+        i30++;
       }
-      i14++;
+      i28++;
     }
   } else if (s.kind === "IfLetStmt") {
     const p: Parent = { kind: "IfLetStmt", id: id, op: "" };
     walkPattern(v, s.pattern, p, "pattern", -1);
     walkExpr(v, s.subject, p, "subject", -1);
-    let i16 = 0;
-    while (i16 < s.thenBody.length) {
-      walkStmt(v, s.thenBody[i16], p, "thenBody", i16);
-      i16++;
+    let i32 = 0;
+    for (const x33 of s.thenBody) {
+      walkStmt(v, x33, p, "thenBody", i32);
+      i32++;
     }
     if (s.elseBody !== null) {
-      let i17 = 0;
-      while (i17 < s.elseBody.length) {
-        walkStmt(v, s.elseBody[i17], p, "elseBody", i17);
-        i17++;
+      let i34 = 0;
+      for (const x35 of s.elseBody) {
+        walkStmt(v, x35, p, "elseBody", i34);
+        i34++;
       }
     }
   } else if (s.kind === "IfChainStmt") {
     const p: Parent = { kind: "IfChainStmt", id: id, op: "" };
-    let i18 = 0;
-    while (i18 < s.clauses.length) {
-      walkChainClause(v, s.clauses[i18], p, "clauses", i18);
-      i18++;
+    let i36 = 0;
+    for (const x37 of s.clauses) {
+      walkChainClause(v, x37, p, "clauses", i36);
+      i36++;
     }
-    let i19 = 0;
-    while (i19 < s.thenBody.length) {
-      walkStmt(v, s.thenBody[i19], p, "thenBody", i19);
-      i19++;
+    let i38 = 0;
+    for (const x39 of s.thenBody) {
+      walkStmt(v, x39, p, "thenBody", i38);
+      i38++;
     }
     if (s.elseBody !== null) {
-      let i20 = 0;
-      while (i20 < s.elseBody.length) {
-        walkStmt(v, s.elseBody[i20], p, "elseBody", i20);
-        i20++;
+      let i40 = 0;
+      for (const x41 of s.elseBody) {
+        walkStmt(v, x41, p, "elseBody", i40);
+        i40++;
       }
     }
   } else if (s.kind === "LetElseStmt") {
     const p: Parent = { kind: "LetElseStmt", id: id, op: "" };
     walkPattern(v, s.pattern, p, "pattern", -1);
     walkExpr(v, s.value, p, "value", -1);
-    let i21 = 0;
-    while (i21 < s.elseBody.length) {
-      walkStmt(v, s.elseBody[i21], p, "elseBody", i21);
-      i21++;
+    let i42 = 0;
+    for (const x43 of s.elseBody) {
+      walkStmt(v, x43, p, "elseBody", i42);
+      i42++;
     }
   } else if (s.kind === "UnsafeBlock") {
     const p: Parent = { kind: "UnsafeBlock", id: id, op: "" };
-    let i22 = 0;
-    while (i22 < s.body.length) {
-      walkStmt(v, s.body[i22], p, "body", i22);
-      i22++;
+    let i44 = 0;
+    for (const x45 of s.body) {
+      walkStmt(v, x45, p, "body", i44);
+      i44++;
     }
   } else if (s.kind === "ForInStmt") {
     const p: Parent = { kind: "ForInStmt", id: id, op: "" };
     const kids: number[] = [];
     kids.push(v.next);
     walkExpr(v, s.iterable, p, "iterable", -1);
-    let i23 = 0;
-    while (i23 < s.invariants.length) {
+    let i46 = 0;
+    for (const x47 of s.invariants) {
       kids.push(v.next);
-      walkContract(v, s.invariants[i23], p, "invariants", i23);
-      i23++;
+      walkContract(v, x47, p, "invariants", i46);
+      i46++;
     }
-    let i24 = 0;
-    while (i24 < s.body.length) {
+    let i48 = 0;
+    for (const x49 of s.body) {
       kids.push(v.next);
-      walkStmt(v, s.body[i24], p, "body", i24);
-      i24++;
+      walkStmt(v, x49, p, "body", i48);
+      i48++;
     }
     v.afterForInStmt(s, id, kids);
   }
@@ -279,15 +279,15 @@ export function walkStmt(v: MutScan, s: Stmt, parent: Parent, key: EdgeKey, inde
 export function walkPattern(v: MutScan, p0: Pattern, parent: Parent, key: EdgeKey, index: number): void {
   const id = v.enter();
   v.node(id);
-  {
+  if (p0.kind === "EnumPattern") {
     const p: Parent = { kind: "EnumPattern", id: id, op: "" };
     if (p0.args !== undefined) {
-      let i25 = 0;
-      while (i25 < p0.args.length) {
-        if (p0.args[i25] !== null) {
-          walkPattern(v, p0.args[i25], p, "args", i25);
+      let i50 = 0;
+      for (const x51 of p0.args) {
+        if (x51 !== null) {
+          walkPattern(v, x51, p, "args", i50);
         }
-        i25++;
+        i50++;
       }
     }
   }
@@ -309,48 +309,46 @@ export function walkChainClause(v: MutScan, c: ChainClause, parent: Parent, key:
 export function walkContract(v: MutScan, k: Contract, parent: Parent, key: EdgeKey, index: number): void {
   const id = v.enter();
   v.node(id);
-  {
     const p: Parent = { kind: "Contract", id: id, op: "" };
     walkExpr(v, k.expr, p, "expr", -1);
-  }
 }
 
 export function walkExprs(v: MutScan, list: Expr[], parent: Parent, key: EdgeKey): void {
   let i = 0;
-  while (i < list.length) {
-    walkExpr(v, list[i], parent, key, i);
+  for (const x of list) {
+    walkExpr(v, x, parent, key, i);
     i++;
   }
 }
 
 export function walkStmts(v: MutScan, list: Stmt[], parent: Parent, key: EdgeKey): void {
   let i = 0;
-  while (i < list.length) {
-    walkStmt(v, list[i], parent, key, i);
+  for (const x of list) {
+    walkStmt(v, x, parent, key, i);
     i++;
   }
 }
 
 export function walkPatterns(v: MutScan, list: Pattern[], parent: Parent, key: EdgeKey): void {
   let i = 0;
-  while (i < list.length) {
-    walkPattern(v, list[i], parent, key, i);
+  for (const x of list) {
+    walkPattern(v, x, parent, key, i);
     i++;
   }
 }
 
 export function walkChainClauses(v: MutScan, list: ChainClause[], parent: Parent, key: EdgeKey): void {
   let i = 0;
-  while (i < list.length) {
-    walkChainClause(v, list[i], parent, key, i);
+  for (const x of list) {
+    walkChainClause(v, x, parent, key, i);
     i++;
   }
 }
 
 export function walkContracts(v: MutScan, list: Contract[], parent: Parent, key: EdgeKey): void {
   let i = 0;
-  while (i < list.length) {
-    walkContract(v, list[i], parent, key, i);
+  for (const x of list) {
+    walkContract(v, x, parent, key, i);
     i++;
   }
 }

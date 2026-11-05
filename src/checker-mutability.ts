@@ -18,7 +18,7 @@
 // checker's object-keyed facts reach it as `MutFacts` through src/checker-mutability-host.ts.
 import type { Function, Span } from "./ast";
 import { walkStmts } from "./ast-walk";
-import { MutScan, isTrue } from "./mutability-scan";
+import { MutScan, fileOf, isTrue } from "./mutability-scan";
 import type { MutFacts } from "./mutability-scan";
 
 export interface FnEntry {
@@ -42,7 +42,6 @@ export interface MutInput {
 export interface Note { message: string; span: Span }
 export interface Finding { code: string; message: string; hint: string; span: Span; len: number; notes: Note[] }
 
-const ROOT_PARENT_ID = -1;
 
 export function newScan(facts: MutFacts): MutScan {
   const mutated = new Set<number>(facts.mutated);
@@ -72,7 +71,7 @@ export function newScan(facts: MutFacts): MutScan {
 // Runs one walk of `fn`'s body in `mode` and leaves the result in the scan.
 export function scanBody(scan: MutScan, base: number, mode: number, watch: string, fn: Function): void {
   scan.begin(base, mode, watch);
-  walkStmts(scan, fn.body, { kind: "None", id: ROOT_PARENT_ID, op: "" }, "");
+  walkStmts(scan, fn.body, { kind: "None", id: -1, op: "" }, "root");
 }
 
 function startsWithAngle(name: string): boolean {
@@ -98,11 +97,7 @@ export function mutabilityFindings(input: MutInput): Finding[] {
   // `var` is reported only when every copy leaves it unwritten.
   let i = 0;
   while (i < input.view.length) {
-    const e = input.view[i];
-    if (!startsWithAngle(e.name) && !e.fn.isExtern && e.fn.typeParams.length === 0) {
-      scanBody(scan, e.base, 0, "", e.fn);
-      scanBody(scan, e.base, 1, "", e.fn);
-    }
+    scanVars(scan, input.view[i]);
     i++;
   }
   i = 0;
@@ -138,18 +133,29 @@ export function mutabilityFindings(input: MutInput): Finding[] {
   return out;
 }
 
+// A function the `var` check looks at: generic bodies are checked per instance instead.
+function scanVars(scan: MutScan, e: FnEntry): void {
+  if (!startsWithAngle(e.name) && !e.fn.isExtern && e.fn.typeParams.length === 0) {
+    scanBody(scan, e.base, 0, "", e.fn);
+    scanBody(scan, e.base, 1, "", e.fn);
+  }
+}
+
+function isCandidate(f: Function): boolean {
+  return !(f.isExtern || isTrue(f.isPub) || f.typeParams.length > 0 || f.name === "main" || hasAttributes(f));
+}
+
 function checkFn(scan: MutScan, e: FnEntry, out: Finding[]): void {
-  const f = e.fn;
-  if (f.isExtern || isTrue(f.isPub) || f.typeParams.length > 0 || f.name === "main" || hasAttributes(f)) { return; }
-  if (f.retType.isRefMut || scan.values.has(f.name) || !e.hasSig) { return; }
+  if (!isCandidate(e.fn)) { return; }
+  if (e.fn.retType.isRefMut || scan.values.has(e.fn.name) || !e.hasSig) { return; }
   const mutIdx: number[] = [];
   let p = 0;
-  while (p < f.params.length) {
-    if (isRefMutParam(f, p) && p < e.refParams.length && e.refParams[p]) { mutIdx.push(p); }
+  while (p < e.fn.params.length) {
+    if (isRefMutParam(e.fn, p) && p < e.refParams.length && e.refParams[p]) { mutIdx.push(p); }
     p++;
   }
   if (mutIdx.length === 0) { return; }
-  scanBody(scan, e.base, 0, "", f);
+  scanBody(scan, e.base, 0, "", e.fn);
   let m = 0;
   while (m < mutIdx.length) {
     checkParam(scan, e, mutIdx[m], out);
@@ -167,7 +173,7 @@ function checkParam(scan: MutScan, e: FnEntry, pi: number, out: Finding[]): void
     let s = 0;
     while (s < scan.sites.length) {
       if (scan.sites[s].callee === e.fn.name && scan.sites[s].idx === pi && scan.sites[s].explicit) {
-        if (scan.sites[s].span.file !== e.fn.params[pi].span.file) { otherFile = true; }
+        if (fileOf(scan.sites[s].span) !== fileOf(e.fn.params[pi].span)) { otherFile = true; }
         notes.push({ message: "'&mut' is not needed here", span: scan.sites[s].span });
       }
       s++;
