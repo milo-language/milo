@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { BackendProgram, FnDecl } from "./backend-program";
 import type { TargetInfo } from "./target";
-import { emitMlirFunction, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
+import { emitMlirFunction, typeAliasText, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
 import { MlirGlue } from "./mlir-glue";
 import { ModuleCtx, type BuildOptions } from "./mlir-ctx";
 import { planStartup } from "./startup";
@@ -255,7 +255,8 @@ export class MlirPlan {
     if (cx.opts.sanitize) attrs.push(`milo.sanitize = "${sanitizerKind()}"`);
     if (this.fns.get("replayHeapMalloc")?.isExtern === false) attrs.push("milo.replay_heap");
     const flags = this.debug ? `llvm.module_flags [#llvm.mlir.module_flag<warning, "Dwarf Version", 4 : i32>]\n` : "";
-    return `${this.debug?.aliases() ?? ""}module attributes {${attrs.join(", ")}} {\n${globalOps(this.prog.globals, cx)}${itables}${flags}${mlirModuleText(all)}${scaffold}}${this.debug ? ` ${this.debug.moduleLoc()}` : ""}\n`;
+    const globals = globalOps(this.prog.globals, cx), funcs = mlirModuleText(all);
+    return `${this.debug?.aliases() ?? ""}${typeAliasText(cx)}module attributes {${attrs.join(", ")}} {\n${globals}${itables}${flags}${funcs}${scaffold}}${this.debug ? ` ${this.debug.moduleLoc()}` : ""}\n`;
   }
 
   /** The LLVM IR of the whole module. */
