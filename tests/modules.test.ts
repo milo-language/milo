@@ -519,9 +519,10 @@ test("print of a collided private struct shows the name as written", () => {
   ]);
   // Not a revert: the symbols themselves are still renamed, which is the whole point.
   const ir = milo(`emit-ir ${main}`);
-  expect(ir.out).toContain("%disp_a$User = type");
-  expect(ir.out).toContain("%disp_b$User = type");
-  expect(ir.out).toContain("@disp_a$tone");
+  // The MLIR backend quotes mangled names in LLVM IR.
+  expect(ir.out).toContain('%"disp_a$User" = type');
+  expect(ir.out).toContain('%"disp_b$User" = type');
+  expect(ir.out).toContain('@"disp_a$tone"');
 });
 
 test("a diagnostic about a collided private name shows the name as written", () => {
@@ -560,7 +561,7 @@ fn main(): void { print(fromWide()) }
   expect(`${r.code} ${r.err}`).toContain("0 ");
   expect(r.out.trim().split("\n")).toEqual(["Solo { id: 11 }", "11"]);
   // ...and it really did rename them, so the assertion above is not vacuous.
-  expect(milo(`emit-ir ${main}`, { env }).out).toContain("%wide_a$Solo = type");
+  expect(milo(`emit-ir ${main}`, { env }).out).toContain('%"wide_a$Solo" = type');
 
   write("wide_a.milo", `struct Solo { id: i64 }
 fn solo(x: i64): i64 { return x + 1 }
