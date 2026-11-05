@@ -1,6 +1,5 @@
-// Differential gate for the stage 3 probe (docs/plans/ts2milo.md): the mutability pass of
-// src/checker-mutability.ts run from TypeScript and from the Milo that scripts/ts2milo.ts generates
-// from it, over every corpus program that type-checks far enough to reach the pass.
+// Differential gate for the stage 3 probe (docs/plans/ts2milo.md): the mutability pass run from TypeScript
+// and from its generated Milo over every corpus program that reaches it.
 //   bun scripts/ts2milo-mut-diff.ts                 full gate; prints `same N / total` and timings
 //   bun scripts/ts2milo-mut-diff.ts --limit 200     the first 200 programs only
 //   bun scripts/ts2milo-mut-diff.ts --only ts2milo-mut   the programs whose path contains the text
