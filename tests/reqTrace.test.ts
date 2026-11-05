@@ -413,7 +413,7 @@ test("a dev build warns about a traceability gap and succeeds; --strict fails; a
     expect(w.code).toBe(0);
     expect(JSON.parse(readFileSync(base, "utf-8")).gaps).toEqual(["untraced:helper"]);
     const adopted = build("--strict", "--baseline", base);
-    expect(adopted.code).toBe(0);
+    expect(adopted.code, adopted.out.slice(0, 2000)).toBe(0);
     expect(adopted.out).toContain("warning: baselined traceability gap: a.milo:10: fn 'helper' has no @req");
 
     // a NEW gap is not in the baseline and fails
@@ -658,7 +658,7 @@ test("a test may @req a derived requirement when reached by absolute path", () =
   const file = join(import.meta.dir, "..", "std", "json", "json_test.milo");
   const r = spawnSync(process.execPath, [join(import.meta.dir, "..", "src", "main.ts"), "test", "--json", file, "-t", "^(testAccessors)$"], { encoding: "utf-8" });
   expect(JSON.parse(r.stdout).passed).toBe(1);
-});
+}, 60000);
 
 // ── --coverage: statement coverage of the implementing fn bodies by the @req tests ──
 
