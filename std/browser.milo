@@ -93,7 +93,7 @@ fn pageTarget(port: u16): Option<string> {
 
 impl Browser {
     // Start `chrome` headless with DevTools on `port` (loopback only) and a fresh temporary
-    // profile, and connect to its page. Waits up to 10 s for the browser to come up.
+    // profile, and connect to its page. Waits up to 30 s for the browser to come up.
     fn launch(chrome: &string, port: u16): Result<Browser> {
         let profile = match makeTempDir("/tmp/milo-browser-") {
             Ok(p) => p
@@ -104,7 +104,8 @@ impl Browser {
         let args: Vec<string> = ["--headless=new", $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--disable-gpu", $"--user-data-dir={profile}", "about:blank"]
         // Chrome logs freely to both streams; a pipe nobody reads would fill and stall it.
         let child = Command.new(chrome).args(args).stdin(Stdio.Null).stdout(Stdio.Null).stderr(Stdio.Null).spawn()?
-        let deadline = epochMillis() + 10000
+        // A cold Chrome on a loaded machine has been seen past 10 s.
+        let deadline = epochMillis() + 30000
         var path: Option<string> = None
         while path.isNone() && epochMillis() < deadline {
             sleepMs(100)
@@ -114,7 +115,7 @@ impl Browser {
             let _ = child.signal(15)
             let _ = child.wait()
             let _ = removeAll(profile)
-            return Result.Err($"Chrome at '{chrome}' did not open DevTools on port {port} within 10 s")
+            return Result.Err($"Chrome at '{chrome}' did not open DevTools on port {port} within 30 s")
         }
         let ws = match wsConnect(ip4(127, 0, 0, 1), port, p) {
             Ok(w) => w

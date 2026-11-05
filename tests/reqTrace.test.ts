@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { LLVM_BIN } from "../src/mlir-backend";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 import { spawnSync } from "child_process";
 
 const ROOT = join(import.meta.dir, "..");
@@ -456,7 +456,8 @@ test("a single-file module finds m/requirements.json and ignores its neighbours"
     expect(llr.verifiedBy.map((s: any) => s.fn)).toEqual(["testInc"]);
     // a requirements.json beside the entry still wins over the module directory
     p.write("requirements.json", JSON.stringify({ requirements: [{ id: "OTHER", text: "x" }] }));
-    expect(JSON.parse(trace(p).out).requirementsFile).not.toContain(join("a", "requirements.json"));
+    // Anchored on the directory: the random temp dir name can itself end in "a".
+    expect(JSON.parse(trace(p).out).requirementsFile).toEndWith(join(basename(p.dir), "requirements.json"));
   } finally { p.done(); }
 }, 120000);
 
