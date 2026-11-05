@@ -73,6 +73,8 @@ interface Mutator { fn: Function; recv: string; stash: { name: string; wrap: Cto
 // visible: the contracts path parses without resolving imports.
 interface Ctx { ctors: Map<string, Ctor>; muts: Map<string, Mutator[]> }
 
+export const USER_MAIN = "__miloUserMain";
+
 export function discoverContractTests(program: Program): ContractDiscovery {
   const structNames = new Set(program.structs.filter(s => s.typeParams.length === 0).map(s => s.name));
   const ctx: Ctx = { ctors: collectCtors(program, structNames), muts: collectMutators(program, structNames) };
@@ -530,10 +532,12 @@ function harnessFor(fn: Function, ctx: Ctx): { source: string; tracing: boolean 
     emit(`    eprint($"  -> ${fn.name}: ${shown.join(" ")}")`);
     emit(`}`);
   }
+  // By now `main` names the harness's own entry point; the user's was renamed aside.
+  const callee = fn.name === "main" ? USER_MAIN : fn.name;
   if (retIsVoid) {
-    emit(`${fn.name}(${callArgs})`);
+    emit(`${callee}(${callArgs})`);
   } else {
-    emit(`let result = ${fn.name}(${callArgs})`);
+    emit(`let result = ${callee}(${callArgs})`);
   }
   ensures.forEach((_c, i) => {
     const src = printed[requires.length + i];
@@ -548,7 +552,8 @@ function harnessFor(fn: Function, ctx: Ctx): { source: string; tracing: boolean 
 
   const lines: string[] = [];
   lines.push(`fn testContract_${fn.name}(): void {`);
-  lines.push(`    var __rng: Rng = Rng.new(${SEED})`);
+  // A fn with nothing to draw never writes it, and the checker rejects a var never written.
+  if (body.some(l => l.includes("__rng"))) lines.push(`    var __rng: Rng = Rng.new(${SEED})`);
   if (tracing) lines.push(`    let __trace: bool = __miloCtTracing()`);
   lines.push(`    var __tried: i64 = 0`);
   lines.push(`    var __ran: i64 = 0`);
@@ -654,6 +659,8 @@ function exprSource(e: Expr, rename?: Map<string, string>): string | { why: stri
     case "BinOp": {
       const l = sub(n.left); if (typeof l !== "string") return l;
       const r = sub(n.right); if (typeof r !== "string") return r;
+      // The harness is ordinary code, where the checker rejects `==>`.
+      if (n.op === "==>") return `((!${l}) || ${r})`;
       return `(${l} ${n.op} ${r})`;
     }
     case "UnaryOp": {

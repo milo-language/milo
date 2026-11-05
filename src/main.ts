@@ -2,7 +2,7 @@
 // the surface described in src/cli-help.ts.
 // timing must be the first import: it timestamps Bun startup before other modules load.
 import { phase, phaseNote, markModulesLoaded, timingReport } from "./timing";
-import { discoverContractTests, contractTestSupport, UNREACHABLE_STATE_EXIT } from "./contract-tests";
+import { discoverContractTests, contractTestSupport, UNREACHABLE_STATE_EXIT, USER_MAIN } from "./contract-tests";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync, statSync } from "fs";
 import { WARNING_NAMES } from "./warnings";
 import { projectLints, projectProfile } from "./pkg";
@@ -1608,7 +1608,7 @@ function renameUserMain(source: string, program: Program): string {
   const i = main.span.line - 1;
   const line = lines[i];
   if (line === undefined) return source;
-  const renamed = line.replace(/(\bfn\s+)main\b/, "$1__miloUserMain");
+  const renamed = line.replace(/(\bfn\s+)main\b/, `$1${USER_MAIN}`);
   if (renamed === line) return source;
   lines[i] = renamed;
   return lines.join("\n");

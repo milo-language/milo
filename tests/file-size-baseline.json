@@ -16,7 +16,7 @@
   "src/checker.ts": 15665,
   "src/cli-help.ts": 350,
   "src/const-fold.ts": 176,
-  "src/contract-tests.ts": 706,
+  "src/contract-tests.ts": 713,
   "src/coverage.ts": 220,
   "src/csig.ts": 59,
   "src/dead.ts": 104,
