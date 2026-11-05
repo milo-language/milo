@@ -22,7 +22,10 @@ pub fn main(): i32 {
     Task.scope((s) => {
         s.spawn(() => {
             schedulerYield()
-            print($"unreachable {overflow(n)}")
+            // Outside the interpolation: a panic does not unwind, so a string half built
+            // around the call would leak, and this fixture is on the leak-clean manifest.
+            let v = overflow(n)
+            print($"unreachable {v}")
         })
         s.spawn(() => {
             schedulerYield()
