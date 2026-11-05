@@ -4131,6 +4131,8 @@ class FnEmitter {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
+    // The value statement skips stmt(), where every other statement gets its guards.
+    this.lazyGuards(last);
     const tf = this.f(last.expr);
     const armLocal = tf.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(tf.name) : undefined;
     // The block's own binding (an arm's payload, as `let ... else` makes one) is moved out,
@@ -4166,6 +4168,8 @@ class FnEmitter {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
+    // The value statement skips stmt(), where every other statement gets its guards.
+    this.lazyGuards(last);
     const tf = this.f(last.expr);
     const armLocal = tf.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(tf.name) : undefined;
     if (armLocal?.kind === "var" && armLocal.owned && armLocal.ty === ty) {

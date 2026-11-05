@@ -1,0 +1,49 @@
+// A lazy global whose first read is an arm's value, with no earlier statement to fill it.
+struct Big { a: string, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: i64 }
+
+let MATCH_VALUE = "match" + "-value"
+let IF_VALUE = "if" + "-value"
+let MATCH_PLACE = "match" + "-place"
+let IF_PLACE = "if" + "-place"
+
+fn same(s: &string): string {
+    return s.clone()
+}
+
+fn big(s: &string): Big {
+    return Big { a: s.clone(), b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0, j: 0, k: 0, l: 0, m: 0, n: 0, o: 0, p: 0, q: 0 }
+}
+
+fn matchValue(k: &string): string {
+    return match k {
+        "x" => same(MATCH_VALUE)
+        _ => "other"
+    }
+}
+
+fn ifValue(c: bool): string {
+    return if c { same(IF_VALUE) } else { "other" }
+}
+
+fn matchPlace(k: &string): Big {
+    return match k {
+        "x" => big(MATCH_PLACE)
+        _ => big("other")
+    }
+}
+
+fn ifPlace(c: bool): Big {
+    return if c { big(IF_PLACE) } else { big("other") }
+}
+
+fn main(): void {
+    print(matchValue("x"))
+    print(ifValue(true))
+    print(matchPlace("x").a)
+    print(ifPlace(true).a)
+}
+
+// @expect: match-value
+// @expect: if-value
+// @expect: match-place
+// @expect: if-place
