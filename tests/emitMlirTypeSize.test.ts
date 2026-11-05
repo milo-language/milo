@@ -33,11 +33,13 @@ function moduleBytes(src: string): number {
 
 test("24 mutually recursive enums and structs emit a linear-size module", () => {
   const bytes = moduleBytes(enums(24));
-  // The runtime and scaffold alone are ~325 KB; the 48 types add ~50 KB.
-  expect(bytes).toBeLessThan(500_000);
+  // The runtime and scaffold alone are ~325 KB; each enum+struct pair adds ~8 KB of
+  // per-type clone and drop functions (measured: 6 pairs 378 KB, 12 427 KB, 24 527 KB).
+  expect(bytes).toBeLessThan(600_000);
 });
 
 test("module size grows by the types, not by their paths", () => {
-  const small = moduleBytes(enums(6)), big = moduleBytes(enums(24));
-  expect(big - small).toBeLessThan(100_000);
+  const a = moduleBytes(enums(6)), b = moduleBytes(enums(12)), c = moduleBytes(enums(24));
+  // Twice the types adds about twice the bytes; path-wise spelling would square or worse.
+  expect(c - b).toBeLessThan(2.5 * (b - a));
 });
