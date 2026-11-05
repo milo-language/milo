@@ -162,7 +162,7 @@ test.if(hasQemu)("32-bit layout: structs, enums, clones and closures agree with 
   const src = join(DIR, "milo_embed_layout32.milo");
   writeFileSync(src, LAYOUT32_SRC);
   const r = milo(`run ${src} --target=cortex-m3`);
-  expect(r.out).toContain("exit=136");
+  expect(r.out, r.err.slice(0, 2000)).toContain("exit=136");
   unlinkSync(src);
 }, COMPILE_TIMEOUT);
 
