@@ -4039,7 +4039,12 @@ class FnEmitter {
     const op = this.f(e.operand);
     if (op.kind !== "Ident" && op.kind !== "FieldAccess" && op.kind !== "IndexAccess" && op.kind !== "HeapDeref")
       throw new MlirUnsupported("deref of a temporary box");
-    const h = this.expr(op);
+    // An element's box is read from the element's place: reading the element as a value
+    // would copy (own) the box, which is what a temporary is.
+    const slot = op.kind === "IndexAccess" ? this.elemRef(op) : null;
+    const h = slot && /^!milo\.heap</.test(slot.ty)
+      ? { ...this.def(`milo.load ${slot.ref} : !milo.ref<${slot.ty}>`, slot.ty), own: "view" as const }
+      : this.expr(op);
     const m = /^!milo\.heap<(.*)>$/.exec(h.ty);
     if (!m || h.own === "owned") throw new MlirUnsupported("deref of a temporary box");
     const ty = m[1];
