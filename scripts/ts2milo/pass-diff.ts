@@ -46,67 +46,91 @@ function findingLine(f: PassFinding): string {
   return `${s?.file}:${s?.line}:${s?.col}\t${f.message}\t${f.hint}`;
 }
 
-export async function runPassDiff<I, F extends PassFinding>(spec: PassDiffSpec<I, F>): Promise<never> {
-  const argv = process.argv.slice(2);
-  const limit = argv.includes("--limit") ? Number(argv[argv.indexOf("--limit") + 1]) : Infinity;
-  const reuse = argv.includes("--reuse");
-  const neuter = argv.includes("--neuter");
-  const OUT = join(ROOT, "out", `ts2milo-${spec.name}`);
-  const DUMPS = join(OUT, "dumps");
-  const driver = `${spec.name}-driver`;
+// A spec with its input and finding types erased, so specs of different passes fit one list.
+export type AnyPassDiffSpec = PassDiffSpec<any, any>;
+export function passSpec<I, F extends PassFinding>(spec: PassDiffSpec<I, F>): AnyPassDiffSpec { return spec; }
 
-  mkdirSync(DUMPS, { recursive: true });
-  const gen = run(["bun", "scripts/ts2milo.ts", ...COMMON_INPUTS, ...spec.inputs, "--ast-root", spec.astRoot, "-o", OUT]);
-  if (gen.code) { console.error(gen.out); process.exit(1); }
-  console.log(gen.out.split("\n").slice(0, 1).join("\n"));
-  writeFileSync(join(OUT, `${driver}.milo`), readFileSync(join(ROOT, "scripts/ts2milo", `${driver}.milo`)));
-  if (neuter) {
-    const f = join(OUT, `checker-${spec.name}.milo`);
-    const text = readFileSync(f, "utf8");
-    if (!text.includes(spec.neuter.find)) { console.error(`neuter: the ${spec.neuter.what} is not in the generated pass`); process.exit(2); }
-    writeFileSync(f, text.replace(spec.neuter.find, () => spec.neuter.put));
+type Item = { file: string; dump: string; ts: string };
+const CHUNK = 100;
+
+// One pass's side of a run: its built driver and what the comparison has counted so far.
+class PassRun {
+  out: string; dumps: string; bin = ""; keys = new Set<string>();
+  pending: Item[] = [];
+  skips = new Map<string, number>();
+  diffs: string[] = [];
+  crashed: string[] = [];
+  ranN = 0; same = 0; withFindings = 0; tsFindings = 0; miloFindings = 0; tsMs = 0; miloNs = 0; work = 0;
+  inputs: unknown[] = [];
+  constructor(readonly spec: AnyPassDiffSpec, readonly reuse: boolean) {
+    this.out = join(ROOT, "out", `ts2milo-${spec.name}`);
+    this.dumps = join(this.out, "dumps");
   }
-  const bin = join(OUT, driver);
-  const b = run(["bun", "src/main.ts", "build", join(OUT, `${driver}.milo`), "-o", bin]);
-  if (b.code) { console.error(b.out); process.exit(1); }
 
-  // Dumps are run through the compiled Milo pass a chunk at a time and deleted, one process per
-  // chunk so a crash is one program.
-  const all = corpus();
-  const only = argv.includes("--only") ? argv[argv.indexOf("--only") + 1]! : "";
-  const files = all.filter((f) => f.includes(only)).slice(0, limit);
-  const keys = decoderKeys(join(OUT, "ast_decode.milo"));
-  const skips = new Map<string, number>();
-  type Item = { file: string; dump: string; ts: string };
-  let pending: Item[] = [];
-  let ranN = 0, same = 0, withFindings = 0, tsFindings = 0, miloFindings = 0, tsMs = 0, miloNs = 0, work = 0;
-  const diffs: string[] = [];
-  const crashed: string[] = [];
-  const CHUNK = 100;
+  // Generates the pass and builds its driver; false (after printing why) when either step fails.
+  build(neuter: boolean): boolean {
+    const { spec } = this;
+    const driver = `${spec.name}-driver`;
+    mkdirSync(this.dumps, { recursive: true });
+    const gen = run(["bun", "scripts/ts2milo.ts", ...COMMON_INPUTS, ...spec.inputs, "--ast-root", spec.astRoot, "-o", this.out]);
+    if (gen.code) { console.error(gen.out); return false; }
+    console.log(gen.out.split("\n").slice(0, 1).join("\n"));
+    writeFileSync(join(this.out, `${driver}.milo`), readFileSync(join(ROOT, "scripts/ts2milo", `${driver}.milo`)));
+    if (neuter) {
+      const f = join(this.out, `checker-${spec.name}.milo`);
+      const text = readFileSync(f, "utf8");
+      if (!text.includes(spec.neuter.find)) { console.error(`neuter: the ${spec.neuter.what} is not in the generated pass`); process.exit(2); }
+      writeFileSync(f, text.replace(spec.neuter.find, () => spec.neuter.put));
+    }
+    this.bin = join(this.out, driver);
+    const b = run(["bun", "src/main.ts", "build", join(this.out, `${driver}.milo`), "-o", this.bin]);
+    if (b.code) { console.error(b.out); return false; }
+    this.keys = decoderKeys(join(this.out, "ast_decode.milo"));
+    return true;
+  }
 
-  const runList = (items: Item[]): { out: string; ok: boolean } => {
-    const list = join(OUT, "files.txt");
+  skip(why: string): void { this.skips.set(why, (this.skips.get(why) ?? 0) + 1); }
+
+  // The whole-program pass runs once per check; the last captured input is the one for this program.
+  program(file: string, i: number): void {
+    const input = this.inputs[this.inputs.length - 1];
+    this.inputs = [];
+    if (input === undefined) { this.skip("pass input not captured"); return; }
+    const dump = join(this.dumps, `${i}.json`);
+    this.work += this.spec.size(input);
+    const t1 = performance.now();
+    const found: PassFinding[] = this.spec.findings(input);
+    this.tsMs += performance.now() - t1;
+    if (!this.reuse || !existsSync(dump)) writeFileSync(dump, stringifyKeyed(input, this.keys));
+    this.pending.push({ file, dump, ts: found.map(findingLine).join("\n") });
+    this.ranN++;
+    if (this.pending.length >= CHUNK) this.flush();
+  }
+
+  private runList(items: Item[]): { out: string; ok: boolean } {
+    const list = join(this.out, "files.txt");
     writeFileSync(list, items.map((x) => x.dump).join("\n") + "\n");
-    const m = run([bin, list]);
+    const m = run([this.bin, list]);
     return { out: m.out, ok: m.code === 0 };
-  };
-  const compare = (items: Item[], out: string) => {
+  }
+
+  private compare(items: Item[], out: string): void {
     const miloOf = new Map<string, string>();
     let name = "", cur: string[] = [];
     const flushBlock = () => { if (name) miloOf.set(name, cur.join("\n")); };
     for (const line of out.split("\n")) {
-      if (line.startsWith("#pass-ns ")) miloNs += Number(line.slice(9));
+      if (line.startsWith("#pass-ns ")) this.miloNs += Number(line.slice(9));
       else if (line.startsWith("== ")) { flushBlock(); name = line.slice(3); cur = []; } else if (line.length) cur.push(line);
     }
     flushBlock();
     for (const r of items) {
       const m = miloOf.get(r.dump);
-      if (r.ts) { withFindings++; tsFindings += r.ts.split("\n").length; }
-      if (m !== undefined && m) miloFindings += m.split("\n").length;
-      if (m !== undefined && m === r.ts) same++;
+      if (r.ts) { this.withFindings++; this.tsFindings += r.ts.split("\n").length; }
+      if (m !== undefined && m) this.miloFindings += m.split("\n").length;
+      if (m !== undefined && m === r.ts) this.same++;
       else {
-        diffs.push(r.file);
-        if (diffs.length <= 6) {
+        this.diffs.push(r.file);
+        if (this.diffs.length <= 6) {
           const a = r.ts.split("\n"), c = (m ?? "<no output>").split("\n");
           let i = 0;
           while (i < a.length && a[i] === c[i]) i++;
@@ -114,52 +138,74 @@ export async function runPassDiff<I, F extends PassFinding>(spec: PassDiffSpec<I
         }
       }
     }
-  };
-  const flush = () => {
-    if (!pending.length) return;
-    const first = runList(pending);
-    if (first.ok) compare(pending, first.out);
-    else for (const one of pending) {
-      const o = runList([one]);
-      if (o.ok) compare([one], o.out); else { crashed.push(one.file); diffs.push(one.file); }
-    }
-    if (!reuse) for (const p of pending) rmSync(p.dump, { force: true });
-    pending = [];
-  };
+  }
 
+  // Dumps are run through the compiled Milo pass a chunk at a time and deleted, one process per
+  // chunk so a crash is one program.
+  flush(): void {
+    if (!this.pending.length) return;
+    const first = this.runList(this.pending);
+    if (first.ok) this.compare(this.pending, first.out);
+    else for (const one of this.pending) {
+      const o = this.runList([one]);
+      if (o.ok) this.compare([one], o.out); else { this.crashed.push(one.file); this.diffs.push(one.file); }
+    }
+    if (!this.reuse) for (const p of this.pending) rmSync(p.dump, { force: true });
+    this.pending = [];
+  }
+
+  // A run where no program reached the pass proves nothing, so it is red.
+  report(files: number, seconds: number): boolean {
+    console.log(`ran ${files} programs in ${seconds.toFixed(0)} s: ${this.ranN} reach the pass, ${files - this.ranN} skipped`);
+    if (this.crashed.length) console.log(`milo pass crashed on ${this.crashed.length} program(s): ${this.crashed.slice(0, 5).join(", ")}`);
+    console.log(`findings: ts ${this.tsFindings}, milo ${this.miloFindings}; programs with at least one finding: ${this.withFindings}`);
+    console.log(`skipped ${files - this.ranN}: ${[...this.skips].map(([why, n]) => `${n} ${why}`).join("; ")}`);
+    console.log(`same ${this.same} / ${this.ranN}`);
+    console.log(`speed: ts pass ${this.tsMs.toFixed(0)} ms over ${this.work} ${this.spec.unit}, milo pass ${(this.miloNs / 1e6).toFixed(0)} ms`);
+    return this.same === this.ranN && !this.crashed.length && this.ranN > 0;
+  }
+}
+
+export function runPassDiff(spec: AnyPassDiffSpec): never { return runPassDiffs([spec]); }
+
+// Every given pass over one walk of the corpus: each program is parsed and checked once, and each
+// pass compares the input it captured during that check. A pass that does not build is red and
+// the others still run.
+export function runPassDiffs(specs: AnyPassDiffSpec[]): never {
+  const argv = process.argv.slice(2);
+  const limit = argv.includes("--limit") ? Number(argv[argv.indexOf("--limit") + 1]) : Infinity;
+  const only = argv.includes("--only") ? argv[argv.indexOf("--only") + 1]! : "";
+  const many = specs.length > 1;
+  const runs: PassRun[] = [];
+  const unbuilt: string[] = [];
+  for (const spec of specs) {
+    if (many) console.log(`== ${spec.name}: build`);
+    const r = new PassRun(spec, argv.includes("--reuse"));
+    if (r.build(argv.includes("--neuter"))) runs.push(r); else unbuilt.push(spec.name);
+  }
+
+  const files = corpus().filter((f) => f.includes(only)).slice(0, limit);
   const t0 = performance.now();
   for (let i = 0; i < files.length; i++) {
     const f = files[i]!;
-    const dump = join(DUMPS, `${i}.json`);
-    const inputs: I[] = [];
-    spec.setCapture((x) => inputs.push(x));
-    let r: ReturnType<typeof checkProgramFile>;
-    try { r = checkProgramFile(f); } finally { spec.setCapture(undefined); }
-    if ("skip" in r) {
-      const why = r.skip.replace(/:.*/, "");
-      skips.set(why, (skips.get(why) ?? 0) + 1);
+    for (const r of runs) r.spec.setCapture((x: unknown) => r.inputs.push(x));
+    let checked: ReturnType<typeof checkProgramFile>;
+    try { checked = checkProgramFile(f); } finally { for (const r of runs) r.spec.setCapture(undefined); }
+    if ("skip" in checked) {
+      const why = checked.skip.replace(/:.*/, "");
+      for (const r of runs) { r.inputs = []; r.skip(why); }
       continue;
     }
-    // The whole-program pass runs once per check; the last input is the one for this program.
-    const input = inputs[inputs.length - 1];
-    if (!input) { skips.set("pass input not captured", (skips.get("pass input not captured") ?? 0) + 1); continue; }
-    work += spec.size(input);
-    const t1 = performance.now();
-    const found = spec.findings(input);
-    tsMs += performance.now() - t1;
-    if (!reuse || !existsSync(dump)) writeFileSync(dump, stringifyKeyed(input, keys));
-    pending.push({ file: f, dump, ts: found.map(findingLine).join("\n") });
-    ranN++;
-    if (pending.length >= CHUNK) flush();
+    for (const r of runs) r.program(f, i);
     if (i % 200 === 199) process.stderr.write(`  ${i + 1} / ${files.length} programs\n`);
   }
-  flush();
-  console.log(`ran ${files.length} programs in ${((performance.now() - t0) / 1000).toFixed(0)} s: ${ranN} reach the pass, ${files.length - ranN} skipped`);
-  if (crashed.length) console.log(`milo pass crashed on ${crashed.length} program(s): ${crashed.slice(0, 5).join(", ")}`);
-  console.log(`findings: ts ${tsFindings}, milo ${miloFindings}; programs with at least one finding: ${withFindings}`);
-  console.log(`skipped ${files.length - ranN}: ${[...skips].map(([why, n]) => `${n} ${why}`).join("; ")}`);
-  console.log(`same ${same} / ${ranN}`);
-  console.log(`speed: ts pass ${tsMs.toFixed(0)} ms over ${work} ${spec.unit}, milo pass ${(miloNs / 1e6).toFixed(0)} ms`);
-  // A run where no program reached the pass proves nothing, so it is red.
-  process.exit(same === ranN && !crashed.length && ranN > 0 ? 0 : 1);
+  const seconds = (performance.now() - t0) / 1000;
+  const red = [...unbuilt];
+  for (const r of runs) {
+    r.flush();
+    if (many) console.log(`== ${r.spec.name}`);
+    if (!r.report(files.length, seconds)) red.push(r.spec.name);
+  }
+  if (many) console.log(red.length ? `RED ${red.length} / ${specs.length}: ${red.join(", ")}` : `all ${specs.length} passes agree`);
+  process.exit(red.length ? 1 : 0);
 }

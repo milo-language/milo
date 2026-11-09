@@ -1,11 +1,11 @@
 // Differential gate for the generated pointer-parameter-escape pass: TypeScript against its generated Milo,
 // on the checker's input for every corpus program that reaches the pass.
 // Options (--limit, --only, --reuse, --neuter) are in scripts/ts2milo/pass-diff.ts.
-import { runPassDiff } from "./ts2milo/pass-diff";
+import { passSpec, runPassDiff } from "./ts2milo/pass-diff";
 import { pointerEscapeFindings } from "../src/checker-pointer-escape";
 import { setPointerEscapeCapture } from "../src/checker-pointer-escape-host";
 
-if (import.meta.main) await runPassDiff({
+export const spec = passSpec({
   name: "pointer-escape",
   inputs: ["src/ast-walk-pointer-escape.ts","src/ast-walk-pointer-mention.ts","src/checker-pointer-mention.ts","src/checker-pointer-escape.ts"],
   astRoot: "PointerEscapeInput",
@@ -20,3 +20,5 @@ if (import.meta.main) await runPassDiff({
     put: "fn visitAssign(self: &mut PointerEscapeScan, n: &Assign, id: i64, _parent: &Parent, _key: EdgeKey, _index: i64) {\n        if self.next >= 0 { return }",
   },
 });
+
+if (import.meta.main) runPassDiff(spec);

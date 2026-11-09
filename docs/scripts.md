@@ -122,6 +122,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ts2milo-mut-diff.ts` | Differential gate for the stage 3 probe (docs/plans/ts2milo.md): the mutability pass run from TypeScript and from its generated Milo over every corpus program that reaches it. |
 | `scripts/ts2milo-nonescaping-diff.ts` | Differential gate for the generated non-escaping parameter pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-parser-diff.ts` | Correctness gate for the GENERATED Milo parser: run it and the TypeScript parser on the same programs and compare the ASTs. |
+| `scripts/ts2milo-pass-diffs.ts` | Every generated checker pass against its TypeScript original in one walk of the corpus: the nine ts2milo-<pass>-diff.ts gates, with each program parsed and checked once instead of once per gate. |
 | `scripts/ts2milo-pointer-escape-diff.ts` | Differential gate for the generated pointer-parameter-escape pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-purity-diff.ts` | Differential gate for the generated @pure body pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-task-scopes-diff.ts` | Differential gate for the generated Task.scope pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |

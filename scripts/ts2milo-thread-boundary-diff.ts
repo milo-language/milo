@@ -1,11 +1,11 @@
 // Differential gate for the generated thread boundary pass: TypeScript against its generated Milo,
 // on the checker's input for every corpus program that reaches the pass.
 // Options (--limit, --only, --reuse, --neuter) are in scripts/ts2milo/pass-diff.ts.
-import { runPassDiff } from "./ts2milo/pass-diff";
+import { passSpec, runPassDiff } from "./ts2milo/pass-diff";
 import { threadBoundaryFindings } from "../src/checker-thread-boundary";
 import { setThreadBoundaryCapture } from "../src/checker-thread-boundary-host";
 
-if (import.meta.main) await runPassDiff({
+export const spec = passSpec({
   name: "thread-boundary",
   inputs: ["src/ast-walk-thread-boundary.ts","src/checker-implicit-calls.ts","src/checker-thread-boundary.ts"],
   astRoot: "ThreadInput",
@@ -20,3 +20,5 @@ if (import.meta.main) await runPassDiff({
     put: "fn reportTouches(self: &mut ThreadScan) {\n        if self.tName.len >= 0 { return }",
   },
 });
+
+if (import.meta.main) runPassDiff(spec);

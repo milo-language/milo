@@ -185,6 +185,12 @@ jobs:
       # same 200 cases against a different libc and codegen path.
       - name: Contract sweep
         run: bun run src/main.ts test --contracts std examples
+      # The checker passes generated into Milo against their TypeScript originals, over the
+      # whole corpus. No test runs these, and a ts2milo change can stop a generated pass from
+      # compiling (the purity pass did not build for a day before this step existed).
+      - name: ts2milo pass gates
+        if: matrix.os == 'ubuntu-latest'
+        run: bun scripts/ts2milo-pass-diffs.ts
 
   # Windows is a partial target: the compiler runs, resolves x86_64-pc-windows-msvc, and
   # builds+runs the fixture suite minus the parts that need APIs Windows has no

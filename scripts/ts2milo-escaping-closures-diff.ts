@@ -1,11 +1,11 @@
 // Differential gate for the generated escaping-closure pass: TypeScript against its generated Milo,
 // on the checker's input for every corpus program that reaches the pass.
 // Options (--limit, --only, --reuse, --neuter) are in scripts/ts2milo/pass-diff.ts.
-import { runPassDiff } from "./ts2milo/pass-diff";
+import { passSpec, runPassDiff } from "./ts2milo/pass-diff";
 import { escapingClosuresFindings } from "../src/checker-escaping-closures";
 import { setEscapingClosuresCapture } from "../src/checker-escaping-closures-host";
 
-if (import.meta.main) await runPassDiff({
+export const spec = passSpec({
   name: "escaping-closures",
   inputs: ["src/ast-walk-escaping-closures.ts","src/checker-escaping-closures.ts"],
   astRoot: "EscapingClosuresInput",
@@ -20,3 +20,5 @@ if (import.meta.main) await runPassDiff({
     put: "fn check(self: &mut EscapingScan, value: &Expr, lit: i64, verb: &string, tail: &string, holder: &string, filter: i64) {\n        if self.next >= 0 { return }",
   },
 });
+
+if (import.meta.main) runPassDiff(spec);

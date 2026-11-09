@@ -1,11 +1,11 @@
 // Differential gate for the generated global borrow invalidation pass: TypeScript against its generated Milo,
 // on the checker's input for every corpus program that reaches the pass.
 // Options (--limit, --only, --reuse, --neuter) are in scripts/ts2milo/pass-diff.ts.
-import { runPassDiff } from "./ts2milo/pass-diff";
+import { passSpec, runPassDiff } from "./ts2milo/pass-diff";
 import { globalBorrowFindings } from "../src/checker-global-borrow";
 import { setGlobalBorrowCapture } from "../src/checker-global-borrow-host";
 
-if (import.meta.main) await runPassDiff({
+export const spec = passSpec({
   name: "global-borrow",
   inputs: ["src/ast-walk-global-borrow.ts","src/checker-global-borrow.ts"],
   astRoot: "GlobalBorrowInput",
@@ -20,3 +20,5 @@ if (import.meta.main) await runPassDiff({
     put: "fn report(self: &mut GlobalBorrowScan, message: &string, span: &Option<Span>, hint: &string) {\n        if self.next >= 0 { return }",
   },
 });
+
+if (import.meta.main) runPassDiff(spec);
