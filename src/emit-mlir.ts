@@ -3700,7 +3700,10 @@ class FnEmitter {
       const b = this.lookup(c.name);
       if (b.kind === "vec") return { name: c.name, place: `!milo.vec<${b.elem}>`, ref: b.ref, b };
       if (b.kind === "var") return { name: c.name, place: `!milo.ref<${b.ty}>`, ref: b.ref, b };
-      if (this.hasDrop(b.v.ty)) throw new MlirUnsupported("capture of an owned value");
+      // A for-in element or pattern binding is a non-owning view of a value somebody else
+      // owns; the by-ref closure only borrows it, so the bits go into an unowned slot
+      // (never dropped here). A truly owned SSA value would need the env to own it.
+      if (this.hasDrop(b.v.ty) && b.v.own !== "view") throw new MlirUnsupported("capture of an owned value");
       const ref = this.fresh();
       this.vars.push(`  ${ref} = milo.var ${quote(c.name)} : !milo.ref<${b.v.ty}>`);
       this.emit(`milo.store ${b.v.ref}, ${ref} : !milo.ref<${b.v.ty}>`);

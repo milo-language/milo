@@ -1,0 +1,28 @@
+// by-ref closure capturing a string loop variable (an owned value held as SSA)
+
+pub fn some(v: &Vec<string>, f: (&string) => bool): bool {
+    for x in v {
+        if f(x) {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn main(): i32 {
+    var names: Vec<string> = Vec.new()
+    names.push("a")
+    names.push("bb")
+    var args: Vec<string> = Vec.new()
+    args.push("bb")
+    args.push("zz")
+    for n in args {
+        if !some(names, (p: &string): bool => {
+            return p == n
+        }) {
+            print(n)
+        }
+    }
+    return 0
+}
+// @expect: zz
