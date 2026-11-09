@@ -9,6 +9,8 @@
 //   bun scripts/ir-same.ts --flags "-g --target windows-x64"   # extra emit-ir args
 //   bun scripts/ir-same.ts --emit check          # compare `check --json` (exit code + diagnostics), for
 //                                                # checker refactors; tests/errors/ is included
+//                                                # (a warning that is off by default is invisible
+//                                                # here: add --flags "--deny=<name>" to see it)
 //   bun scripts/ir-same.ts --emit mlir           # compare `emit-mlir --all` (the milo dialect, before
 //                                                # milo-opt and LLVM can optimize a difference away)
 //
