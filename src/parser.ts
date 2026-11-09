@@ -1604,8 +1604,8 @@ export class Parser {
       if (next && (next.kind === TokenKind.Int || next.kind === TokenKind.Float)) {
         this.advance(); // consume -
         const numTok = this.advance();
-        const lk = numTok.kind === TokenKind.Int ? "int" as const : "float" as const;
-        return { kind: "LiteralPattern", value: lk === "int" ? -BigInt(numTok.value) : -Number(numTok.value), literalKind: lk, span: s };
+        if (numTok.kind === TokenKind.Int) return { kind: "LiteralPattern", value: -BigInt(numTok.value), literalKind: "int", span: s };
+        return { kind: "LiteralPattern", value: -Number(numTok.value), literalKind: "float", span: s };
       }
     }
     // `Enum.Variant` or, when the enum is obvious from the subject, bare `Variant`.

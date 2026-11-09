@@ -109,6 +109,35 @@ describe("tagged unions", () => {
     expect(summary(r)).toContain("0 overrides");
   });
 
+  test("a bigint | number | string | boolean literal field becomes JsPrim, picked by the initializer's type", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "ast.ts"), [
+      "export interface Span { line: number }",
+      "export interface Lit { kind: \"Lit\"; value: bigint | number | string | boolean; literalKind: \"int\" | \"float\" | \"string\" | \"bool\"; span?: Span }",
+      "export interface Other { kind: \"Other\"; span?: Span }",
+      "export type Pat = Lit | Other;",
+    ].join("\n"));
+    writeFileSync(join(dir, "use.ts"), [
+      "import type { Pat } from \"./ast\";",
+      "export function mk(t: string, neg: boolean): Pat {",
+      "  if (neg) return { kind: \"Lit\", value: -Number(t), literalKind: \"float\" };",
+      "  if (t === \"a\") return { kind: \"Lit\", value: BigInt(t), literalKind: \"int\" };",
+      "  if (t === \"b\") return { kind: \"Lit\", value: t, literalKind: \"string\" };",
+      "  return { kind: \"Lit\", value: true, literalKind: \"bool\" };",
+      "}",
+      "export function bad(n: number): Pat { return { kind: \"Lit\", value: n, literalKind: \"int\" }; }",
+    ].join("\n"));
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Pat"], overridesDir: join(dir, "none"), lenient: true });
+    expect(r.files.get("ast.milo")!).toContain("value: JsPrim,");
+    const use = r.files.get("use.milo")!;
+    expect(use).toContain("JsPrim.Num(-jsParseFloat(t))");
+    expect(use).toContain("JsPrim.Big(t");
+    expect(use).toContain("JsPrim.Str(");
+    expect(use).toContain("JsPrim.Bool(true)");
+    // A bare number could be an int or a float: refused, not guessed.
+    expect(r.stubs.map((s) => s.reason).join("\n")).toContain("variant is not known");
+  });
+
   // The copy is only a stand-in for the TS shared reference where nothing writes through either side.
   const holderSrc = (extra: string) => {
     const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));

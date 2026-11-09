@@ -381,6 +381,19 @@ pub fn jsReplaceAll(s: &string, pat: &string, rep: &string): string {
 
 pub enum Severity { Error, Warning, Hint }
 
+// A source literal's value: `bigint | number | string | boolean` in ast.ts (LiteralPattern.value). Big is the decimal text, as every bigint is.
+@derive(Clone)
+pub enum JsPrim { Big(string), Num(f64), Str(string), Bool(bool) }
+
+// -BigInt(s) for the lexer's canonical decimal text: -0n is 0n.
+pub fn jsBigNeg(s: &string): string {
+    let zero = jsFromUtf8("0")
+    if s == zero {
+        return zero
+    }
+    return jsFromUtf8("-") + s
+}
+
 @derive(Clone)
 pub struct Span {
     id: i64,

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
-import { RUNTIME_OWNED, buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
+import { RUNTIME_OWNED, buildAstModel, isPrimUnion, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
@@ -433,6 +433,15 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     };
     // An element stored into a Vec<Heap<T>> (T on a cycle) is boxed on the way in.
     const heapElem = (el: ts.Type, code: string): string => (onCycle(isOptionT(el) ? checker.getNonNullableType(el) : el) && !isOptionT(el) ? `Heap(${code})` : code);
+    // An element of a Vec<Option<Heap<T>>> (T on a cycle): Some(Heap(x)) for a plain T, optBox for an Option<T>, None for null/undefined.
+    const optHeapElem = (el: ts.Type, arg: ts.Expression): string | undefined => {
+      if (!isOptionT(el) || !onCycle(checker.getNonNullableType(el))) return undefined;
+      const nn = checker.getNonNullableType(el);
+      const u = unparen(arg);
+      if (isUndefinedId(u) || u.kind === ts.SyntaxKind.NullKeyword) return "Option.None";
+      if (isOptionT(tOf(arg))) return `${useRuntime("optBox", arg)}<${ty(nn, arg)}>(${ownConv(arg, el)})`;
+      return `Option.Some(Heap(${ownConv(arg, nn)}))`;
+    };
     // Whether `e` reads an array element held as Heap<T> (see `ty`).
     const boxedElem = (e: ts.Expression): boolean => ts.isElementAccessExpression(e) && checker.isArrayType(tOf(e.expression)) && onCycle(checker.getNonNullableType(checker.getTypeArguments(tOf(e.expression) as ts.TypeReference)[0]));
     let opaqueFallback = false; // lenient signatures: a type with no mapping becomes TsOpaque so the function still exists for importers
@@ -1015,7 +1024,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "Array.push": {
             // xs.push(...ys): ys is consumed (a borrowed place is cloned under the usual rules).
             if (a.length === 1 && ts.isSpreadElement(a[0])) return `${ex(recv!)}.extend(${ownConv(a[0].expression, tOf(recv!))})`;
-            const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${heapElem(el, ownConv(a[0], el))})`; }
+            const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${optHeapElem(el, a[0]) ?? heapElem(el, ownConv(a[0], el))})`; }
           // xs.pop(): the owned last element (the Milo Vec holds it boxed when its type is on a cycle).
           case "Array.pop": {
             const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0];
@@ -1409,6 +1418,22 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.ObjectLiteralExpression: {
           const o = e as ts.ObjectLiteralExpression;
+          // A `bigint | number | string | boolean` field is the runtime's JsPrim: the variant is the initializer's own type, and a float is only a Number(string).
+          const primConv = (init: ts.Expression): string => {
+            let u = unparen(init);
+            let neg = false;
+            if (ts.isPrefixUnaryExpression(u) && u.operator === ts.SyntaxKind.MinusToken) { neg = true; u = unparen(u.operand); }
+            if (ts.isCallExpression(u) && ts.isIdentifier(u.expression) && u.arguments.length === 1 && isStr(u.arguments[0])) {
+              const nm = u.expression.text;
+              if (nm === "Number") return `${useRuntime("JsPrim", e)}.Num(${neg ? "-" : ""}${useRuntime("jsParseFloat", e)}(${ex(u.arguments[0])}))`;
+              if (nm === "BigInt") return `${useRuntime("JsPrim", e)}.Big(${neg ? `${useRuntime("jsBigNeg", e)}(${ex(u.arguments[0])})` : ex(u.arguments[0])})`;
+            }
+            if (neg) return fail(init, "negated primitive-union value other than Number(string) or BigInt(string)");
+            const t = tOf(init);
+            if (t.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return `${useRuntime("JsPrim", e)}.Str(${ownConv(init)})`;
+            if (t.flags & ts.TypeFlags.BooleanLike) return `${useRuntime("JsPrim", e)}.Bool(${ex(init)})`;
+            return fail(init, "primitive-union value (bigint | number | string | boolean) whose variant is not known from its expression");
+          };
           const ctxT = checker.getContextualType(o);
           if (!ctxT) fail(o, "object literal without a contextual type");
           const t = checker.getNonNullableType(ctxT!);
@@ -1428,7 +1453,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
               const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
               const pt = checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!);
               const conv1 = astModel.boxed.has(m) && !isOptionT(pt) ? heapConv : ownConv;
-              let val = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? conv1(prop.name, pt) : conv1((prop as ts.PropertyAssignment).initializer, pt);
+              let val = !prop ? "Option.None" : m.type && isPrimUnion(m.type) ? primConv(ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer) : ts.isShorthandPropertyAssignment(prop) ? conv1(prop.name, pt) : conv1((prop as ts.PropertyAssignment).initializer, pt);
               if (astModel.boxed.has(m)) {
                 if (!isOptionT(pt)) val = `Heap(${val})`;
                 else if (prop) {
@@ -1455,7 +1480,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
-            let v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
+            let v = !prop ? "Option.None" : m.type && isPrimUnion(m.type) ? primConv(ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer) : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
             // A boxed AST field stores a Heap: Option<Heap<T>> for an optional one.
             if (prop && ts.isInterfaceDeclaration(d!) && astModel.boxed.has(m)) {
               const val = ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer;
