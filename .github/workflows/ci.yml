@@ -90,16 +90,14 @@ jobs:
       - name: Unsafe census ratchet
         run: bun scripts/corpus-census.ts --check
       # `milo build --sanitize` existed for a long time and nothing ran it over the corpus.
-      # scripts/selfhost-asan.ts asks whether milo-self's OUTPUT is memory-safe; nobody asked
-      # it of the reference compiler's output, so use-after-free, out-of-bounds and
-      # double-free in generated code had no gate. The leak ratchet above cannot see any of
+      # Use-after-free, out-of-bounds and double-free in generated code had no gate. The leak ratchet above cannot see any of
       # those — different question, and it only sees blocks big enough for `leaks` to report.
       #
       # COST, measured on this runner rather than guessed: 4m38s for the fixtures corpus
       # (run 32382533309), against 9m11s for the leak ratchet immediately above. Each entry
       # is its own -fsanitize=address build plus a run, so it scales with the corpus.
-      # If it ever starts hurting, the precedent is in .github/workflows/selfhost.yml: keep
-      # the fast check on push, move the slow sweep to the nightly schedule. It finds
+      # If it ever starts hurting: keep the fast check on push, move the slow sweep to a
+      # nightly schedule. It finds
       # nothing today — the whole value is catching a future regression, which argues for
       # running it often rather than rarely.
       # `bun run test:asan` is the same command developers run locally (package.json), so

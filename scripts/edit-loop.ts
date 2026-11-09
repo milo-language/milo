@@ -22,8 +22,7 @@
 // invocation's hot set would leak into this one (the work path, and so the program's
 // cache key, is the same every time).
 //
-// Builds only; no produced binary is ever run. Each build goes through scripts/guard.ts
-// with the same caps scripts/selfhost.sh uses, since the src-milo build peaks near 2 GB.
+// Builds only; no produced binary is ever run. Each build goes through scripts/guard.ts.
 import { spawnSync } from "child_process";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -46,8 +45,6 @@ const PROGRAMS: Program[] = [
   { name: "java-dap", dir: "examples/tools/java-dap", entry: "src/main.milo", needle: `"0.1.0"` },
   // flight is larger but embeds city assets that are not in a plain checkout.
   { name: "redline", dir: "examples/games/redline", entry: "main.milo", needle: `"SDL_Init failed"` },
-  // std/ changes may leave src-milo behind (AGENTS.md), and then this row reports FAIL.
-  { name: "src-milo", dir: "src-milo", entry: "main.milo", needle: `"commands: build, run, emit-ir, check, lsp"` },
 ];
 
 const SCENARIOS = ["cold", "warm unchanged", "one-line edit", "repeat edit", "one-line edit --fast"] as const;

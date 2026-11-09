@@ -203,7 +203,6 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `modules.test.ts` | import resolution + cross-file merge |
 | `formatter.test.ts` | `milo fmt` output stability |
 | `lsp.test.ts` / `lspProject.test.ts` | LSP diagnostics/hover/go-to-def; project-wide LSP |
-| `selfhost.test.ts` | milo-self bootstrap convergence (guarded) |
 | `debugInfo.test.ts` | DWARF emission (`-g`) |
 | `wcet.test.ts` / `wcetCycles.test.ts` | worst-case-execution-time analysis |
 | `allocaHoist.test.ts` / `zeroStore.test.ts` | codegen optimizations |

@@ -2,9 +2,7 @@
 // Is the code the MAIN compiler generates memory-safe?
 //
 // `milo build --sanitize` has existed for a long time and nothing ran it over the corpus.
-// scripts/selfhost-asan.ts asks this question of milo-self's output; nobody asked it of the
-// reference compiler's, so use-after-free, out-of-bounds and double-free in generated code
-// had no gate at all. The leak gate cannot see any of those — it answers a different
+// Use-after-free, out-of-bounds and double-free in generated code had no gate at all. The leak gate cannot see any of those — it answers a different
 // question, and answers it only for blocks big enough for `leaks` to notice.
 //
 //   bun scripts/asan-sweep.ts                 # sweep tests/fixtures

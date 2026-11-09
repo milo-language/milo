@@ -292,7 +292,7 @@ C interop from day one; keep `unsafe` at the thinnest possible seam.
 Source → Lexer → Parser → AST → Type Checker → HIR → Codegen → LLVM IR → clang → Binary
 ```
 
-Frontend: TypeScript (Bun). Backend: LLVM. Self-hosted port in progress ([self-hosting.md](self-hosting.md)).
+Frontend: TypeScript (Bun). Backend: MLIR (milo dialect, `milo-opt`) to LLVM. Self-hosting is a generated port of the frontend ([self-hosting.md](self-hosting.md)).
 
 ## Differentiators
 

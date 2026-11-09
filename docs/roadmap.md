@@ -202,17 +202,9 @@ Prelude: `prelude`, `rt` (runtime routines the compiler calls by name; not publi
 
 TLS clients verify certificates (`SSL_VERIFY_PEER` + hostname binding), and `std/https` serves HTTPS over the same OpenSSL binding; JSON parsing is RFC 8259-strict with a lenient `jsonParseJsonc` and a `jsonPull` streaming tokenizer.
 
-### Self-Hosting — Bootstrap Converges, and the Endgame Is Decided
+### Self-Hosting — Generated, Not Hand-Ported
 
-`milo0` (`src-milo/`, ~37.9K lines across 32 files) — the Milo compiler written in Milo — compiles its own source to a **byte-identical fixed point at the production `-O2` level**: `stage1 == stage2 == stage3`. 590 fixtures pass under `milo-self` (`tests/selfhost-manifest.txt` is the ratchet); 118 of 255 negative tests behave correctly under it.
-
-**The endgame was decided 2026-08-09: proof-only. `src-milo/` is frozen at the fixpoint and `src/` is not going away.** The rule was precommitted in [selfhost-endgame-decision.md](selfhost-endgame-decision.md) *before* the census that feeds it, precisely so a histogram read afterwards could not be narrated into whichever answer was already wanted. It measured N = 99 silent accepts (unsoundness — programs milo-self compiles that it must reject), of which misscoped-plus-uncalled came in at **14 of 99 where the replacement rule needed 50%**. So the fixpoint is the deliverable, banked; the sync tax stops.
-
-That freeze is why `src-milo/` has had no commits since 2026-08-09, and it is deliberate — not neglect.
-
-See [self-hosting.md](self-hosting.md) for the M0–M5 milestone log and the eight oracle miscompiles the self-compile exposed and fixed.
-
-Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; `.selfhost/milo-self.bin` is gitignored), then `bun test tests/selfhost.test.ts`. CI runs the fixpoint and the soundness/HIR ratchets on any commit touching `src-milo/`, `std/`, or the selfhost scripts, and sweeps every fixture nightly. **Never run `.selfhost/milo-self.bin` bare** — see the memory guards in AGENTS.md.
+One compiler: `src/` emitting the milo MLIR dialect. Self-hosting is a Milo frontend generated from `src/*.ts` by a thin transpiler (`scripts/ts2milo.ts`), gated on identical behavior and, for the whole frontend, byte-identical `emit-mlir` text; see [self-hosting.md](self-hosting.md) and [plans/ts2milo.md](plans/ts2milo.md). The hand-written port (`src-milo/`) reached a byte-identical bootstrap fixed point in August 2026, was frozen 2026-08-09 and deleted 2026-11-08.
 
 ### Platforms
 
@@ -241,7 +233,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 - **Fuzzers**: `scripts/fuzz-frontend.ts` (2 bugs per 150k mutants) and `scripts/fuzz-ownership.ts`, which grades ownership bugs under a *real* ASan oracle. Two silent-success bugs were found in the harness itself before it graded anything: `--sanitize` linked the ASan runtime but instrumented nothing, so every use-after-free read passed while the interceptors kept the sanitizer looking alive; and the fuzzer graded a UAF by whether the freed bytes happened to be reused. Surface coverage is 27 of 39 expression and statement forms, now composed at depth 5–7 rather than emitted alone at the top level of `main` — a generator can reach 39/39 wide and still test nothing about how the rules compose
 - **Benchmarks**: `benchmarks/run.sh` with per-benchmark `results-*.md` (fib, binarytrees, grep, json, matmul, maplookup)
 - **CI**: build + test on push/PR across macOS-arm64, linux-x64 and Windows-x64 (**no linux-arm64 — see In Progress**); release pipeline with `--static-deps` static linking (built on ubuntu-22.04 runners for glibc compatibility, never musl)
-- **Ratchets** — monotone gates that fail the build on a regression rather than on a threshold someone has to remember: the leak baseline (`tests/leak-clean.txt`, via `leaks -atExit`; no LSan on macOS), the `src-milo` HIR re-derivation count (115 sites, monotone to zero, and raising it needs an explicit flag *and* a written reason), the proven-contract floor (losing a proof fails the build, so a contract silently degrading from `proven` to `unknown` is caught), and the selfhost fixture manifest. Every one of these keys fixtures by filename, so renaming a fixture reads as a regression and a new fixture at once
+- **Ratchets** — monotone gates that fail the build on a regression rather than on a threshold someone has to remember: the leak baseline (`tests/leak-clean.txt`, via `leaks -atExit`; no LSan on macOS) and the proven-contract floor (losing a proof fails the build, so a contract silently degrading from `proven` to `unknown` is caught). Every one of these keys fixtures by filename, so renaming a fixture reads as a regression and a new fixture at once
 - **Examples**: 160 `.milo` files over nine domains — `basics/` (9), `cli-tools/` (16), `net/` (10), `graphics/` (8), `games/` (99, mostly the multi-file apsis/neon/flight projects), `simulation/` (6), `terminal/` (6), `embedded/` (2), `tools/` (3). Treated as integration smoke tests for stdlib changes. The census grades what **ran**, not what compiled, and names the unverified rest — it used to report building as passing
 - **Debugging**: `-g` emits DWARF that composes with any `-O`; the DAP debugger lives in [milo-language/dapweb](https://github.com/milo-language/dapweb)
 

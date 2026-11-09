@@ -30,7 +30,7 @@ const GATE = argv.includes("--max-lines") ? Number(flag("--max-lines", "0")) : 0
 const KEEP_ARMS = argv.includes("--platform-arms");
 const globs = argv.includes("--glob")
   ? [flag("--glob", "")]
-  : ["src/*.ts", "src/**/*.ts", "std/*.milo", "std/**/*.milo", "src-milo/*.milo"];
+  : ["src/*.ts", "src/**/*.ts", "std/*.milo", "std/**/*.milo"];
 
 const files = [
   ...new Set(

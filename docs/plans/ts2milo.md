@@ -11,8 +11,8 @@ status: spike, stage 1 passed
 
 ## Why this again
 
-`src-milo/` was frozen on 2026-08-09 because keeping a hand-written port in sync with a
-moving `src/` never ends ([selfhost-endgame-decision.md](../selfhost-endgame-decision.md)).
+The hand-written `src-milo/` was frozen on 2026-08-09 (and deleted 2026-11-08) because
+keeping a hand-written port in sync with a moving `src/` never ends ([self-hosting.md](../self-hosting.md)).
 Two things changed since: MLIR is now the only backend, so the port no longer has to carry
 the LLVM-text codegen (`emit-mlir` is the lowering and `milo-opt` does the rest), and a
 generated port has no sync tax: the Milo is output, rebuilt from the TypeScript, never edited.

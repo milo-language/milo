@@ -1,7 +1,7 @@
 // Guarded child execution: hard memory + wall-clock + CPU caps for every
 // process the test harnesses spawn.
 //
-// Why this exists: milo-self has known memory-corruption bugs, and a runaway
+// Why this exists: a compiled test program (or the compiler) with a runaway
 // allocation swaps macOS to death long before any wall-clock timeout fires.
 // macOS enforces neither RLIMIT_DATA nor RLIMIT_AS (verified: a 3GB malloc
 // succeeds under `ulimit -d`/`-v` of 1GB), so no kernel-side cap is possible.
@@ -13,7 +13,6 @@
 // Library:  import { guardedRun } from "../scripts/guard"
 import { StringDecoder } from "node:string_decoder";
 // CLI:      bun scripts/guard.ts [--mem-mb N] [--virtual-mem-mb N] [--timeout-s N] -- cmd args...
-//           (required for any manual milo-self invocation — never run it bare)
 import { spawn, execFile } from "child_process";
 import { totalmem } from "os";
 
@@ -232,7 +231,7 @@ interface GuardOpts {
 // because the kernel enforces no rlimits, whereas the only Windows consumer is a
 // disposable CI runner. Keep the one guarantee that ports (wall clock) and kill
 // the whole tree with taskkill. There is deliberately NO memory layer here, so
-// nothing untrusted (milo-self) may be run under it on Windows.
+// nothing that might allocate without bound may be run under it on Windows.
 function windowsRun(cmd: string, args: string[], opts: GuardOpts, timeoutMs: number): Promise<RunResult> {
   return new Promise(resolve => {
     const child = spawn(cmd, args, {
@@ -240,10 +239,10 @@ function windowsRun(cmd: string, args: string[], opts: GuardOpts, timeoutMs: num
       env: guardedEnv(opts.env ?? process.env),
       // stdin follows the same inheritStdio switch as stdout/stderr: CLI mode
       // (guard.ts invoked as `bun scripts/guard.ts -- cmd args`) always sets
-      // it, so a guarded interactive process (e.g. `milo-self lsp`, which
+      // it, so a guarded interactive process (e.g. a language server, which
       // reads JSON-RPC off stdin) gets a real stdin instead of silently
       // reading EOF forever. Programmatic guardedRun() callers (test
-      // harnesses, selfhost-sweep) don't pass inheritStdio and keep the
+      // harnesses, sweeps) don't pass inheritStdio and keep the
       // original "ignore" — a batch build/run has no business blocking on
       // stdin, and this must not change their behavior.
       stdio: [opts.inheritStdio ? "inherit" : "ignore", opts.inheritStdio ? "inherit" : "pipe", opts.inheritStdio ? "inherit" : "pipe"],
@@ -358,10 +357,10 @@ exec "$@"`;
       detached: true,
       // stdin follows the same inheritStdio switch as stdout/stderr: CLI mode
       // (guard.ts invoked as `bun scripts/guard.ts -- cmd args`) always sets
-      // it, so a guarded interactive process (e.g. `milo-self lsp`, which
+      // it, so a guarded interactive process (e.g. a language server, which
       // reads JSON-RPC off stdin) gets a real stdin instead of silently
       // reading EOF forever. Programmatic guardedRun() callers (test
-      // harnesses, selfhost-sweep) don't pass inheritStdio and keep the
+      // harnesses, sweeps) don't pass inheritStdio and keep the
       // original "ignore" — a batch build/run has no business blocking on
       // stdin, and this must not change their behavior.
       stdio: [
@@ -451,7 +450,7 @@ exec "$@"`;
 // own process group). Polls the pid subtree via ppid links and SIGKILLs every
 // pid in it on breach. Descendants that reparent to init escape this walk;
 // that's acceptable for the default `milo run` guard — the hard pgid-based
-// guarantee for untrusted milo-self stays with guardedRun.
+// guarantee stays with guardedRun.
 export function monitorPidTree(
   rootPid: number,
   memMb: number,

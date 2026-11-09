@@ -12,9 +12,8 @@
 // --no-overflow-checks or a non-host target, so a full gate is one default pass plus the
 // variant passes listed in docs/plans/codegen-ir-2026-10.md.
 //
-// Why a separate script from ir-diff.ts: that one compares milo-self against the TS compiler,
-// where differences are expected. Here the two sides are the same compiler at two commits, so
-// ANY difference is a behavior change, and "N/N byte-identical" is the whole verdict.
+// The two sides are the same compiler at two commits, so ANY difference is a behavior
+// change, and "N/N byte-identical" is the whole verdict.
 //
 // The base side is a detached worktree of the resolved commit under os.tmpdir(), and its
 // outputs are cached by commit sha (a commit's output never changes), so a rerun in the edit
@@ -144,7 +143,7 @@ type Emit = { ok: true; ir: string } | { ok: false; err: string };
 
 async function emit(tree: string, rel: string): Promise<Emit> {
   // Each tree must resolve std from itself, so an inherited MILO_ROOT is dropped.
-  const env = { ...process.env, MILO_OPT };
+  const env: Record<string, string | undefined> = { ...process.env, MILO_OPT };
   delete env.MILO_ROOT;
   let r;
   for (let attempt = 1; ; attempt++) {

@@ -6,7 +6,7 @@
 // — the target itself — and every no-`-o` invocation degrades to a usage error.
 import { test, expect, afterAll } from "bun:test";
 import { execFileSync } from "child_process";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -40,13 +40,19 @@ test("a directory writes one .md per module", () => {
   expect(readFileSync(join(out, "json.md"), "utf-8")).toContain("Json.parse");
 });
 
-// Nested dirs must keep their path as the module name, not collapse to a basename.
+// Nested dirs must keep their path as the module name, not collapse to a basename:
+// two modules named parser in different dirs must both get a page.
 test("nested modules keep their relative path", () => {
+  const src = mkdtempSync(join(tmpdir(), "milo-doc-nested-src-"));
   const out = mkdtempSync(join(tmpdir(), "milo-doc-nested-"));
-  dirs.push(out);
-  const r = doc([join(ROOT, "src-milo"), "-o", out]);
+  dirs.push(src, out);
+  mkdirSync(join(src, "sub"));
+  writeFileSync(join(src, "parser.milo"), "/// Top.\npub fn top() -> i64 { return 1 }\n");
+  writeFileSync(join(src, "sub", "parser.milo"), "/// Adds.\npub fn add(a: i64, b: i64) -> i64 { return a + b }\n");
+  const r = doc([src, "-o", out]);
   expect(r.code).toBe(0);
-  expect(existsSync(join(out, "parser.md"))).toBe(true);
+  expect(readFileSync(join(out, "parser.md"), "utf-8")).toContain("top");
+  expect(readFileSync(join(out, "sub", "parser.md"), "utf-8")).toContain("add");
 });
 
 test("a missing path is an error, not an empty document", () => {

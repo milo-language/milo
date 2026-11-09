@@ -1,6 +1,5 @@
-// Fixture annotation parsing, shared by tests/run.test.ts (TS compiler) and
-// tests/selfhost.test.ts (milo-self). Both must agree on what a fixture expects,
-// otherwise the self-host ratchet measures the wrong thing.
+// Fixture annotation parsing, shared by tests/run.test.ts and the scripts that run
+// fixtures (leak-check, asan-sweep), so they all agree on what a fixture expects.
 //
 // Annotations are matched after trimming: the formatter indents comments to
 // their enclosing block, so requiring column 0 would make `milo fmt` break
