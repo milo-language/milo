@@ -55,15 +55,16 @@ export class PurityScan {
   // The old check never looked inside loop invariants, so nothing there is reported.
   contractDepth = 0;
 
-  constructor(public input: PurityInput) {}
+  // Plain data only: the input also carries AST bodies, which have no Clone in Milo.
+  constructor(public calls: CallFact[], public globalNames: string[]) {}
 
   index(): void {
     let i = 0;
-    while (i < this.input.calls.length) {
-      this.callIdx.set(this.input.calls[i].id, i);
+    while (i < this.calls.length) {
+      this.callIdx.set(this.calls[i].id, i);
       i++;
     }
-    for (const g of this.input.globals) { this.globals.add(g); }
+    for (const g of this.globalNames) { this.globals.add(g); }
   }
 
   enter(): number {
@@ -152,7 +153,8 @@ export class PurityScan {
 
   visitForInStmt(n: ForInStmt, id: number, _parent: Parent, _key: EdgeKey, _index: number): void {
     const names = [n.varName];
-    if (n.varName2 !== null) { names.push(n.varName2); }
+    const second = n.varName2;
+    if (second !== null) { names.push(second); }
     this.binds.set(id, names);
   }
 
@@ -182,14 +184,18 @@ export class PurityScan {
     const owner = this.pattern(id, parent);
     const names = this.binds.get(owner);
     if (names !== undefined) {
+      // Rebuilt and stored back: a map value read out is not appended to in place in Milo.
+      const merged: string[] = [];
+      for (const nm of names) { merged.push(nm); }
       let i = 0;
       while (i < n.bindings.length) {
         // A nested sub-pattern at this position is visited on its own and binds there.
         let nested = false;
-        if (n.args !== undefined && n.args[i] !== undefined && n.args[i] !== null) { nested = true; }
-        if (!nested) { names.push(n.bindings[i]); }
+        if (n.args !== undefined && i < n.args.length && n.args[i] !== null) { nested = true; }
+        if (!nested) { merged.push(n.bindings[i]); }
         i++;
       }
+      this.binds.set(owner, merged);
     }
   }
   visitLiteralPattern(_n: LiteralPattern, id: number, parent: Parent, _key: EdgeKey, _index: number): void { this.pattern(id, parent); }
@@ -225,7 +231,7 @@ export class PurityScan {
     const got = this.callIdx.get(id);
     if (got !== undefined) { at = got; }
     if (at < 0) { return; }
-    const f = this.input.calls[at];
+    const f = this.calls[at];
     if (f.verdict === IMPURE_FN_VALUE) {
       this.fail(`'${this.who}' is @pure but calls the function value '${f.name}'`, span,
         `purity is not part of a fn type, so the compiler cannot see what this call does — call a named @pure fn instead`, "");
@@ -255,7 +261,7 @@ export class PurityScan {
 }
 
 export function purityFindings(input: PurityInput): Finding[] {
-  const scan = new PurityScan(input);
+  const scan = new PurityScan(input.calls, input.globals);
   scan.index();
   for (const task of input.tasks) {
     scan.begin(task);

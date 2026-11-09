@@ -7,13 +7,18 @@ import { isStdCollectionModule } from "./checker";
 import type { ProgramPassHost, ProgramView } from "./checker-program-passes";
 import {
   purityFindings, IMPURE_NONE, IMPURE_FN_VALUE, IMPURE_INTERFACE, IMPURE_FN_FIELD, IMPURE_EXTERN, IMPURE_CALLEE,
-  type BodyTask, type CallFact,
+  type BodyTask, type CallFact, type PurityInput,
 } from "./checker-purity";
 
 // Built-in free functions with no ambient effect. An allowlist, not a denylist: a new
 // intrinsic has to be judged pure deliberately rather than inheriting it by default.
 // `assert` is here because trapping is not an effect under this definition.
 const PURE_BUILTINS = new Set(["format", "max", "min", "assert"]);
+
+// Test hook (scripts/ts2milo-purity-diff.ts): sees each input the pass is about to run on.
+// Unset in every real compile, so it changes nothing.
+let captureInput: ((input: PurityInput) => void) | undefined;
+export function setPurityCapture(f: ((input: PurityInput) => void) | undefined): void { captureInput = f; }
 
 export function checkPurity(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const pureNames = new Set<string>();
@@ -86,5 +91,7 @@ export function checkPurity(host: ProgramPassHost, program: Program, view: Progr
   }
 
   const globals = program.globals.filter(g => g.mutable).map(g => g.name);
-  for (const f of purityFindings({ tasks, calls, globals })) host.error(f.message, f.span, f.hint);
+  const input: PurityInput = { tasks, calls, globals };
+  if (captureInput) captureInput(input);
+  for (const f of purityFindings(input)) host.error(f.message, f.span, f.hint);
 }
