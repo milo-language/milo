@@ -1273,3 +1273,16 @@ describe("optional chain narrowing", () => {
     expect(out).toContain("jsEnv(");
   });
 });
+
+describe("replaceNode intrinsic", () => {
+  test("a node rewrite through replaceNode is an assignment through the &mut place that keeps the hidden id", () => {
+    const files = ["src/ast.ts", ...frontendFiles().filter((f) => f !== "src/ast.ts")];
+    const r = transpile(files, { astRoots: ["Program"], lenient: true });
+    const out = r.files.get("checker.milo")!;
+    const fn = out.slice(out.indexOf("fn canonicalizePreludeVariant("));
+    const body = fn.slice(0, fn.indexOf("\n    fn ", 10));
+    expect(body).toContain("expr: &mut Expr");
+    expect(body).toMatch(/let id = Expr_id\(expr\)\n\s+expr = \w+\n\s+Expr_set_id\(&mut expr, id\)/);
+    expect(r.functions.some((f) => f.name === "replaceNode")).toBe(false);
+  });
+});
