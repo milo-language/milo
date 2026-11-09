@@ -1153,7 +1153,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             if (ts.isBinaryExpression(l0) && l0.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && isChainMember(unparen(l0.left))) {
               let root: ts.Expression = unparen(l0.left);
               while (isChainMember(root)) root = (root as ts.PropertyAccessExpression).expression;
-              if (ts.isIdentifier(root) && isOptionT(tOf(root)) && !narrow.has(root.getText())) {
+              // Not for a tagged union: `t?.tag === "fn" && t.owning` narrows to a variant, which the union guard path does.
+              if (ts.isIdentifier(root) && isOptionT(tOf(root)) && !narrow.has(root.getText()) && !unionOfType(checker, checker.getNonNullableType(tOf(root)))) {
                 hit("optional chain compare narrowing", "x?.f === k && rest: match x once, both sides read the payload");
                 const key = root.getText(), name = fresh(key), scrut = ex(root);
                 const saved = narrow.get(key);
