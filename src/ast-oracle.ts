@@ -104,8 +104,11 @@ export function armAstOracle(mode: string, program: Program, checker: object): v
   const tables: [string, Map<object, unknown> | Set<object>][] = [];
   const rewrites = fields.rewrites as Map<object, object>;
   if (!(rewrites instanceof Map)) throw new Error("MILO_AST_ORACLE: the checker has no rewrites table");
+  // Pattern replacements are watched the same way as Expr replacements.
+  const patternRewrites = fields.patternRewrites;
+  const rewriteTables: Map<object, object>[] = patternRewrites instanceof Map ? [rewrites, patternRewrites as Map<object, object>] : [rewrites];
   for (const [name, table] of Object.entries(fields)) {
-    if (table === rewrites || !(table instanceof Map || table instanceof Set)) continue;
+    if (rewriteTables.includes(table as Map<object, object>) || !(table instanceof Map || table instanceof Set)) continue;
     tables.push([name, table as Map<object, unknown> | Set<object>]);
     for (const op of ["get", "has", "set", "add", "delete"] as const) {
       const real = (table as unknown as Record<string, (...a: unknown[]) => unknown>)[op];
@@ -116,13 +119,15 @@ export function armAstOracle(mode: string, program: Program, checker: object): v
       };
     }
   }
-  const set = rewrites.set;
-  rewrites.set = function (k, v) {
-    // A fact filed under the node before it was replaced: every later lookup goes through the replacement and misses it.
-    for (const [name, table] of tables) if (table.has(k)) note(`orphan ${name}`);
-    const r = set.call(this, k, v);
-    stale.add(k);
-    markStale(k);
-    return r;
-  };
+  for (const rw of rewriteTables) {
+    const set = rw.set;
+    rw.set = function (k, v) {
+      // A fact filed under the node before it was replaced: every later lookup goes through the replacement and misses it.
+      for (const [name, table] of tables) if (table.has(k)) note(`orphan ${name}`);
+      const r = set.call(this, k, v);
+      stale.add(k);
+      markStale(k);
+      return r;
+    };
+  }
 }

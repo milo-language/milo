@@ -665,6 +665,8 @@ export interface CheckResult {
   // The node the checker put in place of each expression it re-spelled (a prelude variant, a callback
   // thunk). The tree itself is never written: every reader of a child expression goes through `rewritten`.
   rewrites: Map<Expr, Expr>;
+  // The same for patterns (an elided enum name filled in, a bare variant name settled).
+  patternRewrites: Map<Pattern, Pattern>;
 }
 
 // The expression to read where the tree holds `e`: the checker's replacement for it when there is one. A
@@ -675,6 +677,17 @@ export function rewritten(rewrites: Map<Expr, Expr>, e: Expr): Expr {
   let more = true;
   while (more) {
     const next = rewrites.get(cur);
+    if (next !== undefined) { cur = next; } else { more = false; }
+  }
+  return cur;
+}
+
+// The pattern to read where the tree holds `p`, like `rewritten` for expressions.
+export function rewrittenPattern(patternRewrites: Map<Pattern, Pattern>, p: Pattern): Pattern {
+  let cur = p;
+  let more = true;
+  while (more) {
+    const next = patternRewrites.get(cur);
     if (next !== undefined) { cur = next; } else { more = false; }
   }
   return cur;
@@ -968,6 +981,7 @@ export class TypeChecker {
   private currentFnReplayHooked = false;
   private rewrittenEnums = new Map<Expr, string>();
   private rewrites = new Map<Expr, Expr>();
+  private patternRewrites = new Map<Pattern, Pattern>();
   private staticCalls = new Map<Expr, string>();
   private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
   private rewrittenStructLits = new Map<Expr, string>();
@@ -3989,6 +4003,7 @@ export class TypeChecker {
       viewLets: this.viewLets,
       forInBindingTypes: this.forInBindingTypes,
       rewrites: this.rewrites,
+      patternRewrites: this.patternRewrites,
     };
   }
 
@@ -7611,9 +7626,9 @@ export class TypeChecker {
         const rawSubjType = this.checkExpr(stmt.subject);
         // Names first: whether the subject is only inspected depends on which payload
         // positions bind, and `Some(None)` binds nothing once `None` is known to be a variant.
-        this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
-        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [stmt.pattern]);
-        this.bindElidedPattern(stmt.pattern, subjType);
+        const rawBound = this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
+        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [rawBound]);
+        const pat = this.bindElidedPattern(rawBound, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`if let subject must be an enum, got ${this.show(subjType)}`, sp);
           break;
@@ -7624,7 +7639,7 @@ export class TypeChecker {
         const preMoves = this.snapshotMoveState();
         const preReachable = this.reachable;
         this.pushScope();
-        const patternMovedInfo = this.bindLetClause(stmt.pattern, stmt.subject, subjType, subjBorrows, subjIsMut);
+        const patternMovedInfo = this.bindLetClause(pat, stmt.subject, subjType, subjBorrows, subjIsMut);
         for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
         this.releasePatternMove(patternMovedInfo);
         this.popScope();
@@ -7661,9 +7676,9 @@ export class TypeChecker {
             continue;
           }
           const rawSubjType = this.checkExpr(c.subject);
-          this.bindElidedPattern(c.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
-          const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(c.subject, rawSubjType, [c.pattern]);
-          this.bindElidedPattern(c.pattern, subjType);
+          const rawBound = this.bindElidedPattern(c.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
+          const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(c.subject, rawSubjType, [rawBound]);
+          const pat = this.bindElidedPattern(rawBound, subjType);
           failPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
           this.pushScope();
           opened++;
@@ -7671,7 +7686,7 @@ export class TypeChecker {
             this.error(`if let subject must be an enum, got ${this.show(subjType)}`, c.span ?? sp);
             continue;
           }
-          released.push(this.bindLetClause(c.pattern, c.subject, subjType, subjBorrows, subjIsMut));
+          released.push(this.bindLetClause(pat, c.subject, subjType, subjBorrows, subjIsMut));
           if (!subjBorrows) consumed.push(c.subject);
         }
         this.pushScope();
@@ -7698,9 +7713,9 @@ export class TypeChecker {
       case "LetElseStmt": {
         if (stmt.bindName !== undefined) { this.checkNullRefUnwrap(stmt, stmt.bindName, fnRetType, sp); break; }
         const rawSubjType = this.checkExpr(stmt.value);
-        this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
-        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.value, rawSubjType, [stmt.pattern]);
-        this.bindElidedPattern(stmt.pattern, subjType);
+        const rawBound = this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
+        const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.value, rawSubjType, [rawBound]);
+        const pat = this.bindElidedPattern(rawBound, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`let-else value must be an enum (Option/Result/…), got ${this.show(subjType)}`, sp);
           break;
@@ -7723,33 +7738,33 @@ export class TypeChecker {
           this.restoreMoveState(preElseMoves);
         }
         this.reachable = preElseReachable;
-        if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
+        if (subjType.tag === "enum" && pat.kind === "EnumPattern") {
           const enumInfo = must(this.enums, subjType.name, "enums");
-          const ps = stmt.pattern.span;
-          if (stmt.pattern.enumName !== subjType.name && enumInfo.baseName !== stmt.pattern.enumName) {
-            this.error(`pattern enum '${stmt.pattern.enumName}' does not match value type '${subjType.name}'`, ps);
+          const ps = pat.span;
+          if (pat.enumName !== subjType.name && enumInfo.baseName !== pat.enumName) {
+            this.error(`pattern enum '${pat.enumName}' does not match value type '${subjType.name}'`, ps);
           }
-          const variant = enumInfo.variants.get(stmt.pattern.variant);
+          const variant = enumInfo.variants.get(pat.variant);
           if (!variant) {
-            this.error(`enum '${subjType.name}' has no variant '${stmt.pattern.variant}'`, ps);
-          } else if (stmt.pattern.bindings.length !== variant.fields.length) {
-            this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
+            this.error(`enum '${subjType.name}' has no variant '${pat.variant}'`, ps);
+          } else if (pat.bindings.length !== variant.fields.length) {
+            this.error(`variant '${pat.variant}' has ${variant.fields.length} fields, but pattern has ${pat.bindings.length} bindings`, ps);
           }
-          if (variant && isNestedPattern(stmt.pattern)) {
+          if (variant && isNestedPattern(pat)) {
             // Bindings escape into the CURRENT scope (the whole point vs if-let).
-            this.declarePatternLeaves(stmt.pattern, this.patternLeaves(stmt.pattern, subjType, true), stmt.value, subjBorrows, subjIsMut, true);
+            this.declarePatternLeaves(pat, this.patternLeaves(pat, subjType, true), stmt.value, subjBorrows, subjIsMut, true);
           } else if (variant) {
-            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
-            this.patternBindingTypes.set(stmt.pattern, bindTypes);
+            const bindTypes = variant.fields.slice(0, pat.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
+            this.patternBindingTypes.set(pat, bindTypes);
             const freezes = this.freezeSubjectFor(stmt.value, bindTypes);
             // Bindings escape into the CURRENT scope (the whole point vs if-let).
-            for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+            for (let i = 0; i < Math.min(pat.bindings.length, variant.fields.length); i++) {
+              const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
+              this.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)), ...(i === 0 && freezes.length > 0 && { freezes }) });
-              const bound = this.lookup(stmt.pattern.bindings[i]);
-              if (i === 0) this.attributeBorrows(freezes, stmt.pattern.bindings[0], bound);
-              if (bound) this.noteRefInto(bound, stmt.value, stmt.pattern.variant, i);
+              const bound = this.lookup(pat.bindings[i]);
+              if (i === 0) this.attributeBorrows(freezes, pat.bindings[0], bound);
+              if (bound) this.noteRefInto(bound, stmt.value, pat.variant, i);
             }
           }
         }
@@ -8206,7 +8221,9 @@ export class TypeChecker {
       return;
     }
     if (node !== null && typeof node === "object") {
-      for (const value of Object.values(rewritten(this.rewrites, node as Expr))) this.scanUnreachable(value);
+      // A pattern the checker replaced is walked through its replacement too.
+      const cur = this.rewrittenPat(rewritten(this.rewrites, node as Expr) as unknown as Pattern);
+      for (const value of Object.values(cur)) this.scanUnreachable(value);
     }
   }
 
@@ -8610,7 +8627,7 @@ export class TypeChecker {
   // nothing and does not count.
   private forkHasOwnedTail(e: Expr): boolean {
     const arms = e.kind === "IfExpr" ? [{ body: e.thenBody, bound: new Set<string>() }, { body: e.elseBody, bound: new Set<string>() }]
-      : e.kind === "MatchExpr" ? e.arms.map(a => ({ body: a.body, bound: new Set(patternLeafNames(a.pattern)) }))
+      : e.kind === "MatchExpr" ? e.arms.map(a => ({ body: a.body, bound: new Set(patternLeafNames(rewrittenPattern(this.patternRewrites, a.pattern))) }))
       : [];
     return arms.some(({ body, bound }) => {
       const t = this.tailExprOf(body);
@@ -14811,11 +14828,11 @@ export class TypeChecker {
   private checkIsExprExpr(expr: ExprOf<"IsExpr">): TypeKind {
     const sp = expr.span;
     const opType = this.checkExpr(expr.operand);
-    this.bindElidedPattern(expr.pattern, opType.tag === "ref" ? opType.inner : opType);
-    if (isNestedPattern(expr.pattern)) {
+    const pat = this.bindElidedPattern(expr.pattern, opType.tag === "ref" ? opType.inner : opType);
+    if (isNestedPattern(pat)) {
       this.error(`'is' tests one variant, not a nested pattern`, sp, `use 'if let' (or a let-chain) to test a nested shape`);
     }
-    if (expr.pattern.kind === "EnumPattern") {
+    if (pat.kind === "EnumPattern") {
       if (opType.tag !== "enum" && opType.tag !== "unknown") {
         this.error(`'is' pattern requires an enum type, got ${this.show(opType)}`, sp);
       }
@@ -15268,25 +15285,48 @@ export class TypeChecker {
   // the one thing the parser cannot: a bare name in a payload position (`Some(None)`) is a
   // payload-free variant when the payload's enum has a variant of that name, and a binding
   // otherwise. Rust resolves the same spelling the same way.
-  private bindElidedPattern(pattern: Pattern | undefined | null, subjType: TypeKind) {
-    if (!pattern || pattern.kind !== "EnumPattern") return;
-    if (subjType.tag !== "enum") return;
-    if (pattern.enumName === "") pattern.enumName = subjType.name;
-    const variant = this.enums.get(subjType.name)?.variants.get(pattern.variant);
-    if (!variant) return;
-    pattern.bindings.forEach((b, i) => {
-      const ft = variant.fields[i];
-      if (!ft) return;
-      const sub = pattern.args?.[i];
-      if (sub) { this.bindElidedPattern(sub, ft); return; }
-      if (ft.tag !== "enum" || b === "_") return;
-      const named = this.enums.get(ft.name)?.variants.get(b);
-      if (!named || named.fields.length !== 0) return;
-      const args = pattern.args ?? pattern.bindings.map(() => null);
-      args[i] = { kind: "EnumPattern", enumName: ft.name, variant: b, bindings: [], span: pattern.bindingSpans?.[i] ?? pattern.span };
-      pattern.args = args;
-      pattern.bindings[i] = "_";
-    });
+  // Returns the pattern to use from here on: `pattern` itself when nothing needed filling, else its
+  // replacement (recorded in `patternRewrites`; the tree is not written).
+  private rewrittenPat(p: Pattern): Pattern { return rewrittenPattern(this.patternRewrites, p); }
+
+  private bindElidedPattern(pattern: Pattern, subjType: TypeKind): Pattern {
+    const cur = rewrittenPattern(this.patternRewrites, pattern);
+    const next = this.elidedPatternFor(cur, subjType);
+    if (next !== cur) this.patternRewrites.set(cur, next);
+    return next;
+  }
+
+  // `pattern` with its blanks filled in, or `pattern` itself when there are none. A changed sub-pattern
+  // is not recorded on its own: it travels inside the replacement of the pattern that holds it.
+  private elidedPatternFor(pattern: Pattern, subjType: TypeKind): Pattern {
+    if (pattern.kind !== "EnumPattern" || subjType.tag !== "enum") return pattern;
+    const enumName = pattern.enumName === "" ? subjType.name : pattern.enumName;
+    const info = this.enums.get(subjType.name);
+    const variant = info === undefined ? undefined : info.variants.get(pattern.variant);
+    let slotsChanged = false;
+    const bindings: string[] = [];
+    const args: (Pattern | null)[] = [];
+    for (let i = 0; i < pattern.bindings.length; i++) {
+      let binding = pattern.bindings[i]!;
+      let sub: Pattern | null = pattern.args !== undefined && i < pattern.args.length ? pattern.args[i]! : null;
+      const ft = variant === undefined ? undefined : variant.fields[i];
+      if (ft !== undefined && sub !== null) {
+        const nsub = this.elidedPatternFor(sub, ft);
+        if (nsub !== sub) { sub = nsub; slotsChanged = true; }
+      } else if (ft !== undefined && ft.tag === "enum" && binding !== "_") {
+        const named = this.enums.get(ft.name);
+        const bare = named === undefined ? undefined : named.variants.get(binding);
+        if (bare !== undefined && bare.fields.length === 0) {
+          sub = { kind: "EnumPattern", enumName: ft.name, variant: binding, bindings: [], span: pattern.bindingSpans !== undefined && i < pattern.bindingSpans.length ? pattern.bindingSpans[i] : pattern.span };
+          binding = "_";
+          slotsChanged = true;
+        }
+      }
+      bindings.push(binding);
+      args.push(sub);
+    }
+    if (enumName === pattern.enumName && !slotsChanged) return pattern;
+    return { kind: "EnumPattern", enumName, variant: pattern.variant, bindings, bindingSpans: pattern.bindingSpans, args: slotsChanged ? args : pattern.args, span: pattern.span };
   }
 
   // The bindings of an enum pattern matched against `et`, in `patternLeafNames` order. With
@@ -15399,11 +15439,12 @@ export class TypeChecker {
     const env = this.patternSpace();
     const rows: Pat[][] = [];
     for (const arm of arms) {
-      const pat = this.toSpacePat(arm.pattern, subjType);
+      const ap = this.rewrittenPat(arm.pattern);
+      const pat = this.toSpacePat(ap, subjType);
       // An arm after full coverage is only flagged when it is not a wildcard: a trailing
       // `_` after every variant is accepted by the flat rule, and stays accepted here.
-      if (arm.pattern.kind !== "WildcardPattern" && useful(env, rows, [pat], [subjType]) === null) {
-        this.error(`unreachable match arm: '${this.showPattern(arm.pattern)}' is already covered by the arms above it`, arm.pattern.span ?? sp);
+      if (ap.kind !== "WildcardPattern" && useful(env, rows, [pat], [subjType]) === null) {
+        this.error(`unreachable match arm: '${this.showPattern(ap)}' is already covered by the arms above it`, ap.span ?? sp);
       }
       rows.push([pat]);
     }
@@ -15412,7 +15453,7 @@ export class TypeChecker {
       if (!w) continue;
       const top = w[0]!;
       // "Missing variant" only when no arm names it; `Some(0)` alone leaves `Some(_)`.
-      const named = arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.variant === c.name);
+      const named = arms.some(a => { const p = this.rewrittenPat(a.pattern); return p.kind === "EnumPattern" && p.variant === c.name; });
       const allWild = top.k === "ctor" && top.args.every(a => a.k === "wild");
       if (allWild && !named) this.error(`non-exhaustive match: missing variant '${c.name}'`, sp);
       else this.error(`non-exhaustive match: missing case '${showPat(top)}'`, sp,
@@ -15500,8 +15541,8 @@ export class TypeChecker {
       const t = rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
       for (const arm of arms) this.bindElidedPattern(arm.pattern, t);
     }
-    const dead = armAfterWildcard(arms);
-    if (dead >= 0) this.error(`unreachable match arm: '${this.showPattern(arms[dead]!.pattern)}' comes after a '_' arm, which matches everything`, arms[dead]!.pattern.span ?? sp);
+    const dead = armAfterWildcard(arms.map(a => ({ pattern: this.rewrittenPat(a.pattern) })));
+    if (dead >= 0) this.error(`unreachable match arm: '${this.showPattern(this.rewrittenPat(arms[dead]!.pattern))}' comes after a '_' arm, which matches everything`, this.rewrittenPat(arms[dead]!.pattern).span ?? sp);
     // Matching on a borrowed enum (`&Enum`) reads the pointee without moving
     // it. Payload bindings become borrows (see below), so nothing is consumed.
     // Reading a ref Ident auto-derefs, so also consult its declared type.
@@ -15536,7 +15577,7 @@ export class TypeChecker {
     // destructures owned data still consumes exactly as before.
     let subjIsOwnedInspect = false;
     if (!subjIsRef && !subjIsPlace) {
-      subjIsOwnedInspect = this.ownedInspectOnly(subject, subjType, arms.map(a => a.pattern));
+      subjIsOwnedInspect = this.ownedInspectOnly(subject, subjType, arms.map(a => this.rewrittenPat(a.pattern)));
     }
     const subjBorrows = subjIsRef || subjIsPlace || subjIsOwnedInspect;
     this.refuseDropEnumMoveOut(subject, subjType, subjBorrows, arms.map(a => a.pattern));
@@ -15553,22 +15594,23 @@ export class TypeChecker {
       const preReachable = this.reachable;
       const armPaths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[] = [];
       for (const arm of arms) {
-        if (arm.pattern.kind === "WildcardPattern") {
+        const pat = this.rewrittenPat(arm.pattern);
+        if (pat.kind === "WildcardPattern") {
           hasWildcard = true;
-        } else if (arm.pattern.kind === "LiteralPattern") {
-          const ps = arm.pattern.span;
-          if (subjType.tag === "int" && arm.pattern.literalKind !== "int" && arm.pattern.literalKind !== "char") {
+        } else if (pat.kind === "LiteralPattern") {
+          const ps = pat.span;
+          if (subjType.tag === "int" && pat.literalKind !== "int" && pat.literalKind !== "char") {
             // char literals are integer-valued (u8); allow them against any int subject
             this.error(`expected integer literal in match arm`, ps);
-          } else if (subjType.tag === "float" && arm.pattern.literalKind !== "float" && arm.pattern.literalKind !== "int") {
+          } else if (subjType.tag === "float" && pat.literalKind !== "float" && pat.literalKind !== "int") {
             this.error(`expected numeric literal in match arm`, ps);
-          } else if (subjType.tag === "string" && arm.pattern.literalKind !== "string") {
+          } else if (subjType.tag === "string" && pat.literalKind !== "string") {
             this.error(`expected string literal in match arm`, ps);
-          } else if (subjType.tag === "bool" && arm.pattern.literalKind !== "bool") {
+          } else if (subjType.tag === "bool" && pat.literalKind !== "bool") {
             this.error(`expected bool literal in match arm`, ps);
           }
-        } else if (arm.pattern.kind === "EnumPattern") {
-          this.error(`cannot use enum pattern when matching on ${this.show(subjType)}`, arm.pattern.span);
+        } else if (pat.kind === "EnumPattern") {
+          this.error(`cannot use enum pattern when matching on ${this.show(subjType)}`, pat.span);
         }
         this.restoreMoveState(preMoves);
         this.reachable = preReachable;
@@ -15581,8 +15623,8 @@ export class TypeChecker {
       }
       this.joinPaths(preMoves, armPaths);
       if (!hasWildcard && subjType.tag === "bool") {
-        const hasTrueArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === true);
-        const hasFalseArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === false);
+        const hasTrueArm = arms.some(a => { const p = this.rewrittenPat(a.pattern); return p.kind === "LiteralPattern" && p.value === true; });
+        const hasFalseArm = arms.some(a => { const p = this.rewrittenPat(a.pattern); return p.kind === "LiteralPattern" && p.value === false; });
         if (!hasTrueArm || !hasFalseArm) {
           this.error(`non-exhaustive match on bool`, sp);
           this.nonExhaustiveMatches.add(arms);
@@ -15596,48 +15638,49 @@ export class TypeChecker {
       // computed — but it is what narrows `subjType` for the enum accesses below.
       const enumInfo = must(this.enums, subjType.name, "enums");
       const covered = new Set<string>();
-      const anyNested = arms.some(a => isNestedPattern(a.pattern));
+      const anyNested = arms.some(a => isNestedPattern(this.rewrittenPat(a.pattern)));
       let hasWildcard = false;
       const preMoves = this.snapshotMoveState();
       const preReachable = this.reachable;
       const armPaths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[] = [];
       for (const arm of arms) {
-        if (arm.pattern.kind === "WildcardPattern") {
+        const pat = this.rewrittenPat(arm.pattern);
+        if (pat.kind === "WildcardPattern") {
           hasWildcard = true;
-        } else if (arm.pattern.kind === "EnumPattern") {
-          const ps = arm.pattern.span;
-          if (arm.pattern.enumName !== subjType.name && enumInfo.baseName !== arm.pattern.enumName) {
-            this.error(`pattern enum '${arm.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
+        } else if (pat.kind === "EnumPattern") {
+          const ps = pat.span;
+          if (pat.enumName !== subjType.name && enumInfo.baseName !== pat.enumName) {
+            this.error(`pattern enum '${pat.enumName}' does not match subject type '${subjType.name}'`, ps);
           }
-          const variant = enumInfo.variants.get(arm.pattern.variant);
+          const variant = enumInfo.variants.get(pat.variant);
           if (!variant) {
-            this.error(`enum '${subjType.name}' has no variant '${arm.pattern.variant}'`, ps);
+            this.error(`enum '${subjType.name}' has no variant '${pat.variant}'`, ps);
             continue;
           }
           // With a nested arm, two arms may share a variant (`Ok(Some(v))`, `Ok(None)`):
           // checkNestedCoverage decides which arms are dead instead.
-          if (covered.has(arm.pattern.variant) && !anyNested) {
-            this.error(`duplicate match arm for '${arm.pattern.variant}'`, ps);
+          if (covered.has(pat.variant) && !anyNested) {
+            this.error(`duplicate match arm for '${pat.variant}'`, ps);
           }
-          covered.add(arm.pattern.variant);
-          if (arm.pattern.bindings.length !== variant.fields.length) {
-            this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`, ps);
+          covered.add(pat.variant);
+          if (pat.bindings.length !== variant.fields.length) {
+            this.error(`variant '${pat.variant}' has ${variant.fields.length} fields, but pattern has ${pat.bindings.length} bindings`, ps);
           }
-        } else if (arm.pattern.kind === "LiteralPattern") {
-          this.error(`cannot use literal pattern when matching on enum`, arm.pattern.span);
+        } else if (pat.kind === "LiteralPattern") {
+          this.error(`cannot use literal pattern when matching on enum`, pat.span);
         }
         this.restoreMoveState(preMoves);
         this.reachable = preReachable;
         this.pushScope();
-        if (arm.pattern.kind === "EnumPattern" && isNestedPattern(arm.pattern)) {
-          if (enumInfo.variants.has(arm.pattern.variant)) {
-            this.declarePatternLeaves(arm.pattern, this.patternLeaves(arm.pattern, subjType, true), subject, subjBorrows, subjIsMut, false);
+        if (pat.kind === "EnumPattern" && isNestedPattern(pat)) {
+          if (enumInfo.variants.has(pat.variant)) {
+            this.declarePatternLeaves(pat, this.patternLeaves(pat, subjType, true), subject, subjBorrows, subjIsMut, false);
           }
-        } else if (arm.pattern.kind === "EnumPattern") {
-          const variant = enumInfo.variants.get(arm.pattern.variant);
+        } else if (pat.kind === "EnumPattern") {
+          const variant = enumInfo.variants.get(pat.variant);
           if (variant) {
             const bindTypes: TypeKind[] = [];
-            for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
+            for (let i = 0; i < Math.min(pat.bindings.length, variant.fields.length); i++) {
               let bt = variant.fields[i];
               // Ref- or place-match: a non-Copy payload binds as a borrow
               // (`&T`) — a view into the still-owned subject, so it can't be
@@ -15653,20 +15696,20 @@ export class TypeChecker {
             }
             const freezes = this.freezeSubjectFor(subject, bindTypes);
             for (let i = 0; i < bindTypes.length; i++) {
-              const bindSpan = arm.pattern.bindingSpans?.[i] ?? arm.pattern.span;
-              this.declare(arm.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+              const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
+              this.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
-              const bound = this.lookup(arm.pattern.bindings[i]);
-              if (bound) this.noteRefInto(bound, subject, arm.pattern.variant, i);
+              const bound = this.lookup(pat.bindings[i]);
+              if (bound) this.noteRefInto(bound, subject, pat.variant, i);
             }
-            this.patternBindingTypes.set(arm.pattern, bindTypes);
+            this.patternBindingTypes.set(pat, bindTypes);
           }
         }
         // Consume BEFORE the body, not after the whole match: a destructuring arm
         // zeroes the payload at arm entry, so a read of the subject inside that
         // arm is a use-after-move. Deferring the move to the end of the match let
         // those reads through silently and they saw zeroed data.
-        const armConsumes = !subjBorrows && this.armConsumesSubject(arm.pattern, enumInfo, subjType);
+        const armConsumes = !subjBorrows && this.armConsumesSubject(pat, enumInfo, subjType);
         let patternMovedInfo: object | null = null;
         if (armConsumes) {
           this.tryMove(subject);
