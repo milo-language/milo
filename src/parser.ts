@@ -1257,6 +1257,16 @@ export class Parser {
     return null;
   }
 
+  // Parses one f-string interpolation; a failure is re-anchored to the f-string's span (see the call site).
+  private parseFragment(tokens: Token[], span: Span): Expr {
+    try {
+      return new Parser(tokens).parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError)) throw e;
+      throw new ParseError({ ...e.diagnostic, span }, this.source, this.filePath);
+    }
+  }
+
   private parseIfExpr(s: Span): Expr {
     this.expect(TokenKind.If);
     const cond = this.parseExpr();
@@ -1383,17 +1393,9 @@ export class Parser {
     };
     if (this.at(TokenKind.Let)) return desugar(this.parseChainClauses());
     // `while more && let Some(x) = next()`: same retry as parseIf.
-    const saved = this.pos;
-    const savedDepth = this.exprDepth;
-    let cond: Expr;
-    try {
-      cond = this.parseExpr();
-    } catch (e) {
-      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
-      this.pos = saved;
-      this.exprDepth = savedDepth;
-      return desugar(this.parseChainClauses());
-    }
+    const parsedCond = this.parseCondOrNull();
+    if (parsedCond === null) return desugar(this.parseChainClauses());
+    const cond: Expr = parsedCond;
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
@@ -1418,13 +1420,8 @@ export class Parser {
       mutRef = true;
       iterableOrStart = iterableOrStart.operand;
     }
-    let iterable: Expr;
-    if (this.match(TokenKind.DotDot)) {
-      const end = this.parseExpr();
-      iterable = { kind: "RangeExpr", start: iterableOrStart, end, span: iterableOrStart.span };
-    } else {
-      iterable = iterableOrStart;
-    }
+    const rangeEnd = this.match(TokenKind.DotDot) ? this.parseExpr() : null;
+    const iterable: Expr = rangeEnd !== null ? { kind: "RangeExpr", start: iterableOrStart, end: rangeEnd, span: iterableOrStart.span } : iterableOrStart;
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
@@ -2276,13 +2273,7 @@ export class Parser {
         // file and a column past the end of it. That is a diagnostic the reader cannot
         // act on and what the frontend fuzzer's bad-span check reports. Re-anchor to the
         // f-string before it leaves this frame.
-        let expr: Expr;
-        try {
-          expr = new Parser(tokens).parseExpr();
-        } catch (e) {
-          if (!(e instanceof ParseError)) throw e;
-          throw new ParseError({ ...e.diagnostic, span }, this.source, this.filePath);
-        }
+        const expr: Expr = this.parseFragment(tokens, span);
         // The sub-parser lexes a bare fragment, so every span in it starts over
         // at 1:1 — any later error on an interpolated expression pointed at the
         // first line of the FILE. Restamp to the f-string's own span. Columns
