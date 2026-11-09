@@ -325,7 +325,7 @@ describe("truthiness in condition position", () => {
       "  return \"big\";",
       "}",
       "export function score(p: { x: number; y: number }): number { return p.x * 10 + p.y; }",
-      "export function mk(a: number): { x: number; y: number } { return { x: a, y: a + 1 }; }",
+      "export function mk(a: number): { x: number; y: number; z: number } { return { x: a, y: a + 1, z: 0 }; }",
       "export function opt(p: { x: number; tag?: string }): number { if (p.tag) { return 1; } return p.x; }",
     ].join("\n"));
     expect(out).toContain("pub enum Pick_mode {");
@@ -1209,5 +1209,29 @@ describe("optional chain narrowing", () => {
     expect(walk).toMatch(/fn walkOptExpr\(v: &mut StampScan, o: &mut Option<Heap<Expr>>/);
     expect(walk).toContain("_at: i64 = -1");
     expect(stamp).toContain("Expr_set_span(&mut e,");
+  });
+
+  test("a ctor param moves at its last use, @consumesThis takes returned fields, process.env and Map.size translate", () => {
+    const { file, dir } = tmpTs("tsm_cc.ts", [
+      "export interface Res { items: number[]; seen: Map<string, number> }",
+      "export class Chk {",
+      "  private items: number[] = [];",
+      "  private seen = new Map<string, number>();",
+      "  private names: Set<string>;",
+      "  constructor(names?: Set<string>) { this.names = names ?? new Set(); }",
+      "  /** @consumesThis */",
+      "  finish(): Res { this.items.push(1); return { items: this.items, seen: this.seen }; }",
+      "  count(): number { return this.seen.size + this.names.size; }",
+      "}",
+      "export function flag(): boolean { return (process.env.TS2MILO_X ?? \"\") !== \"\"; }",
+      "",
+    ].join("\n"));
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const out = r.files.get("tsm_cc.milo")!;
+    expect(r.stubs.map((s) => `${s.name}: ${s.reason}`)).toEqual([]);
+    expect(out).toContain("replace(self.items, Vec.new())");
+    expect(out).toContain("replace(self.seen, HashMap.new())");
+    expect(out).toContain("self.seen.len()");
+    expect(out).toContain("jsEnv(");
   });
 });

@@ -13,7 +13,7 @@
 // only costs an unneeded (idempotent) guard; missing a real read would hand out the zeroed
 // slot, so over-approximating is the safe side.
 
-import type { Contract, Stmt } from "./ast";
+import type { Contract } from "./ast";
 
 export const LAZY_GUARD_PREFIX = "__milo.lazy.";
 export const LAZY_INIT_PREFIX = "__milo.lazyinit.";

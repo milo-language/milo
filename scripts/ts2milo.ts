@@ -102,7 +102,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   // `<fn>_<local>`, `<Owner>_<field>`; identical literal sets share one generated enum. Declared names win,
   // so these register after the whole program has been walked. Emitted at the end of the declaring file.
   const typeNames = new Set<string>();
-  const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean }>();
+  const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean; dup?: boolean }>();
+  const anonShapes = new Map<string, { name: string; file: string; emitted: boolean }>();
   const genUnions = new Set<{ name: string; lits: string[]; file: string }>();
   const fnLabel = (n: ts.Node): string => {
     for (let c: ts.Node | undefined = n; c; c = c.parent) {
@@ -177,7 +178,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     if (ts.isTypeLiteralNode(node)) {
       if (!anonStructHandled(checker, node)) continue;
       const alias = ts.isTypeAliasDeclaration(node.parent) ? node.parent.name.text : null;
-      anonStructs.set(node, { name: alias ?? freshName(nameFrom(node)), file, emitted: false });
+      // Two unnamed literals of the same text in one file are one structural type in TypeScript (a class field and the result
+      // interface that copies it): one struct, so a value of one is accepted where the other is expected.
+      let generic = false;
+      for (let q: ts.Node | undefined = node.parent; q; q = q.parent) if ((ts.isFunctionLike(q) || ts.isClassLike(q) || ts.isInterfaceDeclaration(q) || ts.isTypeAliasDeclaration(q)) && (q as { typeParameters?: unknown }).typeParameters) generic = true;
+      const shape = alias || generic ? null : file + "|" + node.members.map((m) => m.getText().replace(/\s+/g, " ")).join(";");
+      const same = shape ? anonShapes.get(shape) : undefined;
+      if (same) { anonStructs.set(node, { ...same, emitted: false, dup: true }); continue; }
+      const rec = { name: alias ?? freshName(nameFrom(node)), file, emitted: false };
+      if (shape) anonShapes.set(shape, rec);
+      anonStructs.set(node, rec);
     } else registerGenUnion(checker.getTypeFromTypeNode(node as ts.TypeNode), node);
   }
   // A union narrowed by earlier `||` operands (`k === "A" || k === "B"`) has fewer members than the
@@ -360,14 +370,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (!e) { e = { name: `${u.name}Kind`, lits, file: astFile }; litUnions.set(unionKey(lits), e); }
       return e;
     };
-    const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used, kindEnum);
+    const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used, kindEnum, !!opts.lenient);
     astForeign = em.foreign;
     report.files.set("ast.milo", em.types);
     // The JSON decoder serves the per-pass differential drivers, each transpiling only its own pass. The whole
     // frontend (--lenient over every file) parses source and never decodes a dump, and its decoder would have to
     // tell apart same-named types of different passes (two BodyTask), which the name-keyed model cannot.
-    if (!opts.lenient) report.files.set("ast_decode.milo", em.decoder);
-    else report.files.set("ast_encode.milo", em.encoder);
+    report.files.set("ast_decode.milo", em.decoder);
+    if (opts.lenient) report.files.set("ast_encode.milo", em.encoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
   }
 
@@ -628,6 +638,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const symOf = (n: ts.Identifier) => ts.isShorthandPropertyAssignment(n.parent) ? checker.getShorthandAssignmentValueSymbol(n.parent) : checker.getSymbolAtLocation(n);
       const sy = symOf(id);
       const d = sy?.declarations?.[0];
+      // A constructor parameter is owned (the constructor takes its arguments by value): its last mention in the body moves it.
+      if (sy && d && sy.declarations?.length === 1 && ts.isParameter(d) && ts.isConstructorDeclaration(d.parent) && d.parent.body && !field) {
+        let after = false, inLoop = false;
+        for (let q: ts.Node | undefined = id.parent; q && q !== d.parent; q = q.parent) if (ts.isIterationStatement(q, false)) inLoop = true;
+        const scan = (n: ts.Node) => { if (ts.isIdentifier(n) && n !== id && n.pos >= id.end && symOf(n) === sy) after = true; ts.forEachChild(n, scan); };
+        scan(d.parent.body);
+        return !after && !inLoop;
+      }
       if (!sy || sy.declarations?.length !== 1 || !d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return false;
       const dl = d.parent;
       if (!ts.isVariableDeclarationList(dl) || ts.isForOfStatement(dl.parent) || ts.isForInStatement(dl.parent)) return false;
@@ -702,6 +720,26 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (d && ts.isInterfaceDeclaration(d) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
+    // A method tagged `@consumesThis` ends in `return { f: this.f, ... }`: the generated Milo takes each such field out of
+    // self (builtin `replace`, leaving an empty value) instead of cloning it, because nothing reads self after the return.
+    // The TypeScript source keeps both; a TS caller that reads the object after the call has no generated counterpart.
+    const takeFromThis = (e: ts.Expression, s: string): string | null => {
+      const u = unparen(e);
+      if (!curFn || !ts.isPropertyAccessExpression(u) || u.expression.kind !== ts.SyntaxKind.ThisKeyword) return null;
+      if (!ts.getJSDocTags(curFn).some((tg) => tg.tagName.text === "consumesThis")) return null;
+      const ret = u.parent && ts.isPropertyAssignment(u.parent) && ts.isObjectLiteralExpression(u.parent.parent) && ts.isReturnStatement(u.parent.parent.parent) ? u.parent.parent : null;
+      if (!ret || ret.parent.parent !== curFn.body) return null;
+      // A sibling property reading the same field would see it already taken.
+      let twice = 0;
+      const scan = (n: ts.Node) => { if (ts.isPropertyAccessExpression(n) && n.expression.kind === ts.SyntaxKind.ThisKeyword && n.name.text === u.name.text) twice++; ts.forEachChild(n, scan); };
+      scan(ret);
+      if (twice !== 1) return null;
+      const m = ty(tOf(e), e);
+      const empty = m.startsWith("Vec<") ? "Vec.new()" : m.startsWith("HashMap<") ? "HashMap.new()" : m.startsWith("HashSet<") ? "HashSet.new()" : m.startsWith("Option<") ? "Option.None" : null;
+      if (empty === null) return null;
+      hit("take a field out of self on return", "builtin replace(self.f, empty)");
+      return `replace(${s}, ${empty})`;
+    };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
     const ownBranches = new Set<ts.Node>();
     const isBoxedOptField = (e: ts.Expression): boolean => {
@@ -717,6 +755,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       roDest = false;
       const owned = (s: string, force = false) => {
         if (!(own || force) || !needsClone(e)) return s;
+        const taken = takeFromThis(e, s);
+        if (taken) return taken;
         cloneFail(e, tOf(e), ro);
         return `${s}.clone()`;
       };
@@ -800,6 +840,11 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return !!sy && !!d0 && (ts.isPropertyDeclaration(d0) || ts.isPropertySignature(d0) || ts.isParameter(d0) || ts.isVariableDeclaration(d0)) && !isLibDecl(program, d0) && unmappable(checker.getTypeOfSymbol(sy), u);
     };
     const memberAccess = (e: ts.PropertyAccessExpression): string => {
+      // `process.env.NAME` (string | undefined): the runtime's jsEnv reads the real environment.
+      if (ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === "env" && ts.isIdentifier(e.expression.expression) && e.expression.expression.text === "process") {
+        hit("process.env.NAME", "runtime jsEnv(name) over std/env getEnv");
+        return `${useRuntime("jsEnv", e)}(${JSON.stringify(e.name.text)})`;
+      }
       const sym = checker.getSymbolAtLocation(e.name);
       const d = sym?.declarations?.[0];
       // A field whose own type has no mapping was left out of its struct (or is a TsOpaque there).
@@ -813,6 +858,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (isStr(e.expression)) { hit("string .length", "jsLen (UTF-16 units)"); return `${useRuntime("jsLen", e)}(${ex(e.expression)})`; }
         hit("array .length", "Vec .len");
         return `${ex(e.expression)}.len`;
+      }
+      if (e.name.text === "size" && d && isLibDecl(program, d) && ["Map", "ReadonlyMap", "Set", "ReadonlySet"].includes(checker.getNonNullableType(tOf(e.expression)).symbol?.name ?? "")) {
+        hit("Map/Set .size", "HashMap/HashSet .len()");
+        return `${ex(e.expression)}.len()`;
       }
       // A field every variant of a tagged union has (`span`) is read through a generated accessor.
       const tu = unionOfType(checker, tOf(e.expression));
@@ -2332,7 +2381,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
     }
     // Generated types for this file (names synthesized in step 2); emitting a struct can create more unions.
-    for (const [node, a] of anonStructs) if (a.file === file) {
+    for (const [node, a] of anonStructs) if (a.file === file && !a.dup) {
       const lit = node as ts.TypeLiteralNode;
       const tmark = out.length;
       try {
