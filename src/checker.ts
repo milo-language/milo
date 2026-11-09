@@ -805,10 +805,12 @@ export class TypeChecker {
   // placeholder element object, resolved in-place from the first `v.push(x)`.
   // inferVecElems holds the live placeholder objects (identity set); pendingInferVecs
   // records each with its span so an unresolved one (no push ever seen) can error.
-  private inferVecElems = new WeakSet<object>();
+  // A placeholder is `{ tag: "unknown", inferId }` (so every unknown rule applies until it resolves);
+  // `inferred[inferId]` is its resolution, and `zonkStored` rewrites every stored type to it.
+  private inferred: (TypeKind | undefined)[] = [];
   private pendingInferVecs: Array<{ elem: TypeKind; span: Span | undefined }> = [];
   // A deferred `Vec.withCapacity(n)` binds its std constructor when the element resolves.
-  private inferVecCtors = new WeakMap<object, ExprOf<"EnumLit">>();
+  private inferVecCtors = new Map<number, ExprOf<"EnumLit">>();
   private _globalTypes = new Map<string, TypeKind>();
   private _nonConstGlobals: string[] = [];
   private functions = new Map<string, FnSig>();
@@ -7759,7 +7761,7 @@ export class TypeChecker {
   // normal (element-required) path — and its error — is untouched everywhere else.
   private reportUninferredVecs(): void {
     for (const p of this.pendingInferVecs) {
-      if (this.inferVecElems.has(p.elem as object)) {
+      if (this.isLiveInfer(p.elem)) {
         this.error(`cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'`, p.span);
       }
     }
@@ -7784,11 +7786,53 @@ export class TypeChecker {
 
   // The placeholder element is an identity-keyed object resolved in place by the first push, which the
   // generated Milo cannot express; kept apart so that only a program with an unannotated Vec.new() reaches it.
+  private isLiveInfer(t: TypeKind): t is TypeKind & { tag: "unknown"; inferId: number } {
+    return t.tag === "unknown" && t.inferId !== undefined && this.inferred[t.inferId] === undefined;
+  }
+
+  // Substitute resolved placeholders through `t`; returns `t` itself when nothing changed.
+  private resolveInfer(t: TypeKind): TypeKind {
+    switch (t.tag) {
+      case "unknown": {
+        if (t.inferId === undefined) return t;
+        const r = this.inferred[t.inferId];
+        return r === undefined ? t : this.resolveInfer(r);
+      }
+      case "ptr": case "ref": case "heap": {
+        const inner = this.resolveInfer(t.inner);
+        return inner === t.inner ? t : { ...t, inner };
+      }
+      case "vec": case "array": {
+        const element = this.resolveInfer(t.element);
+        return element === t.element ? t : { ...t, element };
+      }
+      case "hashmap": {
+        const key = this.resolveInfer(t.key), value = this.resolveInfer(t.value);
+        return key === t.key && value === t.value ? t : { ...t, key, value };
+      }
+      case "fn": case "cfn": {
+        const params = t.params.map(p => this.resolveInfer(p)), ret = this.resolveInfer(t.ret);
+        return ret === t.ret && params.every((p, i) => p === t.params[i]) ? t : { ...t, params, ret };
+      }
+      default: return t;
+    }
+  }
+
+  // Every holder of a type that contained the placeholder sees the resolution: bindings,
+  // closure captures, globals and the per-expression types.
+  private zonkStored(): void {
+    for (const scope of this.scopes) for (const info of scope.values()) info.type = this.resolveInfer(info.type);
+    for (const frame of this.closureFrames) for (const c of frame.captures.values()) c.type = this.resolveInfer(c.type);
+    for (const [k, v] of this._globalTypes) this._globalTypes.set(k, this.resolveInfer(v));
+    for (const [k, v] of this.exprTypes) this.exprTypes.set(k, this.resolveInfer(v));
+  }
+
   private makeDeferredVec(value: import("./ast").EnumLit): TypeKind {
-    const elem: TypeKind = { tag: "unknown" };
+    const inferId = this.inferred.length;
+    this.inferred.push(undefined);
+    const elem: TypeKind = { tag: "unknown", inferId };
     const vecTy: TypeKind = { tag: "vec", element: elem };
-    this.inferVecElems.add(elem);
-    if (value.variant === "withCapacity") this.inferVecCtors.set(elem, value);
+    if (value.variant === "withCapacity") this.inferVecCtors.set(inferId, value);
     this.pendingInferVecs.push({ elem, span: value.span });
     this.exprTypes.set(value, vecTy);
     return vecTy;
@@ -13795,22 +13839,25 @@ export class TypeChecker {
           this.error(`cannot push to immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
         // Deferred-inference Vec (`var v = Vec.new()`): first push fixes the
-        // element type. Resolve the shared placeholder object in place so the
-        // binding, its exprType, and every later use all see the real element.
-        if (this.inferVecElems.has(objType.element as object)) {
+        // element type. Resolve the placeholder so the binding, its exprType,
+        // and every later use all see the real element.
+        if (this.isLiveInfer(objType.element)) {
+          const inferId = objType.element.inferId;
           const argType = this.checkExpr(expr.args[0], null);
           // A pushed borrow would outlive the scope that owns the borrowed
           // value — the Vec survives it. Same rule as a struct field.
           if (argType.tag === "ref") {
             this.error(`push: cannot store a reference in a Vec`, sp, `references are second-class — push an owned value (clone it if needed)`);
           }
-          this.inferVecElems.delete(objType.element as object);
-          Object.assign(objType.element as object, argType);
-          const ctor = this.inferVecCtors.get(objType.element as object);
-          if (ctor) this.bindVecConstructor(ctor, objType);
+          // Another unresolved placeholder is copied as a plain unknown: the two stay independent.
+          this.inferred[inferId] = argType.tag === "unknown" ? { tag: "unknown" } : argType;
+          this.zonkStored();
+          const resolvedVec = this.resolveInfer(objType);
+          const ctor = this.inferVecCtors.get(inferId);
+          if (ctor) this.bindVecConstructor(ctor, resolvedVec);
           this.tryMove(expr.args[0]);
           this.holdPointerArgsIn(expr.object, expr.args);
-          return this.bindStdVecMethod(expr, objType.element, "push", { tag: "void" });
+          return this.bindStdVecMethod(expr, (resolvedVec as TypeKind & { tag: "vec" }).element, "push", { tag: "void" });
         }
         const argType = this.checkExpr(expr.args[0], objType.element);
         if (objType.element.tag === "int") this.enforceRangeInto(expr.args[0], argType, objType.element, expr.args[0].span);

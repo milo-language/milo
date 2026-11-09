@@ -28,7 +28,8 @@ export type TypeKind =
   // return/break/continue. Internal: there is no syntax for it, and the checker never
   // records it on a node later stages read as a value type (lowering sees `void`).
   | { tag: "never" }
-  | { tag: "unknown" };
+  // `inferId` marks a deferred `Vec.new()` element placeholder (see TypeChecker.inferred).
+  | { tag: "unknown"; inferId?: number };
 
 // Every name `typeFromAst` resolves to a builtin rather than a user struct, aliases
 // included (`int`/`byte`/`float` alongside `i64`/`u8`/`f64`). Anything absent here is
