@@ -1,16 +1,33 @@
 // The generated Milo frontend run on one program: the tracer bullet for self-hosting. Stage 1 is
-// lex + parse; each later stage (resolve, check, emit-mlir) is added here as it compiles. A stub
-// the program reaches prints "ts2milo stub: <where>: <why>" and exits 70: that is the next thing
-// to translate. Built and run by `bun scripts/ts2milo-frontend.ts --run <file.milo>`.
+// lex + parse (--ast prints the AST as JSON); stage 2 is --check: lex, parse, resolve imports, run
+// the TypeChecker, print the diagnostics as JSON. A stub the program reaches prints
+// "ts2milo stub: <where>: <why>" and exits 70: that is the next thing to translate. Built and run
+// by `bun scripts/ts2milo-frontend.ts --run <file.milo>`.
 from "std/args" import { args }
 from "std/fs" import { readFile }
 from "./lexer" import { Lexer }
 from "./parser" import { Parser }
-from "./ts2milo_runtime" import { jsFromUtf8 }
+from "./resolver" import { resolveImports }
+from "./checker" import { TypeChecker }
+from "./ts2milo_runtime" import { jsFromUtf8, jsonQuote, Severity, TsOpaque }
 from "./ast_encode" import { encodeProgram }
+
+// The fields of a `milo check --json` diagnostic that the generated Diagnostic carries and the
+// diff compares: severity, message, line, col.
+fn severityName(s: Severity): string {
+    match s {
+        Severity.Error => { return "error" }
+        Severity.Warning => { return "warning" }
+        Severity.Hint => { return "hint" }
+    }
+}
 
 fn main() {
     let path = args() [1].clone()
+    var mode: string = ""
+    if args().len > 2 {
+        mode = args() [2].clone()
+    }
     let src = jsFromUtf8(readFile(path)!)
     var lx = Lexer.new(src.clone(), false)
     match lx.tokenize() {
@@ -21,10 +38,50 @@ fn main() {
             var p = Parser.new(tokens, Option.Some(src.clone()), Option.Some(jsFromUtf8(path.clone())))
             match p.parse() {
                 Result.Ok(prog) => {
-                    if args().len > 2 && args() [2] == "--ast" {
+                    if mode == "--ast" {
                         var out: string = ""
                         encodeProgram(prog, &mut out)
                         print(out)
+                    } else if mode == "--check" {
+                        var parsed = prog
+                        let target = TsOpaque {}
+                        let dir = "."
+                        let entry = Option.Some(jsFromUtf8(path.clone()))
+                        match resolveImports(&mut parsed, dir, target, entry) {
+                            Result.Ok(resolved) => {
+                                var rp = resolved
+                                var tc = TypeChecker.new()
+                                match tc.check(&mut rp) {
+                                    Result.Ok(res) => {
+                                        var out: string = "{\"diagnostics\":["
+                                        var first = true
+                                        for d in res.diagnostics {
+                                            if !first {
+                                                out = out + ","
+                                            }
+                                            first = false
+                                            out = out + "{\"severity\":\"" + severityName(d.severity) + "\",\"message\":"
+                                            jsonQuote(d.message, &mut out)
+                                            match d.span {
+                                                Option.Some(sp) => {
+                                                    out = out + ",\"line\":" + sp.line.toString() + ",\"col\":" + sp.col.toString()
+                                                }
+                                                Option.None => {}
+                                            }
+                                            out = out + "}"
+                                        }
+                                        out = out + "]}"
+                                        print(out)
+                                    }
+                                    Result.Err(_) => {
+                                        print("CHECK_THROWN")
+                                    }
+                                }
+                            }
+                            Result.Err(_) => {
+                                print("RESOLVE_ERROR")
+                            }
+                        }
                     } else {
                         print("parsed " + prog.functions.len.toString() + " functions")
                     }

@@ -112,6 +112,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/trace-semantics.ts` | Two-way trace between docs/semantics/milo.md and the reference interpreter (src/interp*.ts). |
 | `scripts/ts-closure-tiers.ts` | Sorts every closure in the frontend files by how hard it is to make portable, using the TypeScript checker's symbols for what each one captures (scripts/ts-portable.ts only counts them). |
 | `scripts/ts-portable.ts` | Counts, per frontend file, the TypeScript constructs outside the portable subset that scripts/ts2milo.ts can translate (rule list: scripts/ts2milo/subset.ts, shared with it). |
+| `scripts/ts2milo-checker-diff.ts` | Correctness gate for the GENERATED Milo type checker: run it and the TypeScript checker on the same programs and compare the diagnostics. |
 | `scripts/ts2milo-concurrent-args-diff.ts` | Differential gate for the generated @concurrent closure-argument pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker bu… |
 | `scripts/ts2milo-escaping-closures-diff.ts` | Differential gate for the generated escaping-closure pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for eve… |
 | `scripts/ts2milo-frontend.ts` | The self-host meter: generate the whole Milo frontend from src/*.ts (ts2milo --lenient, so what does not translate yet becomes a stub that names itself), compile-check every generated file, and print… |

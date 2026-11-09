@@ -297,3 +297,12 @@ portability ratchet in `tests/ts2milo.test.ts`, and the differential gate for ge
   generated.
 - Found a checker bug on the way (backlog #43): an explicit type argument lets a mistyped by-ref
   argument through to codegen.
+
+### Checker meter (2026-11-09)
+
+`bun scripts/ts2milo-checker-diff.ts` runs the generated frontend's `--check` mode (lex, parse,
+resolve, TypeChecker; diagnostics as JSON) against `milo check --json` over tests/errors and
+tests/fixtures and prints `same N / M`, stub reasons and diff kinds. Every program stubs at the
+entry chain: `resolveImports` (no `TargetInfo` in the runtime), `TypeChecker.new` (`WarningConfig`),
+`check` (a closure passed around), `checkProgram` (`replayPlans` field type); the script's census
+lists the stub reasons over all 446 stubbed resolver and checker functions as the worklist.
