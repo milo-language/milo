@@ -6,7 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
-import { ID_FIELD, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
+import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -390,6 +390,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const ty = (t: ts.Type, at: ts.Node): string => {
       try { return ty0(t, at); } catch (e) { if (opaqueFallback && e instanceof Unsupported) return useRuntime("TsOpaque", at); throw e; }
     };
+    // Keys with identity but no node id (arrays, Maps, Sets, object, unknown): Milo has no hash for them.
+    const unhashableKey = (k: ts.Type, at: ts.Node) => {
+      const kn = checker.getNonNullableType(k);
+      if (checker.isArrayType(kn) || isKeyedContainer(kn) || (kn.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive))) fail(at, `Map/Set key of type ${checker.typeToString(k)} (identity of a non-node value: needs a hidden id wrapper)`);
+    };
     const ty0 = (t: ts.Type, at: ts.Node): string => {
       if (isOptionT(t)) { hit("T | undefined", "Option<T>"); return `Option<${ty(checker.getNonNullableType(t), at)}>`; }
       const ed = enumDeclOf(t);
@@ -399,6 +404,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (t.symbol?.name === "Map" || t.symbol?.name === "ReadonlyMap" || t.symbol?.name === "WeakMap") {
         const [k, v] = checker.getTypeArguments(t as ts.TypeReference);
         if (nodeKeyOf(checker, k)) { hit("Map keyed by a node", "HashMap<i64, V> keyed by the node id"); return `HashMap<i64, ${ty(v, at)}>`; }
+        if (enumDeclOf(k)) { hit("Map keyed by an enum", "HashMap<string, V> keyed by Enum_value"); return `HashMap<string, ${ty(v, at)}>`; }
+        unhashableKey(k, at);
         hit("Map<K, V>", "HashMap<K, V>");
         return `HashMap<${ty(k, at)}, ${ty(v, at)}>`;
       }
@@ -418,6 +425,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet" || t.symbol?.name === "WeakSet") {
         const k = checker.getTypeArguments(t as ts.TypeReference)[0];
         if (nodeKeyOf(checker, k)) { hit("Set keyed by a node", "HashSet<i64> of node ids"); return `${std("HashSet")}<i64>`; }
+        if (enumDeclOf(k)) { hit("Set keyed by an enum", "HashSet<string> of Enum_value"); return `${std("HashSet")}<string>`; }
+        unhashableKey(k, at);
         return `${std("HashSet")}<${ty(k, at)}>`;
       }
       const d = t.symbol?.declarations?.[0];
@@ -463,6 +472,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const keyEx = (recv: ts.Expression, arg: ts.Expression, own = false): string => {
       const rt = tOf(recv);
       const k = nodeKeyOfContainer(checker, rt);
+      if (!k) { const ed = enumDeclOf(checker.getTypeArguments(rt as ts.TypeReference)[0]); if (ed) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, arg)}(${ex(arg)})`; }
       return k ? idEx(arg, k) : own ? ownConv(arg, checker.getTypeArguments(rt as ts.TypeReference)[0]) : ex(arg);
     };
     const narrow = new Map<string, { name: string; deref: boolean }>();
@@ -974,6 +984,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const t = tOf(n);
           if (t.symbol?.name === "Set" || t.symbol?.name === "WeakSet") {
             if (nodeKeyOfContainer(checker, t) && n.arguments?.length) fail(n, "iteration over node-identity keys (new Set from a collection)");
+            const ked = enumDeclOf(checker.getTypeArguments(t as ts.TypeReference)[0]);
+            if (ked && n.arguments?.length) {
+              const lit = n.arguments[0];
+              if (!ts.isArrayLiteralExpression(lit)) fail(n, "new Set of enums from a non-literal collection");
+              const vf = useDeclared(`${ked.name.text}_value`, ked.getSourceFile().fileName, n);
+              hit("new Set([enums])", "HashSet.fromVec of Enum_value strings");
+              return `${std("HashSet")}.fromVec([${(lit as ts.ArrayLiteralExpression).elements.map((x) => `${vf}(${ex(x)})`).join(", ")}])`;
+            }
             hit("new Set([...])", "HashSet.fromVec");
             return n.arguments?.length ? `${std("HashSet")}.fromVec(${ownConv(n.arguments[0])})` : `${std("HashSet")}.new()`;
           }

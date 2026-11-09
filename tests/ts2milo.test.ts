@@ -816,6 +816,39 @@ describe("node identity", () => {
     expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
   });
 
+  test("a Set and Map keyed by a string enum are keyed by its value and run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const ts = join(dir, "tsm_ek.ts");
+    writeFileSync(ts, [
+      "export enum K { A = \"a\", B = \"b\", C = \"c\" }",
+      "const SKIP = new Set<K>([K.A, K.C]);",
+      "export function run(): number {",
+      "  const m = new Map<K, number>();",
+      "  m.set(K.B, 7);",
+      "  const s = new Set<K>();",
+      "  s.add(K.B);",
+      "  let r = 0;",
+      "  if (SKIP.has(K.A) && !SKIP.has(K.B)) { r += 1; }",
+      "  if (m.has(K.B) && !m.has(K.A) && (m.get(K.B) ?? 0) === 7) { r += 2; }",
+      "  if (s.has(K.B) && !s.has(K.C)) { r += 4; }",
+      "  return r;",
+      "}",
+    ].join("\n") + "\n");
+    const r = transpile([ts], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    expect(r.files.get("tsm_ek.milo")!).toContain("HashMap<string, i64>");
+    writeFileSync(join(dir, "main.milo"), ["from \"./tsm_ek\" import { run }", "fn main(): i32 {", "    if run() != 7 { return 1 }", "    return 0", "}"].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+
+  test("a Map or Set keyed by an array, Map or object is refused with its reason", () => {
+    for (const k of ["number[]", "Map<string, number>"]) {
+      const { file } = tmpTs("tsm_uk.ts", `export function f(s: Set<${k}>): boolean { return true; }\n`);
+      expect(() => transpile([file], { overridesDir: "/nonexistent" })).toThrow("Map/Set key of type");
+    }
+  });
+
   test("iterating the keys of a node-keyed Map or Set is refused with its reason", () => {
     for (const use of ["for (const k of m.keys()) { n += 1; }", "for (const k of s) { n += 1; }", "m.forEach(() => { n += 1; });"]) {
       const { file } = tmpTs("tsm_idk.ts", [
