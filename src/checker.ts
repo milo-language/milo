@@ -929,6 +929,15 @@ export class TypeChecker {
   private replaySites = new Map<Expr, { wrapper: string; site: string; fixed?: number }>();
   private replayRawShares = new Map<Expr, string>();
   private declOrigins: import("./ast").DeclOrigins | undefined;
+  // Plain method calls rather than `this.declOrigins?.x.get(n)`: an optional chain that ends in a call is outside the generated frontend's subset.
+  private declOrigin(ns: "values" | "types", name: string): import("./ast").DeclOrigin | undefined {
+    if (this.declOrigins === undefined) return undefined;
+    return ns === "values" ? this.declOrigins.values.get(name) : this.declOrigins.types.get(name);
+  }
+  private declFiles(ns: "values" | "types", name: string): Set<string> {
+    const o = this.declOrigin(ns, name);
+    return o === undefined ? new Set<string>() : o.files;
+  }
   private replayPlans: Map<string, ReplayPlan> | undefined;
   // The fn being checked records its own extern calls (`@replayHooked`), so they stay direct.
   private currentFnReplayHooked = false;
@@ -1334,7 +1343,7 @@ export class TypeChecker {
     const files = new Set<string>();
     for (const [sym, written] of this._displayNames ?? []) {
       if (written !== name) continue;
-      const o = this.declOrigins?.[ns].get(sym);
+      const o = this.declOrigin(ns, sym);
       if (o?.anyPub) for (const f of o.files) files.add(f);
     }
     if (files.size === 0) return undefined;
@@ -1586,10 +1595,10 @@ export class TypeChecker {
   // raw pointer, like a Channel, is std's own audited sharing).
   private typeDeclaredInStd(ty: TypeKind): boolean {
     if (ty.tag !== "struct" && ty.tag !== "enum") return false;
-    const files = this.declOrigins?.types.get(ty.name)?.files;
+    const files = this.declFiles("types", ty.name);
     // STDLIB_DIR holds std/ (in a checkout it is the repo root, tests/ included).
     const stdRoot = resolvePath(STDLIB_DIR, "std") + sep;
-    if (files && files.size > 0) return [...files].every(f => f.startsWith(stdRoot));
+    if (files.size > 0) return [...files].every(f => f.startsWith(stdRoot));
     // A generic's instance (`Channel_i64`) is declared where the generic is.
     const inst = this.monomorphizedStructDecls.find(d => d.name === ty.name);
     return !!inst?.span?.file?.startsWith(stdRoot);
@@ -3861,8 +3870,8 @@ export class TypeChecker {
       // The file a renamed symbol came from, when exactly one file declared it.
       const origins = new Map<string, string>();
       for (const sym of this._displayNames.keys()) {
-        const declaredType = this.declOrigins?.types.get(sym);
-        const declaredValue = this.declOrigins?.values.get(sym);
+        const declaredType = this.declOrigin("types", sym);
+        const declaredValue = this.declOrigin("values", sym);
         const files = declaredType !== undefined ? declaredType.files : declaredValue?.files;
         if (files !== undefined && files.size === 1) origins.set(sym, basename([...files][0]));
       }
@@ -5371,7 +5380,7 @@ export class TypeChecker {
       // names the libc symbol std declares (the merge keeps only the last copy).
       fnDeclaredInStd: (f) => {
         const stdRoot = resolvePath(STDLIB_DIR, "std") + sep;
-        const files = [...(this.declOrigins?.values.get(f.name)?.files ?? []), f.sourceFile ?? f.span?.file ?? ""];
+        const files = [...this.declFiles("values", f.name), f.sourceFile ?? f.span?.file ?? ""];
         return files.some(file => file.startsWith(stdRoot));
       },
       isGenericInstance: (f) => {
