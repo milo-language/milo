@@ -1128,7 +1128,6 @@ export class TypeChecker {
 
   constructor(warningConfig?: WarningConfig) {
     this.warningConfig = warningConfig ?? { denied: new Set(), allowed: new Set() };
-    applyWarningDefaults(this.warningConfig);
   }
 
   // `adopt<T>`/`adoptSlice<T>` on a struct whose fields are raw pointers frees the struct
@@ -3841,6 +3840,8 @@ export class TypeChecker {
   }
 
   check(program: Program): CheckResult {
+    // Not in the constructor: a constructor body is `this.f = e` only, so the generated Milo can build it.
+    applyWarningDefaults(this.warningConfig);
     // Outermost `fatal()` boundary. Everything below has a finer one, so reaching
     // here means a fatal fired in a pass that has no per-item recovery (a
     // registration sweep, a whole-program lint). The diagnostic is already

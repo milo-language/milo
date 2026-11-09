@@ -628,6 +628,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const symOf = (n: ts.Identifier) => ts.isShorthandPropertyAssignment(n.parent) ? checker.getShorthandAssignmentValueSymbol(n.parent) : checker.getSymbolAtLocation(n);
       const sy = symOf(id);
       const d = sy?.declarations?.[0];
+      // A constructor parameter is owned (the constructor takes its arguments by value): its last mention in the body moves it.
+      if (sy && d && sy.declarations?.length === 1 && ts.isParameter(d) && ts.isConstructorDeclaration(d.parent) && d.parent.body && !field) {
+        let after = false, inLoop = false;
+        for (let q: ts.Node | undefined = id.parent; q && q !== d.parent; q = q.parent) if (ts.isIterationStatement(q, false)) inLoop = true;
+        const scan = (n: ts.Node) => { if (ts.isIdentifier(n) && n !== id && n.pos >= id.end && symOf(n) === sy) after = true; ts.forEachChild(n, scan); };
+        scan(d.parent.body);
+        return !after && !inLoop;
+      }
       if (!sy || sy.declarations?.length !== 1 || !d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return false;
       const dl = d.parent;
       if (!ts.isVariableDeclarationList(dl) || ts.isForOfStatement(dl.parent) || ts.isForInStatement(dl.parent)) return false;
