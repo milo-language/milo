@@ -333,7 +333,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used, kindEnum);
     astForeign = em.foreign;
     report.files.set("ast.milo", em.types);
-    report.files.set("ast_decode.milo", em.decoder);
+    // The JSON decoder serves the per-pass differential drivers, each transpiling only its own pass. The whole
+    // frontend (--lenient over every file) parses source and never decodes a dump, and its decoder would have to
+    // tell apart same-named types of different passes (two BodyTask), which the name-keyed model cannot.
+    if (!opts.lenient) report.files.set("ast_decode.milo", em.decoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
   }
 
