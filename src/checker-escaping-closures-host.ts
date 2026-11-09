@@ -88,7 +88,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
           break;
         }
         // Only the kinds above can hold a closure literal as a direct child; the rest carry no fact.
-        default: break;
+        // (No `default:` arm: the portable subset has none, scripts/ts2milo/subset.ts.)
       }
     });
   }
