@@ -1001,9 +1001,7 @@ class FnEmitter {
     // isSretCall narrowed Call away; a call that is not sret returns a place-only value.
     const c = e as Form;
     if ((c.kind === "Call" && !this.cx.isBuiltinName(c.func)) || c.kind === "ClosureCall") {
-      this.abiResult = true;
-      const v = this.callScope(() => c.kind === "Call" ? this.call(c, false) : this.closureCall(c, false));
-      this.abiResult = false;
+      const v = this.callScope(() => c.kind === "Call" ? this.call(c, false, undefined, true) : this.closureCall(c, false, true));
       this.emit(`milo.store ${this.take(v, ty, "call result").ref}, ${dst} init : !milo.ref<${ty}>`);
       return;
     }
@@ -1427,9 +1425,6 @@ class FnEmitter {
     return p ? { ref: p, ty: PTR } : this.def(`milo.addr ${ref} : ${ty}`, PTR);
   }
   private retPlaceOnly = false;
-  // Set by into() for the call it is about to emit: its place-only result may be an SSA
-  // value, the ABI's, stored straight into the destination.
-  private abiResult = false;
 
   /**
    * placeType, or the unsupported reason: what a place of `t` holds, and the
@@ -3867,10 +3862,8 @@ class FnEmitter {
   }
 
   /** `f(args)` through a fn value: the callee, then the args. */
-  private closureCall(e: FormOf<"ClosureCall">, _stmt: boolean): Val {
-    // For this call only, as call() takes it: a result that lives in memory is the ABI's value.
-    const abi = this.abiResult;
-    this.abiResult = false;
+  // abi: a result that lives in memory is the ABI's value (for this call only, not the calls in its arguments).
+  private closureCall(e: FormOf<"ClosureCall">, _stmt: boolean, abi = false): Val {
     const ft = stripRefs(this.fieldType(e.callee));
     if (ft.tag !== "fn") throw new MlirUnsupported("call of a non-fn");
     const f = this.expr(e.callee);
@@ -5704,10 +5697,8 @@ class FnEmitter {
     return e.kind === "FieldAccess" && stripRefs(this.ty(e.object)).tag === "struct" && this.ty(e.object).tag !== "ref" && this.ownedLocal(e.object);
   }
 
-  private call(e: FormOf<"Call">, stmt: boolean, into?: string): Val {
-    // For this call only, not the calls in its arguments.
-    const abi = this.abiResult;
-    this.abiResult = false;
+  // abi: as closureCall's.
+  private call(e: FormOf<"Call">, stmt: boolean, into?: string, abi = false): Val {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (NATIVE_BUILTINS.has(e.func) || e.func.startsWith("_atomic")) return this.nativeBuiltin(e);
