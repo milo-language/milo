@@ -1,0 +1,62 @@
+// A 128+ byte value read through a Heap (`*h`) is copied from the box's own memory, never
+// an SSA value: derived Clone of Option<Heap<Big>> / Vec<Heap<Big>>, `(*h).clone()` as an
+// argument and a let init, and plain field reads.
+// @expect: 100
+// @expect: 19
+// @expect: a
+// @expect: 1
+// @expect: 55
+// @expect: 100
+// @expect: 22
+// @expect: 22
+// @expect: 3
+// @expect: q
+@derive(Clone)
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    s: string,
+    t: string,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: i64, r: i64,
+}
+
+@derive(Clone)
+struct Holder {
+    one: Option<Heap<Big>>,
+    many: Vec<Heap<Big>>,
+}
+
+fn mk(x: i64, s: string): Big {
+    return Big { a: x, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, s: s, t: "t", i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 19 }
+}
+
+fn f(b: Big): i64 {
+    return b.a + b.r
+}
+
+fn main() {
+    var many: Vec<Heap<Big>> = []
+    many.push(Heap(mk(1, "a")))
+    let h = Holder { one: Option.Some(Heap(mk(100, "a"))), many: many }
+    var c = h.clone()
+    match c.one {
+        Option.Some(v) => {
+            print((*v).a)
+            print((*v).r)
+            print((*v).s)
+        }
+        Option.None => print(0)
+    }
+    (*c.many[0]).a = 55
+    print((*h.many[0]).a)
+    print((*c.many[0]).a)
+    match h.one {
+        Option.Some(v) => print((*v).a)
+        Option.None => print(0)
+    }
+    let bx = Heap(mk(3, "q"))
+    print(f((*bx).clone()))
+    let x = (*bx).clone()
+    print(x.a + x.r)
+    print((*bx).a)
+    print(x.s)
+}

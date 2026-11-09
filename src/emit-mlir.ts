@@ -4032,6 +4032,16 @@ class FnEmitter {
   }
 
   /**
+   * A held box's 128+ byte owning payload lent to a by-ref param (`(*h).clone()`) is lent
+   * where it sits: building it in a slot would have to copy an owner, which bigSlot cannot.
+   * A plain-data payload keeps the copy into a slot that bigPlace makes.
+   */
+  private heapDerefLent(e: FormOf<"HeapDeref">): boolean {
+    const pt = placeType(this.cx, this.ty(e.node));
+    return pt !== null && valueType(this.cx, this.ty(e.node)) === null && this.hasDrop(pt);
+  }
+
+  /**
    * `*h` as a place: the box's own pointer. The box must be a place's (a local, a field,
    * an element), not a temporary one, which is freed as soon as the payload is out.
    */
@@ -5095,7 +5105,7 @@ class FnEmitter {
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return this.lendAs(b.ref, `!milo.vec<${b.elem}>`, refTy, b.param);
     const p = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param }
-      : e.kind === "FieldAccess" || e.kind === "IndexAccess" ? this.fieldPlace(e) ?? this.scalarElem(e) : null;
+      : e.kind === "FieldAccess" || e.kind === "IndexAccess" || (e.kind === "HeapDeref" && this.heapDerefLent(e)) ? this.fieldPlace(e) ?? this.scalarElem(e) : null;
     if (p) return this.lendAs(p.ref, `!milo.ref<${p.ty}>`, refTy, p.param);
     if (!b && (e.kind === "IndexAccess" || e.kind === "PtrDeref" || e.kind === "FieldAccess") && valueType(this.cx, this.ty(e.node)) === null && placeType(this.cx, this.ty(e.node)) !== null) {
       // A 128+ byte element behind a raw pointer (`f(data[i])` with a `&T` param, as std's
