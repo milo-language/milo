@@ -177,6 +177,41 @@ describe("truthiness in condition position", () => {
     expect({ status: run.status, err: run.stderr.slice(0, 400) }).toEqual({ status: 0, err: "" });
   });
 
+  test("types with no declared name get one from where they are written, and run", () => {
+    const { out, dir } = gen("tsm_anon", [
+      "export function pick(mode: \"fast\" | \"slow\", n: number): number {",
+      "  if (mode === \"fast\") { return n * 2; }",
+      "  return n;",
+      "}",
+      "export function kind(n: number): \"small\" | \"big\" {",
+      "  if (n < 10) { return \"small\"; }",
+      "  return \"big\";",
+      "}",
+      "export function score(p: { x: number; y: number }): number { return p.x * 10 + p.y; }",
+      "export function mk(a: number): { x: number; y: number } { return { x: a, y: a + 1 }; }",
+      "export function opt(p: { x: number; tag?: string }): number { if (p.tag) { return 1; } return p.x; }",
+    ].join("\n"));
+    expect(out).toContain("pub enum Pick_mode {");
+    expect(out).toContain("pub enum Kind_ret {");
+    expect(out).toContain("pub struct Score_p {");
+    expect(out).toContain("pub struct Mk_ret {");
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_anon\" import { pick, kind, score, mk, opt, Pick_mode, Kind_ret, Score_p, Mk_ret }",
+      "fn main(): i32 {",
+      "    if pick(Pick_mode.Fast, 3) != 6 || pick(Pick_mode.Slow, 3) != 3 { return 1 }",
+      "    let k = match kind(20) { Kind_ret.Big => 1, Kind_ret.Small => 0 }",
+      "    if k != 1 { return 2 }",
+      "    if score(Score_p { x: 4, y: 2 }) != 42 { return 3 }",
+      "    let m = mk(7)",
+      "    if m.x != 7 || m.y != 8 { return 4 }",
+      "    return 0",
+      "}",
+      "",
+    ].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.slice(0, 400) }).toEqual({ status: 0, err: "" });
+  });
+
   test("optional object, string, number and boolean bind in an if guard", () => {
     const { out } = gen("tsm_opt", [
       "export interface Box { v: number }",

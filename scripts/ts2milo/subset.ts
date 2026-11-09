@@ -86,6 +86,13 @@ export function inCondPos(e: ts.Node): boolean {
   if (ts.isBinaryExpression(p) && (p.operatorToken.kind === K.AmpersandAmpersandToken || p.operatorToken.kind === K.BarBarToken)) return inCondPos(p);
   return false;
 }
+// An inline object type (`{ a: number; b?: string }`) the emitter turns into a generated struct named
+// from where it is written. One predicate for the subset gate and the emitter. A variant of a tagged
+// union declaration is the union rule's, not this one.
+export function anonStructHandled(checker: ts.TypeChecker, n: ts.TypeLiteralNode): boolean {
+  if (ts.isUnionTypeNode(n.parent) && ts.isTypeAliasDeclaration(n.parent.parent) && taggedUnionOf(checker, n.parent.parent) !== null) return false;
+  return n.members.length > 0 && n.members.every((m) => ts.isPropertySignature(m) && ts.isIdentifier(m.name) && !!m.type);
+}
 // The expression is the condition of an if statement, or a conjunct of it (through parens and &&).
 export function inIfGuard(e: ts.Node): boolean {
   let c: ts.Node = e;
@@ -293,7 +300,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     if (n.kind >= K.FirstPunctuation && n.kind <= K.LastPunctuation) return;
     if (ts.isTypeNode(n) && n.kind !== K.ExpressionWithTypeArguments) {
       if (ts.isTypeReferenceNode(n) || ts.isUnionTypeNode(n) || ts.isLiteralTypeNode(n)) typeNode(n);
-      else if (ts.isTypeLiteralNode(n) && inTaggedBody(n)) return;
+      else if (ts.isTypeLiteralNode(n) && (inTaggedBody(n) || anonStructHandled(checker, n))) return;
       else if (!PLAIN.has(n.kind)) bad(n, `type ${K[n.kind]}`);
       return;
     }
@@ -453,7 +460,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const t = ctx && checker.getNonNullableType(ctx);
         // A tagged union's variant is picked by a literal discriminant property.
         const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(p.initializer) && p.name.getText() === unionOfType(checker, t)!.field);
-        if (!t || !(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d)))) bad(n, "object literal without an interface type");
+        if (!t || !(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d) || (ts.isTypeLiteralNode(d) && anonStructHandled(checker, d))))) bad(n, "object literal without an interface type");
         for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p)) bad(p, "object literal member");
         return;
       }

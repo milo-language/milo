@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
+import { anonStructHandled, calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
 import { buildAstModel, discriminantRead, emitAst, guardUnion, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -80,10 +80,60 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const k = unionKey(lits);
     if (!litUnions.has(k)) litUnions.set(k, { name, lits, file });
   };
+  // Types with no declared name get one from where they are written: `<fn>_<param>`, `<fn>_ret`,
+  // `<fn>_<local>`, `<Owner>_<field>`; identical literal sets share one generated enum. Declared names win,
+  // so these register after the whole program has been walked. Emitted at the end of the declaring file.
+  const typeNames = new Set<string>();
+  const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean }>();
+  const genUnions = new Set<{ name: string; lits: string[]; file: string }>();
+  const fnLabel = (n: ts.Node): string => {
+    for (let c: ts.Node | undefined = n; c; c = c.parent) {
+      if (!ts.isFunctionLike(c)) continue;
+      const f = c as ts.FunctionLikeDeclaration;
+      const own = f.name && ts.isIdentifier(f.name) ? f.name.text : ts.isConstructorDeclaration(f) ? "new" : ts.isVariableDeclaration(f.parent) && ts.isIdentifier(f.parent.name) ? f.parent.name.text : "fn";
+      const owner = f.parent && ts.isClassDeclaration(f.parent) && f.parent.name ? `${f.parent.name.text}_` : "";
+      return owner + own;
+    }
+    return "";
+  };
+  const nameFrom = (n: ts.Node): string => {
+    let c: ts.Node = n;
+    while (c.parent && (ts.isTypeNode(c.parent) || ts.isParenthesizedExpression(c.parent))) c = c.parent;
+    const p = c.parent;
+    const join = (...xs: string[]) => xs.filter(Boolean).join("_");
+    if (p) {
+      if (ts.isParameter(p) && ts.isIdentifier(p.name)) return join(fnLabel(p.parent), p.name.text);
+      if (ts.isFunctionLike(p) && (p as ts.FunctionLikeDeclaration).type === c) return join(fnLabel(p), "ret");
+      if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return join(fnLabel(p.parent), p.name.text);
+      if ((ts.isPropertySignature(p) || ts.isPropertyDeclaration(p)) && ts.isIdentifier(p.name)) {
+        const o = p.parent as { name?: ts.Identifier };
+        return join(o.name?.text ?? "", p.name.text);
+      }
+      if (ts.isTypeAliasDeclaration(p)) return p.name.text;
+    }
+    return join(fnLabel(n), "lit");
+  };
+  const freshName = (base: string) => {
+    base = base ? base[0].toUpperCase() + base.slice(1) : "Anon";
+    let name = base, i = 1;
+    while (typeNames.has(name)) name = `${base}_${++i}`;
+    typeNames.add(name);
+    return name;
+  };
+  const registerGenUnion = (t: ts.Type, at: ts.Node) => {
+    const lits = litsOf(t);
+    if (!lits || litUnions.has(unionKey(lits))) return;
+    const u = { name: freshName(nameFrom(at)), lits, file: at.getSourceFile().fileName };
+    litUnions.set(unionKey(lits), u);
+    genUnions.add(u);
+  };
+  const genCands: { node: ts.Node; file: string }[] = [];
   const allFns: ts.FunctionLikeDeclaration[] = [];
   for (const sf of program.getSourceFiles()) {
     if (isLibDecl(program, sf)) continue;
     const visit = (n: ts.Node) => {
+      if ((ts.isInterfaceDeclaration(n) || ts.isClassDeclaration(n) || ts.isTypeAliasDeclaration(n) || ts.isEnumDeclaration(n)) && n.name) typeNames.add(n.name.text);
+      if (inputSet.has(sf.fileName) && sf.fileName !== astFile && (ts.isUnionTypeNode(n) || ts.isTypeLiteralNode(n))) genCands.push({ node: n, file: sf.fileName });
       if (ts.isTypeAliasDeclaration(n)) registerUnion(checker.getTypeFromTypeNode(n.type), n.name.text, sf.fileName);
       if (ts.isInterfaceDeclaration(n)) {
         for (const m of n.members) if (ts.isPropertySignature(m) && m.type) {
@@ -96,6 +146,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
     visit(sf);
   }
+  for (const { node, file } of genCands) {
+    if (ts.isTypeLiteralNode(node)) {
+      if (!anonStructHandled(checker, node)) continue;
+      const alias = ts.isTypeAliasDeclaration(node.parent) ? node.parent.name.text : null;
+      anonStructs.set(node, { name: alias ?? freshName(nameFrom(node)), file, emitted: false });
+    } else registerGenUnion(checker.getTypeFromTypeNode(node as ts.TypeNode), node);
+  }
   // A union narrowed by earlier `||` operands (`k === "A" || k === "B"`) has fewer members than the
   // declared one: the smallest declared union containing all of them names it.
   const resolveUnion = (t: ts.Type, at: ts.Node) => {
@@ -104,6 +161,10 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     if (!u && lits) {
       const cands = [...litUnions.values()].filter((c) => lits.every((l) => c.lits.includes(l))).sort((a, b) => a.lits.length - b.lits.length);
       if (cands.length > 0 && (cands.length === 1 || cands[0].lits.length < cands[1].lits.length)) u = cands[0];
+    }
+    if (!u && lits && inputSet.has(at.getSourceFile().fileName) && at.getSourceFile().fileName !== astFile) {
+      registerGenUnion(t, at);
+      u = litUnions.get(unionKey(lits));
     }
     if (!u) return fail(at, "string-literal union without a declared name");
     return u;
@@ -331,6 +392,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet") return `${std("HashSet")}<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
       const d = t.symbol?.declarations?.[0];
       if (d && (ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d))) return useDeclared(d.name!.text, d.getSourceFile().fileName, at);
+      const anon = d && ts.isTypeLiteralNode(d) ? anonStructs.get(d) : undefined;
+      if (anon) { hit("inline object type", "generated struct named from where it is written"); return useDeclared(anon.name, anon.file, at); }
       return fail(at, `type ${checker.typeToString(t)}`);
     };
     const defaultOf = (t: ts.Type, at: ts.Node): string => {
@@ -730,10 +793,10 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             });
             return `${uname}.${pascal(v.kind)}(${sname} { ${vfields.join(", ")} })`;
           }
-          const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | undefined;
-          if (!d || !ts.isInterfaceDeclaration(d)) fail(o, "object literal whose contextual type is not a named interface");
+          const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | ts.TypeLiteralNode | undefined;
+          if (!d || !(ts.isInterfaceDeclaration(d) || (ts.isTypeLiteralNode(d) && anonStructs.has(d)))) fail(o, "object literal whose contextual type is not a named interface");
           hit("object literal", "struct literal, missing optionals are Option.None");
-          const name = useDeclared(d!.name.text, d!.getSourceFile().fileName, e);
+          const name = ts.isInterfaceDeclaration(d!) ? useDeclared(d.name.text, d.getSourceFile().fileName, e) : ty(t, e);
           const fields = d!.members.filter(ts.isPropertySignature).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
@@ -1207,6 +1270,27 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         line(`// ts2milo stub: ${e.message.replace(/\n/g, " ")}`);
       }
     }
+    // Generated types for this file (names synthesized in step 2); emitting a struct can create more unions.
+    for (const [node, a] of anonStructs) if (a.file === file) {
+      const lit = node as ts.TypeLiteralNode;
+      const tmark = out.length;
+      try {
+        const fields = lit.members.filter(ts.isPropertySignature).map((m) => {
+          const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : checker.getTypeAtLocation(m);
+          return `${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${ty(pt, m)},`;
+        });
+        line("@derive(Clone)");
+        line(`pub struct ${a.name} {`);
+        ind++; for (const f of fields) line(f); ind--;
+        line("}");
+      } catch (err) {
+        if (!(err instanceof Unsupported) || !opts.lenient) throw err;
+        out.length = tmark;
+        report.stubs.push({ file: rel(file), name: a.name, reason: err.message });
+        line(`// ts2milo stub: ${err.message.replace(/\n/g, " ")}`);
+      }
+    }
+    for (const u of genUnions) if (u.file === file) emitUnion(u);
     function emitUnion(u: { name: string; lits: string[] }) {
       hit("string-literal union", "generated enum + Name_value");
       line("@derive(Clone)");
