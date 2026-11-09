@@ -1,0 +1,48 @@
+// @derive(Clone) rebuilds a Heap nested in an Option or a Vec, so the copy shares nothing
+// with the original: mutating the clone leaves the original's boxes untouched.
+// @expect: 8
+// @expect: 118
+// @expect: 8
+@derive(Clone)
+enum Node {
+    Leaf(i64),
+    Branch(Tree),
+}
+
+@derive(Clone)
+struct Tree {
+    val: i64,
+    left: Option<Heap<Node>>,
+    kids: Vec<Heap<Node>>,
+}
+
+fn sum(n: &Node): i64 {
+    return match n {
+        Node.Leaf(v) => v
+        Node.Branch(t) => sumTree(t)
+    }
+}
+
+fn sumTree(t: &Tree): i64 {
+    var s = t.val
+    match t.left {
+        Option.Some(h) => { s = s + sum(*h) }
+        Option.None => {}
+    }
+    for k in t.kids {
+        s = s + sum(*k)
+    }
+    return s
+}
+
+fn main() {
+    var kids: Vec<Heap<Node>> = []
+    kids.push(Heap(Node.Leaf(5)))
+    let a = Tree { val: 1, left: Option.Some(Heap(Node.Leaf(2))), kids: kids }
+    var b = a.clone()
+    print(sumTree(a))
+    b.val = 11
+    b.kids.push(Heap(Node.Leaf(100)))
+    print(sumTree(b))
+    print(sumTree(a))
+}

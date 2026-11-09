@@ -51,6 +51,7 @@ interface DeriveHost {
 
 export class DeriveSynth {
   constructor(private host: DeriveHost) {}
+  private bindSeq = 0;
 
   // The first payload a synthesized enum clone() cannot reproduce, or null when every
   // variant is rebuildable. A closure payload is excluded even when it is Copy, for the
@@ -132,7 +133,7 @@ export class DeriveSynth {
   canAutoClone(t: TypeKind, pending?: Set<string>, top = true): boolean {
     if (this.host.isCopyType(t)) return true;
     if (t.tag === "string") return true;
-    if (t.tag === "heap") return top && t.inner.tag !== "interface" && t.inner.tag !== "fn" && this.canAutoClone(t.inner, pending, true);
+    if (t.tag === "heap") return t.inner.tag !== "interface" && t.inner.tag !== "fn" && this.canAutoClone(t.inner, pending, top);
     // A container clones only what its contents can: Vec<closure> has no clone (an owning
     // closure's environment cannot be duplicated), and letting it through synthesized a
     // clone() whose body failed to compile inside std/http.
@@ -140,13 +141,17 @@ export class DeriveSynth {
     // rejects every closure: the element would be duplicated OUT of the frame that owns
     // that slot. So "the element is Copy" is not sufficient here — a closure element
     // disqualifies the container even when the closure itself is copyable.
-    if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending, false);
+    // Under `top` the clone is spelled out (cloneOf), so a Heap element is rebuilt rather than
+    // handed to Vec.clone, which has no copy for a box.
+    if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending, top && this.rebuilds(t.element));
     if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending, false) && this.canAutoClone(t.value, pending, false);
     if (t.tag === "struct" || t.tag === "enum") {
       if (this.host.typeImplementsTrait(t.name, "Clone") || this.host.handWrittenClone().has(t.name) || !!pending?.has(t.name)) return true;
       // An Option/Result instance is judged by its payloads, the way a container is: its
       // own impl is conditional on them and may not exist yet when a field asks.
       if (t.tag === "enum") {
+        const inner = this.host.optionInnerType(t);
+        if (top && inner && this.rebuilds(inner)) return this.canAutoClone(inner, pending, true);
         const base = this.host.enums.get(t.name)?.baseName;
         if (base && CONDITIONAL_CLONE_BASES.has(base)) return this.enumCloneBlocker(t.name, pending, false) === null;
       }
@@ -154,11 +159,60 @@ export class DeriveSynth {
     return false;
   }
 
+  // A type whose copy has to be written out because a Heap<T> sits inside it: a box only
+  // clones by rebuilding it around a copy of its payload.
+  private rebuilds(t: TypeKind): boolean {
+    if (t.tag === "heap") return true;
+    if (t.tag === "vec") return this.rebuilds(t.element);
+    if (t.tag === "enum") {
+      const inner = this.host.optionInnerType(t);
+      return !!inner && this.rebuilds(inner);
+    }
+    return false;
+  }
+
+  // The written form of a rebuilt type, for a closure return annotation: the `None` arm of a
+  // cloned Option<..> has no hint to infer its payload type from inside a closure body.
+  private typeRef(t: TypeKind): MiloType | null {
+    const mk = (name: string, typeArgs?: MiloType[]): MiloType => ({ name, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null });
+    if (t.tag === "heap" || t.tag === "vec") {
+      const a = this.typeRef(t.tag === "heap" ? t.inner : t.element);
+      return a ? mk(t.tag === "heap" ? "Heap" : "Vec", [a]) : null;
+    }
+    if (t.tag === "enum") {
+      const inner = this.host.optionInnerType(t);
+      if (inner) {
+        const a = this.typeRef(inner);
+        return a ? mk("Option", [a]) : null;
+      }
+    }
+    if (t.tag === "struct" || t.tag === "enum") return t.name.includes("<") || t.name.includes("$") ? null : mk(t.name);
+    return null;
+  }
+
   // The expression that copies the value `x` of type `t`: bare when Copy, `Heap(*x ...)` for
   // a box (rebuilt around a copy of its payload), `x.clone()` otherwise.
   private cloneOf(t: TypeKind, x: Expr): Expr {
     if (this.host.isCopyType(t)) return x;
     if (t.tag === "heap") return { kind: "Call" as const, func: "Heap", args: [this.cloneOf(t.inner, { kind: "UnaryOp" as const, op: "*", operand: x })] };
+    if (t.tag === "vec" && this.rebuilds(t.element)) {
+      // Fresh binding names: nested Option/Vec would otherwise shadow the outer one, which
+      // the checker rejects.
+      const v = `_c${this.bindSeq++}`;
+      const body = [{ kind: "Return" as const, value: this.cloneOf(t.element, { kind: "Ident" as const, name: v }) }];
+      return { kind: "MethodCall" as const, object: x, method: "map", args: [{ kind: "Closure" as const, params: [{ name: v, type: null }], retType: this.typeRef(t.element), body }] };
+    }
+    const inner = t.tag === "enum" ? this.host.optionInnerType(t) : null;
+    if (inner && this.rebuilds(inner)) {
+      const h = `_c${this.bindSeq++}`;
+      const some = this.cloneOf(inner, { kind: "Ident" as const, name: h });
+      return {
+        kind: "MatchExpr" as const, subject: x, arms: [
+          { pattern: { kind: "EnumPattern" as const, enumName: "Option", variant: "Some", bindings: [h], bindingSpans: [] }, body: [{ kind: "ExprStmt" as const, expr: { kind: "EnumLit" as const, enumName: "Option", variant: "Some", args: [some] } }] },
+          { pattern: { kind: "EnumPattern" as const, enumName: "Option", variant: "None", bindings: [], bindingSpans: [] }, body: [{ kind: "ExprStmt" as const, expr: { kind: "EnumLit" as const, enumName: "Option", variant: "None", args: [] } }] },
+        ],
+      };
+    }
     return { kind: "MethodCall" as const, object: x, method: "clone", args: [] };
   }
 

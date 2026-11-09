@@ -24,7 +24,7 @@
   "src/checker-closure-env.ts": 100,
   "src/checker-concurrent-args-host.ts": 61,
   "src/checker-concurrent-args.ts": 111,
-  "src/checker-derive.ts": 663,
+  "src/checker-derive.ts": 717,
   "src/checker-escaping-closures-host.ts": 101,
   "src/checker-escaping-closures.ts": 694,
   "src/checker-global-borrow-host.ts": 182,
