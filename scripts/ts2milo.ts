@@ -41,13 +41,20 @@ export class Unsupported extends Error {}
 
 // `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
 // A declaration that turns into a stub can be named by code emitted before it, and the importer then fails to
-// compile. A second pass knows which declarations are dead, so their users stub too (the reason names the dead one).
+// compile. Later passes know which declarations are dead, so their users stub too (the reason names the dead one).
 // `stubNames` (--lenient): functions to emit as stubs by "<ts file>::<name>", with the reason (the
 // self-host meter's --stub-errors feeds back the Milo compile errors of the previous round).
 export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> } = {}): Report {
-  const first = transpileOnce(inputs, opts, new Set());
-  if (!opts.lenient || first.deadDecls.size === 0) return first;
-  return transpileOnce(inputs, opts, first.deadDecls);
+  let r = transpileOnce(inputs, opts, new Set());
+  if (!opts.lenient) return r;
+  // A stub can make the declaration that reads it a stub too, which only the next pass sees: run to a fixed point.
+  for (let pass = 0; pass < 6 && r.deadDecls.size > 0; pass++) {
+    const next = transpileOnce(inputs, opts, r.deadDecls);
+    const grew = next.deadDecls.size !== r.deadDecls.size;
+    r = next;
+    if (!grew) break;
+  }
+  return r;
 }
 
 function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> }, dead: Set<string>): Report {
