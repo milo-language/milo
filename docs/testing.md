@@ -212,7 +212,7 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `skillText.test.ts` | every ```` ```milo ```` fence in `milo skill` output type-checks; its std module list covers `std/` |
 | `header.test.ts` | generated C header correctness |
 | `embedded.test.ts` | embedded/no-runtime target |
-| `fileSizeRatchet.test.ts` | no `src/*.ts` grows past `file-size-baseline.json`; new files cap at 1500 lines; rebaseline with `bun scripts/file-size-ratchet.ts --update` |
+| `fileSizeRatchet.test.ts` | no `src/*.ts` over 1500 lines grows past `file-size-baseline.json` (smaller files have no entry and cap at 1500); rebaseline with `bun scripts/file-size-ratchet.ts --update` |
 | `browser.test.ts` | std/browser against a real headless Chrome (viewport, color scheme, evaluate, PNG size); skipped, with the reason printed, when no Chrome is installed |
 
 Keep this table current — it's the map reviewers and the sweep skill use to reason about coverage.
