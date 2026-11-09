@@ -879,3 +879,13 @@ describe("class fields set in the constructor body", () => {
     expect(r.stubs.some((s) => s.name === "Box.new" && s.reason.includes("constructor body"))).toBe(true);
   });
 });
+
+describe("methods named like builtin struct methods", () => {
+  test("clone and drop are renamed so the builtin copy is not shadowed", () => {
+    const { file, dir } = tmpTs("tsm_clone.ts", `export class Glue { n = 1; clone(t: string): string { return t + "x"; } }\nexport class Em { glue: Glue = new Glue(); use(): string { return this.glue.clone("a"); } }\n`);
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const text = r.files.get("tsm_clone.milo")!;
+    expect(text).not.toMatch(/fn clone\(/);
+    expect(text).toContain("clone_(");
+  });
+});

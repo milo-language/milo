@@ -17,7 +17,7 @@ const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
 const THROWN_ENUM = "Thrown";
 const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
 const safeId = (n: string): string => { const m = n.replace(/\$/g, "_d"); return RESERVED.has(m) ? m + "_" : m; };
-const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub".split(" "));
+const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub clone drop".split(" "));
 
 export interface Report {
   files: Map<string, string>;
