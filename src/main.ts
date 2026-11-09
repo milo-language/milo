@@ -18,6 +18,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker, type CheckResult } from "./checker";
 import { armAstOracle } from "./ast-oracle";
+import { applyRewrites } from "./apply-rewrites";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
 import { backendProgram } from "./backend-program";
 import { decodeChecked, encodeChecked } from "./checked-dump";
@@ -775,6 +776,8 @@ function emitMlir(sourcePath: string, outputPath: string | null, target: TargetI
   let prog;
   if (fromChecked) {
     const c = decodeChecked(readFileSync(fromChecked, "utf-8")) as { program: Program; result: import("./checker").CheckResult };
+    // A dump made by another checker can carry rewrites it has not applied.
+    applyRewrites(c.result);
     prog = backendProgram(c.program, c.result, dirname(resolve(sourcePath)), target.os, target.arch);
   } else prog = frontendToProgram(source, target, sourcePath, warningConfig);
   const plan = new MlirPlan(prog, target, { filePath: sourcePath, trapOnOverflow: false, emitDebug: false, contractChecks: false, stripPanicLocations: false, sanitize: false });

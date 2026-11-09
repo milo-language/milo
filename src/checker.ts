@@ -27,6 +27,7 @@ import { checkPlainClosureEnv } from "./checker-closure-env";
 import { checkPurity } from "./checker-purity-host";
 import { checkPointerParamEscape } from "./checker-pointer-escape-host";
 import { checkMutParamBundle } from "./checker-mut-bundle-host";
+import { applyRewrites } from "./apply-rewrites";
 import { checkEscapingClosures, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
@@ -3902,13 +3903,16 @@ export class TypeChecker {
     // which matters most in the LSP, where the checker runs on half-typed code
     // and an escaped throw means the file shows no diagnostics at all.
     try {
-      this.checkProgram(program);
-      this.reportStrandedCFnReads();
-      this.sql.run();
-      this.flushSqlErrors();
+      this.checkCore(program);
+      // The only place the recorded rewrites reach the tree: the passes below read the finished shape.
+      applyRewrites(this);
+      this.checkPasses(program);
+      this.finishChecks();
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
+    // A CheckAbort in the core leaves the rewrites unapplied; a second call is a no-op.
+    applyRewrites(this);
     if (this.reportStringClones) this.printStringClones();
     if (this._displayNames !== undefined && this._displayNames.size > 0) {
       // The file a renamed symbol came from, when exactly one file declared it.
@@ -3992,7 +3996,8 @@ export class TypeChecker {
     };
   }
 
-  private checkProgram(program: Program): void {
+  // Registration and every expression check. Records rewrites, never writes the AST.
+  private checkCore(program: Program): void {
     this._userFnNames = program.userFnNames;
     this.replayPlans = program.replayPlans;
     for (const fn of program.droppedExterns ?? []) this.checkVariadicExtern(fn);
@@ -4731,7 +4736,11 @@ export class TypeChecker {
         `a struct cannot contain itself by value: put the recursive field behind an indirection (e.g. 'Heap<${shown}>' or 'Vec<${shown}>')`);
     }
 
-    // The whole-program passes below all read the finished program through one view:
+  }
+
+  // The whole-program passes: they read the program after applyRewrites.
+  private checkPasses(program: Program): void {
+    // They all read the finished program through one view:
     // the call-resolution maps are complete, every monomorphized instance exists, and
     // `closureCaptures` / the auto-`move` promotions have settled. Built once here so no
     // pass carries its own copy of "which function does this call reach".
@@ -4797,6 +4806,12 @@ export class TypeChecker {
       });
     }
 
+  }
+
+  private finishChecks(): void {
+    this.reportStrandedCFnReads();
+    this.sql.run();
+    this.flushSqlErrors();
   }
 
   private processDerives(program: Program): import("./ast").ImplDecl[] {
@@ -6195,7 +6210,8 @@ export class TypeChecker {
   // `(p0: &T, ...) => f(p0, ...)`, which borrows `f` only for the call (the std callback
   // parameter does not escape). The builtin map and sorts loaded the element for such a
   // callback; coerceCopyCallback covers literals and named fns, not locals.
-  private thunkByValueFnValue(arg: Expr, element: TypeKind, arity: number): void {
+  private thunkByValueFnValue(slot: Expr, element: TypeKind, arity: number): void {
+    const arg = rewritten(this.rewrites, slot);
     // ident-ok: the rewrite emits a call by NAME (`f(p0)`), so only a fn value bound to a name qualifies
     const fnName = identNameOf(arg);
     if (fnName === null) return;
@@ -6205,7 +6221,7 @@ export class TypeChecker {
     const elemRef: TypeKind = { tag: "ref", inner: element, mutable: false };
     const paramTypes: TypeKind[] = [];
     for (const _p of t.params) paramTypes.push(elemRef);
-    replaceNode(arg, this.callbackThunk(fnName, paramTypes, t.ret, arg.span));
+    this.rewrites.set(arg, this.callbackThunk(fnName, paramTypes, t.ret, arg.span));
   }
 
   // After the adaptations above, a callback std/vec would call with `&T` that still takes
@@ -8181,7 +8197,7 @@ export class TypeChecker {
       return;
     }
     if (node !== null && typeof node === "object") {
-      for (const value of Object.values(node)) this.scanUnreachable(value);
+      for (const value of Object.values(rewritten(this.rewrites, node as Expr))) this.scanUnreachable(value);
     }
   }
 
@@ -9403,9 +9419,10 @@ export class TypeChecker {
       if (!n || typeof n !== "object" || seen.has(n)) return;
       seen.add(n);
       if (Array.isArray(n)) { for (const x of n) visit(x, false); return; }
-      const kind = (n as { kind?: unknown }).kind;
+      // A child the checker replaced is walked as its replacement.
+      const e = rewritten(this.rewrites, n as Expr);
+      const kind = (e as { kind?: unknown }).kind;
       if (typeof kind !== "string") return;
-      const e = n as Expr;
       // ident-ok: a closure binding is a whole variable; its literals carry the captures
       if (!top && (e.kind === "Closure" || (e.kind === "Ident" && this.exprTypes.get(e)?.tag === "fn"))) {
         const name = e.kind === "Ident" ? `'${e.name}'` : "a closure";
@@ -9429,10 +9446,10 @@ export class TypeChecker {
       // ident-ok: movedExprs holds the moved place nodes; the kind only filters out elements
       if (!top && (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e)) atPlace(e, `a move of '${this.describeExpr(e)}'`, true, e);
       if (kind === "Assign") {
-        const t = (n as { target: Expr }).target;
+        const t = (e as unknown as { target: Expr }).target;
         atPlace(t, `an assignment to '${this.describeExpr(t)}'`);
       }
-      for (const [k, v] of Object.entries(n)) if (k !== "span") visit(v, false);
+      for (const [k, v] of Object.entries(e)) if (k !== "span") visit(v, false);
     };
     visit(arg, true);
     return out;
@@ -10369,7 +10386,9 @@ export class TypeChecker {
   // child checked with plain `checkExpr(child)` cannot see a hint meant for an ancestor.
   // A hint is a request, not a check: callers still compare the result against what
   // they wanted and report the mismatch in their own words.
-  private checkExpr(expr: Expr, expected: TypeKind | null = null): TypeKind {
+  private checkExpr(node: Expr, expected: TypeKind | null = null): TypeKind {
+    // A node the checker already replaced is checked as its replacement; every fact is filed under that.
+    const expr = rewritten(this.rewrites, node);
     this.canonicalizePreludeVariant(expr);
     let hint = expected && this.hintFor(expr, expected);
     if (expr.kind === "EnumLit" && expr.typeArgs?.length && (expr.enumName === "Vec" || expr.enumName === "HashMap")) {
@@ -12416,7 +12435,8 @@ export class TypeChecker {
     return null;
   }
 
-  private coerceCopyCallbackTo(arg: Expr, wantParams: TypeKind[]): void {
+  private coerceCopyCallbackTo(slot: Expr, wantParams: TypeKind[]): void {
+    const arg = rewritten(this.rewrites, slot);
     if (arg.kind === "Closure") {
       if (arg.params.length === wantParams.length) {
         for (let i = 0; i < arg.params.length; i++) {
@@ -12440,8 +12460,7 @@ export class TypeChecker {
       else paramTypes.push(sig.params[i]!.type);
     }
     if (!adapted) return;
-    // In place: the parent's args array holds this node, and lowering reads the AST.
-    replaceNode(arg, this.callbackThunk(fnName, paramTypes, sig.ret, arg.span));
+    this.rewrites.set(arg, this.callbackThunk(fnName, paramTypes, sig.ret, arg.span));
   }
 
   // `(__cb0: T0, ...) => f(__cb0, ...)`.
