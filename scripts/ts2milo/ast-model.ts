@@ -262,13 +262,17 @@ const RESERVED = new Set("fn extern let var return if else while true false stru
 const field_ = (n: string) => (RESERVED.has(n) ? n + "_" : n);
 const pascal = (s: string) => s.replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase());
 
-export interface AstEmit { types: string; decoder: string; typeNames: string[]; dropped: AstModel["dropped"]; sizeBoxed: string[] }
+export interface AstEmit { types: string; decoder: string; typeNames: string[]; dropped: AstModel["dropped"]; sizeBoxed: string[]; foreign: { file: string; name: string }[] }
 export interface LitName { name: string; lits: string[]; file: string }
 
 // Milo for every type reachable from `roots`: struct and enum declarations for the types declared
 // in `astFile`, and a JSON decoder (cursors into a std/json document) for all of them wherever
 // declared. `litName` names a string-literal union the way the function emitter does, so both
 // sides agree on the enum; `modOf` gives the Milo module a file's declarations live in.
+// Declared in ast.ts but owned by the hand-written runtime, whose Diagnostic holds one: a second struct of the name is a different type.
+export const RUNTIME_OWNED = new Set(["Span"]);
+// The name a type node refers to: a plain reference, or one written as an import type.
+const refName = (n: ts.TypeNode): string | null => (ts.isTypeReferenceNode(n) ? n.typeName.getText() : ts.isImportTypeNode(n) && n.qualifier ? n.qualifier.getText() : null);
 export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>, kindEnum: (u: TaggedUnion) => LitName): AstEmit {
   const membersOf = (n: string) => model.ifaces.get(n)?.members ?? model.inline.get(n);
   const enums = new Map<string, LitName>();
@@ -290,7 +294,8 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
       const base = stripOptional(m.type);
       const elem = ts.isArrayTypeNode(base) ? stripOptional(base.elementType) : base;
-      if (ts.isTypeReferenceNode(elem)) visit(elem.typeName.getText());
+      const en = refName(elem);
+      if (en) visit(en);
     }
   };
   for (const r of roots) visit(r);
@@ -323,15 +328,15 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
         const e = conv(n.elementType, false);
         if (e === null) return null;
         const el = stripOptional(n.elementType);
-        const name = ts.isTypeReferenceNode(el) ? el.typeName.getText() : "";
+        const name = refName(el) ?? "";
         return `Vec<${wrap(model.cyclic.has(name) ? `Heap<${e}>` : e, n.elementType, false)}>`;
       }
       if (n.kind === ts.SyntaxKind.NumberKeyword) return "i64";
       if (n.kind === ts.SyntaxKind.StringKeyword || n.kind === ts.SyntaxKind.BigIntKeyword) return "string";
       if (n.kind === ts.SyntaxKind.BooleanKeyword || (ts.isLiteralTypeNode(n) && n.literal.kind === ts.SyntaxKind.TrueKeyword)) return "bool";
-      if (ts.isTypeReferenceNode(n)) {
-        const name = n.typeName.getText();
-        if (membersOf(name) || model.unions.has(name)) return incomplete.has(name) ? null : name;
+      const rn = refName(n);
+      if (rn) {
+        if (membersOf(rn) || model.unions.has(rn)) return incomplete.has(rn) ? null : rn;
       }
       const l = litName(n) ?? (ts.isTypeReferenceNode(n) ? (() => { const d = checker.getSymbolAtLocation(n.typeName)?.declarations?.[0]; return d && ts.isTypeAliasDeclaration(d) ? litName(d.type) : null; })() : null);
       if (l) { enums.set(l.name, l); return l.name; }
@@ -351,11 +356,12 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     }
   }
 
-  const structFields = new Map<string, { name: string; ty: string; node: ts.PropertySignature }[]>();
+  const structFields = new Map<string, { name: string; ty: string; node: ts.PropertySignature; fill?: string }[]>();
   const dropped: AstModel["dropped"] = [];
+  const foreign: { file: string; name: string }[] = [];
   const fieldsOf = (name: string, report: boolean) => {
-    const fs: { name: string; ty: string; node: ts.PropertySignature }[] = [];
-    if (model.identity.has(name)) fs.push({ name: ID_FIELD, ty: "i64", node: undefined as unknown as ts.PropertySignature });
+    const fs: { name: string; ty: string; node: ts.PropertySignature; fill?: string }[] = [];
+    if (model.identity.has(name) || RUNTIME_OWNED.has(name)) fs.push({ name: ID_FIELD, ty: "i64", node: undefined as unknown as ts.PropertySignature });
     for (const m of membersOf(name)!) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       const fname = (m.name as ts.Identifier).text;
@@ -363,6 +369,20 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       // A field no input file reads is not carried: a smaller type, a smaller dump, a smaller decoder.
       if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
       const t = typeOf(m);
+      if (t === null) {
+        // A list or optional of a type the decoder cannot build (tokens): the struct keeps the field, the decoder leaves it empty.
+        const base = stripOptional(m.type);
+        const isList = ts.isArrayTypeNode(base);
+        const el = isList ? stripOptional(base.elementType) : base;
+        const en = refName(el);
+        const opt = base !== m.type || !!m.questionToken;
+        if (en && membersOf(en) && model.fileOf.get(en) !== astFile && (isList || opt)) {
+          foreign.push({ file: model.fileOf.get(en)!, name: en });
+          const inner = isList ? `Vec<${en}>` : en;
+          fs.push({ name: fname, ty: opt ? `Option<${inner}>` : inner, node: m, fill: opt ? "Option.None" : "Vec.new()" });
+          continue;
+        }
+      }
       if (t === null) { if (report && model.fileOf.get(name) === astFile) dropped.push({ iface: name, field: fname, type: m.type.getText() }); continue; }
       fs.push({ name: fname, ty: t, node: m });
     }
@@ -397,7 +417,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
         for (;;) {
           if (sizeOf(s) + 8 <= LIMIT) break;
           const aggregate = (ty: string) => structFields.has(ty) || model.unions.has(ty);
-          const cand = (structFields.get(s) ?? []).filter((f) => (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
+          const cand = (structFields.get(s) ?? []).filter((f) => !f.fill && (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
           if (!cand) break;
           model.boxed.add(cand.node);
           if (!allowVec) names.add(cand.name);
@@ -426,7 +446,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       for (;;) {
         if (sizeOf(name) + 8 <= LIMIT) break;
         const aggregate = (ty: string) => structFields.has(ty) || model.unions.has(ty);
-        const cand = (structFields.get(name) ?? []).filter((f) => (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
+        const cand = (structFields.get(name) ?? []).filter((f) => !f.fill && (f.ty.startsWith("Option<") || aggregate(f.ty) || (allowVec && f.ty.startsWith("Vec<"))) && !f.ty.startsWith("Option<Heap<") && sizeOf(f.ty) > 16).sort((a, b) => sizeOf(b.ty) - sizeOf(a.ty))[0];
         if (!cand) break;
         model.boxed.add(cand.node);
         sizeBoxed.push(`${name}.${cand.name}`);
@@ -444,7 +464,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   }
 
   // ---- types (only those declared in astFile; the rest are declared by their own files) ----
-  const t: string[] = ["// GENERATED by scripts/ts2milo.ts from src/ast.ts. Do not edit; change the TypeScript."];
+  const t: string[] = ["// GENERATED by scripts/ts2milo.ts from src/ast.ts. Do not edit; change the TypeScript.", ...[...RUNTIME_OWNED].filter((n) => order.includes(n)).map((n) => `from "./ts2milo_runtime" import { ${n} }`)];
   const typeNames: string[] = [];
   for (const l of enums.values()) if (l.file === astFile) t.push(`@derive(Clone)`, `pub enum ${l.name} { ${l.lits.map(pascal).join(", ")} }`);
   for (const name of order) {
@@ -478,6 +498,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     const fs = structFields.get(name);
     if (!fs) continue;
     typeNames.push(name);
+    if (RUNTIME_OWNED.has(name)) continue;
     t.push(...(model.cloneable.has(name) ? ["@derive(Clone)"] : []), `pub struct ${name} {`, ...fs.map((f) => `    ${field_(f.name)}: ${f.ty},`), `}`);
   }
 
@@ -515,7 +536,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       lines.push(`    return ${ty}.${pascal(last.kind)}(${dec(last.name)}(j, c))`, `}`, "");
     } else {
       const fs = structFields.get(ty) ?? [];
-      lines.push(head, `    return ${ty} {`, ...fs.map((f) => (f.node ? `        ${field_(f.name)}: ${dec(f.ty)}(j, j.curField(c, ${JSON.stringify(f.name)})),` : `        ${f.name}: ts2miloNextId(),`)), `    }`, `}`, "");
+      lines.push(head, `    return ${ty} {`, ...fs.map((f) => (f.fill ? `        ${field_(f.name)}: ${f.fill},` : f.node ? `        ${field_(f.name)}: ${dec(f.ty)}(j, j.curField(c, ${JSON.stringify(f.name)})),` : `        ${f.name}: ts2miloNextId(),`)), `    }`, `}`, "");
     }
     d.push(...lines);
     return name;
@@ -523,13 +544,13 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   const rootFns = roots.map((r) => (incomplete.has(r) ? "" : dec(r)));
   const mods = new Map<string, Set<string>>();
   const importFrom = (file: string, name: string) => { const m = modOf(file); if (!mods.has(m)) mods.set(m, new Set()); mods.get(m)!.add(name); };
-  for (const name of order) if (!incomplete.has(name)) { const f = model.fileOf.get(name); if (f && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
+  for (const name of order) if (!incomplete.has(name)) { const f = model.fileOf.get(name); if (f && !RUNTIME_OWNED.has(name) && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
   for (const l of enums.values()) importFrom(l.file, l.name);
-  const out: string[] = ["// GENERATED by scripts/ts2milo.ts from the TypeScript types. Do not edit; change the TypeScript.", `from "std/json" import { Json }`, `from "./ts2milo_runtime" import { jsFromUtf8${model.identity.size ? ", ts2miloNextId" : ""} }`];
+  const out: string[] = ["// GENERATED by scripts/ts2milo.ts from the TypeScript types. Do not edit; change the TypeScript.", `from "std/json" import { Json }`, `from "./ts2milo_runtime" import { ${[...RUNTIME_OWNED].filter((n) => order.includes(n)).map((n) => n + ", ").join("")}jsFromUtf8${(model.identity.size || order.some((n) => RUNTIME_OWNED.has(n))) ? ", ts2miloNextId" : ""} }`];
   for (const [m, names] of [...mods.entries()].sort(([a], [b]) => a.localeCompare(b))) out.push(`from "${m}" import { ${[...names].sort().join(", ")} }`);
   out.push("");
   out.push(`fn rawStr(j: &Json, c: i64): string {`, `    match j.curStr(c) {`, `        Option.Some(s) => { return s }`, `        Option.None => { return "" }`, `    }`, `}`, "");
   out.push(...d);
   roots.forEach((r, i) => !incomplete.has(r) && out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
-  return { types: t.join("\n") + "\n", decoder: out.join("\n") + "\n", typeNames, dropped, sizeBoxed };
+  return { types: t.join("\n") + "\n", decoder: out.join("\n") + "\n", typeNames, dropped, sizeBoxed, foreign };
 }

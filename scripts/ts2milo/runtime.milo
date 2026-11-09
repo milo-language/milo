@@ -327,7 +327,9 @@ pub fn jsReplaceAll(s: &string, pat: &string, rep: &string): string {
 
 pub enum Severity { Error, Warning, Hint }
 
+@derive(Clone)
 pub struct Span {
+    id: i64,
     line: i64,
     col: i64,
     file: Option<string>,

@@ -922,3 +922,42 @@ describe("methods named like builtin struct methods", () => {
     expect(text).toContain("clone_(");
   });
 });
+
+describe("frontend generation bugs", () => {
+  const gen = (name: string, body: string, driver: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, `${name}.ts`), body);
+    const r = transpile([join(dir, `${name}.ts`)], { overridesDir: join(dir, "none"), lenient: true });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    writeFileSync(join(dir, "main.milo"), driver.join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    return { status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) };
+  };
+
+  test("optional and struct truthiness in a value position, string-enum concatenation", () => {
+    const r = gen("tsm_vt", [
+      "export type K = \"let\" | \"var\";",
+      "export interface P { n: number }",
+      "export function mk(): P { return { n: 1 }; }",
+      // Payload truthiness narrows the operand after && (a non-empty string, not just present).
+      "export function len(s: string | undefined): number { return !!s && s.length > 1 ? 2 : -1; }",
+      "export function both(a: P, b: P): boolean { return a && b && a.n === b.n; }",
+      "export function none(s: string | undefined): boolean { return !s; }",
+      "export function say(k: K): string { return \"kw \" + k; }",
+    ].join("\n"), [
+      "from \"./tsm_vt\" import { K, mk, len, both, none, say }",
+      "from \"./ts2milo_runtime\" import { jsLen }",
+      "fn main(): i32 {",
+      "    if len(Option.Some(\"\\x61\\x00\\x62\\x00\")) != 2 { return 1 }",
+      "    if len(Option.Some(\"\")) != -1 { return 2 }",
+      "    if len(Option.None) != -1 { return 3 }",
+      "    if !both(mk(), mk()) { return 4 }",
+      "    if !none(Option.None) { return 5 }",
+      "    if jsLen(say(K.Var)) != 6 { return 6 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.err).not.toContain("error");
+    expect(r.status).toBe(0);
+  });
+});

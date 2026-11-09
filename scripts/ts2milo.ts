@@ -5,9 +5,9 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
+import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf } from "./ts2milo/subset";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
-import { buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
+import { RUNTIME_OWNED, buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
@@ -288,6 +288,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   };
 
   // src/ast.ts: Milo types and a decoder from its interfaces and tagged unions; no functions.
+  let astForeign: { file: string; name: string }[] = [];
   const astModel = buildAstModel(program, checker, astFile ? [astFile, ...files.filter((f) => f !== astFile)] : files);
 
 
@@ -320,6 +321,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return e;
     };
     const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used, kindEnum);
+    astForeign = em.foreign;
     report.files.set("ast.milo", em.types);
     report.files.set("ast_decode.milo", em.decoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
@@ -339,11 +341,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     // A name declared elsewhere: another input file, or the hand-written runtime.
     const useDeclared = (name: string, declFile: string | undefined, at: ts.Node) => {
       if (!declFile || declFile === file) return name;
-      if (inputSet.has(declFile)) use(modOf(declFile), name);
+      if (RUNTIME_OWNED.has(name) && declFile === astFile) use(RUNTIME_MOD, name);
+      else if (inputSet.has(declFile)) use(modOf(declFile), name);
       else return useRuntime(RUNTIME_RENAMES[name] ?? name, at);
       return name;
     };
     const std = (name: string) => { use(STD_MODULES[name], name); return name; };
+    if (isAst) { for (const f of astForeign) use(modOf(f.file), f.name); }
     const out: string[] = [];
     let ind = 0;
     const line = (s: string) => out.push("    ".repeat(ind) + s);
@@ -450,9 +454,36 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     // JS truthiness of a non-boolean (subset.ts truthyHandled). The value is evaluated once.
     const truthText = (k: "str" | "num" | "optBool", code: string) =>
       k === "str" ? `(${useRuntime("jsLen", sf)}(${code}) != 0)` : k === "num" ? `(${code} != 0)` : code;
+    // An enum-typed operand where a js string is wanted (`"x" + tok.kind`): its string value.
+    const strOperand = (x: ts.Expression): string => {
+      const t = tOf(x);
+      const ed = enumDeclOf(t);
+      if (ed) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, x)}(${ex(x)})`;
+      const lits = litsOf(t);
+      const u = lits && !isOptionT(t) ? litUnions.get(unionKey(lits)) : null;
+      if (u && u.file !== astFile) return `${useDeclared(`${u.name}_value`, u.file, x)}(${ex(x)})`;
+      return ex(x);
+    };
     const cond = (e: ts.Expression): string => {
       const k = truthyHandled(checker, e);
-      if (!k) return ex(e);
+      const ue = unparen(e);
+      if (!k && ts.isBinaryExpression(ue) && (ue.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || ue.operatorToken.kind === ts.SyntaxKind.BarBarToken)) return ex(e);
+      if (!k) {
+        // Only a boolean may stand where the output wants one: an optional or struct value is not one.
+        const t = tOf(e), tk = truthyKind(t);
+        if (tk && tk !== "str" && tk !== "num") {
+          // Outside an if guard nothing is bound to the payload, so the test is a match yielding the bool.
+          hit("truthiness", "optional value: match on Some, payload tested by its own truthiness");
+          const v = fresh("v");
+          const body = tk === "opt" ? "true" : tk === "optBool" ? v : tk === "optStr" ? truthText("str", v) : truthText("num", v);
+          return `(match ${ex(e)} { Option.Some(${tk === "opt" ? "_" : v}) => ${body}, Option.None => false })`;
+        }
+        if (!t.isUnion() && t.flags & ts.TypeFlags.Object) {
+          if (!sideEffectFree(e)) return fail(e, "truthiness of a non-null struct with side effects");
+          return "true";
+        }
+        return ex(e);
+      }
       if (k === "str" || k === "num") { hit("truthiness", "string: jsLen != 0, number: != 0"); return truthText(k, ex(e)); }
       return fail(e, "optional truthiness outside an if guard");
     };
@@ -838,7 +869,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
     // A condition that, when it evaluates to `positive`, proves a place is a variant or present: the place
     // and the pattern that binds its payload. Operands after it (or a branch) read the payload instead.
-    type Guard = { scrut: ts.Expression; pat: (n: string) => string; outer?: (n: string) => string; deref: boolean; at: ts.Node };
+    type Guard = { scrut: ts.Expression; pat: (n: string) => string; outer?: (n: string) => string; also?: (n: string) => string; deref: boolean; at: ts.Node };
     const guardOf = (c: ts.Expression, positive: boolean): Guard | null => {
       c = unparen(c);
       if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) return guardOf(c.operand, !positive);
@@ -863,8 +894,10 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       // Truthiness of an optional struct, array or union: present. (A string, number or boolean also tests its payload.)
       if (positive && okPlace(c) && isOptionT(tOf(c))) {
         const nn = checker.getNonNullableType(tOf(c));
-        if (nn.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike) || litsOf(nn)) return null;
-        return { scrut: c, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(c), at: c };
+        if (litsOf(nn)) return null;
+        // A string, number or boolean payload must also be truthy itself.
+        const also = nn.flags & ts.TypeFlags.StringLike ? (n: string) => truthText("str", n) : nn.flags & ts.TypeFlags.NumberLike ? (n: string) => truthText("num", n) : nn.flags & ts.TypeFlags.BooleanLike ? (n: string) => n : undefined;
+        return { scrut: c, pat: (n) => `Option.Some(${n})`, also, deref: boxedPlace(c), at: c };
       }
       return null;
     };
@@ -878,7 +911,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       guardScrut = null;
       const saved = narrow.get(key);
       narrow.set(key, { name, deref: g.deref });
-      const body = then();
+      let body = then();
+      if (g.also) body = `(if ${g.also(name)} { ${body} } else { ${other} })`;
       if (saved) narrow.set(key, saved); else narrow.delete(key);
       if (g.outer) { const o = fresh(key); return `match ${scrutCode} { ${g.outer(o)} => match ${o} { ${g.pat(name)} => ${body}, _ => ${other} }, _ => ${other} }`; }
       return `match ${scrutCode} { ${g.pat(name)} => ${body}, _ => ${other} }`;
@@ -965,7 +999,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
               const v = fresh("v");
               const some = inner.flags & ts.TypeFlags.NumberLike ? `${useRuntime("jsNum", e)}(${v})` : v;
               parts.push(`(match ${ex(sp.expression)} { Option.Some(${v}) => ${some}, Option.None => ${jsLit("undefined")} })`);
-            } else parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : ex(sp.expression));
+            } else parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : strOperand(sp.expression));
             if (sp.literal.text) parts.push(jsLit(sp.literal.text));
           }
           return `(${parts.join(" + ")})`;
@@ -1037,6 +1071,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             if (g) return g;
             return `(${cond(b.left)} ${text} ${cond(b.right)})`;
           }
+          if (op === ts.SyntaxKind.PlusToken && (isStr(b.left) || isStr(b.right) || tOf(b).flags & ts.TypeFlags.StringLike)) return `(${strOperand(b.left)} + ${strOperand(b.right)})`;
           return `(${ex(b.left)} ${text} ${ex(b.right)})`;
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
@@ -1091,14 +1126,16 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           if (!d || !(ts.isInterfaceDeclaration(d) || (ts.isTypeLiteralNode(d) && anonStructs.has(d)))) fail(o, "object literal whose contextual type is not a named interface");
           hit("object literal", "struct literal, missing optionals are Option.None");
           const name = ts.isInterfaceDeclaration(d!) ? useDeclared(d.name.text, d.getSourceFile().fileName, e) : ty(t, e);
-          const fields = d!.members.filter(ts.isPropertySignature).map((m) => {
+          // An AST struct has no field for a single-literal type (its `kind: "ImportDecl"` tag): the Milo struct itself is the tag.
+          const tagOnly = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && d.getSourceFile().fileName === astFile && astModel.ifaces.has(d.name.text) && !!m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal);
+          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m)).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
             const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
             return `${safeId(fname)}: ${v}`;
           });
-          if (ts.isInterfaceDeclaration(d!) && astModel.identity.has(d.name.text) && inputSet.has(d.getSourceFile().fileName)) fields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
+          if (ts.isInterfaceDeclaration(d!) && ((astModel.identity.has(d.name.text) && inputSet.has(d.getSourceFile().fileName)) || RUNTIME_OWNED.has(d.name.text))) fields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
           return `${name} { ${fields.join(", ")} }`;
         }
         case ts.SyntaxKind.ArrayLiteralExpression: {
@@ -1729,6 +1766,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       hit("string-literal union", "generated enum + Name_value");
       line("@derive(Clone)");
       line(`pub enum ${u.name} { ${u.lits.map(pascal).join(", ")} }`);
+      line(`pub fn ${u.name}_value(k: ${u.name}): string {`);
+      line(`    return match k { ${u.lits.map((l) => `${u.name}.${pascal(l)} => ${jsLit(l)}`).join(", ")} }`);
+      line("}");
     }
 
     const header = `// GENERATED by scripts/ts2milo.ts from ${rel(file)}. Do not edit; change the TypeScript.`;

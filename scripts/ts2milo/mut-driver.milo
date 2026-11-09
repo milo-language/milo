@@ -8,7 +8,7 @@ from "std/fs" import { readFile }
 from "std/json" import { Json }
 from "std/time" import { now, since }
 from "./ts2milo_runtime" import { jsToUtf8 }
-from "./ast" import { Span }
+from "./ts2milo_runtime" import { Span }
 from "./ast_decode" import { decodeMutInput }
 from "./checker-mutability" import { Finding, MutInput, mutabilityFindings }
 
