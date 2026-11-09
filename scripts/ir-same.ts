@@ -7,6 +7,8 @@
 //   bun scripts/ir-same.ts --filter hashmap      # only paths containing the substring
 //   bun scripts/ir-same.ts --jobs 2              # concurrency (default 4)
 //   bun scripts/ir-same.ts --flags "-g --target windows-x64"   # extra emit-ir args
+//   bun scripts/ir-same.ts --emit check          # compare `check --json` (exit code + diagnostics), for
+//                                                # checker refactors; tests/errors/ is included
 //   bun scripts/ir-same.ts --emit mlir           # compare `emit-mlir --all` (the milo dialect, before
 //                                                # milo-opt and LLVM can optimize a difference away)
 //
@@ -54,8 +56,8 @@ const baseRef = arg("--base") ?? "main";
 const filter = arg("--filter");
 const flags = (arg("--flags") ?? "").split(/\s+/).filter(Boolean);
 const emitKind = arg("--emit") ?? "ir";
-if (emitKind !== "ir" && emitKind !== "mlir") { console.error("--emit takes ir or mlir"); process.exit(2); }
-const emitCmd = emitKind === "mlir" ? ["emit-mlir", "--all"] : ["emit-ir"];
+if (emitKind !== "ir" && emitKind !== "mlir" && emitKind !== "check") { console.error("--emit takes ir, mlir or check"); process.exit(2); }
+const emitCmd = emitKind === "mlir" ? ["emit-mlir", "--all"] : emitKind === "check" ? ["check", "--json"] : ["emit-ir"];
 const jobs = Math.max(1, Number(arg("--jobs") ?? 4) || 4);
 // The largest example (examples/games/flight) peaks near 700MB alone and was footprint-killed
 // at 1536MB under parallel load, so the cap takes the whole per-job share of the budget.
@@ -86,7 +88,7 @@ if (!existsSync(MILO_OPT)) {
 // The ledger env vars change the IR the same way (emit-ir inherits this env), and so does
 // a rebuilt milo-opt (its mtime and size stand in for its identity).
 const optStat = statSync(MILO_OPT);
-const keyParts = [...(emitKind === "mlir" ? ["emit=mlir"] : []), ...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
+const keyParts = [...(emitKind !== "ir" ? [`emit=${emitKind}`] : []), ...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
 const flagKey = keyParts.length ? "-" + Bun.hash(keyParts.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
 
@@ -141,6 +143,7 @@ function listMilo(dir: string, recursive: boolean): string[] {
 
 function corpus(tree: string): Set<string> {
   const files = [...listMilo(join(tree, "tests", "fixtures"), false), ...listMilo(join(tree, "examples"), true)];
+  if (emitKind === "check") files.push(...listMilo(join(tree, "tests", "errors"), false));
   return new Set(files.map(f => relative(tree, f)).filter(f => !filter || f.includes(filter)));
 }
 
@@ -164,6 +167,8 @@ async function emit(tree: string, rel: string): Promise<Emit> {
       process.exit(2);
     }
   }
+  // A rejected program is a result here, not a failure: its diagnostics are what is compared.
+  if (emitKind === "check") return { ok: true, ir: `exit ${r.code}\n${r.stdout}` };
   return r.code === 0 ? { ok: true, ir: r.stdout } : { ok: false, err: r.stderr.split("\n").find(l => l.trim()) ?? `exit ${r.code}` };
 }
 
