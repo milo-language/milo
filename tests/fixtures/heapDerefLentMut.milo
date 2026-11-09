@@ -1,0 +1,24 @@
+// `&mut *b` of a named box lends the boxed value where it sits: writes land in the box, nothing is copied or dropped twice.
+
+struct Node {
+    name: string,
+    kids: Vec<string>,
+}
+
+fn grow(n: &mut Node, s: string) {
+    n.kids.push(s)
+    n.name = n.name + "+"
+}
+
+pub fn main(): i32 {
+    var b: Heap<Node> = Heap(Node { name: "root", kids: Vec.new() })
+    grow(&mut *b, "a")
+    grow(&mut *b, "bb")
+    print((*b).name)
+    print((*b).kids.len.toString())
+    print((*b).kids[1])
+    return 0
+}
+// @expect: root++
+// @expect: 2
+// @expect: bb

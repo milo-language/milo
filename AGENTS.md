@@ -52,7 +52,7 @@ tool to the host language; the JSON survives a Rust or self-hosted rewrite.
 ### Tests
 
 `tests/run.test.ts` is a single driver that walks two directories:
-- `tests/fixtures/*.milo` (<!-- stat:fixtures -->1087<!-- /stat --> files) — compiled + executed; stdout must match `// @expect: <line>` annotations (one per expected output line).
+- `tests/fixtures/*.milo` (<!-- stat:fixtures -->1088<!-- /stat --> files) — compiled + executed; stdout must match `// @expect: <line>` annotations (one per expected output line).
 - `tests/errors/*.milo` — must fail type-check; error output must contain the `// @error: <substring>` annotation.
 
 Add a new test by dropping a `.milo` file with the appropriate annotation in the right directory. No code changes needed.
