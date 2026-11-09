@@ -10,9 +10,10 @@
 //   {"$big": "123"}           bigint
 //   {"$num": "NaN" | "Infinity" | "-Infinity" | "-0"}
 //   {"$undef": 1}             undefined where JSON cannot omit it (array slot, Map value)
-// An object field holding undefined is omitted. A $ref must follow its $id in document order.
-// A full value whose $id was already decoded resolves to the first one, so an encoder whose
-// values have no identity (copies that carry an id) may repeat a node in full.
+// An object field holding undefined is omitted. A $ref may come before its $id in the document
+// (a table keyed by nodes of a declaration that is written after it). A full value whose $id
+// already appeared resolves to the first one, so an encoder whose values have no identity
+// (copies that carry an id) may repeat a node in full.
 
 export function encodeChecked(root: unknown): string {
   // References per object. A Map/Set key counts twice: it needs an id even when seen once,
@@ -67,39 +68,52 @@ export function encodeChecked(root: unknown): string {
 }
 
 export function decodeChecked(text: string): unknown {
+  // Pass 1 makes the empty object of every $id (the first full value with that id defines it),
+  // pass 2 fills them: a $ref then resolves wherever its $id sits, and cycles need no care.
   const byId = new Map<number, unknown>();
+  const definers = new Set<object>();
+  const scan = (j: any): void => {
+    if (j === null || typeof j !== "object") return;
+    if (Array.isArray(j)) { for (const x of j) scan(x); return; }
+    if (j.$id !== undefined && !byId.has(j.$id)) {
+      byId.set(j.$id, "$map" in j ? new Map() : "$set" in j ? new Set() : "$arr" in j ? [] : {});
+      definers.add(j);
+    }
+    for (const k in j) scan(j[k]);
+  };
   const dec = (j: any): unknown => {
     if (j === null || typeof j !== "object") return j;
     if (Array.isArray(j)) return j.map((x) => dec(x));
     if ("$ref" in j) {
-      if (!byId.has(j.$ref)) throw new Error(`checked dump: $ref ${j.$ref} before its $id`);
+      if (!byId.has(j.$ref)) throw new Error(`checked dump: $ref ${j.$ref} has no $id`);
       return byId.get(j.$ref);
     }
     if ("$undef" in j) return undefined;
     if ("$big" in j) return BigInt(j.$big);
     if ("$num" in j) return j.$num === "-0" ? -0 : Number(j.$num);
     const id: number | undefined = j.$id;
-    if (id !== undefined && byId.has(id)) return byId.get(id);
-    // Registered before the children decode, so a cycle back to this value resolves.
-    const keep = <T>(v: T): T => { if (id !== undefined) byId.set(id, v); return v; };
+    if (id !== undefined && !definers.has(j)) return byId.get(id);
+    const shell = id === undefined ? undefined : byId.get(id);
     if ("$map" in j) {
-      const m = keep(new Map<unknown, unknown>());
+      const m = (shell as Map<unknown, unknown>) ?? new Map<unknown, unknown>();
       for (const [k, x] of j.$map) m.set(dec(k), dec(x));
       return m;
     }
     if ("$set" in j) {
-      const s = keep(new Set<unknown>());
+      const s = (shell as Set<unknown>) ?? new Set<unknown>();
       for (const x of j.$set) s.add(dec(x));
       return s;
     }
     if ("$arr" in j) {
-      const a = keep([] as unknown[]);
+      const a = (shell as unknown[]) ?? [];
       for (const x of j.$arr) a.push(dec(x));
       return a;
     }
-    const o = keep({} as Record<string, unknown>);
+    const o = (shell as Record<string, unknown>) ?? {};
     for (const k in j) if (k !== "$id") o[k] = dec(j[k]);
     return o;
   };
-  return dec(JSON.parse(text));
+  const root = JSON.parse(text);
+  scan(root);
+  return dec(root);
 }

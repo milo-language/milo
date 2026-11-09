@@ -60,8 +60,14 @@ test("a repeated full value with a known $id decodes to the first one", () => {
   expect(out.types.get(out.body[0])).toBe("i64");
 });
 
-test("a class instance or a forward $ref is refused", () => {
+test("a $ref may come before its $id", () => {
+  const out = decodeChecked('{"types":{"$map":[[{"$ref":7},"i64"]]},"body":[{"$id":7,"kind":"Ident"}]}') as any;
+  expect(out.types.get(out.body[0])).toBe("i64");
+  expect(out.body[0]).toEqual({ kind: "Ident" });
+});
+
+test("a class instance or an unknown $ref is refused", () => {
   class C { x = 1; }
   expect(() => encodeChecked({ c: new C() })).toThrow("cannot encode a C instance");
-  expect(() => decodeChecked('{"a":{"$ref":3}}')).toThrow("$ref 3 before its $id");
+  expect(() => decodeChecked('{"a":{"$ref":3}}')).toThrow("$ref 3 has no $id");
 });
