@@ -138,6 +138,26 @@ describe("tagged unions", () => {
     expect(r.stubs.map((s) => s.reason).join("\n")).toContain("variant is not known");
   });
 
+  test("filter over non-Copy elements moves them out of a fresh call result and refuses a place", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "ast.ts"), [
+      "export interface Span { line: number }",
+      "export interface Item { kind: \"Item\"; tag: string; span?: Span }",
+      "export interface Other { kind: \"Other\"; span?: Span }",
+      "export type Node = Item | Other;",
+    ].join("\n"));
+    writeFileSync(join(dir, "use.ts"), [
+      "import type { Item } from \"./ast\";",
+      "function make(): Item[] { return [{ kind: \"Item\", tag: \"a\" }]; }",
+      "export function fresh(): Item[] { return make().filter(i => i.tag === \"a\"); }",
+      "export function place(xs: Item[]): Item[] { return xs.filter(i => i.tag === \"a\"); }",
+    ].join("\n"));
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Node"], overridesDir: join(dir, "none"), lenient: true });
+    expect(r.files.get("use.milo")!).toContain("jsFilterOwned(make()");
+    expect(r.stubs.filter((s) => s.name === "place").map((s) => s.reason).join("\n")).toContain("receiver is not a fresh call result");
+    expect(r.stubs.some((s) => s.name === "fresh")).toBe(false);
+  });
+
   // The copy is only a stand-in for the TS shared reference where nothing writes through either side.
   const holderSrc = (extra: string) => {
     const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));

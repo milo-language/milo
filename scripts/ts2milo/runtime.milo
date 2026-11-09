@@ -541,6 +541,38 @@ pub fn jsFilter<T>(v: &Vec<T>, f: (&T) => bool): Vec<T> {
     return out
 }
 
+// filter over a fresh (owned) vector whose elements are not Copy: the kept ones are moved, in order.
+pub fn jsFilterOwned<T>(v: Vec<T>, f: (&T) => bool): Vec<T> {
+    var src = v
+    var rev: Vec<T> = Vec.new()
+    var more = true
+    while more {
+        match src.pop() {
+            Option.Some(e) => {
+                if f(e) {
+                    rev.push(e)
+                }
+            }
+            Option.None => {
+                more = false
+            }
+        }
+    }
+    var out: Vec<T> = Vec.new()
+    more = true
+    while more {
+        match rev.pop() {
+            Option.Some(e) => {
+                out.push(e)
+            }
+            Option.None => {
+                more = false
+            }
+        }
+    }
+    return out
+}
+
 pub fn jsFind<T>(v: &Vec<T>, f: (&T) => bool): Option<T> {
     for e in v {
         if f(e) {

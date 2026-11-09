@@ -308,7 +308,13 @@ export function arrayClosureCall(program: ts.Program, checker: ts.TypeChecker, c
   const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
   if (BOOL_CLOSURE.has(method) && !(ret.flags & ts.TypeFlags.Boolean)) return why("non-boolean result");
   // filter/find copy elements out of a borrowed vector: only plain Copy values.
-  if ((method === "filter" || method === "find") && !isCopyScalar(elem)) return why("element is not a number, boolean or string");
+  if (method === "find" && !isCopyScalar(elem)) return why("element is not a number, boolean or string");
+  // A fresh call result is owned and unreachable afterwards, so its kept elements can be moved (jsFilterOwned); a place's cannot without a copy.
+  if (method === "filter" && !isCopyScalar(elem)) {
+    let r: ts.Expression = c.expression.expression;
+    while (ts.isParenthesizedExpression(r)) r = r.expression;
+    if (!ts.isCallExpression(r)) return why("element is not a number, boolean or string, and the receiver is not a fresh call result");
+  }
   if (method === "flatMap") {
     const re = checker.isArrayType(ret) ? checker.getTypeArguments(ret as ts.TypeReference)[0] : null;
     if (!re || !isCopyScalar(re)) return why("result is not an array of numbers, booleans or strings");

@@ -950,13 +950,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const closureCall = (c: ts.CallExpression, cl: { method: string; arrow: ts.ArrowFunction; elem: ts.Type }): string => {
       const { method, arrow, elem } = cl;
       hit("closure in an array method", `${CLOSURE_HELPERS[method]}(xs, closure) loop helper`);
-      const helper = useRuntime(CLOSURE_HELPERS[method], c);
       const recv = (c.expression as ts.PropertyAccessExpression).expression;
+      const owned = method === "filter" && !(elem.flags & (ts.TypeFlags.Number | ts.TypeFlags.String | ts.TypeFlags.Boolean | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral));
+      const helper = useRuntime(owned ? "jsFilterOwned" : CLOSURE_HELPERS[method], c);
       const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
       const core = isOptionT(elem) ? checker.getNonNullableType(elem) : elem;
       const boxed = onCycle(core);
       const inner = boxed ? `Heap<${ty(core, c)}>` : ty(core, c);
       const elemTy = `&${isOptionT(elem) ? `Option<${inner}>` : inner}`;
+      // The receiver is evaluated by the caller, outside the closure: a `?` in it propagates from the enclosing function.
+      const recvCode = ex(recv);
       const savedFn = curFn;
       curFn = arrow; closureDepth++; push();
       try {
@@ -977,7 +980,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const inside = out.splice(mark).join("\n");
         const lit = `(${ps.join(", ")})${retTy} => {\n${inside}\n${"    ".repeat(ind)}}`;
         const tail = method === "reduce" ? `, ${ownConv(c.arguments[1], ret)}` : "";
-        return `${helper}(${ex(recv)}, ${lit}${tail})`;
+        return `${helper}(${recvCode}, ${lit}${tail})`;
       } finally { pop(); closureDepth--; curFn = savedFn; }
     };
 
