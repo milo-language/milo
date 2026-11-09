@@ -228,3 +228,12 @@ impl ParseError {
         return ParseError { diagnostic: diagnostic, source: source, filePath: filePath, message: message }
     }
 }
+
+// An Option<Heap<T>> field read where an Option<T> is wanted. The type argument is written out at
+// every call: inference does not see T through &Option<Heap<T>>.
+pub fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
+    if let Option.Some(h) = o {
+        return Option.Some((*h).clone())
+    }
+    return Option.None
+}

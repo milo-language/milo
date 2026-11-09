@@ -6,6 +6,7 @@
 import type { Span, Stmt, ClosureExpr, Ident } from "./ast";
 import { walkStmts } from "./ast-walk-nonescaping";
 import type { Parent, EdgeKey } from "./ast-walk-types";
+import { isTrue } from "./mutability-scan";
 
 // One body to scan: `base` is the id of its first node, `params` the plain closure parameters
 // in scope, `who` how the hint names the owner ("'f'" or "the closure").
@@ -42,18 +43,18 @@ export class NonEscapingScan {
   callIdx = new Map<number, number>();
   capIdx = new Map<number, number>();
 
-  constructor(public input: NonEscapingInput) {}
+  // Plain data only: the input also carries AST bodies, which have no Clone in Milo.
+  constructor(public calls: CallFact[], public captures: CaptureFact[]) {}
 
   index(): void {
-    const input = this.input;
     let i = 0;
-    while (i < input.calls.length) {
-      this.callIdx.set(input.calls[i].id, i);
+    while (i < this.calls.length) {
+      this.callIdx.set(this.calls[i].id, i);
       i++;
     }
     i = 0;
-    while (i < input.captures.length) {
-      if (!this.capIdx.has(input.captures[i].id)) { this.capIdx.set(input.captures[i].id, i); }
+    while (i < this.captures.length) {
+      if (!this.capIdx.has(this.captures[i].id)) { this.capIdx.set(this.captures[i].id, i); }
       i++;
     }
   }
@@ -92,8 +93,8 @@ export class NonEscapingScan {
       this.report(n.name, n.span, "is stored");
     } else if ((parent.kind === "Call" || parent.kind === "MethodCall" || parent.kind === "EnumLit") && key === "args") {
       const at = this.callIdx.get(parent.id);
-      if (at !== undefined && this.input.calls[at].keeps[index]) {
-        const call = this.input.calls[at];
+      if (at !== undefined && this.calls[at].keeps[index]) {
+        const call = this.calls[at];
         const what = `is passed to '${call.callee}', which may keep it`;
         if (n.span !== undefined) {
           this.report(n.name, n.span, what);
@@ -110,11 +111,13 @@ export class NonEscapingScan {
   // frame, the same as one that borrows a local.
   visitClosure(n: ClosureExpr, id: number, _parent: Parent, _key: EdgeKey, _index: number): void {
     const at = this.capIdx.get(id);
-    if (at !== undefined && n.isMove === true) {
+    if (at !== undefined && isTrue(n.isMove)) {
       let j = at;
-      while (j < this.input.captures.length && this.input.captures[j].id === id) {
-        if (this.params.has(this.input.captures[j].name)) {
-          this.report(this.input.captures[j].name, n.span, "is captured by a 'move' closure");
+      while (j < this.captures.length && this.captures[j].id === id) {
+        // A local copy: report() takes self mutably, so it cannot also read self.captures.
+        const name = this.captures[j].name;
+        if (this.params.has(name)) {
+          this.report(name, n.span, "is captured by a 'move' closure");
         }
         j++;
       }
@@ -123,7 +126,7 @@ export class NonEscapingScan {
 }
 
 export function nonEscapingFindings(input: NonEscapingInput): Finding[] {
-  const scan = new NonEscapingScan(input);
+  const scan = new NonEscapingScan(input.calls, input.captures);
   scan.index();
   for (const task of input.tasks) {
     scan.begin(task);

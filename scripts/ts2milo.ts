@@ -355,14 +355,25 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
     const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
-      const owned = (s: string) => {
-        if (!own || !needsClone(e)) return s;
+      const owned = (s: string, force = false) => {
+        if (!(own || force) || !needsClone(e)) return s;
         if (!canClone(tOf(e))) fail(e, `a value of type ${checker.typeToString(tOf(e))} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
         return `${s}.clone()`;
       };
+      // A boxed optional field is an Option<Heap<T>> in Milo; anywhere an Option<T> is wanted it
+      // is unboxed (a copy, as reading through a Heap must be).
+      // (Not a tagged union common field: its accessor already returns the unboxed Option.)
+      if (want && isOptionT(want) && isOptionT(tOf(e)) && ts.isPropertyAccessExpression(e) && !unionOfType(checker, tOf(e.expression))) {
+        const d = checker.getSymbolAtLocation(e.name)?.declarations?.[0];
+        if (d && ts.isPropertySignature(d) && astModel.boxed.has(d)) {
+          hit("boxed optional field", "Option<Heap<T>> passed as Option<T> through optUnbox<T>");
+          return `${useRuntime("optUnbox", e)}<${ty(checker.getNonNullableType(tOf(e)), e)}>(${ex(e)})`;
+        }
+      }
       if (want && isOptionT(want) && !isOptionT(tOf(e))) {
         if (isUndefinedId(e)) return "Option.None";
-        return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)))})`;
+        // Option.Some(x) takes x by value even where the argument itself is only borrowed.
+        return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)), true)})`;
       }
       return owned(ex(e, want));
     };
