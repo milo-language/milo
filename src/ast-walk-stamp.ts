@@ -28,9 +28,7 @@ export function walkExpr(v: StampScan, e: Expr, _parent: Parent, _key: EdgeKey, 
       walkExpr(v, x3.value, p, "value", -1);
       i2++;
     }
-    if (e.base !== undefined) {
-      walkExpr(v, e.base, p, "base", -1);
-    }
+    walkOptExpr(v, e.base, p, "base", -1);
   } else if (e.kind === "FieldAccess") {
     const p: Parent = { kind: "FieldAccess", id: id, op: "" };
     walkExpr(v, e.object, p, "object", -1);
@@ -135,9 +133,7 @@ export function walkStmt(v: StampScan, s: Stmt, _parent: Parent, _key: EdgeKey, 
     walkExpr(v, s.value, p, "value", -1);
   } else if (s.kind === "Return") {
     const p: Parent = { kind: "Return", id: id, op: "" };
-    if (s.value !== null) {
-      walkExpr(v, s.value, p, "value", -1);
-    }
+    walkNullableExpr(v, s.value, p, "value", -1);
   } else if (s.kind === "IfStmt") {
     const p: Parent = { kind: "IfStmt", id: id, op: "" };
     walkExpr(v, s.cond, p, "cond", -1);
@@ -146,25 +142,19 @@ export function walkStmt(v: StampScan, s: Stmt, _parent: Parent, _key: EdgeKey, 
       walkStmt(v, x21, p, "thenBody", i20);
       i20++;
     }
-    if (s.elseBody !== null) {
-      let i22 = 0;
-      for (const x23 of s.elseBody) {
-        walkStmt(v, x23, p, "elseBody", i22);
-        i22++;
-      }
-    }
+    walkNullableStmtList(v, s.elseBody, p, "elseBody");
   } else if (s.kind === "WhileStmt") {
     const p: Parent = { kind: "WhileStmt", id: id, op: "" };
     walkExpr(v, s.cond, p, "cond", -1);
-    let i24 = 0;
-    for (const x25 of s.invariants) {
-      walkContract(v, x25, p, "invariants", i24);
-      i24++;
+    let i22 = 0;
+    for (const x23 of s.invariants) {
+      walkContract(v, x23, p, "invariants", i22);
+      i22++;
     }
-    let i26 = 0;
-    for (const x27 of s.body) {
-      walkStmt(v, x27, p, "body", i26);
-      i26++;
+    let i24 = 0;
+    for (const x25 of s.body) {
+      walkStmt(v, x25, p, "body", i24);
+      i24++;
     }
   } else if (s.kind === "ExprStmt") {
     const p: Parent = { kind: "ExprStmt", id: id, op: "" };
@@ -172,79 +162,67 @@ export function walkStmt(v: StampScan, s: Stmt, _parent: Parent, _key: EdgeKey, 
   } else if (s.kind === "MatchStmt") {
     const p: Parent = { kind: "MatchStmt", id: id, op: "" };
     walkExpr(v, s.subject, p, "subject", -1);
-    let i28 = 0;
-    for (const x29 of s.arms) {
-      walkPattern(v, x29.pattern, p, "pattern", -1);
-      let i30 = 0;
-      for (const x31 of x29.body) {
-        walkStmt(v, x31, p, "body", i30);
-        i30++;
+    let i26 = 0;
+    for (const x27 of s.arms) {
+      walkPattern(v, x27.pattern, p, "pattern", -1);
+      let i28 = 0;
+      for (const x29 of x27.body) {
+        walkStmt(v, x29, p, "body", i28);
+        i28++;
       }
-      i28++;
+      i26++;
     }
   } else if (s.kind === "IfLetStmt") {
     const p: Parent = { kind: "IfLetStmt", id: id, op: "" };
     walkPattern(v, s.pattern, p, "pattern", -1);
     walkExpr(v, s.subject, p, "subject", -1);
-    let i32 = 0;
-    for (const x33 of s.thenBody) {
-      walkStmt(v, x33, p, "thenBody", i32);
-      i32++;
+    let i30 = 0;
+    for (const x31 of s.thenBody) {
+      walkStmt(v, x31, p, "thenBody", i30);
+      i30++;
     }
-    if (s.elseBody !== null) {
-      let i34 = 0;
-      for (const x35 of s.elseBody) {
-        walkStmt(v, x35, p, "elseBody", i34);
-        i34++;
-      }
-    }
+    walkNullableStmtList(v, s.elseBody, p, "elseBody");
   } else if (s.kind === "IfChainStmt") {
     const p: Parent = { kind: "IfChainStmt", id: id, op: "" };
-    let i36 = 0;
-    for (const x37 of s.clauses) {
-      walkChainClause(v, x37, p, "clauses", i36);
-      i36++;
+    let i32 = 0;
+    for (const x33 of s.clauses) {
+      walkChainClause(v, x33, p, "clauses", i32);
+      i32++;
     }
-    let i38 = 0;
-    for (const x39 of s.thenBody) {
-      walkStmt(v, x39, p, "thenBody", i38);
-      i38++;
+    let i34 = 0;
+    for (const x35 of s.thenBody) {
+      walkStmt(v, x35, p, "thenBody", i34);
+      i34++;
     }
-    if (s.elseBody !== null) {
-      let i40 = 0;
-      for (const x41 of s.elseBody) {
-        walkStmt(v, x41, p, "elseBody", i40);
-        i40++;
-      }
-    }
+    walkNullableStmtList(v, s.elseBody, p, "elseBody");
   } else if (s.kind === "LetElseStmt") {
     const p: Parent = { kind: "LetElseStmt", id: id, op: "" };
     walkPattern(v, s.pattern, p, "pattern", -1);
     walkExpr(v, s.value, p, "value", -1);
-    let i42 = 0;
-    for (const x43 of s.elseBody) {
-      walkStmt(v, x43, p, "elseBody", i42);
-      i42++;
+    let i36 = 0;
+    for (const x37 of s.elseBody) {
+      walkStmt(v, x37, p, "elseBody", i36);
+      i36++;
     }
   } else if (s.kind === "UnsafeBlock") {
     const p: Parent = { kind: "UnsafeBlock", id: id, op: "" };
-    let i44 = 0;
-    for (const x45 of s.body) {
-      walkStmt(v, x45, p, "body", i44);
-      i44++;
+    let i38 = 0;
+    for (const x39 of s.body) {
+      walkStmt(v, x39, p, "body", i38);
+      i38++;
     }
   } else if (s.kind === "ForInStmt") {
     const p: Parent = { kind: "ForInStmt", id: id, op: "" };
     walkExpr(v, s.iterable, p, "iterable", -1);
-    let i46 = 0;
-    for (const x47 of s.invariants) {
-      walkContract(v, x47, p, "invariants", i46);
-      i46++;
+    let i40 = 0;
+    for (const x41 of s.invariants) {
+      walkContract(v, x41, p, "invariants", i40);
+      i40++;
     }
-    let i48 = 0;
-    for (const x49 of s.body) {
-      walkStmt(v, x49, p, "body", i48);
-      i48++;
+    let i42 = 0;
+    for (const x43 of s.body) {
+      walkStmt(v, x43, p, "body", i42);
+      i42++;
     }
   }
 }
@@ -254,15 +232,7 @@ export function walkPattern(v: StampScan, p0: Pattern, _parent: Parent, _key: Ed
   v.onPattern(p0);
   if (p0.kind === "EnumPattern") {
     const p: Parent = { kind: "EnumPattern", id: id, op: "" };
-    if (p0.args !== undefined) {
-      let i50 = 0;
-      for (const x51 of p0.args) {
-        if (x51 !== null) {
-          walkPattern(v, x51, p, "args", i50);
-        }
-        i50++;
-      }
-    }
+    walkOptPatternListNullable(v, p0.args, p, "args");
   }
 }
 
@@ -284,6 +254,40 @@ export function walkContract(v: StampScan, k: Contract, _parent: Parent, _key: E
   v.onContract(k);
     const p: Parent = { kind: "Contract", id: id, op: "" };
     walkExpr(v, k.expr, p, "expr", -1);
+}
+
+export function walkNullableExpr(v: StampScan, o: Expr | null, parent: Parent, key: EdgeKey, index: number): void {
+  if (o !== null) {
+    walkExpr(v, o, parent, key, index);
+  }
+}
+
+export function walkNullablePattern(v: StampScan, o: Pattern | null, parent: Parent, key: EdgeKey, index: number): void {
+  if (o !== null) {
+    walkPattern(v, o, parent, key, index);
+  }
+}
+
+export function walkOptExpr(v: StampScan, o: Expr | undefined, parent: Parent, key: EdgeKey, index: number): void {
+  if (o !== undefined) {
+    walkExpr(v, o, parent, key, index);
+  }
+}
+
+export function walkNullableStmtList(v: StampScan, list: Stmt[] | null, parent: Parent, key: EdgeKey): void {
+  if (list !== null) {
+    for (let i = 0; i < list.length; i++) {
+      walkStmt(v, list[i], parent, key, i);
+    }
+  }
+}
+
+export function walkOptPatternListNullable(v: StampScan, list: (Pattern | null)[] | undefined, parent: Parent, key: EdgeKey): void {
+  if (list !== undefined) {
+    for (let i = 0; i < list.length; i++) {
+      walkNullablePattern(v, list[i], parent, key, i);
+    }
+  }
 }
 
 export function walkExprs(v: StampScan, list: Expr[], parent: Parent, key: EdgeKey): void {
