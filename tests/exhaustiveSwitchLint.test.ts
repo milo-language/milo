@@ -32,7 +32,11 @@ const SRC = join(import.meta.dir, "..", "src");
 
 // Switches allowed to stay silent, each with a reason. Declining to handle a kind should
 // be a decision on the record, not a field someone forgot.
-const ALLOWED: Record<string, string> = {};
+const ALLOWED: Record<string, string> = {
+  // A fact collector, not a dispatcher: kinds that carry no closure or literal have nothing to
+  // record. The file is ported by ts2milo, whose portable subset has no `default:` arm.
+  "checker-escaping-closures-host.ts:66": "fact collector in a ts2milo-ported file",
+};
 
 // Every `kind` string in a node union, read from source. Hardcoding these lists would be
 // the same fail-open shape the lint exists to forbid.
