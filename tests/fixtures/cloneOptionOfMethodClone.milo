@@ -1,0 +1,48 @@
+// A type whose clone is an ordinary `fn clone(self: &T): T` method (std's HashSet and
+// HashMap), not a derived one, still clones inside Option, Vec and @derive(Clone):
+// the container calls that method, so the copy is independent of the original.
+from "std/set" import { HashSet }
+from "std/hashmap" import { HashMap }
+
+@derive(Clone)
+struct Bag {
+    m: HashMap<string, i64>
+}
+
+fn main() {
+    var s: HashSet<i64> = HashSet.new()
+    s.add(1)
+    let o: Option<HashSet<i64>> = Option.Some(s)
+    let p = o.clone()
+    if let Option.Some(t) = p {
+        var u = t
+        u.add(2)
+        print(u.len().toString())
+    }
+    if let Option.Some(t) = o {
+        print(t.len().toString())
+    }
+
+    var a: HashSet<string> = HashSet.new()
+    a.add("x")
+    var v: Vec<HashSet<string>> = Vec.new()
+    v.push(a)
+    var w = v.clone()
+    w[0].add("y")
+    print(w[0].len().toString())
+    print(v[0].len().toString())
+
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("k", 1)
+    let b = Bag { m: m }
+    var c = b.clone()
+    c.m.insert("j", 2)
+    print(c.m.len().toString())
+    print(b.m.len().toString())
+}
+// @expect: 2
+// @expect: 1
+// @expect: 2
+// @expect: 1
+// @expect: 2
+// @expect: 1

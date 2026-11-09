@@ -32,6 +32,8 @@ interface DeriveHost {
   traitImpls: Map<string, ImplInfo[]>;
   // Reassigned per program by processDerives, hence a getter.
   handWrittenClone(): Set<string>;
+  // An ordinary `fn clone(self: &T): T` method (std's HashSet/HashMap), not a Clone impl.
+  hasCloneMethod(t: TypeKind): boolean;
   deriveTemplates: Map<string, DeriveTemplate>;
   jsonCapableStructs: Set<string>;
   jsonUserMethods: Set<string>;
@@ -146,7 +148,7 @@ export class DeriveSynth {
     if (t.tag === "vec") return t.element.tag !== "fn" && this.canAutoClone(t.element, pending, top && this.rebuilds(t.element));
     if (t.tag === "hashmap") return t.value.tag !== "fn" && this.canAutoClone(t.key, pending, false) && this.canAutoClone(t.value, pending, false);
     if (t.tag === "struct" || t.tag === "enum") {
-      if (this.host.typeImplementsTrait(t.name, "Clone") || this.host.handWrittenClone().has(t.name) || !!pending?.has(t.name)) return true;
+      if (this.host.typeImplementsTrait(t.name, "Clone") || this.host.handWrittenClone().has(t.name) || !!pending?.has(t.name) || this.host.hasCloneMethod(t)) return true;
       // An Option/Result instance is judged by its payloads, the way a container is: its
       // own impl is conditional on them and may not exist yet when a field asks.
       if (t.tag === "enum") {

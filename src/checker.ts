@@ -4943,6 +4943,11 @@ export class TypeChecker {
     dropImpls: this.dropImpls,
     traitImpls: this.traitImpls,
     handWrittenClone: () => this.handWrittenClone,
+    hasCloneMethod: (t) => {
+      if (t.tag !== "struct" && t.tag !== "enum") return false;
+      const m = this.resolveMethod(t.name, "clone");
+      return !!m && m.sig.params.length === 1 && typeEq(m.sig.ret, t);
+    },
     deriveTemplates: this.deriveTemplates,
     jsonCapableStructs: this.jsonCapableStructs,
     jsonUserMethods: this.jsonUserMethods,
