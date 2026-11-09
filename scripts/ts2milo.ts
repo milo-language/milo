@@ -533,7 +533,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
       }
       if (want && isOptionT(want) && !isOptionT(tOf(e))) {
-        if (isUndefinedId(e) || e.kind === ts.SyntaxKind.NullKeyword) return "Option.None";
+        if (isUndefinedId(e) || e.kind === ts.SyntaxKind.NullKeyword) return `${useRuntime("optNone", e)}<${ty(checker.getNonNullableType(want), e)}>()`;
         // Option.Some(x) takes x by value even where the argument itself is only borrowed.
         return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)), true)})`;
       }
@@ -1631,7 +1631,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         ind++;
         line(`return ${cname} {`);
         ind++;
-        for (const p of props) line(`${safeId(p.name)}: ${p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init},`);
+        for (const p of props) {
+          // A field with no initializer that is no parameter property is assigned in the constructor body, which is not translated.
+          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
+          line(`${safeId(p.name)}: ${init},`);
+        }
         ind--; line("}");
         ind--; line("}");
         pop();

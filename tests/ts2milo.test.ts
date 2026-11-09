@@ -830,3 +830,52 @@ describe("node identity", () => {
     }
   });
 });
+
+describe("narrowing inside expressions and after early exits", () => {
+  const shapes = [
+    `type Shape = { tag: "sq"; side: number } | { tag: "rect"; w: number; h: number };`,
+    `export function isBig(s: Shape): boolean { return s.tag === "sq" && s.side > 10; }`,
+    `export function notRect(s: Shape): boolean { return s.tag !== "rect" || s.w > 3; }`,
+    `export function sideOf(s: Shape): number { if (s.tag !== "sq") return -1; return s.side; }`,
+    `export function must(o?: Shape): number { if (!o) return 0; return o.tag === "sq" ? 1 : 2; }`,
+    "export function label(n?: number): string { return `n=${n}`; }",
+    `export function isFalse(b?: boolean): boolean { return b === false; }`,
+  ].join("\n");
+  test("a kind or presence guard in &&, ||, ?: or an early exit binds the payload for what follows", () => {
+    const { file } = tmpTs("tsm_narrow.ts", shapes);
+    const r = transpile([file], { overridesDir: join(tmpdir(), "none-narrow"), lenient: true });
+    const out = r.files.get("tsm_narrow.milo")!;
+    expect(out).toMatch(/match s \{ Shape\.Sq\(s_\d*\) => .*, _ => false \}/);
+    expect(out).toMatch(/match s \{ Shape\.Rect\(s_\d*\) => .*, _ => true \}/);
+    expect(out).toContain("let Shape.Sq(");
+    expect(out).toContain("let Option.Some(");
+    // a number | undefined in a template prints "undefined" for the absent case
+    expect(out).toMatch(/Option\.Some\(v\d*\) => jsNum\(v\d*\)/);
+    // an optional boolean against a value compares the payload (Option has no == with payload)
+    expect(out).toMatch(/match b \{ Option\.Some\(v\d*\) => \(v\d* == false\), Option\.None => false \}/);
+  }, 60000);
+  test("it compiles and runs", () => {
+    const { file, dir } = tmpTs("tsm_narrow_run.ts", shapes);
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    writeFileSync(join(dir, "main.milo"), [
+      `from "./tsm_narrow_run" import { isBig, notRect, sideOf, must, isFalse }`,
+      `fn main(): i64 {`,
+      `    println(isBig(Shape.Sq(Shape_sq { side: 11 })))`,
+      `    return 0`,
+      `}`,
+      ``,
+    ].join("\n"));
+    const check = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "check", join(dir, "tsm_narrow_run.milo")], { encoding: "utf-8", env: process.env });
+    expect(check.stdout + check.stderr).not.toMatch(/cannot access field on enum|payload-bearing/);
+  });
+});
+
+describe("class fields set in the constructor body", () => {
+  test("are refused by name instead of emitted as a literal null", () => {
+    const { file } = tmpTs("tsm_ctor.ts", `export class Box { private n: number; constructor() { this.n = 1; } get(): number { return this.n; } }\n`);
+    const r = transpile([file], { overridesDir: join(tmpdir(), "none-ctor"), lenient: true });
+    expect(r.files.get("tsm_ctor.milo")!).not.toContain("n: null");
+    expect(r.stubs.some((s) => s.name === "Box.new" && s.reason.includes("constructor body"))).toBe(true);
+  });
+});
