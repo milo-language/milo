@@ -336,14 +336,22 @@ export class DeriveSynth {
   // auto-derived for every eligible struct that never asked for it — that path calls
   // `deriveEq` directly, and stamping only the explicit route left 40 of 1006 functions
   // in `java-dap` with no origin.
-  stampOrigin(impl: ImplDecl, s: StructDecl | EnumDecl): ImplDecl {
+  // Builds the stamped copy (the generated methods are never written). `restamp`: the file is set even
+  // when the parser or template already gave one, and even to nothing.
+  stampOrigin(impl: ImplDecl, s: StructDecl | EnumDecl, restamp = false): ImplDecl {
     const file = s.span?.file;
-    if (file) for (const m of impl.methods) m.sourceFile ??= file;
-    // The file alone gives DWARF a subprogram but no line, and code on line 0 is code no
-    // requirement or rule can claim (`milo trace-object`). The type that produced the glue is
-    // the line it answers to, as a macro expansion's is its call site.
-    if (s.span) for (const m of impl.methods) m.span ??= { ...s.span };
-    return impl;
+    const methods = impl.methods.map((m) => {
+      const sourceFile = restamp ? file : (m.sourceFile ?? file);
+      // The file alone gives DWARF a subprogram but no line, and code on line 0 is code no
+      // requirement or rule can claim (`milo trace-object`). The type that produced the glue is
+      // the line it answers to, as a macro expansion's is its call site.
+      return {
+        ...m,
+        ...(restamp || sourceFile !== undefined ? { sourceFile } : {}),
+        ...(s.span && !m.span ? { span: { ...s.span } } : {}),
+      };
+    });
+    return { ...impl, methods };
   }
 
 
@@ -544,8 +552,7 @@ export class DeriveSynth {
     // The generated SQL is checked against the schema like any other; a mismatch (a field
     // with no column, a missing table) is the struct's to fix, so it is reported there.
     restampSpans(impl, s.span);
-    for (const m of impl.methods) m.sourceFile = s.span?.file;
-    return this.stampOrigin(impl, s);
+    return this.stampOrigin(impl, s, true);
   }
 
   deriveRow(s: StructDecl): ImplDecl | null {
@@ -576,8 +583,7 @@ export class DeriveSynth {
       this.host.error(`internal error: generated Row reader for '${s.name}' produced no impl`, s.span);
       return null;
     }
-    for (const m of impl.methods) m.sourceFile = s.span?.file;
-    return this.stampOrigin(impl, s);
+    return this.stampOrigin(impl, s, true);
   }
 
   deriveJson(s: StructDecl): ImplDecl | null {
@@ -647,8 +653,7 @@ export class DeriveSynth {
       this.host.error(`internal error: generated Json codec for '${s.name}' produced no impl`, s.span);
       return null;
     }
-    for (const m of impl.methods) m.sourceFile = s.span?.file;
-    return this.stampOrigin(impl, s);
+    return this.stampOrigin(impl, s, true);
   }
 
   deriveEq(s: StructDecl, skipValidation = false): ImplDecl {

@@ -11,10 +11,18 @@ import type { Program } from "./ast";
 
 const sites = new Map<string, number>();
 let armed = false;
+// True while applyRewrites runs: its writes are the rewrites, not a checker write.
+let applying = false;
+// Nodes whose rewrite is recorded and not yet applied (the stale window).
+let stale = new WeakSet<object>();
 
 function note(what: string): void {
+  if (applying) return;
   const frames = (new Error().stack ?? "").split("\n").slice(1).filter((l) => !l.includes("ast-oracle.ts"));
-  const at = /([^/\s(]+\.ts:\d+)/.exec(frames[0] ?? "")?.[1] ?? "?";
+  // A native frame (Object.entries, a spread) has no file: the first frame that has one is the site.
+  // MILO_AST_ORACLE_DEPTH=n names the n innermost callers too (site<-caller<-...), to find who held the node.
+  const depth = Number(process.env.MILO_AST_ORACLE_DEPTH ?? "1");
+  const at = frames.map((l) => /([^/\s(]+\.ts:\d+)/.exec(l)?.[1]).filter((m) => m !== undefined).slice(0, depth).join("<-") || "?";
   const key = `${at} ${what}`;
   sites.set(key, (sites.get(key) ?? 0) + 1);
 }
@@ -73,12 +81,25 @@ function markStale(node: object): void {
   }
 }
 
+// Runs the apply step: the writes it makes are not noted, and the shape snapshot is taken again after it
+// so only writes made before it show up as shape changes. The stale window closes here.
+export function applyWindow(fn: () => void): void {
+  if (!armed) { fn(); return; }
+  noteShapeChanges();
+  applying = true;
+  try { fn(); } finally {
+    applying = false;
+    for (const x of shapes.keys()) if (!(x instanceof Map || x instanceof Set)) shapes.set(x, shapeOf(x));
+    stale = new WeakSet<object>();
+  }
+}
+
 // `checker` is the TypeChecker about to run; its tables are reached by name because they are private.
 export function armAstOracle(mode: string, program: Program, checker: object): void {
   if (!armed) { armed = true; process.on("exit", flush); }
   if (mode === "writes") { watchWrites(program); return; }
   if (mode !== "stale") throw new Error(`MILO_AST_ORACLE: unknown mode '${mode}' (writes, stale)`);
-  const stale = new WeakSet<object>();
+  stale = new WeakSet<object>();
   const fields = checker as Record<string, unknown>;
   const tables: [string, Map<object, unknown> | Set<object>][] = [];
   const rewrites = fields.rewrites as Map<object, object>;

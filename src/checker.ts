@@ -27,6 +27,7 @@ import { checkPlainClosureEnv } from "./checker-closure-env";
 import { checkPurity } from "./checker-purity-host";
 import { checkPointerParamEscape } from "./checker-pointer-escape-host";
 import { checkMutParamBundle } from "./checker-mut-bundle-host";
+import { applyRewrites } from "./apply-rewrites";
 import { checkEscapingClosures, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
@@ -1798,7 +1799,7 @@ export class TypeChecker {
   // closure capturing it, or an `unsafe` block only ever costs the optimisation.
   // Returns the root to watch, or null when the binding is not a candidate.
   private viewBindRoot(stmt: Stmt & { kind: "LetDecl" }, hint: TypeKind | null, valType: TypeKind): string | null {
-    const v = stmt.value;
+    const v = rewritten(this.rewrites, stmt.value);
     if (v.kind !== "IndexAccess" || this.closureFrames.length > 0) return null;
     if (hint && !typeEq(hint, valType)) return null;
     if (valType.tag === "ref" || this.isCopyType(valType) || !this.viewBindPure(valType, new Set())) return null;
@@ -1899,7 +1900,8 @@ export class TypeChecker {
     return clean;
   }
 
-  private lintIndexClone(value: Expr, ty: TypeKind, span?: Span) {
+  private lintIndexClone(slot: Expr, ty: TypeKind, span?: Span) {
+    const value = rewritten(this.rewrites, slot);
     // A resource element is rejected by tryMoveLeaf, which every caller of this lint
     // reaches next; the cost warning below would only pile onto that error.
     if (value.kind === "IndexAccess" && ty.tag !== "ref" && this.resourceKind(ty)) return;
@@ -1914,7 +1916,10 @@ export class TypeChecker {
     // moveTargets already knows where a value actually comes from, so reuse it rather
     // than re-deriving the tail rules here.
     if (value.kind === "IfExpr" || value.kind === "MatchExpr") {
-      for (const t of this.moveTargets(value)) this.lintIndexClone(t, ty, t.span ?? span);
+      for (const slotTail of this.moveTargets(value)) {
+        const t = rewritten(this.rewrites, slotTail);
+        this.lintIndexClone(t, ty, t.span ?? span);
+      }
       return;
     }
     if (value.kind !== "IndexAccess") return;
@@ -1973,7 +1978,8 @@ export class TypeChecker {
   // with the wrong arguments, which is exactly the shape of a foreign-memory view.
   // The display name of a call's callee when it is `@mustUse`, else null. A generic fn is
   // looked up on its template; a method on the mangled name checkExpr resolved it to.
-  private mustUseCallee(e: Expr): string | null {
+  private mustUseCallee(slot: Expr): string | null {
+    const e = rewritten(this.rewrites, slot);
     if (e.kind === "Call") {
       if (this.functions.get(e.func)?.mustUse || mustUseOf(this.genericFns.get(e.func)?.decl).mustUse) return e.func;
       return null;
@@ -3671,7 +3677,8 @@ export class TypeChecker {
   // holds the pointer for as long as `c` does, and so does `let ps: Vec<*u8> = [v.ptr()]`
   // or `Some(v.ptr())`. Anything else (a call result, an arithmetic value, a bare pointer
   // variable) carries no provenance this can see.
-  private pointerViewsIn(e: Expr, out: { source: Expr; call: string; line: number }[] = []): { source: Expr; call: string; line: number }[] {
+  private pointerViewsIn(slot: Expr, out: { source: Expr; call: string; line: number }[] = []): { source: Expr; call: string; line: number }[] {
+    const e = rewritten(this.rewrites, slot);
     switch (e.kind) {
       case "CastExpr":
         return this.pointerViewsIn(e.operand, out);
@@ -3902,13 +3909,16 @@ export class TypeChecker {
     // which matters most in the LSP, where the checker runs on half-typed code
     // and an escaped throw means the file shows no diagnostics at all.
     try {
-      this.checkProgram(program);
-      this.reportStrandedCFnReads();
-      this.sql.run();
-      this.flushSqlErrors();
+      this.checkCore(program);
+      // The only place the recorded rewrites reach the tree: the passes below read the finished shape.
+      applyRewrites(this);
+      this.checkPasses(program);
+      this.finishChecks();
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
+    // A CheckAbort in the core leaves the rewrites unapplied; a second call is a no-op.
+    applyRewrites(this);
     if (this.reportStringClones) this.printStringClones();
     if (this._displayNames !== undefined && this._displayNames.size > 0) {
       // The file a renamed symbol came from, when exactly one file declared it.
@@ -3992,7 +4002,8 @@ export class TypeChecker {
     };
   }
 
-  private checkProgram(program: Program): void {
+  // Registration and every expression check. Records rewrites, never writes the AST.
+  private checkCore(program: Program): void {
     this._userFnNames = program.userFnNames;
     this.replayPlans = program.replayPlans;
     for (const fn of program.droppedExterns ?? []) this.checkVariadicExtern(fn);
@@ -4635,15 +4646,15 @@ export class TypeChecker {
     // list (a `var g: Arena<T> = arenaNew<T>()` reaches std/arena's `nextArenaId`),
     // and checking them strictly in order reported that as an undefined variable
     // inside a std file. Unannotated globals still wait for their inferred type.
-    for (const g of program.globals) this.globalDeclsByName.set(g.name, g);
+    for (const g of this.globalsOrdered) this.globalDeclsByName.set(g.name, g);
     for (const f of program.functions) this.fnDeclsByName.set(f.name, f);
-    for (const g of program.globals) {
+    for (const g of this.globalsOrdered) {
       if (!g.type) continue;
       const t = this.resolve(g.type);
       globalTypes.set(g.name, t);
       this.declare(g.name, { type: t, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span, isGlobal: true });
     }
-    for (const g of program.globals) {
+    for (const g of this.globalsOrdered) {
       const hint = g.type ? this.resolve(g.type) : null;
       const valType = this.checkExpr(g.value, hint);
       const finalType = hint ?? valType;
@@ -4731,7 +4742,11 @@ export class TypeChecker {
         `a struct cannot contain itself by value: put the recursive field behind an indirection (e.g. 'Heap<${shown}>' or 'Vec<${shown}>')`);
     }
 
-    // The whole-program passes below all read the finished program through one view:
+  }
+
+  // The whole-program passes: they read the program after applyRewrites.
+  private checkPasses(program: Program): void {
+    // They all read the finished program through one view:
     // the call-resolution maps are complete, every monomorphized instance exists, and
     // `closureCaptures` / the auto-`move` promotions have settled. Built once here so no
     // pass carries its own copy of "which function does this call reach".
@@ -4797,6 +4812,12 @@ export class TypeChecker {
       });
     }
 
+  }
+
+  private finishChecks(): void {
+    this.reportStrandedCFnReads();
+    this.sql.run();
+    this.flushSqlErrors();
   }
 
   private processDerives(program: Program): import("./ast").ImplDecl[] {
@@ -4996,6 +5017,12 @@ export class TypeChecker {
   // The impl generators (src/checker-derive.ts). What they may reach is this list.
   private sql = new SqlChecker();
   private globalDeclsByName = new Map<string, import("./ast").GlobalDecl>();
+  // program.globals in dependency order (orderGlobalsByDependency); `globalsHome` is the array
+  // applyRewrites writes it back into once the core check is done.
+  private globalsOrdered: GlobalDecl[] = [];
+  // Closures the checker promoted to `move` (a callee keeps them, or they move a capture out).
+  private moveClosures = new Set<Expr>();
+  globalsHome: GlobalDecl[] | null = null; // not private: only applyRewrites reads it
   private globalConstCache = new Map<string, string | null>();
   private fnDeclsByName = new Map<string, Function>();
   private templateDepth = 0;
@@ -6195,7 +6222,8 @@ export class TypeChecker {
   // `(p0: &T, ...) => f(p0, ...)`, which borrows `f` only for the call (the std callback
   // parameter does not escape). The builtin map and sorts loaded the element for such a
   // callback; coerceCopyCallback covers literals and named fns, not locals.
-  private thunkByValueFnValue(arg: Expr, element: TypeKind, arity: number): void {
+  private thunkByValueFnValue(slot: Expr, element: TypeKind, arity: number): void {
+    const arg = rewritten(this.rewrites, slot);
     // ident-ok: the rewrite emits a call by NAME (`f(p0)`), so only a fn value bound to a name qualifies
     const fnName = identNameOf(arg);
     if (fnName === null) return;
@@ -6205,7 +6233,7 @@ export class TypeChecker {
     const elemRef: TypeKind = { tag: "ref", inner: element, mutable: false };
     const paramTypes: TypeKind[] = [];
     for (const _p of t.params) paramTypes.push(elemRef);
-    replaceNode(arg, this.callbackThunk(fnName, paramTypes, t.ret, arg.span));
+    this.rewrites.set(arg, this.callbackThunk(fnName, paramTypes, t.ret, arg.span));
   }
 
   // After the adaptations above, a callback std/vec would call with `&T` that still takes
@@ -7016,19 +7044,20 @@ export class TypeChecker {
     const frozenBeforeRhs = this.openBorrowWindow();
     const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
     const valType = deferred ?? this.checkExpr(stmt.value, hint);
+    const value = rewritten(this.rewrites, stmt.value);
     if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
       const optInner = this.optionInnerType(hint);
       const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
       if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
-        this.autoWrappedOption.set(stmt.value, hint.name);
-        this.enforceWrapRange(stmt.value);
+        this.autoWrappedOption.set(value, hint.name);
+        this.enforceWrapRange(value);
       } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
-        this.arrayToVecCoercions.add(stmt.value);
-      } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
+        this.arrayToVecCoercions.add(value);
+      } else if (!isStringToPtr && !this.tryInterfaceCoercion(value, valType, hint)) {
         this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
       }
     }
-    if (hint?.tag === "int") this.enforceRangeInto(stmt.value, valType, hint, sp);
+    if (hint?.tag === "int") this.enforceRangeInto(value, valType, hint, sp);
     return { hint, valType, frozenBeforeRhs };
   }
 
@@ -7037,6 +7066,7 @@ export class TypeChecker {
     switch (stmt.kind) {
       case "LetDecl": {
         const { hint, valType, frozenBeforeRhs } = this.checkBindingInit(stmt);
+        const value = rewritten(this.rewrites, stmt.value);
         // Borrows the RHS created: a ref binding owns them until its scope pops;
         // any other binding consumed them within the statement (e.g. s[0..n].clone())
         // and must not leak a freeze onto later statements.
@@ -7051,37 +7081,38 @@ export class TypeChecker {
             `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
         }
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
-        this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(value && this.onceClosures.has(value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         const letInfo = this.lookup(stmt.name);
         if (letInfo && bindingType.tag === "string") {
-          const c = this.sqlConstOf(stmt.value);
+          const c = this.sqlConstOf(value);
           if (c !== null) letInfo.constStr = c;
         }
         if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, letInfo);
-        if (letInfo) this.bindPointerViews(stmt.name, letInfo, stmt.value);
-        if (letInfo) this.noteClosureSources(letInfo, stmt.value);
+        if (letInfo) this.bindPointerViews(stmt.name, letInfo, value);
+        if (letInfo) this.noteClosureSources(letInfo, value);
         // An unannotated `let x = <const-int-value>` stays width-adaptable until
         // its first use (see VarInfo.flexInt): its default i32 can widen to an
         // i64 (etc.) context without an `as` cast, since the value is literals.
         if (!hint && valType.tag === "int") {
-          const leaves = this.flexIntLeaves(stmt.value);
+          const leaves = this.flexIntLeaves(value);
           if (leaves) {
             const info = this.lookup(stmt.name);
-            if (info) { info.flexInt = { leaves, valueExpr: stmt.value }; this.flexIntVars.set(info, stmt.name); }
+            if (info) { info.flexInt = { leaves, valueExpr: value }; this.flexIntVars.set(info, stmt.name); }
           }
         }
         if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
         const viewRoot = this.viewBindRoot(stmt, hint, valType);
-        if (viewRoot) this.viewBindPending.set(stmt, { root: viewRoot, lint: () => this.lintIndexClone(stmt.value, bindingType, sp) });
-        else this.lintIndexClone(stmt.value, bindingType, sp);
-        const letCarried = this.pointerBorrowsCarriedBy(stmt.value);
+        if (viewRoot) this.viewBindPending.set(stmt, { root: viewRoot, lint: () => this.lintIndexClone(value, bindingType, sp) });
+        else this.lintIndexClone(value, bindingType, sp);
+        const letCarried = this.pointerBorrowsCarriedBy(value);
         this.pointerMoveKeepsHolders = letCarried !== null;
-        try { this.tryMove(stmt.value); } finally { this.pointerMoveKeepsHolders = false; }
+        try { this.tryMove(value); } finally { this.pointerMoveKeepsHolders = false; }
         if (letCarried) this.carryPointerBorrows(letCarried, stmt.name);
         break;
       }
       case "VarDecl": {
         const { hint, valType, frozenBeforeRhs } = this.checkBindingInit(stmt);
+        const value = rewritten(this.rewrites, stmt.value);
         {
           const newlyFrozen = this.newlyFrozenSince(frozenBeforeRhs);
           const bindingType = hint ?? valType;
@@ -7094,53 +7125,54 @@ export class TypeChecker {
               `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
           }
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
-          this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+          this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(value && this.onceClosures.has(value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
           const varInfo = this.lookup(stmt.name);
           if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, varInfo);
-          if (varInfo) this.bindPointerViews(stmt.name, varInfo, stmt.value);
-          if (varInfo) this.noteClosureSources(varInfo, stmt.value);
+          if (varInfo) this.bindPointerViews(stmt.name, varInfo, value);
+          if (varInfo) this.noteClosureSources(varInfo, value);
           if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
-          this.lintIndexClone(stmt.value, bindingType, sp);
+          this.lintIndexClone(value, bindingType, sp);
         }
-        const varCarried = this.pointerBorrowsCarriedBy(stmt.value);
+        const varCarried = this.pointerBorrowsCarriedBy(value);
         this.pointerMoveKeepsHolders = varCarried !== null;
-        try { this.tryMove(stmt.value); } finally { this.pointerMoveKeepsHolders = false; }
+        try { this.tryMove(value); } finally { this.pointerMoveKeepsHolders = false; }
         if (varCarried) this.carryPointerBorrows(varCarried, stmt.name);
         break;
       }
       case "Assign": {
         const targetInfo = this.resolveAssignTarget(stmt.target);
+        const target = rewritten(this.rewrites, stmt.target);
         if (!targetInfo.mutable) {
           // A pattern binding has no declaration to change, so the generic advice would
           // send the reader looking for a `let` that does not exist. Rebuilding the
           // variant is the move that works, and it costs no clone.
           // ident-ok: asks whether the assigned NAME is a pattern binding, to choose a hint; a place has no binding kind
-          const tgtInfo = stmt.target.kind === "Ident" ? this.lookup(stmt.target.name) : null;
-          this.error(`cannot assign to immutable variable '${this.describeExpr(stmt.target)}'`, sp,
+          const tgtInfo = target.kind === "Ident" ? this.lookup(target.name) : null;
+          this.error(`cannot assign to immutable variable '${this.describeExpr(target)}'`, sp,
             tgtInfo?.patternBound
-              ? `'${this.describeExpr(stmt.target)}' is bound by a pattern of an immutable subject. Match through a '&mut' subject to write the payload in place, or assign a rebuilt value to the matched variable (e.g. 'n = Node.Leaf(v + 1)')`
+              ? `'${this.describeExpr(target)}' is bound by a pattern of an immutable subject. Match through a '&mut' subject to write the payload in place, or assign a rebuilt value to the matched variable (e.g. 'n = Node.Leaf(v + 1)')`
               : `declare with 'var' instead of 'let' to make it mutable`);
           break;
         }
         // Assignment puts a value back, so whatever was moved out of this place is
         // live again. An Ident target replaces the whole variable and clears all of it.
         // ident-ok: an Ident target replaces the WHOLE variable; the field case is the else branch, via staticFieldPath
-        if (stmt.target.kind === "Ident") {
-          const whole = this.lookup(stmt.target.name);
+        if (target.kind === "Ident") {
+          const whole = this.lookup(target.name);
           if (whole) { this.clearMovedPlace(whole, null); this.noteClosureSources(whole, stmt.value); }
         } else {
-          const place = this.staticFieldPath(stmt.target);
+          const place = this.staticFieldPath(target);
           const rootInfo = place ? this.lookup(place.root) : null;
           if (place && rootInfo) this.clearMovedPlace(rootInfo, place.path);
         }
-        this.markCaptureMutated(stmt.target);
+        this.markCaptureMutated(target);
         // reject reassignment while a borrow (slice, iteration ref) is live
         // but allow closures to mutate their own captured variables.
         // Whole-place assignment (`x = ...`, `x.f = ...`) drops the old value and frees
         // its buffer, so a live view into it would dangle. An index step is exempt: an
         // in-place element write never reallocates, so views stay valid and see it
         // (tests/fixtures/viewFreezeRelease.milo).
-        const assignPath = this.accessSteps(stmt.target);
+        const assignPath = this.accessSteps(target);
         // The index/deref exemption above is a VIEW's exemption: writing an element in
         // place never reallocates, so a live slice stays valid and simply observes the
         // write. A `for-in` is the case it does not cover — the loop is handing out that
@@ -7153,7 +7185,7 @@ export class TypeChecker {
         // pointer does not get that exemption. The pointer's user may be another thread
         // (tests/fixtures/bandParallelBuffer.milo writes through it from workers), and a
         // write through the owner at the same time is the race the view rule exists to stop.
-        const indexPh = assignPath && indexQualified && assignInfo ? this.pointerBorrowAgainst(assignInfo, stmt.target) : null;
+        const indexPh = assignPath && indexQualified && assignInfo ? this.pointerBorrowAgainst(assignInfo, target) : null;
         if (indexPh) {
           // The three pointer-freeze sites (index write, reassignment, reallocating
           // call) all go through requireUnsafe: `unsafe { }` is the one spelling that
@@ -7163,31 +7195,31 @@ export class TypeChecker {
             `write through '${indexPh.name}' instead, or take the pointer after the last write`);
           break;
         }
-        if (assignPath && indexQualified && assignInfo && this.frozenByIteration(assignInfo, stmt.target)) {
-          const loop = this.conflictingBorrow(assignInfo, stmt.target);
+        if (assignPath && indexQualified && assignInfo && this.frozenByIteration(assignInfo, target)) {
+          const loop = this.conflictingBorrow(assignInfo, target);
           const loopNotes: DiagnosticNote[] = loop?.via === "loop" && loop.span
             ? [{ message: `the loop over '${assignPath.root}' (line ${loop.span.line}) borrows it for its whole body`, span: loop.span }] : [];
-          this.errorWithNotes(`cannot assign to '${this.describeExpr(stmt.target)}' because '${assignPath.root}' is being iterated`, sp,
+          this.errorWithNotes(`cannot assign to '${this.describeExpr(target)}' because '${assignPath.root}' is being iterated`, sp,
             `the loop hands out this element — finish the loop, or collect the writes and apply them after it`, loopNotes);
           break;
         }
         if (assignPath && !indexQualified) {
           const info = this.lookup(assignPath.root);
           const isCapturedMutation = this.closureScopeDepth !== null && (this.currentClosureCaptures !== null && this.currentClosureCaptures.has(assignPath.root));
-          const ph = info && !isCapturedMutation ? this.pointerBorrowAgainst(info, stmt.target) : null;
+          const ph = info && !isCapturedMutation ? this.pointerBorrowAgainst(info, target) : null;
           if (ph) {
-            this.requireUnsafe(`'${this.describeExpr(stmt.target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+            this.requireUnsafe(`'${this.describeExpr(target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
               this.pointerHint(ph));
             break;
           }
           // A closure assigning to its own capture is exempt only from the capture
           // borrows; any other borrow (a match binding or view into it, now that a
           // by-reference closure can capture those) still forbids the write.
-          if (info && this.frozenAgainst(info, stmt.target, isCapturedMutation ? "capture" : undefined)) {
-            const place = this.describeExpr(stmt.target);
+          if (info && this.frozenAgainst(info, target, isCapturedMutation ? "capture" : undefined)) {
+            const place = this.describeExpr(target);
             const why = place === assignPath.root ? "it is borrowed" : `'${assignPath.root}' is borrowed`;
             this.reportBorrowed(`cannot assign to '${place}'`, assignPath.root,
-              this.conflictingBorrow(info, stmt.target, isCapturedMutation ? "capture" : undefined), sp,
+              this.conflictingBorrow(info, target, isCapturedMutation ? "capture" : undefined), sp,
               `cannot assign to '${place}' because ${why}`,
               `a reference or slice into this variable is still live — the assignment would invalidate it`);
             break;
@@ -7199,9 +7231,9 @@ export class TypeChecker {
         // already frozen, then release any newly-frozen by the RHS afterward.
         const frozenBeforeRhs = this.openBorrowWindow();
         const valType = this.checkExpr(stmt.value, targetInfo.type);
-        this.lintStringConcatInLoop(stmt.target, stmt.value, targetInfo.type, sp);
+        this.lintStringConcatInLoop(target, stmt.value, targetInfo.type, sp);
         if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
-            && !this.checkCFnStore(stmt.value, targetInfo.type, valType, `cannot assign to '${this.describeExpr(stmt.target)}'`, sp)) {
+            && !this.checkCFnStore(stmt.value, targetInfo.type, valType, `cannot assign to '${this.describeExpr(target)}'`, sp)) {
           this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);
         } else if (targetInfo.type.tag !== "cfn" && !typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(targetInfo.type);
@@ -7216,8 +7248,8 @@ export class TypeChecker {
         for (const vi of this.newlyFrozenSince(frozenBeforeRhs)) this.unfreeze(vi);
         if (targetInfo.type.tag === "int") this.enforceRangeInto(stmt.value, valType, targetInfo.type, sp);
         // ident-ok: assigning a whole variable revives it, and a field assignment deliberately must not revive the whole
-        if (stmt.target.kind === "Ident") {
-          const info = this.lookup(stmt.target.name);
+        if (target.kind === "Ident") {
+          const info = this.lookup(target.name);
           if (info) {
             this.touchMoveState(info); info.moved = false;
             // `p = w.ptr()` overwrites whatever `p` pointed at, so the borrows the old
@@ -7225,8 +7257,8 @@ export class TypeChecker {
             // reference, so every freeze on it is a pointer borrow.
             if (info.freezes) { for (const src of info.freezes) this.releasePointerBorrows(src, info); info.freezes = undefined; }
             info.pointerSourceMoved = undefined;
-            this.errorIfPointerOutlivesSource(stmt.target.name, info, stmt.value, sp);
-            this.bindPointerViews(stmt.target.name, info, stmt.value);
+            this.errorIfPointerOutlivesSource(target.name, info, stmt.value, sp);
+            this.bindPointerViews(target.name, info, stmt.value);
           }
         } else if (assignPath && assignInfo && this.pointerViewsIn(stmt.value).length > 0) {
           // `c.buf = v.ptr()` / `ps[0] = v.ptr()`: the pointer now lives inside `c`/`ps`,
@@ -7244,6 +7276,7 @@ export class TypeChecker {
           if (fnRetType.tag !== "void") this.error(`return without value in function returning ${this.show(fnRetType)}`, sp);
         } else {
           const valType = this.checkExpr(stmt.value, fnRetType);
+          const value = rewritten(this.rewrites, stmt.value);
           // The signature's reference return was already rejected: a mismatch against it,
           // or a "move out of the borrowed" for handing a view back, is that error again.
           const retRejected = this.currentFnDecl !== null && this.refReturnReported.has(this.currentFnDecl);
@@ -7252,11 +7285,11 @@ export class TypeChecker {
             // Coerce a concrete type to an interface at return position
             // (`return Heap(Circle{})` where the fn returns Heap<Shape>), as
             // let-bindings and call args already do.
-            if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, fnRetType)) {
+            if (!isStringToPtr && !this.tryInterfaceCoercion(value, valType, fnRetType)) {
               this.error(`return type mismatch: expected ${this.show(fnRetType)}, got ${this.show(valType)}`, sp);
             }
           }
-          if (fnRetType.tag === "int") this.enforceRangeInto(stmt.value, valType, fnRetType, sp);
+          if (fnRetType.tag === "int") this.enforceRangeInto(value, valType, fnRetType, sp);
           // A returned closure that captures by reference is rejected, not promoted —
           // see checkEscapingClosures for why the promotion that used to live here was
           // itself unsound.
@@ -7264,15 +7297,15 @@ export class TypeChecker {
           // any other reference return was already rejected at the signature, and checking
           // the return only attaches the reason to that error.
           if (this.isViewReturn(fnRetType) || (fnRetType.tag === "ref" && this.currentFnDecl !== null && this.refReturnDiags.has(this.currentFnDecl))) {
-            this.checkViewProvenance(stmt.value, sp, fnRetType);
+            this.checkViewProvenance(value, sp, fnRetType);
           }
-          this.errorIfReturnedPointerDangles(stmt.value, sp);
+          this.errorIfReturnedPointerDangles(value, sp);
           // A `return v[i]` allocates exactly like `let m = v[i]` does, and was invisible
           // even with the lint on: the check only ran at a binding. `return b.v[0]` on a
           // borrowed struct is the shape docs/backlog.md #7 is about — the field spelling
           // is a hard error, the index spelling silently deep-copies.
-          this.lintIndexClone(stmt.value, valType, sp);
-          if (!retRejected) this.tryMove(stmt.value);
+          this.lintIndexClone(value, valType, sp);
+          if (!retRejected) this.tryMove(value);
         }
         this.reachable = false;
         break;
@@ -7889,7 +7922,10 @@ export class TypeChecker {
   // introduce is not necessarily real: only a cycle in the direct global→global edges is
   // reported. Anything else falls back to source order, which is what shipped before.
   private orderGlobalsByDependency(program: Program) {
-    const globals = program.globals;
+    // The sorted order lives here during the check; applyRewrites writes it back into `globalsHome`.
+    this.globalsHome = program.globals;
+    const globals = [...program.globals];
+    this.globalsOrdered = globals;
     if (globals.length < 2) return;
     const index = new Map<string, number>();
     globals.forEach((g, i) => index.set(g.name, i));
@@ -7981,8 +8017,7 @@ export class TypeChecker {
       order.push(globals[i]!);
     };
     for (let i = 0; i < globals.length; i++) visit(i);
-    globals.length = 0;
-    globals.push(...order);
+    this.globalsOrdered = order;
   }
 
   // Does this body unconditionally exit (return/break/continue) on every path?
@@ -8082,7 +8117,7 @@ export class TypeChecker {
         case "Return": case "BreakStmt": case "ContinueStmt": return true;
         case "ExprStmt":
           // `todo()` aborts, so a body that is only a todo returns on every path.
-          if (s.expr.kind === "Call" && s.expr.func === "todo") return true;
+          { const e = rewritten(this.rewrites, s.expr); if (e.kind === "Call" && e.func === "todo") return true; }
           break;
         case "IfStmt": case "IfLetStmt": case "IfChainStmt":
           if (s.elseBody && this.bodyNeverFallsOff(s.thenBody) && this.bodyNeverFallsOff(s.elseBody)) return true;
@@ -8165,7 +8200,7 @@ export class TypeChecker {
   // reopens the hole for that shape.
   private scanUnreachable(node: unknown) {
     if (Array.isArray(node)) {
-      if (node.length > 1 && node.every(n => n !== null && typeof n === "object" && TypeChecker.STMT_KINDS.has(n.kind))) {
+      if (node.length > 1 && node.every(n => n !== null && typeof n === "object" && TypeChecker.STMT_KINDS.has(rewritten(this.rewrites, n).kind))) {
         const stmts = node as Stmt[];
         for (let i = 0; i + 1 < stmts.length; i++) {
           const stmt = stmts[i]!;
@@ -8181,7 +8216,7 @@ export class TypeChecker {
       return;
     }
     if (node !== null && typeof node === "object") {
-      for (const value of Object.values(node)) this.scanUnreachable(value);
+      for (const value of Object.values(rewritten(this.rewrites, node as Expr))) this.scanUnreachable(value);
     }
   }
 
@@ -8563,13 +8598,15 @@ export class TypeChecker {
   // is cloned for that (codegen's blockValueOwnsResult). A resource type cannot be
   // cloned structurally (its Drop would run twice), so for one the fork consumes its
   // places, exactly as `let x = if c { r } else { mk() }` does.
-  private autoBorrow(expr: Expr, how: { mutable: boolean }) {
+  private autoBorrow(slot: Expr, how: { mutable: boolean }) {
+    const expr = rewritten(this.rewrites, slot);
     this.autoBorrowed.set(expr, how);
     this.consumeMixedResourceFork(expr);
   }
 
   // Also reached from a field read (`(if c { r } else { mk() }).name`).
-  private consumeMixedResourceFork(expr: Expr) {
+  private consumeMixedResourceFork(slot: Expr) {
+    const expr = rewritten(this.rewrites, slot);
     if (expr.kind !== "IfExpr" && expr.kind !== "MatchExpr") return;
     const ty = this.exprTypes.get(expr);
     if (ty && this.resourceKind(ty) && this.forkHasOwnedTail(expr)) this.tryMove(expr);
@@ -8599,7 +8636,8 @@ export class TypeChecker {
     }
   }
 
-  private tryMove(expr: Expr) {
+  private tryMove(slot: Expr) {
+    const expr = rewritten(this.rewrites, slot);
     this.moveRequested.add(expr);
     const targets = this.moveTargets(expr);
     // A fork forwards to its tails; anything else is either itself the target or
@@ -8703,7 +8741,7 @@ export class TypeChecker {
       }
     }
     // Move closure: captures are moved out of the enclosing scope
-    if (expr.kind === "Closure" && (expr as any).isMove) {
+    if (expr.kind === "Closure" && this.isMoveClosure(expr)) {
       const caps = this.closureCaptures.get(expr);
       if (caps) {
         for (const cap of caps) {
@@ -8967,7 +9005,8 @@ export class TypeChecker {
     if (info) info.read = true;
   }
 
-  private resolveAssignTarget(expr: Expr): { type: TypeKind; mutable: boolean } {
+  private resolveAssignTarget(slot: Expr): { type: TypeKind; mutable: boolean } {
+    const expr = rewritten(this.rewrites, slot);
     const sp = expr.span;
     // ident-ok: the Ident base case of a walk that recurses through FieldAccess/IndexAccess itself
     if (expr.kind === "Ident") {
@@ -9050,8 +9089,9 @@ export class TypeChecker {
     // isn't a type. checkExpr already recovers this for reads; without the same
     // recovery here, a mutable global struct was writable field-by-field
     // nowhere, which reads as "Milo has no mutable globals".
-    if (expr.kind === "EnumLit" && this.rewriteStaticToMember(expr)) {
-      return this.resolveAssignTarget(expr);
+    if (expr.kind === "EnumLit") {
+      const next = this.rewriteStaticToMember(expr);
+      if (next !== null) return this.resolveAssignTarget(next);
     }
     this.fatal("invalid assignment target", sp);
   }
@@ -9094,7 +9134,8 @@ export class TypeChecker {
   // this answer (nothing calls the init routine there), so a "const" the codegen
   // side emits as zeroinitializer would wave through a silent zero. Codegen's side
   // is Codegen.isFullyConstInit / tryConstantExpr; a case added here needs one there.
-  private isConstGlobalInit(e: Expr): boolean {
+  private isConstGlobalInit(slot: Expr): boolean {
+    const e = rewritten(this.rewrites, slot);
     switch (e.kind) {
       case "IntLit":
       case "FloatLit":
@@ -9212,7 +9253,8 @@ export class TypeChecker {
     type Use = { arg: number; root: unknown; name: string; fields: string[] | null; steps: string[]; span: Span | undefined; moved: boolean; via?: string; captured?: boolean };
     const muts: Use[] = [];
     const shared: Use[] = [];
-    args.forEach((arg, i) => {
+    args.forEach((slot, i) => {
+      const arg = rewritten(this.rewrites, slot);
       // A closure argument reaches what it captures for as long as the callee may run
       // it: a capture the body writes is a `&mut` of that place, one it only reads a `&`,
       // and a non-Copy capture of a `move` closure moves the place into the environment.
@@ -9358,7 +9400,8 @@ export class TypeChecker {
   // (VarInfo.closureSources). A captured closure binding passes on its own captures, since
   // running the outer closure may run it. A closure held in a field or element is not
   // tracked: a by-reference one cannot be stored there.
-  private closureArgCaptures(arg: Expr): { cap: CaptureInfo; isMove: boolean }[] {
+  private closureArgCaptures(slot: Expr): { cap: CaptureInfo; isMove: boolean }[] {
+    const arg = rewritten(this.rewrites, slot);
     // ident-ok: a closure binding is a whole variable, not a place with steps
     const sources = arg.kind === "Closure" ? [arg] : arg.kind === "Ident" ? this.lookup(arg.name)?.closureSources ?? [] : [];
     return this.capturesOfClosures(sources);
@@ -9372,7 +9415,7 @@ export class TypeChecker {
       seen.add(src);
       for (const cap of this.closureCaptures.get(src) ?? []) {
         if (!cap.info) continue;
-        out.push({ cap, isMove: !!(src as { isMove?: boolean }).isMove });
+        out.push({ cap, isMove: this.isMoveClosure(src) });
         for (const inner of cap.info.closureSources ?? []) walk(inner);
       }
     };
@@ -9403,16 +9446,17 @@ export class TypeChecker {
       if (!n || typeof n !== "object" || seen.has(n)) return;
       seen.add(n);
       if (Array.isArray(n)) { for (const x of n) visit(x, false); return; }
-      const kind = (n as { kind?: unknown }).kind;
+      // A child the checker replaced is walked as its replacement.
+      const e = rewritten(this.rewrites, n as Expr);
+      const kind = (e as { kind?: unknown }).kind;
       if (typeof kind !== "string") return;
-      const e = n as Expr;
       // ident-ok: a closure binding is a whole variable; its literals carry the captures
       if (!top && (e.kind === "Closure" || (e.kind === "Ident" && this.exprTypes.get(e)?.tag === "fn"))) {
         const name = e.kind === "Ident" ? `'${e.name}'` : "a closure";
         for (const c of this.closureArgCaptures(e)) if (!c.isMove && c.cap.mutatedInClosure) capWrites(c.cap, `running ${name}`);
         // A `move` literal takes its non-Copy captures into the environment right here,
         // as it is built, whether or not anything runs it.
-        if (e.kind === "Closure" && (e as { isMove?: boolean }).isMove) {
+        if (e.kind === "Closure" && this.isMoveClosure(e)) {
           for (const cap of this.closureCaptures.get(e) ?? []) {
             if (!cap.info || this.isCopyType(cap.type)) continue;
             const p = this.capturePlace(cap);
@@ -9429,10 +9473,10 @@ export class TypeChecker {
       // ident-ok: movedExprs holds the moved place nodes; the kind only filters out elements
       if (!top && (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e)) atPlace(e, `a move of '${this.describeExpr(e)}'`, true, e);
       if (kind === "Assign") {
-        const t = (n as { target: Expr }).target;
+        const t = (e as unknown as { target: Expr }).target;
         atPlace(t, `an assignment to '${this.describeExpr(t)}'`);
       }
-      for (const [k, v] of Object.entries(n)) if (k !== "span") visit(v, false);
+      for (const [k, v] of Object.entries(e)) if (k !== "span") visit(v, false);
     };
     visit(arg, true);
     return out;
@@ -9580,7 +9624,8 @@ export class TypeChecker {
   // An expression yields a SET of places because control flow forks: the tails
   // of an if- or match-expression are each a candidate result. Callers must
   // satisfy their rule for *every* place in the set, never just the first.
-  private placesOf(e: Expr): Place[] {
+  private placesOf(slot: Expr): Place[] {
+    const e = rewritten(this.rewrites, slot);
     switch (e.kind) {
       // Fresh values. Own themselves, reach no binding's storage.
       case "IntLit": case "FloatLit": case "BoolLit": case "StringLit": case "CharLit":
@@ -9753,7 +9798,8 @@ export class TypeChecker {
   // end up moved or maybe-moved just as they would there, and a Vec/array value is then
   // consumed. A field of an rvalue (`mk().items`) stays on the place side: codegen owns
   // its whole temporary.
-  private isPlaceIterable(e: Expr): boolean {
+  private isPlaceIterable(slot: Expr): boolean {
+    const e = rewritten(this.rewrites, slot);
     return e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" ||
       (e.kind === "UnaryOp" && e.op === "*");
   }
@@ -10022,7 +10068,8 @@ export class TypeChecker {
     return this.rootMutable(target.object);
   }
 
-  private rootMutable(expr: Expr): boolean {
+  private rootMutable(slot: Expr): boolean {
+    const expr = rewritten(this.rewrites, slot);
     // ident-ok: the Ident base case of isRootMutable, which IS the mutability walk over places
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
@@ -10156,7 +10203,7 @@ export class TypeChecker {
     paramAt: (i: number) => { name: string; mut: boolean; show: () => string } | undefined,
   ) {
     for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
+      const arg = rewritten(this.rewrites, args[i]!);
       const param = paramAt(i);
       if (arg.kind === "UnaryOp" && arg.op === "&mut") {
         args[i] = arg.operand;
@@ -10264,7 +10311,8 @@ export class TypeChecker {
     return info;
   }
 
-  private describeExpr(expr: Expr): string {
+  private describeExpr(slot: Expr): string {
+    const expr = rewritten(this.rewrites, slot);
     // The hidden local a destructuring `let { a } = f()` reads from (parser.ts
     // parseDestructure); nobody wrote its name, so a diagnostic shows the pattern.
     if (expr.kind === "Ident") return expr.name.startsWith("_destructure") ? "{ … }" : expr.name;
@@ -10293,9 +10341,11 @@ export class TypeChecker {
   // whose enumName was a function (a crash in the suggester; fuzzFrontend found it).
   private static readonly PRELUDE_VARIANTS = new Map<string, string>([["Some", "Option"], ["None", "Option"], ["Ok", "Result"], ["Err", "Result"]]);
 
-  private canonicalizePreludeVariant(expr: Expr): void {
+  // The node to check from here on: `expr`, or its EnumLit replacement (recorded in `rewrites`).
+  private canonicalizePreludeVariant(expr: Expr): Expr {
     const next = this.preludeVariantNode(expr);
-    if (next) replaceNode(expr, next);
+    if (next) { this.rewrites.set(expr, next); return next; }
+    return expr;
   }
 
   // The EnumLit `expr` canonicalizes to, or null. Separate from the replacement so that `expr` is
@@ -10345,9 +10395,7 @@ export class TypeChecker {
           `add @derive(Json) to the element struct; the call is then '${this.show(elem)}.fromJsonArray(text)'`);
         return null;
       }
-      expr.enumName = elem.name;
-      expr.variant = "fromJsonArray";
-      delete expr.typeArgs;
+      this.rewrites.set(expr, { kind: "EnumLit", enumName: elem.name, variant: "fromJsonArray", args: expr.args, span: expr.span });
       return "rewritten";
     }
     if (!["new", "withCapacity", "filled"].includes(expr.variant) || (expr.enumName === "HashMap" && expr.variant === "filled")) {
@@ -10369,8 +10417,9 @@ export class TypeChecker {
   // child checked with plain `checkExpr(child)` cannot see a hint meant for an ancestor.
   // A hint is a request, not a check: callers still compare the result against what
   // they wanted and report the mismatch in their own words.
-  private checkExpr(expr: Expr, expected: TypeKind | null = null): TypeKind {
-    this.canonicalizePreludeVariant(expr);
+  private checkExpr(node: Expr, expected: TypeKind | null = null): TypeKind {
+    // A node the checker already replaced is checked as its replacement; every fact is filed under that.
+    let expr = this.canonicalizePreludeVariant(rewritten(this.rewrites, node));
     let hint = expected && this.hintFor(expr, expected);
     if (expr.kind === "EnumLit" && expr.typeArgs?.length && (expr.enumName === "Vec" || expr.enumName === "HashMap")) {
       const spelled = this.spelledBuiltinStatic(expr);
@@ -10378,6 +10427,7 @@ export class TypeChecker {
       // The spelled instance is the type, as an annotation would give it; a context that
       // wants another type reports the mismatch in its own words.
       if (spelled !== "rewritten") hint = spelled;
+      else expr = rewritten(this.rewrites, expr);
     }
     if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
       if (expr.kind === "IntLit") {
@@ -10731,23 +10781,23 @@ export class TypeChecker {
     // facing a plain place, whose read has none either (`Some(x) == a`).
     // A bare prelude variant (`None`, `Some(x)`) is an Ident or Call until checkExpr
     // rewrites it, which would be too late for it to count as context-typed here.
-    this.canonicalizePreludeVariant(expr.left);
-    this.canonicalizePreludeVariant(expr.right);
+    const left = this.canonicalizePreludeVariant(rewritten(this.rewrites, expr.left));
+    const right = this.canonicalizePreludeVariant(rewritten(this.rewrites, expr.right));
     const contextTyped = (e: Expr) => e.kind === "IfExpr" || e.kind === "MatchExpr" || e.kind === "EnumLit";
     const sibling = (t: TypeKind) => t.tag === "unknown" ? null : t;
     let lt: TypeKind, rt: TypeKind;
-    if (expr.left.kind === "EnumLit" && !contextTyped(expr.right)
-        && (expr.left.args.length === 0 || isFieldChain(expr.right))) {
-      rt = this.checkExpr(expr.right);
-      lt = this.checkExpr(expr.left, sibling(rt));
+    if (left.kind === "EnumLit" && !contextTyped(right)
+        && (left.args.length === 0 || isFieldChain(right))) {
+      rt = this.checkExpr(right);
+      lt = this.checkExpr(left, sibling(rt));
     } else {
-      lt = this.checkExpr(expr.left);
-      rt = this.checkExpr(expr.right, contextTyped(expr.right) ? sibling(lt) : null);
+      lt = this.checkExpr(left);
+      rt = this.checkExpr(right, contextTyped(right) ? sibling(lt) : null);
     }
     // `x == f64.NAN` / `!=` is a dead comparison: NaN equals nothing, itself included,
     // so the branch is unreachable (==) or always taken (!=). Steer to isNan.
     if (expr.op === "==" || expr.op === "!=") {
-      const nanSide = [expr.left, expr.right].some(
+      const nanSide = [left, right].some(
         e => e.kind === "FieldAccess" && floatNamespaceConst(e)?.value !== undefined && Number.isNaN(floatNamespaceConst(e)!.value));
       if (nanSide) this.warn("nan-comparison",
         `comparison with NaN is always ${expr.op === "==" ? "false" : "true"}`, sp,
@@ -10767,28 +10817,28 @@ export class TypeChecker {
         const v = other.min !== undefined ? this.constIntValue(e) : null;
         return v !== null && Number.isSafeInteger(Number(v)) ? { ...base, min: Number(v), max: Number(v) } : base;
       };
-      if (this.isConstIntExpr(expr.right)) {
-        rt = adopt(expr.right, lt);
-      } else if (this.isConstIntExpr(expr.left)) {
-        lt = adopt(expr.left, rt);
+      if (this.isConstIntExpr(right)) {
+        rt = adopt(right, lt);
+      } else if (this.isConstIntExpr(left)) {
+        lt = adopt(left, rt);
       } else {
         // A flexible const-int binding (`let m = if.. { const arms }`) used
         // against a concrete int of another width adopts that width here —
         // this is its first read, so nothing was committed at the default.
-        const rInfo = this.flexIntBinding(expr.right);
-        const lInfo = this.flexIntBinding(expr.left);
-        if (rInfo && this.resolveFlexInt(rInfo, lt, expr.right)) rt = lt;
-        else if (lInfo && this.resolveFlexInt(lInfo, rt, expr.left)) lt = rt;
+        const rInfo = this.flexIntBinding(right);
+        const lInfo = this.flexIntBinding(left);
+        if (rInfo && this.resolveFlexInt(rInfo, lt, right)) rt = lt;
+        else if (lInfo && this.resolveFlexInt(lInfo, rt, left)) lt = rt;
       }
     }
     // Same treatment for float widths: `1.0 - f32val` retypes the literal to
     // f32 rather than demanding an annotated constant.
     if (lt.tag === "float" && rt.tag === "float" && !typeEq(lt, rt)) {
-      if (this.isConstFloatExpr(expr.right)) {
-        this.retypeConstFloat(expr.right, lt);
+      if (this.isConstFloatExpr(right)) {
+        this.retypeConstFloat(right, lt);
         rt = lt;
-      } else if (this.isConstFloatExpr(expr.left)) {
-        this.retypeConstFloat(expr.left, rt);
+      } else if (this.isConstFloatExpr(left)) {
+        this.retypeConstFloat(left, rt);
         lt = rt;
       }
     }
@@ -10810,15 +10860,15 @@ export class TypeChecker {
           const methodName = traitName.toLowerCase();
           const mangled = `${lt.name}$${traitName}$${methodName}`;
           this.resolvedOperators.set(expr, mangled);
-          this.autoBorrow(expr.left, { mutable: false });
-          this.autoBorrow(expr.right, { mutable: false });
+          this.autoBorrow(left, { mutable: false });
+          this.autoBorrow(right, { mutable: false });
           return this.setType(expr, lt);
         }
       }
       if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${this.show(lt)}`, sp);
       if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
-      if (lt.tag === "int" && expr.left.kind === "IntLit" && expr.right.kind === "IntLit") {
-        this.checkConstOverflow(expr.left.value, expr.right.value, expr.op, lt, sp);
+      if (lt.tag === "int" && left.kind === "IntLit" && right.kind === "IntLit") {
+        this.checkConstOverflow(left.value, right.value, expr.op, lt, sp);
       }
       // range propagation: compute output range from operand ranges
       if (lt.tag === "int" && rt.tag === "int" && lt.min !== undefined && lt.max !== undefined && rt.min !== undefined && rt.max !== undefined) {
@@ -10849,9 +10899,9 @@ export class TypeChecker {
               const v = info.variants.get(e.variant);
               return v && v.fields.length === 0 ? v : null;
             };
-            const rv = variantSide(expr.right), lv = rv ? null : variantSide(expr.left);
+            const rv = variantSide(right), lv = rv ? null : variantSide(left);
             if (hasPayload && typeEq(lt, rt) && (rv || lv)) {
-              this.variantTagCompares.set(expr, { operand: rv ? expr.left : expr.right, tag: (rv ?? lv)!.tag });
+              this.variantTagCompares.set(expr, { operand: rv ? left : right, tag: (rv ?? lv)!.tag });
             } else if (hasPayload) {
               this.error(`cannot use '${expr.op}' on enum '${lt.name}' with payload-bearing variants`, sp, `use 'match' to compare`);
             }
@@ -10860,8 +10910,8 @@ export class TypeChecker {
           if (this.typeImplementsTrait(lt.name, "Eq")) {
             const mangled = `${lt.name}$Eq$eq`;
             this.resolvedOperators.set(expr, mangled);
-            this.autoBorrow(expr.left, { mutable: false });
-            this.autoBorrow(expr.right, { mutable: false });
+            this.autoBorrow(left, { mutable: false });
+            this.autoBorrow(right, { mutable: false });
           } else {
             this.error(`cannot use '${expr.op}' on ${this.show(lt)}`, sp, `implement Eq trait or compare individual fields`);
           }
@@ -11006,7 +11056,7 @@ export class TypeChecker {
   }
 
   private sqlResolver(ident: (name: string) => string | null): ConstResolver {
-    return { ident, staticCall: this.sql.staticConst, call: (fn, args) => this.templateCall(fn, args) };
+    return { node: (e) => rewritten(this.rewrites, e), ident, staticCall: this.sql.staticConst, call: (fn, args) => this.templateCall(fn, args) };
   }
 
   // A call to a template function: non-generic, every parameter a string, and a body that
@@ -11128,8 +11178,9 @@ export class TypeChecker {
     };
     const want = shape[expr.func]!;
     if (expr.args.length !== want.args.length) this.error(`'${expr.func}' expects ${want.args.length} argument(s)`, sp);
-    expr.args.forEach((a, i) => {
-      if (a.kind === "UnaryOp" && a.op === "&mut") expr.args[i] = a = a.operand;
+    expr.args.forEach((slot, i) => {
+      let a = rewritten(this.rewrites, slot);
+      if (a.kind === "UnaryOp" && a.op === "&mut") { const operand = a.operand; this.rewrites.set(a, operand); a = operand; }
       const k = want.args[i];
       if (k === "lit" && a.kind !== "StringLit") this.error(`'${expr.func}' argument ${i + 1} must be a string literal`, sp);
       this.checkExpr(a, k === "i64" ? i64 : null);
@@ -11791,7 +11842,8 @@ export class TypeChecker {
     // one's place (`$"{k} {consume(k)}"`) left it formatting an emptied string.
     if (sig.variadic && !sig.isExtern) {
       const uses: ArgUse[] = [];
-      expr.args.forEach((a, i) => {
+      expr.args.forEach((slot, i) => {
+        const a = rewritten(this.rewrites, slot);
         const t = this.exprTypes.get(a);
         const p = t && !this.isCopyType(t) ? this.exclusivityPlace(a) : null;
         if (p) uses.push({ arg: i, ...p, moved: false });
@@ -11959,11 +12011,14 @@ export class TypeChecker {
 
   // Copy each omitted field's default into the literal. A name the default reads must
   // still mean the global here, so a local shadowing it is an error, not a silent rebind.
-  private fillFieldDefaults(expr: ExprOf<"StructLit">, declName: string) {
-    if (expr.base || this.defaultsFilled.has(expr)) return;
+  // Returns the literal to go on with: `expr` itself when nothing was added, else its replacement (recorded
+  // in `rewrites`), which the caller re-checks from the top.
+  private fillFieldDefaults(expr: ExprOf<"StructLit">, declName: string): ExprOf<"StructLit"> {
+    if (expr.base || this.defaultsFilled.has(expr)) return expr;
     this.defaultsFilled.add(expr);
     const defs = this.structDefaults.get(declName);
-    if (!defs) return;
+    if (!defs) return expr;
+    const added: ExprOf<"StructLit">["fields"] = [];
     for (const [name, def] of defs) {
       if (expr.fields.some(f => f.name === name)) continue;
       const value = structuredClone(def);
@@ -11972,8 +12027,13 @@ export class TypeChecker {
         this.error(`the default for field '${name}' reads the global '${shadowed}', but a local '${shadowed}' shadows it here`, expr.span,
           `rename the local, or write '${name}: ...' in this literal`);
       }
-      expr.fields.push({ name, value, fromDefault: true });
+      added.push({ name, value, fromDefault: true });
     }
+    if (added.length === 0) return expr;
+    const filled: ExprOf<"StructLit"> = { ...expr, fields: [...expr.fields, ...added] };
+    this.defaultsFilled.add(filled);
+    this.rewrites.set(expr, filled);
+    return filled;
   }
 
   private shadowedDefaultName(e: Expr): string | null {
@@ -11995,7 +12055,8 @@ export class TypeChecker {
     const sp = expr.span;
     const hintInfo = must(this.structs, hint.name, "struct instance");
     const shown = expr.name || this.show(hint);
-    this.fillFieldDefaults(expr, hintInfo.baseName ?? hint.name);
+    const filled = this.fillFieldDefaults(expr, hintInfo.baseName ?? hint.name);
+    if (filled !== expr) return this.checkStructLitAsInstance(filled, hint, baseType);
     const namesOk = this.checkStructLitFieldNames(expr, hint.name, hintInfo.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = hintInfo.fields.find(d => d.name === f.name);
@@ -12112,7 +12173,8 @@ export class TypeChecker {
     }
     if (genericInfo) {
       const typeMap = new Map<string, TypeKind>();
-      this.fillFieldDefaults(expr, expr.name);
+      const filled = this.fillFieldDefaults(expr, expr.name);
+      if (filled !== expr) return this.checkStructLitExpr(filled);
       const namesOk = this.checkStructLitFieldNames(expr, expr.name, genericInfo.decl.fields.map(d => d.name));
       for (const f of expr.fields) {
         const declField = genericInfo.decl.fields.find(d => d.name === f.name);
@@ -12158,7 +12220,8 @@ export class TypeChecker {
     }
     const info = this.structs.get(expr.name);
     if (!info) { this.error(`unknown struct '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
-    this.fillFieldDefaults(expr, info.baseName ?? expr.name);
+    const filled = this.fillFieldDefaults(expr, info.baseName ?? expr.name);
+    if (filled !== expr) return this.checkStructLitExpr(filled);
     const namesOk = this.checkStructLitFieldNames(expr, expr.name, info.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
@@ -12416,14 +12479,21 @@ export class TypeChecker {
     return null;
   }
 
-  private coerceCopyCallbackTo(arg: Expr, wantParams: TypeKind[]): void {
+  private coerceCopyCallbackTo(slot: Expr, wantParams: TypeKind[]): void {
+    const arg = rewritten(this.rewrites, slot);
     if (arg.kind === "Closure") {
       if (arg.params.length === wantParams.length) {
-        for (let i = 0; i < arg.params.length; i++) {
-          const p = arg.params[i]!;
+        const params = [...arg.params];
+        let changed = false;
+        for (let i = 0; i < params.length; i++) {
+          const p = params[i]!;
           const inner = this.copyRefInner(wantParams[i]!);
-          if (inner !== null && p.type && !p.type.isRef && !p.type.isRefMut && !p.type.isPtr && typeEq(this.resolve(p.type), inner)) p.type = { ...p.type, isRef: true };
+          if (inner !== null && p.type && !p.type.isRef && !p.type.isRefMut && !p.type.isPtr && typeEq(this.resolve(p.type), inner)) {
+            params[i] = { ...p, type: { ...p.type, isRef: true } };
+            changed = true;
+          }
         }
+        if (changed) this.rewrites.set(arg, { ...arg, params });
       }
       return;
     }
@@ -12440,8 +12510,7 @@ export class TypeChecker {
       else paramTypes.push(sig.params[i]!.type);
     }
     if (!adapted) return;
-    // In place: the parent's args array holds this node, and lowering reads the AST.
-    replaceNode(arg, this.callbackThunk(fnName, paramTypes, sig.ret, arg.span));
+    this.rewrites.set(arg, this.callbackThunk(fnName, paramTypes, sig.ret, arg.span));
   }
 
   // `(__cb0: T0, ...) => f(__cb0, ...)`.
@@ -12469,7 +12538,8 @@ export class TypeChecker {
   // The argument-vs-parameter rules, for an argument whose type is already known.
   // A generic call checks its arguments before the signature exists (inference needs
   // every type first), so it applies these afterwards against the monomorphized one.
-  private matchCallArg(arg: Expr, argType: TypeKind, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
+  private matchCallArg(slot: Expr, argType: TypeKind, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
+    const arg = rewritten(this.rewrites, slot);
     if (paramType.tag === "ref") {
       this.enforceArgRange(arg, argType, paramType, arg.span);
       if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
@@ -12529,7 +12599,8 @@ export class TypeChecker {
 
   // A by-value parameter that does not take the argument: a `&T` param, an array decaying
   // to a pointer, or an owning closure lent to a plain closure parameter.
-  private argIsBorrowed(arg: Expr, paramType: TypeKind): boolean {
+  private argIsBorrowed(slot: Expr, paramType: TypeKind): boolean {
+    const arg = rewritten(this.rewrites, slot);
     return paramType.tag === "ref" || this.decaysToPtr(arg, paramType) || this.lendsOwningClosure(arg, paramType);
   }
 
@@ -13137,12 +13208,18 @@ export class TypeChecker {
   // write-back to the original, which a move would drop; such a literal stays
   // by-reference and checkEscapingClosures rejects it at a `move` parameter. `always` is
   // for a call through a fn value, whose parameter types cannot say what the target does.
-  private autoMoveClosureArg(arg: Expr, param: TypeKind | undefined, keepsWriteBack: (c: CaptureInfo) => boolean, always = false): void {
-    if (arg.kind !== "Closure" || (arg as { isMove?: boolean }).isMove || param?.tag !== "fn") return;
+  // `move` as written, or promoted by the checker (recorded in moveClosures; applyRewrites sets the flag).
+  private isMoveClosure(e: Expr): boolean {
+    return this.moveClosures.has(e) || !!(e as { isMove?: boolean }).isMove;
+  }
+
+  private autoMoveClosureArg(slot: Expr, param: TypeKind | undefined, keepsWriteBack: (c: CaptureInfo) => boolean, always = false): void {
+    const arg = rewritten(this.rewrites, slot);
+    if (arg.kind !== "Closure" || this.isMoveClosure(arg) || param?.tag !== "fn") return;
     if (!always && !param.owning) return;
     const caps = this.closureCaptures.get(arg) ?? [];
     if (caps.some(keepsWriteBack)) return;
-    (arg as { isMove?: boolean }).isMove = true;
+    this.moveClosures.add(arg);
     this.errorOnRefCaptures(arg, caps, "this closure is passed to a 'move' parameter, so it owns its captures");
   }
 
@@ -13207,7 +13284,7 @@ export class TypeChecker {
     if (inferredRet.tag === "unknown" && expr.body.length > 0) {
       const lastStmt = expr.body[expr.body.length - 1];
       if (lastStmt.kind === "Return" && lastStmt.value) {
-        inferredRet = this.exprTypes.get(lastStmt.value) ?? { tag: "void" };
+        inferredRet = this.exprTypes.get(rewritten(this.rewrites, lastStmt.value)) ?? { tag: "void" };
         if (inferredRet.tag === "never") inferredRet = { tag: "void" };
       } else if (lastStmt.kind === "ExprStmt") {
         inferredRet = { tag: "void" };
@@ -13225,19 +13302,19 @@ export class TypeChecker {
     // then freed it a second time. So such a literal is a move closure (call-once), like
     // one written `move`; one that also writes another capture back cannot be either.
     const consumed = captures.find(c => c.consumedInClosure);
-    if (consumed && !(expr as { isMove?: boolean }).isMove) {
+    if (consumed && !this.isMoveClosure(expr)) {
       const written = captures.find(c => c.mutatedInClosure);
       if (written) {
         this.error(`closure moves '${consumed.name}' out and also assigns to '${written.name}'`, expr.span,
           `moving a capture out needs a 'move' closure, which owns copies of its captures, so the write to '${written.name}' would be lost; return the new value instead, or clone '${consumed.name}' before moving it`);
       } else {
-        (expr as { isMove?: boolean }).isMove = true;
+        this.moveClosures.add(expr);
         this.errorOnRefCaptures(expr, captures, `this closure moves '${consumed.name}' out, so it owns its captures`);
       }
-    } else if ((expr as { isMove?: boolean }).isMove) {
+    } else if (this.isMoveClosure(expr)) {
       this.errorOnRefCaptures(expr, captures, "a 'move' closure owns its captures");
     }
-    if ((expr as any).isMove && consumed) this.onceClosures.add(expr);
+    if (this.isMoveClosure(expr) && consumed) this.onceClosures.add(expr);
     for (const cap of captures) {
       for (let i = this.scopes.length - 1; i >= 0; i--) {
         const info = this.scopes[i].get(cap.name);
@@ -13258,7 +13335,7 @@ export class TypeChecker {
     // environment and owns nothing, so typing it as owning would make it non-Copy for no
     // reason; a by-reference closure's environment is a stack slot in the frame that built
     // it, which that frame already owns. Only a move closure with captures holds heap.
-    const owning = !!(expr as { isMove?: boolean }).isMove && captures.length > 0;
+    const owning = this.isMoveClosure(expr) && captures.length > 0;
     return this.setType(expr, owning
       ? { tag: "fn", params: paramTypes, ret: inferredRet, owning: true }
       : { tag: "fn", params: paramTypes, ret: inferredRet });
@@ -13269,8 +13346,10 @@ export class TypeChecker {
   // like a user method's: `v[0].startsWith(consume(v).toString())` read the string after
   // `consume` freed it. So the receiver is checked against the arguments' nested writes
   // here, unless a user-method path already checked it as its first argument.
-  private checkMethodCallExpr(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
-    const t = this.checkMethodCallExprInner(expr, expected);
+  private checkMethodCallExpr(call: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
+    const t = this.checkMethodCallExprInner(call, expected);
+    // The receiver strip and the Json chain rewrites replace the call; the checks below are on what was checked.
+    const expr = rewritten(this.rewrites, call) as ExprOf<"MethodCall">;
     if (expr.args.length > 0 && !this.siteCheckedFirstArgs.has(expr.object)) {
       const p = this.exclusivityPlace(expr.object);
       // A string root is a name that is not a binding (a static call's type name).
@@ -13295,10 +13374,10 @@ export class TypeChecker {
       root = expr.object;
       start = { kind: "MethodCall", object: structuredClone(root), method: "idxRoot", args: [], span: expr.span } as Expr;
     } else {
-      const r = this.jsonChains.get(expr.object);
+      const r = this.jsonChains.get(rewritten(this.rewrites, expr.object));
       if (!r) return null;
       root = r;
-      start = expr.object;
+      start = rewritten(this.rewrites, expr.object);
     }
     const idxType = this.checkExpr(expr.index);
     const idxT = idxType.tag === "ref" ? idxType.inner : idxType;
@@ -13308,15 +13387,13 @@ export class TypeChecker {
       if (idxT.tag !== "unknown") this.error(`a Json index is a string key, an integer position or a JsonCur, got ${this.show(idxType)}`, expr.span);
       return this.setType(expr, { tag: "unknown" });
     }
-    const node = expr as any;
-    const index = node.index;
-    delete node.index;
-    node.kind = "MethodCall";
-    node.object = structuredClone(root);
-    node.method = method;
-    node.args = method === "idxCur" ? [index] : [start, index];
-    this.jsonChains.set(node as Expr, root);
-    return this.checkExpr(node as Expr, null);
+    const next: Expr = {
+      kind: "MethodCall", object: structuredClone(root), span: expr.span, method,
+      args: method === "idxCur" ? [expr.index] : [start, expr.index],
+    };
+    this.rewrites.set(expr, next);
+    this.jsonChains.set(next, root);
+    return this.checkExpr(next, null);
   }
 
   // `doc.at("data.user.orgs[0].name")`, or `.at(path)` on a `doc[...]` chain: a path step,
@@ -13345,12 +13422,10 @@ export class TypeChecker {
     const root = onChain ? chainRoot! : expr.object;
     const start: Expr = onChain ? expr.object
       : { kind: "MethodCall", object: structuredClone(root), method: "idxRoot", args: [], span: expr.span } as Expr;
-    const node = expr as any;
-    node.object = structuredClone(root);
-    node.method = "idxPath";
-    node.args = [start, expr.args[0]];
-    this.jsonChains.set(node as Expr, root);
-    return this.checkMethodCallExprInner(node, expected);
+    const next: ExprOf<"MethodCall"> = { ...expr, object: structuredClone(root), method: "idxPath", args: [start, expr.args[0]] };
+    this.rewrites.set(expr, next);
+    this.jsonChains.set(next, root);
+    return this.checkMethodCallExprInner(next, expected);
   }
 
   // A root the chain can re-borrow at every step: a name or a field path on one.
@@ -13360,28 +13435,28 @@ export class TypeChecker {
     return false;
   }
 
-  private checkMethodCallExprInner(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
+  private checkMethodCallExprInner(call: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
+    let expr = call;
     const sp = expr.span;
     if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
       // Receivers borrow implicitly.
       // Stripped so the call is still checked as written and one error is reported.
       const inner = this.describeExpr(expr.object.operand);
       this.error(`'&mut' is implicit on a method receiver; write '${inner}.${expr.method}(${expr.args.map(a => this.describeExpr(a)).join(", ")})'`, expr.object.span);
-      expr.object = expr.object.operand;
+      expr = { ...call, object: expr.object.operand };
+      this.rewrites.set(call, expr);
     }
     const rawObjType = this.checkExpr(expr.object);
     // A read at the end of a `doc[...]` chain: `doc["a"].str()` → `doc.idxStr(chain)`.
-    const chainRoot = this.jsonChains.get(expr.object);
+    const chainRoot = this.jsonChains.get(rewritten(this.rewrites, expr.object));
     const pathStep = this.rewriteJsonPathStep(expr, rawObjType, chainRoot, expected);
     if (pathStep) return pathStep;
     if (chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur") {
       const read = JSON_CHAIN_READS[expr.method];
       if (read && expr.args.length === (read === "idxValueAt" ? 1 : 0)) {
-        const node = expr as any;
-        node.args = [expr.object, ...expr.args];
-        node.object = structuredClone(chainRoot);
-        node.method = read;
-        return this.checkMethodCallExprInner(node, expected);
+        const next: ExprOf<"MethodCall"> = { ...expr, args: [expr.object, ...expr.args], object: structuredClone(chainRoot), method: read };
+        this.rewrites.set(expr, next);
+        return this.checkMethodCallExprInner(next, expected);
       }
     }
     if (!chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur" && (JSON_CHAIN_READS[expr.method] || expr.method === "at")) {
@@ -15619,7 +15694,7 @@ export class TypeChecker {
   private blockExprType(body: Stmt[]): TypeKind {
     if (body.length === 0) return { tag: "void" };
     const last = body[body.length - 1];
-    if (last.kind === "ExprStmt") return this.exprTypes.get(last.expr) ?? { tag: "void" };
+    if (last.kind === "ExprStmt") return this.exprTypes.get(rewritten(this.rewrites, last.expr)) ?? { tag: "void" };
     return { tag: "void" };
   }
 
@@ -15652,39 +15727,30 @@ export class TypeChecker {
   // Called only from the two "no such static" error paths, so anything that
   // resolves as a static call today keeps resolving that way.
   private staticCallOnVariable(expr: any, expected: TypeKind | null): TypeKind | null {
-    if (!this.rewriteStaticToMember(expr)) return null;
-    return this.checkExpr(expr as Expr, expected);
+    const next = this.rewriteStaticToMember(expr);
+    if (next === null) return null;
+    return this.checkExpr(next, expected);
   }
 
   // The rewrite half of staticCallOnVariable, without the re-check: mutates the
   // EnumLit node into a FieldAccess/MethodCall on the same-named variable and
   // reports whether it did. Assignment targets need the rewrite but must not
   // re-enter checkExpr — that would type the node as an rvalue read (and move it).
-  private rewriteStaticToMember(expr: any): boolean {
+  private rewriteStaticToMember(expr: any): Expr | null {
     const info = this.lookup(expr.enumName);
-    if (!info) return false;
+    if (!info) return null;
     const obj = { kind: "Ident", name: expr.enumName, span: expr.span } as unknown as Expr;
     let ty = info.type;
     if (ty.tag === "ref") ty = ty.inner;
     // `.len` is the one built-in field: `NAMES.len` on a module-level array reads it, not a method.
     const isField = (ty.tag === "struct" && !!this.structs.get(ty.name)?.fields.some(f => f.name === expr.variant))
       || (expr.variant === "len" && (ty.tag === "array" || ty.tag === "vec" || ty.tag === "string" || ty.tag === "hashmap"));
-    const node = expr as any;
     const args: Expr[] = expr.args ?? [];
-    if (isField && args.length === 0) {
-      node.kind = "FieldAccess";
-      node.object = obj;
-      node.field = expr.variant;
-    } else {
-      node.kind = "MethodCall";
-      node.object = obj;
-      node.method = expr.variant;
-      node.args = args;
-    }
-    delete node.enumName;
-    delete node.variant;
-    delete node.typeArgs;
-    return true;
+    const next: Expr = isField && args.length === 0
+      ? { kind: "FieldAccess", object: obj, field: expr.variant, span: expr.span }
+      : { kind: "MethodCall", object: obj, method: expr.variant, args, span: expr.span };
+    this.rewrites.set(expr as Expr, next);
+    return next;
   }
 
   private flexIntLeaves(e: Expr): Expr[] | null {

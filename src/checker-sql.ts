@@ -40,6 +40,8 @@ interface Site {
 interface Piece { version: bigint | null; ddl: boolean; sql: string | null; span?: Span; callee: string }
 
 export interface ConstResolver {
+  // The checker's replacement for a node it re-spelled (identity when it did not).
+  node(e: Expr): Expr;
   ident(name: string): string | null;
   staticCall(type: string, method: string): string | null;
   call(fn: string, args: string[]): string | null;
@@ -122,7 +124,8 @@ export class SqlChecker {
   // resolver supplies what only the checker knows: the constant a name holds, a derived
   // `T.columns()`, and a call to a template function (one whose body is a single
   // `return` of a foldable expression in its parameters).
-  static constString(e: Expr, r: ConstResolver): string | null {
+  static constString(slot: Expr, r: ConstResolver): string | null {
+    const e = r.node(slot);
     switch (e.kind) {
       case "StringLit": return e.value;
       case "IntLit": return e.value.toString();
