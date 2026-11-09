@@ -284,3 +284,16 @@ remains the compiler, and this plan records why):
 Gates for every step: `bun scripts/ir-same.ts --emit mlir` (byte-identical milo dialect; the base is
 cached, so a rerun only re-emits the working tree) on the fixtures a change can reach, the
 portability ratchet in `tests/ts2milo.test.ts`, and the differential gate for generated files.
+
+### Stage 4 progress (2026-11-08)
+
+- `checkNonEscapingParams`: ported (net -56), generated 39/39 functions automatic, compiles,
+  findings identical over tests/errors (`bun scripts/ts2milo-nonescaping-diff.ts --only tests/errors`:
+  same 723/723, 14 programs with findings, `--neuter` caught 2). Milo pass 3 ms vs TS 6 ms.
+  Generation needed two ts2milo rules (clone inside an `Option.Some` re-wrap; `optUnbox<T>` for a
+  boxed optional field) and two TypeScript idioms (`isTrue` on an optional bool; a local copy before
+  a call that takes `self` mutably).
+- `checkPurity`: ported (net -82, scope tracking via the walker's `enterStmts`/`exitStmts`), not yet
+  generated.
+- Found a checker bug on the way (backlog #43): an explicit type argument lets a mistyped by-ref
+  argument through to codegen.
