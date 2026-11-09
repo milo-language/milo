@@ -21,6 +21,15 @@ test("the checked-in spec matches the generator", () => {
   execFileSync("bun", ["run", "scripts/gen-spec.ts", "--check"], { cwd: ROOT, stdio: "pipe" });
 });
 
+// docs/semantics/requirements.json is projected from this spec plus docs/semantics/milo.md,
+// so a spec change that skips the regeneration leaves `milo trace` citing stale text.
+test("the checked-in language requirements match the generator", () => {
+  // Regenerate with: bun scripts/gen-language-requirements.ts
+  execFileSync("bun", ["run", "scripts/gen-language-requirements.ts", "--check"], { cwd: ROOT, stdio: "pipe" });
+  const reqs = JSON.parse(readFileSync(join(ROOT, "docs/semantics/requirements.json"), "utf-8")).requirements;
+  expect(reqs.length).toBeGreaterThan(100);
+});
+
 test("every pinned program states exactly one requirement", () => {
   const reqs = requirements();
   // A count guard, because a scan that found nothing would report perfect compliance —
