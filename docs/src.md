@@ -113,6 +113,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/layout.ts` | Type layout: struct and enum registration, sizes, alignments, field offsets, niches and which types need drop glue. |
 | `src/lazy-globals.ts` | Lazy module globals: where the first-use guard goes in front of a read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
+| `src/llvm-toolchain.ts` | Locates the LLVM bin directory (clang, llvm-cov, ...) for tools that must not depend on the codegen backend. |
 | `src/lsp.ts` | milod — Milo Language Server Speaks LSP over JSON-RPC/stdio. |
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |

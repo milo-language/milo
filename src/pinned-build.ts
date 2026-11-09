@@ -15,7 +15,8 @@ import { spawnSync } from "child_process";
 import { join } from "path";
 import type { SafetyLevel } from "./safety";
 import type { TargetInfo } from "./target";
-import { MLIR_PIPELINE, MILO_OPT, LLVM_BIN } from "./mlir-backend";
+import { MLIR_PIPELINE, MILO_OPT } from "./mlir-backend";
+import { LLVM_BIN } from "./llvm-toolchain";
 
 export const PIN_MAGIC = "MILO-PIN\0";
 export const PIN_SYMBOL = "__milo_pin";

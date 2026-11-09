@@ -17,7 +17,7 @@
 import { spawnSync } from "child_process";
 import { openSync, readSync, closeSync } from "fs";
 import { join } from "path";
-import { LLVM_BIN } from "./mlir-backend";
+import { LLVM_BIN } from "./llvm-toolchain";
 import { objectPolicy, type SafetyLevel } from "./safety";
 
 export interface ObjectGraph {

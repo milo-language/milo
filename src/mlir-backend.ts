@@ -8,6 +8,7 @@ import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
 import { basename, dirname, join } from "path";
 import { STDLIB_DIR } from "./stdlib-dir";
+import { LLVM_BIN } from "./llvm-toolchain";
 import type { BackendProgram, FnDecl } from "./backend-program";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, typeAliasText, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
@@ -42,14 +43,7 @@ function findMiloOpt(): string {
   return !existsSync(built) && existsSync(beside) ? beside : built;
 }
 export const MILO_OPT = findMiloOpt();
-// The LLVM whose clang compiles the module, the one milo-opt was built against (mlir/build.sh
-// looks in the same places).
-function findLlvmBin(): string {
-  if (process.env.MILO_LLVM_BIN) return process.env.MILO_LLVM_BIN;
-  const dirs = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin", "/home/linuxbrew/.linuxbrew/opt/llvm/bin", "/usr/lib/llvm-23/bin"];
-  return dirs.find(d => existsSync(join(d, "clang"))) ?? dirs[0];
-}
-export const LLVM_BIN = findLlvmBin();
+export { LLVM_BIN } from "./llvm-toolchain";
 const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
 // arith's `select %c, 1, 0` -> `extui %c` makes a signless-only op from a select whose
