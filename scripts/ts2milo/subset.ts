@@ -101,6 +101,117 @@ export function truthyHandled(checker: ts.TypeChecker, e: ts.Expression): Truthy
   return (k === "str" || k === "num" ? inCondPos(e) : inIfGuard(e)) ? k : null;
 }
 
+// ---- `??`, `?.` and `switch` ----
+// Each predicate is the one both the gate and the emitter ask, so they cannot drift.
+const NULLISH = ts.TypeFlags.Undefined | ts.TypeFlags.Null;
+export const isOptionalType = (t: ts.Type): boolean => t.isUnion() && t.types.some((x) => !!(x.flags & NULLISH)) && !(t.flags & ts.TypeFlags.Boolean);
+const unparenE = (e: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(e) ? unparenE(e.expression) : e);
+// A place or literal: reading it twice, or not at all, is not observable.
+export function sideEffectFree(e: ts.Node): boolean {
+  if (ts.isParenthesizedExpression(e)) return sideEffectFree(e.expression);
+  if (ts.isIdentifier(e) || e.kind === K.ThisKeyword || e.kind === K.TrueKeyword || e.kind === K.FalseKeyword || e.kind === K.NullKeyword) return true;
+  if (ts.isStringLiteral(e) || ts.isNumericLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
+  if (ts.isPrefixUnaryExpression(e)) return e.operator === K.MinusToken && sideEffectFree(e.operand);
+  if (ts.isPropertyAccessExpression(e)) return sideEffectFree(e.expression);
+  if (ts.isElementAccessExpression(e)) return sideEffectFree(e.expression) && sideEffectFree(e.argumentExpression);
+  return false;
+}
+const isPlaceE = (e: ts.Expression): boolean => { e = unparenE(e); return ts.isIdentifier(e) || ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || e.kind === K.ThisKeyword; };
+
+// A member access inside an optional chain (`a?.b`, and the `.c` of `a?.b.c`).
+export const isChainMember = (e: ts.Node): boolean => ts.isPropertyAccessExpression(e) && !!(e.flags & ts.NodeFlags.OptionalChain);
+// `a?.f`: a is an optional struct place (or an earlier link of the chain) and f one of its fields.
+// A method call, element access or non-null assertion on a chain has no translation.
+export function chainHandled(checker: ts.TypeChecker, e: ts.Expression): boolean {
+  const p = e as ts.PropertyAccessExpression;
+  const par = p.parent;
+  if (par && ((ts.isCallExpression(par) && par.expression === p) || (ts.isElementAccessExpression(par) && par.expression === p) || ts.isNonNullExpression(par))) return false;
+  const d = checker.getSymbolAtLocation(p.name)?.declarations?.[0];
+  if (!d || !(ts.isPropertySignature(d) || ts.isPropertyDeclaration(d)) || d.getSourceFile().fileName.includes("node_modules")) return false;
+  const base = p.expression;
+  if (!isChainMember(base) && !isPlaceE(base)) return false;
+  const bt = checker.getNonNullableType(checker.getTypeAtLocation(base));
+  if (unionOfType(checker, bt)) return false;
+  const bd = bt.symbol?.declarations?.[0];
+  return !!bd && ts.isInterfaceDeclaration(bd);
+}
+// `a ?? b`: "value" (a optional, b its payload type: the result is not optional) or "opt" (b optional
+// too; `a` is read twice, so it must be a side-effect-free place). `b` may have calls: it runs only
+// when `a` is absent, in both emitted forms.
+export function nullishHandled(checker: ts.TypeChecker, b: ts.BinaryExpression): "value" | "opt" | null {
+  const lt = checker.getTypeAtLocation(b.left), rt = checker.getTypeAtLocation(b), r = checker.getTypeAtLocation(b.right);
+  if (!isOptionalType(lt)) return null;
+  const l = unparenE(b.left);
+  const chainOk = !isChainMember(l) || chainHandled(checker, l);
+  if (!isOptionalType(rt)) {
+    if (isOptionalType(r) || checker.typeToString(rt) !== checker.typeToString(checker.getNonNullableType(lt))) return null;
+    return chainOk ? "value" : null;
+  }
+  if (checker.typeToString(rt) !== checker.typeToString(lt) || !chainOk) return null;
+  return isChainMember(l) || (isPlaceE(l) && sideEffectFree(l)) ? "opt" : null;
+}
+// `chain === k` / `chain !== k`: k is a side-effect-free non-nullish value (JS evaluates it even
+// when the chain short-circuits).
+export function chainCompareHandled(checker: ts.TypeChecker, b: ts.BinaryExpression): boolean {
+  const l = unparenE(b.left);
+  const rt = checker.getTypeAtLocation(b.right);
+  return isChainMember(l) && chainHandled(checker, l) && sideEffectFree(b.right) && !isOptionalType(rt) && !(rt.flags & NULLISH);
+}
+
+const isValueType = (t: ts.Type): boolean => (t.isUnion() ? t.types.every(isValueType) : !!(t.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) && !(t.flags & ts.TypeFlags.BigIntLike));
+const isTerminator = (s: ts.Statement) => ts.isBreakStatement(s) || ts.isReturnStatement(s) || ts.isThrowStatement(s) || ts.isContinueStatement(s);
+// The statements of a clause, a lone block unwrapped, without its closing `break`.
+export function clauseBody(c: ts.CaseOrDefaultClause): ts.Statement[] {
+  let st = [...c.statements];
+  while (st.length === 1 && ts.isBlock(st[0])) st = [...st[0].statements];
+  if (st.length && ts.isBreakStatement(st[st.length - 1]) && !(st[st.length - 1] as ts.BreakStatement).label) st.pop();
+  return st;
+}
+const breaksOut = (n: ts.Node): boolean => {
+  if (ts.isBreakStatement(n)) return true;
+  if (ts.isIterationStatement(n, false) || ts.isSwitchStatement(n) || ts.isFunctionLike(n)) return false;
+  return ts.forEachChild(n, (c) => breaksOut(c) || undefined) === true;
+};
+function lastTerminates(c: ts.CaseOrDefaultClause): boolean {
+  let st = [...c.statements];
+  while (st.length === 1 && ts.isBlock(st[0])) st = [...st[0].statements];
+  return st.length > 0 && isTerminator(st[st.length - 1]);
+}
+// `switch` on a string, a number, a string-literal union or an enum ("value"), or on a tagged
+// union's `.kind` ("kind"), as an if / else-if chain. No fallthrough but stacked empty labels, and
+// no `break` but each clause's last statement (a `break` elsewhere would leave the chain, not the loop).
+export function switchHandled(checker: ts.TypeChecker, s: ts.SwitchStatement): "value" | "kind" | null {
+  const d = unparenE(s.expression);
+  const kind = ts.isPropertyAccessExpression(d) && d.name.text === "kind" && !!guardUnion(checker, d.expression);
+  if (kind) { if (!sideEffectFree(d.expression) || !isPlaceE(d.expression)) return null; }
+  else if (!sideEffectFree(d) || !isValueType(checker.getTypeAtLocation(d))) return null;
+  const cs = s.caseBlock.clauses;
+  let stacked = false;
+  for (let i = 0; i < cs.length; i++) {
+    const c = cs[i];
+    if (ts.isCaseClause(c)) {
+      const l = unparenE(c.expression);
+      const member = ts.isPropertyAccessExpression(l) ? checker.getSymbolAtLocation(l.name)?.declarations?.[0] : undefined;
+      const ok = kind ? ts.isStringLiteral(l)
+        : ts.isStringLiteral(l) || ts.isNoSubstitutionTemplateLiteral(l) || (ts.isNumericLiteral(l) && /^(0x[0-9a-fA-F]+|[0-9]+)$/.test(l.getText()))
+          || (ts.isPrefixUnaryExpression(l) && l.operator === K.MinusToken && ts.isNumericLiteral(l.operand))
+          || (!!member && ts.isEnumMember(member));
+      if (!ok) return null;
+    }
+    const last = i === cs.length - 1;
+    if (c.statements.length === 0 && !last) {
+      if (kind || ts.isDefaultClause(c)) return null;
+      stacked = true;
+      continue;
+    }
+    if (stacked && ts.isDefaultClause(c)) return null;
+    stacked = false;
+    if (!last && !lastTerminates(c)) return null;
+    if (clauseBody(c).some((st) => breaksOut(st))) return null;
+  }
+  return kind ? "kind" : "value";
+}
+
 // "Owner.member" for a library member, or null when the symbol is project code.
 export function calleeKey(program: ts.Program, checker: ts.TypeChecker, call: ts.CallExpression): string | null {
   const callee = call.expression;
@@ -146,6 +257,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
   // `x.kind` is only read as `x.kind === "K"` in a guard.
   const isKindGuard = (access: ts.Node): boolean => {
     const b = access.parent;
+    if (b && ts.isSwitchStatement(b) && b.expression === access) return switchHandled(checker, b) === "kind";
     return !!b && ts.isBinaryExpression(b) && b.operatorToken.kind === K.EqualsEqualsEqualsToken && b.left === access && ts.isStringLiteral(b.right) && inIfGuard(b);
   };
 
@@ -241,7 +353,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       }
       case K.PropertyAccessExpression: {
         const p = n as ts.PropertyAccessExpression;
-        if (p.questionDotToken) { bad(n, "optional chaining"); return; }
+        if (isChainMember(p)) { if (!chainHandled(checker, p)) bad(n, "optional chaining"); return; }
         const u = p.name.text === "kind" ? guardUnion(checker, p.expression) : unionOfType(checker, checker.getTypeAtLocation(p.expression));
         if (u) {
           // A tagged union value has no fields of its own: `kind` only in a guard, and a field only
@@ -290,6 +402,13 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
           if (!inIfGuard(b) || op === K.EqualsEqualsEqualsToken) bad(n, "undefined or null comparison outside a positive if guard");
           return;
         }
+        if ((op === K.EqualsEqualsEqualsToken || op === K.ExclamationEqualsEqualsToken) && (isChainMember(unparenE(b.left)) || isChainMember(unparenE(b.right)))) {
+          // A chain the walk already flags needs no second violation for the comparison around it.
+          const operandOk = [b.left, b.right].some((x) => isChainMember(unparenE(x)) && chainHandled(checker, unparenE(x)));
+          if (operandOk && !chainCompareHandled(checker, b)) bad(n, "optional chain comparison");
+          return;
+        }
+        if (op === K.QuestionQuestionToken) { if (!nullishHandled(checker, b)) bad(n, "operator ??"); return; }
         if (!BINARY_OK.has(op)) { bad(n, `operator ${b.operatorToken.getText()}`); return; }
         if (ASSIGN_OPS.has(op) && !ts.isExpressionStatement(b.parent)) bad(n, "assignment as expression");
         if (op === K.AmpersandAmpersandToken || op === K.BarBarToken) { needBool(b.left, "operand of &&/||"); needBool(b.right, "operand of &&/||"); }
@@ -340,6 +459,9 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         if (!one || !isArr(checker.getTypeAtLocation(f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
         return;
       }
+      case K.SwitchStatement: if (!switchHandled(checker, n as ts.SwitchStatement)) bad(n, "switch outside the subset"); return;
+      case K.CaseBlock: return;
+      case K.CaseClause: case K.DefaultClause: if (!switchHandled(checker, n.parent.parent as ts.SwitchStatement)) bad(n, K[n.kind]); return;
       case K.IfStatement: needBool((n as ts.IfStatement).expression, "if condition"); return;
       case K.WhileStatement: needBool((n as ts.WhileStatement).expression, "while condition"); return;
       default:

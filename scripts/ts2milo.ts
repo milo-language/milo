@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { calleeKey, isLibDecl, makeProgram, truthyHandled, violationsOf } from "./ts2milo/subset";
+import { calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
 import { buildAstModel, emitAst, guardUnion, registerUnions, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -413,6 +413,79 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return code;
     };
 
+    // ---- `a?.f` chains and `a ?? b` (subset.ts chainHandled / nullishHandled) ----
+    // The payload an `if let` binds out of `scrut` is a Heap<T> to deref when the place is boxed.
+    const boxedPlace = (scrut: ts.Expression): boolean => {
+      if (isChainMember(scrut)) return false; // a chain yields an owned, already unboxed Option
+      const d = ts.isPropertyAccessExpression(scrut) ? checker.getSymbolAtLocation(scrut.name)?.declarations?.[0] : undefined;
+      return !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(scrut) || (ts.isIdentifier(scrut) && elemBoxed.has(symOf(scrut)!));
+    };
+    // The chain `n` as nested `match`es: `some` builds the result from the payload once every link is
+    // present, `none` is the result when any is absent (so a `??` default runs only then). Each link
+    // binds the payload by reference and narrows its source text, so the next link reads through it;
+    // only the last link's payload is cloned out when `own`.
+    const chainFold = (e: ts.Expression, none: string, some: (v: string) => string, own: boolean): string => {
+      const n = e as ts.PropertyAccessExpression;
+      hit("optional chain", "nested match on each Option link");
+      const link = n.expression;
+      const access = (): string => {
+        const fieldT = checker.getTypeOfSymbolAtLocation(checker.getSymbolAtLocation(n.name)!, n);
+        const code = memberAccess(n);
+        const key = n.getText();
+        const saved = narrow.get(key);
+        const bindTo = (scrut: string, deref: boolean) => {
+          const name = fresh(key);
+          narrow.set(key, { name, deref });
+          const inner = some(name);
+          if (saved) narrow.set(key, saved); else narrow.delete(key);
+          return `(match ${scrut} { Option.Some(${name}) => ${inner}, Option.None => ${none} })`;
+        };
+        if (isOptionT(fieldT)) {
+          const payloadT = checker.getNonNullableType(fieldT);
+          const d = checker.getSymbolAtLocation(n.name)?.declarations?.[0];
+          const boxed = !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d));
+          if (!own) return bindTo(code, boxed);
+          if (boxed) return bindTo(`${useRuntime("optUnbox", n)}<${ty(payloadT, n)}>(${code})`, false);
+          if (!canClone(fieldT)) fail(n, `a value of type ${checker.typeToString(fieldT)} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+          return bindTo(`${code}.clone()`, false);
+        }
+        let v = code;
+        if (own && !isCopyT(fieldT)) {
+          if (!canClone(fieldT)) fail(n, `a value of type ${checker.typeToString(fieldT)} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+          v = `${code}.clone()`;
+        }
+        narrow.set(key, { name: code, deref: false });
+        const r = some(v);
+        if (saved) narrow.set(key, saved); else narrow.delete(key);
+        return r;
+      };
+      if (isChainMember(link)) return chainFold(link, none, () => access(), false);
+      // The root: an optional place, bound by reference.
+      const lkey = link.getText();
+      const lsaved = narrow.get(lkey);
+      const name = fresh(lkey);
+      const scrut = ex(link);
+      narrow.set(lkey, { name, deref: boxedPlace(link) });
+      const inner = access();
+      if (lsaved) narrow.set(lkey, lsaved); else narrow.delete(lkey);
+      return `(match ${scrut} { Option.Some(${name}) => ${inner}, Option.None => ${none} })`;
+    };
+    // A chain read as an Option value (the same type as TypeScript gives `a?.f`, flattened).
+    const chainOpt = (n: ts.Expression): string => {
+      const t = checker.getNonNullableType(tOf(n));
+      return chainFold(n, `${useRuntime("optNone", n)}<${ty(t, n)}>()`, (v) => `Option.Some(${v})`, true);
+    };
+    const nullish = (b: ts.BinaryExpression): string => {
+      const mode = nullishHandled(checker, b) ?? fail(b, "?? outside the subset");
+      hit("nullish coalescing", mode === "value" ? "Milo ?? (the default runs only when absent)" : "if isSome, else the default");
+      const rt = tOf(b);
+      const l = unparen(b.left);
+      const dflt = ownConv(b.right, rt);
+      if (isChainMember(l)) return mode === "value" ? chainFold(l, dflt, (v) => v, true) : chainFold(l, dflt, (v) => `Option.Some(${v})`, true);
+      if (mode === "value") return `(${conv(l, tOf(l), true)} ?? ${dflt})`;
+      return `(if ${ex(l)}.isSome() { ${conv(l, tOf(l), true)} } else { ${dflt} })`;
+    };
+
     // `byValue`: a constructor takes ownership of its arguments; every other parameter is borrowed,
     // and one the callee writes through is passed as `&mut x`.
     const args = (call: ts.CallExpression | ts.NewExpression, byValue = false): string => {
@@ -509,7 +582,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           }
           return `(${parts.join(" + ")})`;
         }
-        case ts.SyntaxKind.PropertyAccessExpression: return memberAccess(e as ts.PropertyAccessExpression);
+        case ts.SyntaxKind.PropertyAccessExpression: return isChainMember(e) ? chainOpt(e) : memberAccess(e as ts.PropertyAccessExpression);
         case ts.SyntaxKind.ElementAccessExpression: {
           const el = e as ts.ElementAccessExpression;
           if (isStr(el.expression)) { hit("string[i]", "jsAt: one-unit js string, empty past the end"); return `${useRuntime("jsAt", e)}(${ex(el.expression)}, ${ex(el.argumentExpression)})`; }
@@ -534,6 +607,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const b = e as ts.BinaryExpression;
           const op = b.operatorToken.kind;
           const text = b.operatorToken.getText();
+          if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
+          if ((op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) && isChainMember(unparen(b.left)) && chainCompareHandled(checker, b)) {
+            // Absent compares unequal to any value, so `!==` is true there.
+            const eq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+            const l = unparen(b.left);
+            const lt = checker.getNonNullableType(tOf(l));
+            return chainFold(l, eq ? "false" : "true", (v) => `(${v} ${eq ? "==" : "!="} ${ex(b.right, litsOf(lt) ? lt : undefined)})`, false);
+          }
           if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
             const sym = op === ts.SyntaxKind.EqualsEqualsEqualsToken ? "==" : "!=";
             const lt = tOf(b.left), rt = tOf(b.right);
@@ -620,6 +701,56 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           line("}");
           return;
         }
+        case ts.SyntaxKind.SwitchStatement: {
+          const sw = s as ts.SwitchStatement;
+          const mode = switchHandled(checker, sw) ?? fail(sw, "switch outside the subset");
+          hit("switch", mode === "kind" ? "else-if chain of kind guards" : "else-if chain of ==");
+          const x = unparen(sw.expression);
+          // Stacked empty labels (`case A: case B:`) share the next clause's body.
+          const groups: { labels: ts.Expression[]; clause: ts.CaseOrDefaultClause; isDefault: boolean }[] = [];
+          let pending: ts.Expression[] = [];
+          for (const c of sw.caseBlock.clauses) {
+            if (ts.isCaseClause(c)) pending.push(c.expression);
+            if (c.statements.length === 0 && c !== sw.caseBlock.clauses[sw.caseBlock.clauses.length - 1]) continue;
+            groups.push({ labels: pending, clause: c, isDefault: ts.isDefaultClause(c) });
+            pending = [];
+          }
+          groups.sort((a, b) => Number(a.isDefault) - Number(b.isDefault));
+          const emitBody = (c: ts.CaseOrDefaultClause) => { push(); ind++; for (const st of clauseBody(c)) stmt(st); ind--; pop(); };
+          let first = true;
+          for (const g of groups) {
+            if (g.isDefault) {
+              line(first ? "{" : "} else {");
+              emitBody(g.clause);
+              first = false;
+              continue;
+            }
+            const open = first ? "" : "} else ";
+            if (mode === "kind") {
+              const tu = guardUnion(checker, (x as ts.PropertyAccessExpression).expression)!;
+              const scrut = (x as ts.PropertyAccessExpression).expression;
+              const useName = useDeclared(tu.name, tu.decl.getSourceFile().fileName, g.clause);
+              const key = scrut.getText();
+              const name = fresh(key);
+              line(`${open}if let ${useName}.${pascal((g.labels[0] as ts.StringLiteral).text)}(${name}) = ${ex(scrut)} {`);
+              const saved = narrow.get(key);
+              narrow.set(key, { name, deref: false });
+              emitBody(g.clause);
+              if (saved) narrow.set(key, saved); else narrow.delete(key);
+            } else {
+              const xt = tOf(x);
+              const tests = g.labels.map((l) => {
+                const lt = tOf(l);
+                return `(${ex(x, litsOf(lt) ? lt : undefined)} == ${ex(l, litsOf(xt) ? xt : undefined)})`;
+              });
+              line(`${open}if ${tests.join(" || ")} {`);
+              emitBody(g.clause);
+            }
+            first = false;
+          }
+          if (!first) line("}");
+          return;
+        }
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
           const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
@@ -685,15 +816,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             bind = { scrut: c.left.expression, pat: (n) => `${useName}.${pascal(kind)}(${n})`, deref: false, what: "tagged union kind guard" };
           }
         } else if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && (isUndefinedId(c.right) || c.right.kind === ts.SyntaxKind.NullKeyword)) {
-          const d = ts.isPropertyAccessExpression(c.left) ? checker.getSymbolAtLocation(c.left.name)?.declarations?.[0] : undefined;
-          bind = { scrut: c.left, pat: (n) => `Option.Some(${n})`, deref: !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(c.left) || (ts.isIdentifier(c.left) && elemBoxed.has(symOf(c.left)!)), what: "undefined guard" };
+          bind = { scrut: c.left, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(c.left), what: "undefined guard" };
         }
         else if (tk && tk !== "str" && tk !== "num") {
           // `if (x)` on an optional narrows x to its payload, so it binds like `x !== undefined`;
           // the payload's own truthiness (non-empty, non-zero, true) is tested right after.
-          const d = ts.isPropertyAccessExpression(c) ? checker.getSymbolAtLocation(c.name)?.declarations?.[0] : undefined;
           const then = tk === "optStr" ? (code: string) => truthText("str", code) : tk === "optNum" ? (code: string) => truthText("num", code) : tk === "optBool" ? (code: string) => code : undefined;
-          bind = { scrut: c, pat: (n) => `Option.Some(${n})`, deref: !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(c) || (ts.isIdentifier(c) && elemBoxed.has(symOf(c)!)), what: "truthiness guard", then };
+          bind = { scrut: c, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(c), what: "truthiness guard", then };
         }
         if (!bind) { plain.push(cond(c)); continue; }
         flush();

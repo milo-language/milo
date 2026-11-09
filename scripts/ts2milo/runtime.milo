@@ -229,6 +229,12 @@ impl ParseError {
     }
 }
 
+// An absent `a?.f`. Milo cannot infer T for a bare Option.None inside a match arm, so the type
+// argument is written out at every call.
+pub fn optNone<T>(): Option<T> {
+    return Option.None
+}
+
 // An Option<Heap<T>> field read where an Option<T> is wanted. The type argument is written out at
 // every call: inference does not see T through &Option<Heap<T>>.
 pub fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {

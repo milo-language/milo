@@ -200,6 +200,169 @@ describe("truthiness in condition position", () => {
   });
 });
 
+// Strings in a hand-written driver are UTF-16LE: "a" is "\x61\x00".
+describe("??, ?. and switch", () => {
+  const u16 = (s: string) => `"${[...s].map((c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}\\x00`).join("")}"`;
+  const gen = (name: string, body: string, driver: string[], extra: Record<string, string> = {}, astRoots?: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const files = Object.entries({ ...extra, [`${name}.ts`]: body }).map(([f, text]) => { writeFileSync(join(dir, f), text); return join(dir, f); });
+    const r = transpile(files, { overridesDir: join(dir, "none"), astRoots });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    writeFileSync(join(dir, "main.milo"), driver.join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    return { out: r.files.get(`${name}.milo`)!, status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) };
+  };
+  const rejects = (body: string, msg?: string) => {
+    const { file } = tmpTs("tsm_rej.ts", body);
+    if (msg) expect(() => transpile([file], { overridesDir: "/nonexistent" })).toThrow(msg);
+    else expect(() => transpile([file], { overridesDir: "/nonexistent" })).toThrow();
+  };
+
+  test("?? on an optional number, string, field and optional default follows JS", () => {
+    const r = gen("tsm_nn", [
+      "export interface Box { v: number; s: string | undefined }",
+      "export function numOr(a: number | undefined, d: number): number { return a ?? d; }",
+      "export function strOr(a: string | undefined, d: string): string { return a ?? d; }",
+      "export function field(b: Box): string { return b.s ?? \"no\"; }",
+      "export function optOr(a: number | undefined, b: number | undefined): number | undefined { return a ?? b; }",
+      "export function zero(a: number | undefined): number { return a ?? 7; }",
+    ].join("\n"), [
+      "from \"./tsm_nn\" import { Box, numOr, strOr, field, optOr, zero }",
+      "fn main(): i32 {",
+      "    let some: Option<i64> = Option.Some(3)",
+      "    let none: Option<i64> = Option.None",
+      "    if numOr(some, 9) != 3 || numOr(none, 9) != 9 { return 1 }",
+      "    let ss: Option<string> = Option.Some(" + u16("hi") + ")",
+      "    let sn: Option<string> = Option.None",
+      "    if strOr(ss, " + u16("d") + ") != " + u16("hi") + " || strOr(sn, " + u16("d") + ") != " + u16("d") + " { return 2 }",
+      "    let b1 = Box { v: 1, s: Option.Some(" + u16("x") + ") }",
+      "    let b2 = Box { v: 1, s: Option.None }",
+      "    if field(b1) != " + u16("x") + " || field(b2) != " + u16("no") + " { return 3 }",
+      "    let o1 = optOr(none, some)",
+      "    let o2 = optOr(none, none)",
+      "    if let Option.Some(q) = o1 { if q != 3 { return 4 } } else { return 5 }",
+      "    if let Option.Some(_q) = o2 { return 6 }",
+      "    if zero(Option.Some(0)) != 0 || zero(none) != 7 { return 7 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain(" ?? ");
+    expect(r.out).toContain(".isSome()");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("?. reads a field through an optional, chains, flattens and composes", () => {
+    const r = gen("tsm_oc", [
+      "export interface Inner { n: number; t: string | undefined }",
+      "export interface Outer { inner: Inner | undefined; k: number }",
+      "export function k(o: Outer | undefined): number | undefined { return o?.k; }",
+      "export function deep(o: Outer | undefined): number { return o?.inner?.n ?? -1; }",
+      "export function flat(o: Outer | undefined): string { return o?.inner?.t ?? \"none\"; }",
+      "export function eq(o: Outer | undefined): boolean { return o?.k === 4; }",
+      "export function ne(o: Outer | undefined): boolean { return o?.k !== 4; }",
+      "export function guard(o: Outer | undefined): number { if (o?.k) { return 1; } return 0; }",
+      "export function strict(o: Outer | undefined): number { if (o?.inner !== undefined) { return 1; } return 0; }",
+    ].join("\n"), [
+      "from \"./tsm_oc\" import { Inner, Outer, k, deep, flat, eq, ne, guard, strict }",
+      "fn main(): i32 {",
+      "    let none: Option<Outer> = Option.None",
+      "    let o1: Option<Outer> = Option.Some(Outer { inner: Option.Some(Inner { n: 5, t: Option.Some(" + u16("t") + ") }), k: 4 })",
+      "    let o2: Option<Outer> = Option.Some(Outer { inner: Option.None, k: 0 })",
+      "    if let Option.Some(v) = k(o1) { if v != 4 { return 1 } } else { return 2 }",
+      "    if let Option.Some(_v) = k(none) { return 3 }",
+      "    if deep(o1) != 5 || deep(o2) != -1 || deep(none) != -1 { return 4 }",
+      "    if flat(o1) != " + u16("t") + " || flat(o2) != " + u16("none") + " || flat(none) != " + u16("none") + " { return 5 }",
+      "    if !eq(o1) || eq(o2) || eq(none) { return 6 }",
+      "    if ne(o1) || !ne(o2) || !ne(none) { return 7 }",
+      "    if guard(o1) != 1 || guard(o2) != 0 || guard(none) != 0 { return 8 }",
+      "    if strict(o1) != 1 || strict(o2) != 0 || strict(none) != 0 { return 9 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("optNone<");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("switch on a string, a number and a literal union follows JS", () => {
+    const r = gen("tsm_sw", [
+      "export type Color = \"red\" | \"green\";",
+      "export function str(s: string): number {",
+      "  switch (s) { case \"a\": case \"b\": return 1; case \"c\": { const x = 5; return x; } default: return 0; }",
+      "}",
+      "export function num(n: number): number {",
+      "  let r = 0;",
+      "  switch (n) { case 1: r = 10; break; case 2: r = 20; break; case -3: r = 30; break; default: r = 99; }",
+      "  return r;",
+      "}",
+      "export function col(c: Color): number {",
+      "  switch (c) { case \"red\": return 1; case \"green\": return 2; }",
+      "  return 0;",
+      "}",
+      "export function loop(n: number): number {",
+      "  let t = 0;",
+      "  let i = 0;",
+      "  while (i < n) { i += 1; switch (i) { case 2: continue; default: t += i; } }",
+      "  return t;",
+      "}",
+    ].join("\n"), [
+      "from \"./tsm_sw\" import { Color, str, num, col, loop }",
+      "fn main(): i32 {",
+      "    if str(" + u16("a") + ") != 1 || str(" + u16("b") + ") != 1 || str(" + u16("c") + ") != 5 || str(" + u16("z") + ") != 0 { return 1 }",
+      "    if num(1) != 10 || num(2) != 20 || num(-3) != 30 || num(4) != 99 { return 2 }",
+      "    if col(Color.Red) != 1 || col(Color.Green) != 2 { return 3 }",
+      "    if loop(4) != 8 { return 4 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("} else if ");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("switch on a tagged union kind narrows each case like a kind guard", () => {
+    const r = gen("tsm_use", [
+      "import type { Expr } from \"./ast\";",
+      "export function ev(e: Expr): number {",
+      "  switch (e.kind) {",
+      "    case \"Num\": return e.n;",
+      "    case \"Neg\": return 0 - ev(e.e);",
+      "  }",
+      "  return 0;",
+      "}",
+    ].join("\n"), [
+      "from \"./ast\" import { Expr, Num }",
+      "from \"./tsm_use\" import { ev }",
+      "fn main(): i32 {",
+      "    let e = Expr.Num(Num { n: 7 })",
+      "    if ev(e) != 7 { return 1 }",
+      "    return 0",
+      "}",
+    ], {
+      "ast.ts": [
+        "export interface Span { line: number }",
+        "export interface Num { kind: \"Num\"; n: number; span?: Span }",
+        "export interface Neg { kind: \"Neg\"; e: Expr; span?: Span }",
+        "export type Expr = Num | Neg;",
+      ].join("\n"),
+    }, ["Expr"]);
+    expect(r.out).toContain("if let Expr.Num(");
+    expect(r.out).toContain("} else if let Expr.Neg(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("what stays outside the subset is still rejected", () => {
+    const head = "export interface O { k: number; p: O | undefined }\nexport function g(): number { return 1; }\n";
+    rejects(head + "export function f(a: number | undefined, b: number | undefined): number | undefined { return g() > 0 ? undefined : a; }\nexport function h(a: number): number | undefined { return g() ?? a; }");
+    rejects("export function f(x: number | undefined): number | undefined { return (x === 1 ? undefined : x) ?? x; }");
+    rejects(head + "export function f(o: O | undefined): number | undefined { return o?.k === g() ? 1 : 0; }");
+    rejects("export class C { v: number = 1; m(): number { return 1; } }\nexport function f(c: C | undefined): number | undefined { return c?.m(); }", "optional chaining");
+    rejects(head + "export function f(o: O | undefined): number | undefined { return o?.p?.k !== undefined ? 1 : 0; }");
+    rejects("export function f(n: number): number {\n  let r = 0;\n  switch (n) { case 1: r = 1; case 2: r = 2; break; default: r = 3; }\n  return r;\n}\n", "switch outside the subset");
+    rejects("export function f(n: number, b: boolean): number {\n  let r = 0;\n  switch (n) { case 1: if (b) { break; } r = 1; break; default: r = 3; }\n  return r;\n}\n", "switch outside the subset");
+    rejects("export function g(): number { return 1; }\nexport function f(): number {\n  switch (g()) { case 1: return 1; default: return 0; }\n}\n", "switch outside the subset");
+    rejects("export function f(n: number, m: number): number {\n  switch (n) { case m: return 1; default: return 0; }\n}\n", "switch outside the subset");
+  });
+});
+
 describe("ts-portable", () => {
   test("lexer and tokens stay inside the portable subset", () => {
     const res = countViolations(["src/lexer.ts", "src/tokens.ts"]);
