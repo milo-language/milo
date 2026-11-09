@@ -1002,7 +1002,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "Map.set": case "WeakMap.set": { const [, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${keyEx(recv!, a[0], true)}, ${ownConv(a[1], vt)})`; }
           // The generated AST holds every `number` as i64, so a float literal keeps its integer part only (a known parser-diff gap until the AST has an f64).
           // TS numbers are i64 in the generated code: a float would silently lose its fraction, so refuse until f64 exists.
-          case "Number": case "parseFloat": return fail(c, "Number/parseFloat on a value that may not be an integer (no f64 numbers in the generated code yet)");
+          // parseFloat yields an f64, which only an `f64`-typed destination (ast.ts's alias) can hold; the lexer's number text is plain decimal/exponent, so strtod agrees with JS.
+          case "parseFloat": if (a.length !== 1 || !isStr(a[0])) return fail(c, "parseFloat of other than one string"); return `${useRuntime("jsParseFloat", c)}(${ex(a[0])})`;
+          case "Number": return fail(c, "Number/parseFloat on a value that may not be an integer (no f64 numbers in the generated code yet)");
           case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           // A bigint is its decimal string in the Milo AST. BigInt of a string is that string (the lexer's decimal digits are already canonical).
           case "BigInt": if (a.length !== 1 || !(isStr(a[0]) || isNum(a[0]))) return fail(c, "BigInt of other than one string or number"); return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);

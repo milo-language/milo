@@ -575,3 +575,133 @@ pub fn vecPopHeap<T>(v: &mut Vec<Heap<T>>): Option<T> {
     }
     return Option.None
 }
+
+// parseFloat for the number text the lexer produces (digits, optional fraction and exponent, no underscores).
+pub fn jsParseFloat(s: &string): f64 {
+    let u = jsToUtf8(s)
+    match u.parseF64() {
+        Option.Some(v) => {
+            return v
+        }
+        Option.None => {
+            return 0.0 / 0.0
+        }
+    }
+}
+
+// JSON.stringify of a number, as UTF-8: Number.prototype.toString's layout over the shortest round-trip digits.
+pub fn jsF64Json(x: f64): string {
+    if x != x || x > 1.7976931348623157e308 || x < -1.7976931348623157e308 {
+        return "null"
+    }
+    if x == 0.0 {
+        return "0"
+    }
+    var v = x
+    var neg = false
+    if v < 0.0 {
+        neg = true
+        v = -v
+    }
+    let s = v.toString()
+    var all: string = ""
+    var intDigits: i64 = 0
+    var seenDot = false
+    var exp: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i] as i64
+        if c >= 48 && c <= 57 {
+            all.push(c as u8)
+            if !seenDot {
+                intDigits += 1
+            }
+        } else if c == 46 {
+            seenDot = true
+        } else if c == 101 {
+            i += 1
+            var eneg = false
+            if s[i] == 45 {
+                eneg = true
+                i += 1
+            } else if s[i] == 43 {
+                i += 1
+            }
+            while i < s.len {
+                exp = exp * 10 + (s[i] as i64) - 48
+                i += 1
+            }
+            if eneg {
+                exp = 0 - exp
+            }
+            break
+        }
+        i += 1
+    }
+    var lead: i64 = 0
+    while lead < all.len && all[lead] == 48 {
+        lead += 1
+    }
+    var end = all.len
+    while end > lead && all[end - 1] == 48 {
+        end -= 1
+    }
+    let k = end - lead
+    let n = intDigits - lead + exp
+    var out: string = ""
+    if neg {
+        out.pushStr("-")
+    }
+    if k <= n && n <= 21 {
+        var j = lead
+        while j < end {
+            out.push(all[j])
+            j += 1
+        }
+        var z = k
+        while z < n {
+            out.push(48)
+            z += 1
+        }
+    } else if 0 < n && n <= 21 {
+        var j = lead
+        while j < end {
+            if j - lead == n {
+                out.push(46)
+            }
+            out.push(all[j])
+            j += 1
+        }
+    } else if -6 < n && n <= 0 {
+        out.pushStr("0.")
+        var z = n
+        while z < 0 {
+            out.push(48)
+            z += 1
+        }
+        var j = lead
+        while j < end {
+            out.push(all[j])
+            j += 1
+        }
+    } else {
+        let e = n - 1
+        out.push(all[lead])
+        if k > 1 {
+            out.push(46)
+            var j = lead + 1
+            while j < end {
+                out.push(all[j])
+                j += 1
+            }
+        }
+        out.push(101)
+        if e < 0 {
+            out.push(45)
+        } else {
+            out.push(43)
+        }
+        out.pushStr((if e < 0 { 0 - e } else { e }).toString())
+    }
+    return out
+}

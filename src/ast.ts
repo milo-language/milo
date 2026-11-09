@@ -1,4 +1,6 @@
 // AST node types: what the parser produces and the checker walks.
+// A `number` that holds a non-integer: ts2milo maps it to Milo f64, plain `number` to i64.
+export type f64 = number;
 export interface Span { line: number; col: number; file?: string }
 
 export interface MiloType {
@@ -87,7 +89,7 @@ export interface Attribute {
 // value is a bigint so 64-bit literals (i64::MAX, u64 bit masks) round-trip
 // losslessly — a JS number would round anything past 2^53 and miscompile.
 export interface IntLit { kind: "IntLit"; value: bigint; span?: Span }
-export interface FloatLit { kind: "FloatLit"; value: number; span?: Span }
+export interface FloatLit { kind: "FloatLit"; value: f64; span?: Span }
 export interface BoolLit { kind: "BoolLit"; value: boolean; span?: Span }
 // `fromFString` marks a piece produced by desugaring `$"..."`. Braces in such a
 // piece got there through an escape and are meant literally, so the

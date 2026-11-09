@@ -370,6 +370,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       const t = checker.getTypeFromTypeNode(n);
       const name = n.typeName.getText();
       if (name === "Array" || name === "Set" || name === "ReadonlySet" || name === "Map" || name === "ReadonlyMap" || name === "WeakMap" || name === "WeakSet") { return; }
+      if (name === "f64" && !n.typeArguments) return;
       if (n.typeArguments) bad(n, `generic type ${name}`);
       else if (!isProjectSymbolType(t, (d) => ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d) || ts.isEnumDeclaration(d) || ts.isTypeAliasDeclaration(d))) {
         bad(n, `type ${name}`);
@@ -448,6 +449,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.TypeAliasDeclaration: {
         const a = n as ts.TypeAliasDeclaration;
         if (a.typeParameters) bad(n, "generic type alias");
+        else if (a.name.text === "f64" && a.type.kind === K.NumberKeyword) { /* the f64 alias ts2milo maps to Milo f64 */ }
         else if (taggedUnionOf(checker, a) === null && nestedUnionOf(checker, a) === null && !ts.isUnionTypeNode(a.type) && !(ts.isLiteralTypeNode(a.type))) bad(n, "type alias other than string literals");
         return;
       }
