@@ -12,6 +12,7 @@
 // proves: the builtin container contracts in verify.ts, above all.
 import { test, expect, describe, beforeAll } from "bun:test";
 import { readdirSync, readFileSync, mkdtempSync } from "fs";
+import { parseExpected } from "./annotations";
 import { execSync, spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -61,7 +62,7 @@ describe("prove (z3)", () => {
       if (eFailed !== null) expect(failed).toBe(eFailed);
       if (eUnknown !== null) expect(unknown).toBe(eUnknown);
 
-      const expected = [...src.matchAll(/\/\/\s*@expect:\s?(.*)$/gm)].map(x => x[1]!.trimEnd());
+      const expected = parseExpected(src);
       if (expected.length === 0) return;
       const bin = join(TOOL_DIR, file.replace(".milo", ""));
       const build = await guardedRun(MILOC, ["build", join(PROVE_DIR, file), "--debug", "-o", bin], { env: CHILD_ENV, virtualMemMb: 8192 });
@@ -69,7 +70,7 @@ describe("prove (z3)", () => {
       const ran = await guardedRun(bin, [], { env: CHILD_ENV });
       // A violated contract aborts, and an abort is exactly the disagreement this exists to catch.
       expect(`${file}: exit ${ran.code}\n${ran.stderr}`).toBe(`${file}: exit 0\n`);
-      expect(ran.stdout.trimEnd().split("\n")).toEqual(expected);
+      expect(ran.stdout.trim().split("\n").map(l => l.trim())).toEqual(expected);
     }, 120000);
   }
 });

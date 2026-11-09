@@ -10,6 +10,7 @@
 import { test, expect } from "bun:test";
 import { execSync } from "child_process";
 import { mkdtempSync, writeFileSync, readFileSync } from "fs";
+import { parseExpected } from "./annotations";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -128,7 +129,7 @@ pub fn main(): i32 {
   const cases: [string, string[]][] = [[consume, ["40"]]];
   for (const name of ["closureCaptureSelf", "closureBorrowedCallbacks", "closureCaptureHeap"]) {
     const src = join(import.meta.dir, "fixtures", `${name}.milo`);
-    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    const want = parseExpected(readFileSync(src, "utf-8"));
     cases.push([src, want]);
   }
   for (const [src, want] of cases) {
@@ -139,7 +140,7 @@ pub fn main(): i32 {
       out = (e.stdout ?? "") + (e.stderr ?? "");
     }
     expect(out).not.toContain("AddressSanitizer");
-    expect(out.trim().split("\n")).toEqual(want);
+    expect(out.trim().split("\n").map(l => l.trim())).toEqual(want);
   }
 }, 240_000);
 
@@ -196,7 +197,7 @@ pub fn main(): i32 {
   const cases: [string, string[]][] = [[heap, ["152", "50"]]];
   for (const name of ["closureBodyDrop", "closureBodyDropLoop", "closureBodyDropKinds", "closureBodyDropSpawn", "closureBodyDropTcp", "closureReturnInSretFn"]) {
     const src = join(import.meta.dir, "fixtures", `${name}.milo`);
-    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    const want = parseExpected(readFileSync(src, "utf-8"));
     cases.push([src, want]);
   }
   for (const [src, want] of cases) {
@@ -210,7 +211,7 @@ pub fn main(): i32 {
     // Linux ASan's swapcontext interceptor prints this once per process whenever green
     // tasks switch stacks (closureBodyDropSpawn); it is a notice, not a finding, and no
     // ASAN_OPTIONS turns it off.
-    const lines = out.trim().split("\n").filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
+    const lines = out.trim().split("\n").map(l => l.trim()).filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
     expect(lines).toEqual(want);
   }
 }, 300_000);
@@ -223,7 +224,7 @@ pub fn main(): i32 {
 test("scoped tasks and nested capture moves run clean under --sanitize", () => {
   for (const name of ["taskScopeBorrow", "byRefCaptureMovedIntoThread"]) {
     const src = join(import.meta.dir, "fixtures", `${name}.milo`);
-    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    const want = parseExpected(readFileSync(src, "utf-8"));
     let out = "";
     try {
       out = execSync(`bun ${MILO} run --sanitize ${src} 2>&1`, { encoding: "utf-8", env: ENV, timeout: 60_000 });
@@ -231,7 +232,7 @@ test("scoped tasks and nested capture moves run clean under --sanitize", () => {
       out = (e.stdout ?? "") + (e.stderr ?? "");
     }
     expect(out).not.toContain("AddressSanitizer");
-    const lines = out.trim().split("\n").filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
+    const lines = out.trim().split("\n").map(l => l.trim()).filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
     expect(lines).toEqual(want);
   }
 }, 240_000);

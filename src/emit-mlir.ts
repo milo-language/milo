@@ -77,8 +77,6 @@ export interface MlirEmitCtx {
 }
 
 const CALLBACK_OPS = new Set(["map", "optionAndThen", "optionOrElse", "resultMap", "resultMapErr", "unwrapOrElse", "resultAndThen", "resultOrElse", "resultUnwrapOrElse", "resultContext"]);
-const PROBE = !!process.env.MILO_MLIR_PROBE;
-const PROBE_SKIPPED = "(skipped by probe)";
 
 export class MlirUnsupported extends Error {
   constructor(readonly reason: string) { super(`mlir: unsupported ${reason}`); }
@@ -1873,9 +1871,6 @@ class FnEmitter {
     return false;
   }
 
-  // MILO_MLIR_PROBE (census only): a refused statement is noted and skipped, so one run
-  // lists every blocker of a function, not just its first. The function never ships.
-  readonly probed: string[] = [];
   private stmt(s: Stmt): boolean {
     return this.at(s.span, () => {
       // A lazy global the statement mentions is filled before it runs (src/lazy-globals.ts);
@@ -1889,23 +1884,6 @@ class FnEmitter {
     for (const g of lazyMentions(node, this.cx.lazyGlobals)) this.emit(`milo.global.init ${quote(g)}`);
   }
 
-  private stmtAt(s: Stmt): boolean {
-    if (!PROBE) return this.stmtProbed(s);
-    const at = { body: this.body.length, owned: this.owned.length, scopes: this.scopes.length, depth: this.depth,
-      pending: this.pending.length, loops: this.loops, loopBase: this.loopBase.length, blocks: this.blocks.length };
-    try {
-      return this.stmtProbed(s);
-    } catch (err) {
-      if (!(err instanceof MlirUnsupported)) throw err;
-      if (!err.reason.includes(PROBE_SKIPPED)) this.probed.push(err.reason);
-      this.body.length = at.body; this.owned.length = at.owned; this.scopes.length = at.scopes; this.depth = at.depth;
-      this.pending.length = at.pending; this.loops = at.loops; this.loopBase.length = at.loopBase; this.blocks.length = at.blocks;
-      // A later use of what the skipped statement bound refuses as a follow-on, not a blocker.
-      if (s.kind === "LetDecl" || s.kind === "VarDecl") this.bind(s.name, { kind: "opaque", what: PROBE_SKIPPED });
-      return false;
-    }
-  }
-
   /** `s` is a match statement (an `if let`, a let-else whose bindings all escape by name). */
   private isMatchStmt(s: Stmt): boolean {
     if (s.kind === "MatchStmt" || s.kind === "IfLetStmt") return true;
@@ -1913,7 +1891,7 @@ class FnEmitter {
     return this.fx.c.matchSubjectRef.has(s.value) || isNestedPattern(s.pattern);
   }
 
-  private stmtProbed(s: Stmt): boolean {
+  private stmtAt(s: Stmt): boolean {
     if (s.kind !== "Assign" && s.kind !== "ExprStmt" && !this.isMatchStmt(s)) return this.stmtCore(s);
     // Its temporaries die at its end (tempSlot): a block's end may never come
     // (an exit() later in it), and the live-block count at exit would see them.
@@ -5874,7 +5852,6 @@ export function emitMlirFunction(fn: FnDecl, cx: MlirEmitCtx, fns: Map<string, F
   const em = new FnEmitter(fn, cx, fns, undefined, glue);
   try {
     const text = em.run();
-    if (em.probed.length) return [...new Set(em.probed)].join("\n");
     let all = [text, ...em.closures.texts].join("\n");
     if (cx.emitDebug) {
       // The function's own loc names its subprogram; its closures' get one of their own.
@@ -5885,8 +5862,7 @@ export function emitMlirFunction(fn: FnDecl, cx: MlirEmitCtx, fns: Map<string, F
     }
     return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: all, callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
-    if (err instanceof MlirUnsupported) return [...new Set([...em.probed, err.reason])].filter(r => !r.includes(PROBE_SKIPPED)).join("\n") || err.reason;
-    if (PROBE) return [...em.probed, `probe: internal error ${(err as Error).message.slice(0, 60)}`].join("\n");
+    if (err instanceof MlirUnsupported) return err.reason;
     throw err;
   }
 }

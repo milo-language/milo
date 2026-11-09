@@ -24,6 +24,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { guardedRun } from "./guard";
+import { parseExpected } from "../tests/annotations";
 
 const ROOT = join(import.meta.dir, "..");
 const MAIN = join(ROOT, "src", "main.ts");
@@ -47,7 +48,7 @@ const lines = (s: string) => s.trim().split("\n").map(l => l.trim());
 export async function compareOne(p: { path: string; name: string; kind: "fixtures" | "programs" }, cwd: string): Promise<Result> {
   const src = readFileSync(p.path, "utf-8");
   const flags = /^\/\/ @mlir-same-flags:(.*)$/m.exec(src)?.[1]?.trim().split(/\s+/) ?? [];
-  const expect = [...src.matchAll(/\/\/\s*@expect:\s?(.*)$/gm)].map(m => m[1]!.trimEnd());
+  const expect = parseExpected(src);
   const r = await guardedRun("bun", ["run", MAIN, "interp", p.path, "--live", ...flags], { timeoutMs: TIMEOUT_MS, cwd });
   const m = /^interp: (unsupported|stuck at)[^\n]*/m.exec(r.stderr);
   if (m?.[1] === "unsupported") return { name: p.name, verdict: "unsupported", detail: m[0].replace(/^interp: unsupported: /, ""), where: /^  in (.*)$/m.exec(r.stderr)?.[1] };
