@@ -8,6 +8,7 @@
 // Declarations of types the transpiled files import from untranspiled TypeScript
 // (src/diagnostics.ts, src/ast.ts) also live here, mirroring those interfaces.
 from "std/unicode" import { decodeCodepoint }
+from "std/set" import { HashSet }
 
 // Node identity: every struct that TypeScript uses as a Map/Set key or compares with `===` carries a
 // fresh id (scripts/ts2milo/node-identity.ts). A copy keeps the id, as a reference does in TypeScript.
@@ -416,6 +417,27 @@ pub struct Diagnostic {
     hint: Option<string>,
     code: Option<string>,
     notes: Option<Vec<DiagnosticNote>>,
+}
+
+// src/diagnostics.ts WarningConfig: Set fields are HashSet<string> of UTF-16 names.
+pub struct WarningConfig {
+    denied: HashSet<string>,
+    allowed: HashSet<string>,
+    expected: Option<HashSet<string>>,
+    warned: Option<HashSet<string>>,
+    maxStackArrayBytes: Option<i64>,
+}
+
+// src/target.ts TargetInfo; os/arch are plain strings (the literal unions are not modelled).
+@derive(Clone)
+pub struct TargetInfo {
+    triple: string,
+    os: string,
+    arch: string,
+    bareMetal: Option<bool>,
+    mcpu: Option<string>,
+    floatAbi: Option<string>,
+    qemuMachine: Option<string>,
 }
 
 pub struct ParseError {

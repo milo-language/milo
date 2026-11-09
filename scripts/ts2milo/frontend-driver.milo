@@ -9,7 +9,7 @@ from "./lexer" import { Lexer }
 from "./parser" import { Parser }
 from "./resolver" import { resolveImports }
 from "./checker" import { TypeChecker }
-from "./ts2milo_runtime" import { jsFromUtf8, jsonQuote, Severity, TsOpaque }
+from "./ts2milo_runtime" import { jsFromUtf8, jsonQuote, Severity, TargetInfo }
 from "./ast_encode" import { encodeProgram }
 
 // The fields of a `milo check --json` diagnostic that the generated Diagnostic carries and the
@@ -44,7 +44,7 @@ fn main() {
                         print(out)
                     } else if mode == "--check" {
                         var parsed = prog
-                        let target = TsOpaque {}
+                        let target = TargetInfo { triple: jsFromUtf8("aarch64-apple-darwin"), os: jsFromUtf8("darwin"), arch: jsFromUtf8("aarch64"), bareMetal: Option.None, mcpu: Option.None, floatAbi: Option.None, qemuMachine: Option.None }
                         let dir = "."
                         let entry = Option.Some(jsFromUtf8(path.clone()))
                         match resolveImports(&mut parsed, dir, target, entry) {
