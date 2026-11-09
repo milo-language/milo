@@ -12717,15 +12717,16 @@ export class TypeChecker {
     }
     // Infer the type arguments a bare `Pair.new(...)` did not spell, so the call below
     // sees the same shape the turbofish produces.
-    if ((!expr.typeArgs || expr.typeArgs.length === 0) && this.genericStructs.has(expr.enumName)
+    let spelled = expr.typeArgs;
+    if ((!spelled || spelled.length === 0) && this.genericStructs.has(expr.enumName)
         && !this.enums.has(expr.enumName) && !this.structs.has(expr.enumName)) {
       const inferred = this.inferGenericStaticTypeArgs(expr, expected);
       if (inferred === "argError") return this.setType(expr, { tag: "unknown" });
-      if (inferred) expr.typeArgs = inferred;
+      if (inferred) spelled = inferred;
     }
     // generic struct static call: Struct<T>.method(args) with explicit type args
-    if (expr.typeArgs && expr.typeArgs.length > 0 && this.genericStructs.has(expr.enumName)) {
-      const typeArgs = expr.typeArgs.map(ta => this.resolve(ta));
+    if (spelled && spelled.length > 0 && this.genericStructs.has(expr.enumName)) {
+      const typeArgs = spelled.map(ta => this.resolve(ta));
       const mangled = this.monomorphizeStruct(expr.enumName, typeArgs);
       // process pending impl methods that monomorphization may have generated
       this.flushStructBounds();
