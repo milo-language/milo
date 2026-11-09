@@ -36,7 +36,11 @@ const seen = new Map<string, string>();
 const firstOf = new Map<string, string>();
 const errs: Err[] = [];
 const gen = readdirSync(OUT).filter((f) => f.endsWith(".milo")).sort();
-await Promise.all(gen.map(async (f) => {
+// Bounded: each `milo check` holds 100-400 MB, and 60 at once (times every agent building at the
+// same moment) ran a 16 GB Mac into memory warnings.
+const JOBS = Number(process.env.TS2MILO_JOBS ?? 6);
+let nextGen = 0;
+const checkOne = async (f: string) => {
   const p = Bun.spawn(["bun", join(ROOT, "src/main.ts"), "check", join(OUT, f), "--json"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const text = await new Response(p.stdout).text();
   await p.exited;
@@ -52,7 +56,8 @@ await Promise.all(gen.map(async (f) => {
   } catch {
     seen.set(`${f}:?:no json`, "check produced no JSON (crash?)");
   }
-}));
+};
+await Promise.all(Array.from({ length: JOBS }, async () => { while (nextGen < gen.length) await checkOne(gen[nextGen++]); }));
 return { r, translated, seen, firstOf, errs };
 };
 
