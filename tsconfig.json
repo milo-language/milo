@@ -24,6 +24,8 @@
     // clean and is gated in tests/typecheck.test.ts — see docs/backlog.md.
     "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
+    // Milo needs a return on every path of a non-void fn, so the port wants this too.
+    "noImplicitReturns": true,
 
     // Gated by tests/typecheck.test.ts: a dead local or import is a defect, not noise.
     // Prefix an intentionally unused parameter with `_`.

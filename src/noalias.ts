@@ -167,6 +167,7 @@ export function noaliasGrants(input: NoaliasInput, candidates: ReadonlyMap<strin
           n.sites.push({ callee: f.func, args, extern: true });
         }
       }
+      return;
     });
   };
   for (const f of input.functions) {
