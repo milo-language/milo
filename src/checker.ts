@@ -3839,6 +3839,7 @@ export class TypeChecker {
     return null;
   }
 
+  /** @consumesThis */
   check(program: Program): CheckResult {
     // Not in the constructor: a constructor body is `this.f = e` only, so the generated Milo can build it.
     applyWarningDefaults(this.warningConfig);

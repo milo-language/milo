@@ -710,6 +710,26 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (d && ts.isInterfaceDeclaration(d) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
+    // A method tagged `@consumesThis` ends in `return { f: this.f, ... }`: the generated Milo takes each such field out of
+    // self (builtin `replace`, leaving an empty value) instead of cloning it, because nothing reads self after the return.
+    // The TypeScript source keeps both; a TS caller that reads the object after the call has no generated counterpart.
+    const takeFromThis = (e: ts.Expression, s: string): string | null => {
+      const u = unparen(e);
+      if (!curFn || !ts.isPropertyAccessExpression(u) || u.expression.kind !== ts.SyntaxKind.ThisKeyword) return null;
+      if (!ts.getJSDocTags(curFn).some((tg) => tg.tagName.text === "consumesThis")) return null;
+      const ret = u.parent && ts.isPropertyAssignment(u.parent) && ts.isObjectLiteralExpression(u.parent.parent) && ts.isReturnStatement(u.parent.parent.parent) ? u.parent.parent : null;
+      if (!ret || ret.parent.parent !== curFn.body) return null;
+      // A sibling property reading the same field would see it already taken.
+      let twice = 0;
+      const scan = (n: ts.Node) => { if (ts.isPropertyAccessExpression(n) && n.expression.kind === ts.SyntaxKind.ThisKeyword && n.name.text === u.name.text) twice++; ts.forEachChild(n, scan); };
+      scan(ret);
+      if (twice !== 1) return null;
+      const m = ty(tOf(e), e);
+      const empty = m.startsWith("Vec<") ? "Vec.new()" : m.startsWith("HashMap<") ? "HashMap.new()" : m.startsWith("HashSet<") ? "HashSet.new()" : m.startsWith("Option<") ? "Option.None" : null;
+      if (empty === null) return null;
+      hit("take a field out of self on return", "builtin replace(self.f, empty)");
+      return `replace(${s}, ${empty})`;
+    };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
     const ownBranches = new Set<ts.Node>();
     const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
@@ -718,6 +738,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       roDest = false;
       const owned = (s: string, force = false) => {
         if (!(own || force) || !needsClone(e)) return s;
+        const taken = takeFromThis(e, s);
+        if (taken) return taken;
         cloneFail(e, tOf(e), ro);
         return `${s}.clone()`;
       };
