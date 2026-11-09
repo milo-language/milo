@@ -459,6 +459,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (t.flags & ts.TypeFlags.NumberLike) return "0";
       if (t.flags & ts.TypeFlags.StringLike) return `""`;
       if (t.flags & ts.TypeFlags.BooleanLike) return "false";
+      // `let x: T | undefined;` starts undefined in TS: a typed None (a bare Option.None has no inferable payload).
+      if (isOptionT(t)) return `${useRuntime("optNone", at)}<${ty(checker.getNonNullableType(t), at)}>()`;
       return fail(at, `declaration without initializer of type ${checker.typeToString(t)}`);
     };
 
