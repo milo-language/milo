@@ -530,17 +530,27 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         throw err;
       }
     }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    // Mapping a field type for the key must not leave imports behind: this file may only reference the struct, not its fields' types.
+    const shapeOf = (t: ts.Type, d: ts.Node) => {
+      const saved = [...imports].map(([m, names]) => [m, new Set(names)] as const);
+      try {
+        const fields = inferredFields(t, d);
+        return { fields, key: fields.map((f) => `${f.name}:${f.milo}`).join(",") };
+      } finally {
+        imports.clear();
+        for (const [m, names] of saved) imports.set(m, names);
+      }
+    };
     const inferredStructOf = (t: ts.Type): InferredStruct => {
       const decl = t.symbol.declarations![0];
-      const fields = inferredFields(t, decl);
-      const key = fields.map((f) => `${f.name}:${f.milo}`).join(",");
+      const { fields, key } = shapeOf(t, decl);
       const known = inferredStructs.get(key);
       if (known) return known;
       // A written type literal of the same shape is the same TS type, so a value of one must be accepted where the other is expected.
       for (const [node, a] of anonStructs) {
         if (a.dup) continue;
         let k: string;
-        try { k = inferredFields(checker.getTypeFromTypeNode(node as ts.TypeNode), node).map((f) => `${f.name}:${f.milo}`).join(","); } catch (err) { if (err instanceof Unsupported) continue; throw err; }
+        try { k = shapeOf(checker.getTypeFromTypeNode(node as ts.TypeNode), node).key; } catch (err) { if (err instanceof Unsupported) continue; throw err; }
         if (k === key) { const rec = { ...a, at: decl }; inferredStructs.set(key, rec); return rec; }
       }
       hit("inferred object literal type", "generated struct keyed by its field names and types");
@@ -1591,6 +1601,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           // No annotation to take the type from: the literal's own inferred type is a synthesized struct.
           const ownT = checker.getNonNullableType(ctxT ?? tOf(o));
           if (ownT.symbol?.declarations?.[0] && ts.isObjectLiteralExpression(ownT.symbol.declarations[0])) {
+            // A module-level value would be a global initializer, which the backend cannot lower for a struct yet.
+            if (!ts.findAncestor(o, ts.isFunctionLike)) fail(o, "inferred object literal outside a function");
             const sname = ty(ownT, e);
             const keyOf = (q: ts.ObjectLiteralElementLike) => (q.name ? q.name.getText() : "");
             for (const p of o.properties) if (!(ts.isShorthandPropertyAssignment(p) || ts.isPropertyAssignment(p)) || ts.isComputedPropertyName(p.name)) fail(p, `object literal member ${p.getText().slice(0, 30)}: only plain name: value and shorthand members are supported`);
