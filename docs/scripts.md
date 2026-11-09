@@ -119,6 +119,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ts2milo-nonescaping-diff.ts` | Differential gate for the generated non-escaping parameter pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds f… |
 | `scripts/ts2milo-pointer-escape-diff.ts` | Differential gate for the generated pointer-parameter-escape pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds… |
 | `scripts/ts2milo-purity-diff.ts` | Differential gate for the generated @pure body pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for every cor… |
+| `scripts/ts2milo-task-scopes-diff.ts` | Differential gate for the generated Task.scope pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for every cor… |
 | `scripts/ts2milo.ts` | TypeScript -> Milo transpiler for the portable subset (scripts/ts2milo/subset.ts). |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
