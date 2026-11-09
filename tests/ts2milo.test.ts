@@ -1199,4 +1199,28 @@ describe("optional chain narrowing", () => {
     expect(reasons.some((x) => x.startsWith("g:") && x.includes("captured by a closure"))).toBe(true);
     expect(reasons.some((x) => x.startsWith("h:") && x.includes("'as' from"))).toBe(true);
   });
+
+  test("a ctor param moves at its last use, @consumesThis takes returned fields, process.env and Map.size translate", () => {
+    const { file, dir } = tmpTs("tsm_cc.ts", [
+      "export interface Res { items: number[]; seen: Map<string, number> }",
+      "export class Chk {",
+      "  private items: number[] = [];",
+      "  private seen = new Map<string, number>();",
+      "  private names: Set<string>;",
+      "  constructor(names?: Set<string>) { this.names = names ?? new Set(); }",
+      "  /** @consumesThis */",
+      "  finish(): Res { this.items.push(1); return { items: this.items, seen: this.seen }; }",
+      "  count(): number { return this.seen.size + this.names.size; }",
+      "}",
+      "export function flag(): boolean { return (process.env.TS2MILO_X ?? \"\") !== \"\"; }",
+      "",
+    ].join("\n"));
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const out = r.files.get("tsm_cc.milo")!;
+    expect(r.stubs.map((s) => `${s.name}: ${s.reason}`)).toEqual([]);
+    expect(out).toContain("replace(self.items, Vec.new())");
+    expect(out).toContain("replace(self.seen, HashMap.new())");
+    expect(out).toContain("self.seen.len()");
+    expect(out).toContain("jsEnv(");
+  });
 });
