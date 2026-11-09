@@ -415,43 +415,9 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
   for (const g of program.globals) findCalls(g.value);
 }
 
-// A `@concurrent` fn runs its closure argument on several threads at once, all sharing
-// one environment, so a capture written (or moved out) in the body is a data race with no
-// park involved; checkGlobalBorrowInvalidation's park rule cannot see it. Rust spells
-// this `Fn + Sync`; here the closure must visibly not write: a named fn, or a literal
-// whose captures are only read. A closure value is rejected, since its body is not
-// at the call.
-export function checkConcurrentClosureArgs(host: ProgramPassHost, program: Program, view: ProgramView): void {
-  const { fns, calleeOf } = view;
-  const isConcurrent = (t: string | undefined) => !!t && !!fns.get(t)?.attributes?.some(a => a.name === "concurrent");
-  if (![...fns.values()].some(f => f.attributes?.some(a => a.name === "concurrent"))) return;
-  const named = new Set<string>([...program.functions.map(f => f.name), ...fns.keys()]);
-  const visit = (node: unknown, bound: Set<string>) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) { for (const n of node) visit(n, bound); return; }
-    const n = node as Record<string, unknown> & { kind?: string; span?: Span };
-    if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") bound.add(n.name);
-    if ((n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") && isConcurrent(calleeOf(n as unknown as Expr))) {
-      const who = view.pretty(calleeOf(n as unknown as Expr)!);
-      for (const a of (n.args as Expr[] | undefined) ?? []) {
-        if (host.exprTypes.get(a)?.tag !== "fn") continue;
-        if (a.kind === "Closure") {
-          const bad = (host.closureCaptures.get(a) ?? []).find(c => c.mutatedInClosure || c.consumedInClosure);
-          if (bad) {
-            host.error(`'${who}' runs this closure on several threads at once, and it ${bad.consumedInClosure && !bad.mutatedInClosure ? "moves" : "writes"} its capture '${bad.name}'`, a.span ?? n.span,
-              `every worker shares one environment, so the writes race: give each worker its own state through parallelMapWith's states, or a std/sync atomic`);
-          }
-          continue;
-        }
-        if (a.kind === "Ident" && named.has(a.name) && !bound.has(a.name)) continue;
-        host.error(`'${who}' runs its closure argument on several threads at once, and the checker cannot see whether this one writes its captures`, a.span ?? n.span,
-          `pass a named fn or write the closure literal at the call`);
-      }
-    }
-    for (const k of Object.keys(n)) if (k !== "span") visit(n[k], bound);
-  };
-  for (const f of fns.values()) if (f.body) visit(f.body, new Set(f.params.map(p => p.name)));
-}
+// The @concurrent closure-argument check lives in src/checker-concurrent-args-host.ts;
+// re-exported so the checker keeps importing it from here.
+export { checkConcurrentClosureArgs } from "./checker-concurrent-args-host";
 
 // Which globals does each function transitively write? The aliasing model is keyed to
 // locals, params and self, so a `var` global mutated inside a callee is invisible to it
