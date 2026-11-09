@@ -20,7 +20,9 @@ const SKIP = new Set(["span", "type", "targetType", "retType", "methodSpan"]);
 const FAMILIES = ["Expr", "Stmt", "Pattern", "ChainClause"];
 // One walker per pass, each calling only its own visitor class (static calls, no interface to
 // dispatch through, which keeps the generated Milo plain). Edges and ids are the same in all.
-interface Visitor { file: string; cls: string; out: string }
+// optHelper: visit an optional child through walkOpt<Family>, whose parameter is the optional itself. The
+// Milo port binds a payload of `if let` on a `&mut` parameter as `&mut`, but on a field place only as `&`.
+interface Visitor { file: string; cls: string; out: string; optHelper?: boolean }
 const VISITORS: Visitor[] = [
   { file: "src/mutability-scan.ts", cls: "MutScan", out: "src/ast-walk.ts" },
   { file: "src/checker-nonescaping.ts", cls: "NonEscapingScan", out: "src/ast-walk-nonescaping.ts" },
@@ -33,7 +35,7 @@ const VISITORS: Visitor[] = [
   { file: "src/checker-global-borrow.ts", cls: "GlobalBorrowScan", out: "src/ast-walk-global-borrow.ts" },
   { file: "src/checker-concurrent-args.ts", cls: "ConcurrentArgsScan", out: "src/ast-walk-concurrent-args.ts" },
   { file: "src/checker-thread-boundary.ts", cls: "ThreadScan", out: "src/ast-walk-thread-boundary.ts" },
-  { file: "src/parser-stamp.ts", cls: "StampScan", out: "src/ast-walk-stamp.ts" },
+  { file: "src/parser-stamp.ts", cls: "StampScan", out: "src/ast-walk-stamp.ts", optHelper: true },
 ];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }
@@ -141,6 +143,9 @@ export function generate(): Map<string, string> {
   const emitWalker = (V: Visitor): string => {
     const hooks = hooksOf(V);
     let uid = 0;
+    const optUsed = new Set<string>();
+    const listUsed = new Set<string>();
+    const listName = (opt: string, fam: string, elem: string) => `walk${opt === "null" ? "Nullable" : "Opt"}${fam}List${elem ? "Nullable" : ""}`;
     const w: string[] = [];
     const emitEdge = (ind: string, path: string, e: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }, collectKids: boolean) => {
       const body = (i2: string, p: string, indexExpr: string) => {
@@ -157,7 +162,15 @@ export function generate(): Map<string, string> {
         inner(ind2 + "  ");
         w.push(`${ind2}}`);
       };
-      const single = (i1: string, p: string, idx: string, opt: string) => opt ? guard(`${p} !== ${opt}`, i1, (i2) => body(i2, p, idx)) : body(i1, p, idx);
+      const single = (i1: string, p: string, idx: string, opt: string) => {
+        if (opt && V.optHelper && !e.struct) {
+          if (collectKids) throw new Error("optHelper does not support kid collection");
+          keys.add(e.field);
+          optUsed.add(`${opt}:${e.family}`);
+          w.push(`${i1}walk${opt === "null" ? "Nullable" : "Opt"}${e.family}(v, ${p}, p, "${e.field}", ${idx});`);
+        } else if (opt) guard(`${p} !== ${opt}`, i1, (i2) => body(i2, p, idx));
+        else body(i1, p, idx);
+      };
       if (!e.array) { single(ind, path, "-1", e.optional); return; }
       // A statement list is a lexical scope: a visitor with enterStmts/exitStmts hooks is told
       // where each one begins and ends (a pass tracking bindings needs both; the after<Kind>
@@ -174,7 +187,13 @@ export function generate(): Map<string, string> {
         w.push(`${i1}}`);
         if (scoped && hooks.has("exitStmts")) w.push(`${i1}v.exitStmts(p.id, "${e.field}");`);
       };
-      if (e.optional) guard(`${path} !== ${e.optional}`, ind, emitLoop); else emitLoop(ind);
+      if (e.optional && V.optHelper && !e.struct) {
+        if (collectKids || (scoped && (hooks.has("enterStmts") || hooks.has("exitStmts")))) throw new Error("optHelper does not support kid collection or scope hooks");
+        keys.add(e.field);
+        listUsed.add(`${e.optional}:${e.family}:${e.elemOptional}`);
+        if (e.elemOptional) optUsed.add(`${e.elemOptional}:${e.family}`);
+        w.push(`${ind}${listName(e.optional, e.family!, e.elemOptional)}(v, ${path}, p, "${e.field}");`);
+      } else if (e.optional) guard(`${path} !== ${e.optional}`, ind, emitLoop); else emitLoop(ind);
     };
 
     w.push(header("walker"));
@@ -211,6 +230,18 @@ export function generate(): Map<string, string> {
       });
       w.push("}");
       w.push("");
+    }
+    for (const u of [...optUsed].sort()) {
+      const [kind, fam] = u.split(":");
+      w.push(`export function walk${kind === "null" ? "Nullable" : "Opt"}${fam}(v: ${V.cls}, o: ${fam} | ${kind}, parent: Parent, key: EdgeKey, index: number): void {`);
+      w.push(`  if (o !== ${kind}) {`, `    ${fn(fam)}(v, o, parent, key, index);`, `  }`, `}`, "");
+    }
+    for (const u of [...listUsed].sort()) {
+      const [opt, fam, elem] = u.split(":");
+      w.push(`export function ${listName(opt, fam, elem)}(v: ${V.cls}, list: ${elem ? `(${fam} | ${elem})` : fam}[] | ${opt}, parent: Parent, key: EdgeKey): void {`);
+      // Indexed, not for-of: the Milo port needs the element as a place it can pass `&mut`.
+      const call = elem ? `walk${elem === "null" ? "Nullable" : "Opt"}${fam}` : fn(fam);
+      w.push(`  if (list !== ${opt}) {`, `    for (let i = 0; i < list.length; i++) {`, `      ${call}(v, list[i], parent, key, i);`, `    }`, `  }`, `}`, "");
     }
     for (const fam of [...FAMILIES, "Contract"]) {
       w.push(`export function ${fn(fam)}s(v: ${V.cls}, list: ${fam}[], parent: Parent, key: EdgeKey): void {`);

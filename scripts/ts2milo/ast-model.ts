@@ -503,6 +503,13 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
           return `${read}.clone()`;
         };
         t.push(`pub fn ${name}_${f.name}(e: &${name}): ${plain} {`, `    return match e {`, ...u.variants.map((v) => `        ${name}.${pascal(v.kind)}(p) => ${arm(v)},`), `    }`, `}`);
+        // `u.f = x` on the union: a match on the `&mut` parameter binds each payload `&mut`; a boxed field takes a Heap.
+        const store = (v: Variant) => {
+          const x = structFields.get(v.name)!.find((y) => y.name === f.name)!;
+          if (x.ty.startsWith("Option<Heap<")) return `match v { Option.Some(h) => Option.Some(Heap(h)), Option.None => Option.None }`;
+          return x.ty.startsWith("Heap<") ? "Heap(v)" : "v";
+        };
+        t.push(`pub fn ${name}_set_${f.name}(e: &mut ${name}, v: ${plain}) {`, `    match e {`, ...u.variants.map((v) => `        ${name}.${pascal(v.kind)}(p) => { p.${field_(f.name)} = ${store(v)} },`), `    }`, `}`);
       }
       const ke = kindOf.get(name);
       if (ke) {

@@ -704,6 +704,13 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
     const ownBranches = new Set<ts.Node>();
+    const isBoxedOptField = (e: ts.Expression): boolean => {
+      if (ts.isElementAccessExpression(e)) return isOptionT(tOf(e)) && boxedElem(e);
+      if (!ts.isPropertyAccessExpression(e) || !isOptionT(tOf(e)) || unionOfType(checker, tOf(e.expression))) return false;
+      const d = checker.getSymbolAtLocation(e.name)?.declarations?.[0];
+      return !!d && ts.isPropertySignature(d) && astModel.boxed.has(d);
+    };
+    let heapOptParam: (p: ts.ParameterDeclaration) => boolean = () => false;
     const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
       // The read-only flag belongs to this value only, never to the expressions nested inside it.
       const ro = roDest;
@@ -918,7 +925,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const mp = decl && mutParams.get(decl);
       decl?.parameters.forEach((p, i) => {
         const pt = checker.getTypeAtLocation(p);
-        if (i < given.length && mp?.has(i)) { hit("&mut parameter", "argument written `&mut x`"); parts.push(`&mut ${conv(given[i], pt)}`); }
+        if (i < given.length && heapOptParam(p)) { hit("boxed optional field", "passed as Option<Heap<T>> to an optional parameter"); parts.push(`${mp?.has(i) ? "&mut " : ""}${ex(given[i])}`); }
+        else if (i < given.length && mp?.has(i)) { hit("&mut parameter", "argument written `&mut x`"); parts.push(`&mut ${conv(given[i], pt)}`); }
         else if (i < given.length) parts.push(conv(given[i], pt, byValue));
         else if (p.initializer) { hit("default parameter", "default expression filled in at the call site"); parts.push(ex(p.initializer)); }
         else if (p.questionToken) parts.push("Option.None");
@@ -1662,8 +1670,19 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           push();
           const name = declareLocal(sym, (d.name as ts.Identifier).text);
           if (onCycle(isOptionT(el) ? checker.getNonNullableType(el) : el)) elemBoxed.add(sym);
+          if (!mv && forOfMutates(f) && arr.startsWith("(*")) {
+            // The checker takes only a named place after `for x in &mut`, and a boxed field reads as `(*e.f)`:
+            // walk it by index, with the loop variable standing for the indexed element. The step runs at the top
+            // so a `continue` cannot skip it.
+            const k = `${name}_at`;
+            scopes[scopes.length - 1].set(sym, `${arr}[${k}]`);
+            line(`var ${k}: i64 = -1`);
+            line(`while ${k} + 1 < ${arr}.len {`);
+            ind++; line(`${k} += 1`); body(f.statement); ind--;
+          } else {
           line(`for ${name} in ${!mv && forOfMutates(f) ? "&mut " : ""}${arr} {`);
           ind++; body(f.statement); ind--;
+          }
           line("}");
           pop();
           afterLoop();
@@ -1923,6 +1942,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             return;
           }
         }
+        if (op === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(e.left)) {
+          const tu = unionOfType(checker, tOf(e.left.expression));
+          if (tu) {
+            hit("tagged union common field", "assigned through the generated setter Union_set_field(&mut u, v)");
+            line(`${useDeclared(`${tu.name}_set_${e.left.name.text}`, tu.decl.getSourceFile().fileName, e)}(&mut ${ex(e.left.expression)}, ${ownConv(e.right, lt)})`);
+            return;
+          }
+        }
         if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${ownConv(e.right, lt)}`); return; }
         if (op === ts.SyntaxKind.PlusEqualsToken && isStr(e.left)) { hit("string +=", "pushStr in place"); line(`${ex(e.left)}.pushStr(${ex(e.right)})`); return; }
         // Only the compound assignments Milo has; `??=`, `||=`, `&&=`, `**=` and `>>>=` would be emitted verbatim.
@@ -1954,6 +1981,26 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     // ---- declarations ----
     const overridesDir = opts.overridesDir ?? join(ROOT, "scripts/ts2milo/overrides");
     const fileBase = basename(file).replace(/\.ts$/, "");
+    // An optional parameter that every call site feeds a boxed optional field is an Option<Heap<T>> in Milo,
+    // taking the field as is: a `&mut` view of the place, so the callee's `if let` binds the payload `&mut`
+    // (a match on a field place binds only `&`, and unboxing the field would copy the node).
+    let heapOpt: Set<ts.Node> | undefined;
+    heapOptParam = (p) => {
+      if (!heapOpt) {
+        const good = new Set<ts.Node>(), bad = new Set<ts.Node>();
+        for (const fn of allFns) walkBody(fn.body!, (n) => {
+          if (!ts.isCallExpression(n)) return;
+          const decl = checker.getResolvedSignature(n)?.declaration as ts.SignatureDeclaration | undefined;
+          decl?.parameters.forEach((q, i) => {
+            const a = n.arguments[i];
+            if (a) (isBoxedOptField(a) ? good : bad).add(q);
+          });
+        });
+        for (const q of bad) good.delete(q);
+        heapOpt = good;
+      }
+      return heapOpt.has(p) && isOptionT(checker.getTypeAtLocation(p));
+    };
     const fnHeader = (fn: ts.FunctionLikeDeclaration, name: string, selfKind: "" | "&" | "&mut "): string => {
       const sig = checker.getSignatureFromDeclaration(fn)!;
       // Parameters other than numbers, bools and unit enums are borrowed; one the body writes
@@ -1961,7 +2008,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const ps = fn.parameters.map((p, i) => {
         const t = checker.getTypeAtLocation(p);
         const borrow = isScalar(t) ? "" : mutParams.get(fn)?.has(i) ? "&mut " : "&";
-        return `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${borrow}${ty(t, p)}`;
+        const heapOpt = heapOptParam(p);
+        const name = declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text);
+        if (heapOpt) { elemBoxed.add(symOf(p.name as ts.Identifier)!); return `${name}: ${borrow}Option<Heap<${ty(checker.getNonNullableType(t), p)}>>`; }
+        return `${name}: ${borrow}${ty(t, p)}`;
       });
       if (selfKind) ps.unshift(`self: ${selfKind}${(fn.parent as ts.ClassDeclaration).name!.text}`);
       let r = sig.getReturnType();

@@ -1199,4 +1199,15 @@ describe("optional chain narrowing", () => {
     expect(reasons.some((x) => x.startsWith("g:") && x.includes("captured by a closure"))).toBe(true);
     expect(reasons.some((x) => x.startsWith("h:") && x.includes("'as' from"))).toBe(true);
   });
+
+  test("the stamp walker: optional children go through &mut Option<Heap<T>> params, boxed Vec fields by index, spans through set_span", () => {
+    const root = join(import.meta.dir, "..");
+    const r = transpile(["src/ast.ts", ...frontendFiles().filter((f) => f !== "src/ast.ts")].map((f) => join(root, f)), { astRoots: ["Program"], lenient: true });
+    const walk = r.files.get("ast-walk-stamp.milo")!;
+    const stamp = r.files.get("parser-stamp.milo")!;
+    expect(r.stubs.map((x) => x.name)).not.toContain("walkExpr");
+    expect(walk).toMatch(/fn walkOptExpr\(v: &mut StampScan, o: &mut Option<Heap<Expr>>/);
+    expect(walk).toContain("_at: i64 = -1");
+    expect(stamp).toContain("Expr_set_span(&mut e,");
+  });
 });
