@@ -104,7 +104,27 @@ if (argv.includes("--run")) {
   const prog = argv[argv.indexOf("--run") + 1];
   await Bun.write(join(OUT, "frontend-driver.milo"), Bun.file(join(ROOT, "scripts/ts2milo/frontend-driver.milo")));
   const bin = join(OUT, "frontend");
-  const b = Bun.spawnSync(["bun", join(ROOT, "src/main.ts"), "build", join(OUT, "frontend-driver.milo"), "-o", bin], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const build = () => Bun.spawnSync(["bun", join(ROOT, "src/main.ts"), "build", join(OUT, "frontend-driver.milo"), "-o", bin], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  let b = build();
+  // A function the MLIR backend does not cover yet ("mlir: F is not covered: why") is stubbed like a
+  // compile error, so the binary builds; with --stub-errors, round after round. Each is a backend gap.
+  for (let n = 1; b.exitCode && argv.includes("--stub-errors") && n <= 40; n++) {
+    const m = /mlir: ([A-Za-z_][A-Za-z0-9_$.]*) is not covered: ([^\n]*)/.exec(b.stderr.toString());
+    if (!m) break;
+    // A name with "$" is code the compiler synthesized (a derived Clone, a monomorphized copy): no TS function to
+    // stub, the backend itself must learn the shape.
+    if (m[1].includes("$")) { console.error(`--run: backend gap in synthesized ${m[1]}: ${m[2].slice(0, 120)}`); break; }
+    const fn = m[1].replace(/^.*\./, "");
+    const owner = [...r.functions].find((f) => f.name === fn || f.name.endsWith("." + fn));
+    if (!owner) { console.error(`--run: cannot map backend gap in ${m[1]} to a TS function`); break; }
+    const key = `${owner.file}::${owner.name.split(".").pop()}`;
+    if (stubNames.has(key)) break;
+    stubNames.set(key, `backend not covered: ${m[2].slice(0, 140)}`);
+    console.error(`--run: backend gap ${n}: ${owner.file} ${fn}: ${m[2].slice(0, 100)}`);
+    round = await generateAndCheck();
+    await Bun.write(join(OUT, "frontend-driver.milo"), Bun.file(join(ROOT, "scripts/ts2milo/frontend-driver.milo")));
+    b = build();
+  }
   if (b.exitCode) { console.error("build failed:\n" + b.stderr.toString().split("\n").filter((l) => /error/.test(l)).slice(0, 8).join("\n")); process.exit(1); }
   const run = Bun.spawnSync([bin, prog], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
   process.exit(run.exitCode ?? 1);
