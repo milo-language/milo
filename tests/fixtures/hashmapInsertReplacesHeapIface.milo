@@ -1,0 +1,31 @@
+// @expect: drop ii1
+// @expect: 1
+// @expect: drop ii2
+// Replacing a HashMap value that is a Heap<interface> drops the old one at the insert and the
+// new one at scope end, each exactly once.
+interface Sh {
+    fn show(self: &Self): string
+}
+
+struct Impl { name: string }
+
+impl Impl {
+    fn show(self: &Self): string { return self.name }
+}
+
+impl Drop for Impl {
+    fn drop(self: &mut Self): void { print("drop " + self.name) }
+}
+
+fn mk(n: i64): Heap<Sh> {
+    let h: Heap<Sh> = Heap(Impl { name: "i".repeat(2) + n.toString() })
+    return h
+}
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Heap<Sh>> = HashMap.new()
+    m.insert(1, mk(1))
+    m.insert(1, mk(2))
+    print(m.len.toString())
+    return 0
+}
