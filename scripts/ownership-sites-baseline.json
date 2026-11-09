@@ -1,0 +1,19 @@
+{
+ "reached": 39,
+ "unreached": [
+  "src/checker-derive.ts: cannot derive Clone for '${}': it holds a raw pointer ('${}') and is not @copy, so a clone would be ",
+  "src/checker-derive.ts: cannot derive Clone for '${}': it is a resource type (Drop or @noCopy), and duplicating it would rel",
+  "src/checker.ts: '${}' is already unwrapped here — a second '&mut ${}' to the same object would alias the first",
+  "src/checker.ts: '@copy' on '${}' contradicts its Drop impl: a type with a destructor is never Copy",
+  "src/checker.ts: 'unwrapOr' on a non-Copy Result<${}> — use 'match' to move the value out",
+  "src/checker.ts: 'unwrapOrElse' on a non-Copy Result<${}> — use 'match' to move the value out",
+  "src/checker.ts: a ${} parameter cannot borrow a ${}: the ranges must ${}, since a borrow is not range-checked",
+  "src/checker.ts: cannot derive Clone for '${}': it implements Drop, so each clone would release the resource again on",
+  "src/checker.ts: cannot impl Drop for built-in type '${}'",
+  "src/checker.ts: cannot return '${}': '${}' is freed when this function returns, so the pointer would dangle (from '$",
+  "src/checker.ts: clone it ('${}.clone()'), or borrow it by passing it to a '&T' parameter${}",
+  "src/checker.ts: closure moves '${}' out and also assigns to '${}'",
+  "src/checker.ts: impl Drop requires a struct or enum type, got '${}'",
+  "src/checker.ts: type alias '${}': type parameter '${}' cannot carry a bound"
+ ]
+}
