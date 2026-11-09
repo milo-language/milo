@@ -24,6 +24,7 @@ interface Visitor { file: string; cls: string; out: string }
 const VISITORS: Visitor[] = [
   { file: "src/mutability-scan.ts", cls: "MutScan", out: "src/ast-walk.ts" },
   { file: "src/checker-nonescaping.ts", cls: "NonEscapingScan", out: "src/ast-walk-nonescaping.ts" },
+  { file: "src/checker-purity.ts", cls: "PurityScan", out: "src/ast-walk-purity.ts" },
 ];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }

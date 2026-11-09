@@ -1,6 +1,7 @@
 {
   "src/ast-nodes.ts": 92,
   "src/ast-walk-nonescaping.ts": 0,
+  "src/ast-walk-purity.ts": 0,
   "src/ast-walk-types.ts": 0,
   "src/ast-walk.ts": 0,
   "src/ast.ts": 32,
@@ -11,7 +12,9 @@
   "src/checker-mutability.ts": 0,
   "src/checker-nonescaping-host.ts": 41,
   "src/checker-nonescaping.ts": 0,
-  "src/checker-program-passes.ts": 1778,
+  "src/checker-program-passes.ts": 1669,
+  "src/checker-purity-host.ts": 27,
+  "src/checker-purity.ts": 0,
   "src/checker-sql.ts": 220,
   "src/checker.ts": 6723,
   "src/emit-forms.ts": 892,

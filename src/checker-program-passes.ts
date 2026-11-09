@@ -5,11 +5,10 @@
 // monomorphized instances, which is why they cannot run per function, and they reach
 // the checker only through `ProgramPassHost` (its recorded maps and diagnostics) plus
 // the `ProgramView` it builds once for all of them (design pass 2026-09, F5).
-import type { Program, Function, Stmt, Expr, Span, Pattern, ChainClause } from "./ast";
+import type { Program, Function, Expr, Span, Pattern, ChainClause } from "./ast";
 import { patternLeafNames } from "./ast";
 import type { TypeKind } from "./types";
 import type { CaptureInfo, FnSig } from "./checker";
-import { isStdCollectionModule } from "./checker";
 import { RETAINING_MEMBERS, MUTATING_COLLECTION_METHODS } from "./builtin-members";
 
 // What a whole-program pass may ask of the finished program. Built once by
@@ -99,11 +98,6 @@ export interface ProgramPassHost {
 // Run as a post-pass rather than inside type checking because it needs the finished
 // call-resolution maps (`staticCalls`, `resolvedMethods`, the monomorphized
 // instances) to know what a given call site actually targets.
-
-// Built-in free functions with no ambient effect. An allowlist, not a denylist: a new
-// intrinsic has to be judged pure deliberately rather than inheriting it by default.
-// `assert` is here because trapping is not an effect under this definition.
-const PURE_BUILTINS = new Set(["format", "max", "min", "assert"]);
 
 // Does `fnName` KEEP its idx-th argument past the call? For a closure-typed parameter
 // the signature answers (`move` keeps it, a plain one cannot). For any other parameter
@@ -640,203 +634,6 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
   for (const fn of [...program.functions, ...host.monomorphizedFns]) {
     if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
     visit(fn.body, []);
-  }
-}
-
-export function checkPurity(host: ProgramPassHost, program: Program, view: ProgramView): void {
-  const pureNames = new Set<string>();
-  const bodies: Function[] = [];
-  // A generic declaration is registered as pure but not walked — its instances are what
-  // call sites resolved to, and they are the copies whose expressions carry resolution
-  // data.
-  for (const f of view.fns.values()) {
-    if (!f.attributes?.some(a => a.name === "pure")) continue;
-    pureNames.add(f.name);
-    if (!f.isExtern && f.typeParams.length === 0) bodies.push(f);
-  }
-  if (bodies.length === 0) return;
-
-  const mutableGlobals = new Set(program.globals.filter(g => g.mutable).map(g => g.name));
-  // Every instance of a pure generic walks the same source span, so the same violation
-  // would be reported once per instantiation.
-  const seen = new Set<string>();
-  const { pretty } = view;
-
-  for (const fn of bodies) {
-    const who = fn.sourceName ?? pretty(fn.name);
-    const fail = (msg: string, span: Span | undefined, hint: string, key?: string) => {
-      const k = key ?? `${span?.line ?? 0}:${span?.col ?? 0}:${msg}`;
-      if (seen.has(k)) return;
-      seen.add(k);
-      host.error(msg, span, hint);
-    };
-
-    const checkCall = (target: string, span: Span | undefined) => {
-      if (pureNames.has(target) || PURE_BUILTINS.has(target)) return;
-      // std/hashmap and std/vec are the builtin collections' method bodies, which act only
-      // on the receiver and the arguments handed to them, as the builtins did. They cannot
-      // say '@pure' themselves: their bodies are unsafe (raw slot access), which @pure refuses.
-      if (isStdCollectionModule(view.fns.get(target)?.sourceFile)) return;
-      const sig = host.functions.get(target);
-      if (!sig) {
-        // No registered signature: a compiler builtin (`Vec.new`, `v.len()`). Those act
-        // only on the data handed to them, so they are pure by construction — the ones
-        // that are not (`print`, `exit`, the `_milo*`/`_atomic*` intrinsics) do have a
-        // registered signature and fall through to the impure branch below.
-        return;
-      }
-      if (sig.isExtern) {
-        fail(`'${who}' is @pure but calls extern fn '${pretty(target)}'`, span,
-          `an extern's body is compiled elsewhere, so nothing here can check it — write '@pure extern fn ${target}(...)' to assert it has no effects, or drop '@pure' from '${who}'`);
-        return;
-      }
-      fail(`'${who}' is @pure but calls '${pretty(target)}', which is not`, span,
-        `purity is transitive — mark '${pretty(target)}' '@pure' too, or drop '@pure' from '${who}'`);
-    };
-
-    const ex = (e: Expr | null | undefined, bound: Set<string>): void => {
-      if (!e) return;
-      switch (e.kind) {
-        case "Ident":
-          if (mutableGlobals.has(e.name) && !bound.has(e.name)) {
-            // One report per global per function: `g = g + 1` is a read and a write of
-            // the same mistake, and repeating it per mention buries the fix.
-            fail(`'${who}' is @pure but touches the mutable global '${e.name}'`, e.span,
-              `a @pure fn reads and writes only its parameters and its own locals — pass '${e.name}' in as a parameter, or make it a 'let'`,
-              `${fn.name}|global|${e.name}`);
-          }
-          break;
-        case "Call":
-          // A call through a value (closure, fn-typed param, C function pointer) has no
-          // static target, and purity is not part of a fn type yet.
-          if (host.closureCalls.has(e) || host.cfnCalls.has(e)) {
-            fail(`'${who}' is @pure but calls the function value '${e.func}'`, e.span,
-              `purity is not part of a fn type, so the compiler cannot see what this call does — call a named @pure fn instead`);
-          } else {
-            checkCall(view.calleeOf(e) ?? e.func, e.span);
-          }
-          e.args.forEach(a => ex(a, bound));
-          break;
-        case "EnumLit": {
-          // Static method calls (`Math.sqrt(x)`) parse as EnumLit and are resolved into
-          // staticCalls; without an entry this is ordinary enum construction.
-          const target = view.calleeOf(e);
-          if (target) checkCall(target, e.span);
-          e.args.forEach(a => ex(a, bound));
-          break;
-        }
-        case "MethodCall": {
-          const iface = host.interfaceMethodCalls.get(e);
-          if (iface) {
-            fail(`'${who}' is @pure but calls '${e.method}' through the interface '${iface.ifaceName}'`, e.span,
-              `dynamic dispatch hides which body runs, and purity is not part of an interface method's signature`);
-          } else if (host.fnFieldCalls.has(e) || host.cfnFieldCalls.has(e)) {
-            fail(`'${who}' is @pure but calls the fn-typed field '${e.method}'`, e.span,
-              `purity is not part of a fn type, so the compiler cannot see what this call does`);
-          } else {
-            const target = view.calleeOf(e);
-            if (target) checkCall(target, e.span);
-          }
-          ex(e.object, bound);
-          e.args.forEach(a => ex(a, bound));
-          break;
-        }
-        case "BinOp": ex(e.left, bound); ex(e.right, bound); break;
-        case "UnaryOp": ex(e.operand, bound); break;
-        case "FieldAccess": ex(e.object, bound); break;
-        case "IndexAccess": ex(e.object, bound); ex(e.index, bound); break;
-        case "StructLit": e.fields.forEach(f => ex(f.value, bound)); if (e.base) ex(e.base, bound); break;
-        case "ArrayLit": e.elements.forEach(el => ex(el, bound)); break;
-        case "ArrayRepeat": ex(e.value, bound); break;
-        case "Unwrap": case "Propagate": ex(e.operand, bound); break;
-        case "DefaultValue": ex(e.operand, bound); ex(e.default, bound); break;
-        case "CastExpr": ex(e.operand, bound); break;
-        case "Closure": {
-          // The body runs inside this fn, so its effects are this fn's effects.
-          const inner = new Set(bound);
-          for (const p of e.params) inner.add(p.name);
-          st(e.body, inner);
-          break;
-        }
-        case "RangeExpr": ex(e.start, bound); ex(e.end, bound); break;
-        case "IsExpr": ex(e.operand, bound); break;
-        case "IfExpr": ex(e.cond, bound); st(e.thenBody, new Set(bound)); st(e.elseBody, new Set(bound)); break;
-        case "MatchExpr": ex(e.subject, bound); e.arms.forEach(a => st(a.body, bindPattern(a.pattern, bound))); break;
-        case "IntLit": case "FloatLit": case "BoolLit": case "StringLit": case "CharLit":
-          break;
-        default: {
-          // A missing arm would silently skip a whole subtree — the same failure mode
-          // that let the safety walker report "pass" on code it never looked at.
-          const _exhaustive: never = e;
-          void _exhaustive;
-        }
-      }
-    };
-
-    const bindPattern = (p: import("./ast").Pattern, bound: Set<string>): Set<string> => {
-      const inner = new Set(bound);
-      for (const b of patternLeafNames(p)) inner.add(b);
-      return inner;
-    };
-
-    const st = (list: Stmt[], outer: Set<string>): void => {
-      const bound = new Set(outer);
-      for (const s of list) {
-        switch (s.kind) {
-          // Walk the initializer before binding the name: in `let x = x + 1` the
-          // right-hand `x` is still whatever `x` meant outside.
-          case "LetDecl": case "VarDecl": ex(s.value, bound); bound.add(s.name); break;
-          case "Assign": ex(s.target, bound); ex(s.value, bound); break;
-          case "Return": ex(s.value, bound); break;
-          case "ExprStmt": ex(s.expr, bound); break;
-          case "IfStmt": ex(s.cond, bound); st(s.thenBody, bound); if (s.elseBody) st(s.elseBody, bound); break;
-          case "WhileStmt": ex(s.cond, bound); st(s.body, bound); break;
-          case "ForInStmt": {
-            ex(s.iterable, bound);
-            const inner = new Set(bound);
-            inner.add(s.varName);
-            if (s.varName2) inner.add(s.varName2);
-            st(s.body, inner);
-            break;
-          }
-          case "MatchStmt": ex(s.subject, bound); s.arms.forEach(a => st(a.body, bindPattern(a.pattern, bound))); break;
-          case "IfLetStmt":
-            ex(s.subject, bound);
-            st(s.thenBody, bindPattern(s.pattern, bound));
-            if (s.elseBody) st(s.elseBody, bound);
-            break;
-          case "IfChainStmt": {
-            let inner = bound;
-            for (const c of s.clauses) {
-              if (c.kind === "CondClause") { ex(c.cond, inner); continue; }
-              ex(c.subject, inner);
-              inner = bindPattern(c.pattern, inner);
-            }
-            st(s.thenBody, inner);
-            if (s.elseBody) st(s.elseBody, bound);
-            break;
-          }
-          case "LetElseStmt":
-            ex(s.value, bound);
-            st(s.elseBody, bound);
-            // The bind escapes into the enclosing scope — that is the point of let-else.
-            for (const b of patternLeafNames(s.pattern)) bound.add(b);
-            break;
-          case "UnsafeBlock":
-            fail(`'${who}' is @pure but contains an 'unsafe' block`, s.span,
-              `raw memory access is exactly the ambient effect '@pure' rules out`);
-            st(s.body, bound);
-            break;
-          case "BreakStmt": case "ContinueStmt": break;
-          default: {
-            const _exhaustive: never = s;
-            void _exhaustive;
-          }
-        }
-      }
-    };
-
-    st(fn.body, new Set(fn.params.map(p => p.name)));
   }
 }
 
