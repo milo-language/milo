@@ -65,7 +65,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   }
 
   // 2. Whole-program facts: string-literal unions, throwing and mutating functions.
-  const pascal = (s: string) => s.replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase());
+  // A leading non-identifier character (`"$peel"`) is dropped, and a leading digit gets a `V`: both must still give a Milo identifier.
+  const pascal = (s: string) => { const t = s.replace(/^[^a-zA-Z0-9]+/, "").replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase()); return /^[0-9]/.test(t) || t === "" ? "V" + t : t; };
   const unionKey = (lits: string[]) => [...lits].sort().join("\u0000");
   const litUnions = new Map<string, { name: string; lits: string[]; file: string }>();
   const litsOf = (t: ts.Type): string[] | null => {
