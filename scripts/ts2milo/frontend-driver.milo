@@ -9,6 +9,9 @@ from "./lexer" import { Lexer }
 from "./parser" import { Parser }
 from "./resolver" import { resolveImports }
 from "./checker" import { TypeChecker }
+from "./ast" import { Program }
+from "./ast_decode" import { decodeProgram }
+from "std/json" import { Json }
 from "./ts2milo_runtime" import { jsFromUtf8, jsonQuote, Severity, TargetInfo }
 from "./ast_encode" import { encodeProgram }
 
@@ -22,11 +25,51 @@ fn severityName(s: Severity): string {
     }
 }
 
+// Type-check a resolved program and print its diagnostics as `milo check --json` does.
+fn checkAndPrint(prog: Program) {
+    var rp = prog
+    var tc = TypeChecker.new(Option.None)
+    match tc.check(&mut rp) {
+        Result.Ok(res) => {
+            var out: string = "{\"diagnostics\":["
+            var first = true
+            for d in res.diagnostics {
+                if !first {
+                    out = out + ","
+                }
+                first = false
+                out = out + "{\"severity\":\"" + severityName(d.severity) + "\",\"message\":"
+                jsonQuote(d.message, &mut out)
+                match d.span {
+                    Option.Some(sp) => {
+                        out = out + ",\"line\":" + sp.line.toString() + ",\"col\":" + sp.col.toString()
+                    }
+                    Option.None => {}
+                }
+                out = out + "}"
+            }
+            out = out + "]}"
+            print(out)
+        }
+        Result.Err(_) => {
+            print("CHECK_THROWN")
+        }
+    }
+}
+
 fn main() {
     let path = args() [1].clone()
     var mode: string = ""
     if args().len > 2 {
         mode = args() [2].clone()
+    }
+    if mode == "--check-json" {
+        // The resolver is not run: the input is the resolved program TS dumped (emit-ast --all --spans).
+        match Json.parse(readFile(path)!) {
+            Result.Ok(j) => { checkAndPrint(decodeProgram(j, j.curRoot())) }
+            Result.Err(_) => { print("JSON_ERROR") }
+        }
+        return
     }
     let src = jsFromUtf8(readFile(path)!)
     var lx = Lexer.new(src.clone(), false)
@@ -49,34 +92,7 @@ fn main() {
                         let entry = Option.Some(jsFromUtf8(path.clone()))
                         match resolveImports(&mut parsed, dir, target, entry) {
                             Result.Ok(resolved) => {
-                                var rp = resolved
-                                var tc = TypeChecker.new(Option.None)
-                                match tc.check(&mut rp) {
-                                    Result.Ok(res) => {
-                                        var out: string = "{\"diagnostics\":["
-                                        var first = true
-                                        for d in res.diagnostics {
-                                            if !first {
-                                                out = out + ","
-                                            }
-                                            first = false
-                                            out = out + "{\"severity\":\"" + severityName(d.severity) + "\",\"message\":"
-                                            jsonQuote(d.message, &mut out)
-                                            match d.span {
-                                                Option.Some(sp) => {
-                                                    out = out + ",\"line\":" + sp.line.toString() + ",\"col\":" + sp.col.toString()
-                                                }
-                                                Option.None => {}
-                                            }
-                                            out = out + "}"
-                                        }
-                                        out = out + "]}"
-                                        print(out)
-                                    }
-                                    Result.Err(_) => {
-                                        print("CHECK_THROWN")
-                                    }
-                                }
+                                checkAndPrint(resolved)
                             }
                             Result.Err(_) => {
                                 print("RESOLVE_ERROR")

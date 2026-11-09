@@ -281,7 +281,7 @@ export interface LitName { name: string; lits: string[]; file: string }
 export const RUNTIME_OWNED = new Set(["Span"]);
 // The name a type node refers to: a plain reference, or one written as an import type.
 const refName = (n: ts.TypeNode): string | null => (ts.isTypeReferenceNode(n) ? n.typeName.getText() : ts.isImportTypeNode(n) && n.qualifier ? n.qualifier.getText() : null);
-export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>, kindEnum: (u: TaggedUnion) => LitName): AstEmit {
+export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>, kindEnum: (u: TaggedUnion) => LitName, astOnlyDecoder = false): AstEmit {
   const membersOf = (n: string) => model.ifaces.get(n)?.members ?? model.inline.get(n);
   const enums = new Map<string, LitName>();
   const order: string[] = [];
@@ -558,7 +558,9 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     d.push(...lines);
     return name;
   };
-  const rootFns = roots.map((r) => (incomplete.has(r) ? "" : dec(r)));
+  // The whole-frontend build decodes only the AST: other files' input types may share a name (two BodyTask) that this name-keyed model cannot tell apart.
+  const decRoots = astOnlyDecoder ? roots.filter((r) => model.fileOf.get(r) === astFile) : roots;
+  const rootFns = decRoots.map((r) => (incomplete.has(r) ? "" : dec(r)));
   const mods = new Map<string, Set<string>>();
   const importFrom = (file: string, name: string) => { const m = modOf(file); if (!mods.has(m)) mods.set(m, new Set()); mods.get(m)!.add(name); };
   for (const name of order) if (!incomplete.has(name)) { const f = model.fileOf.get(name); if (f && !RUNTIME_OWNED.has(name) && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
@@ -568,7 +570,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   out.push("");
   out.push(`fn rawStr(j: &Json, c: i64): string {`, `    match j.curStr(c) {`, `        Option.Some(s) => { return s }`, `        Option.None => { return "" }`, `    }`, `}`, "");
   out.push(...d);
-  roots.forEach((r, i) => !incomplete.has(r) && out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
+  decRoots.forEach((r, i) => !incomplete.has(r) && out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
 
   // ---- encoder: the mirror of the decoder, writing a generated AST as JSON (the parser differential compares it with
   // emit-ast). Spans and the hidden node id are not written: the TS AST has no id, and spans are compared elsewhere. ----

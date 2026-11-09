@@ -1,6 +1,9 @@
 // Correctness gate for the GENERATED Milo type checker: run it and the TypeScript checker on the
 // same programs and compare the diagnostics.
 //   bun scripts/ts2milo-checker-diff.ts [--only <substr>] [--limit N] [--no-build] [--diffs N] [--census N] [--files a.milo,b.milo]
+// The resolver is NOT part of this comparison yet: TS runs lex/parse/resolveImports and dumps the
+// resolved Program (`emit-ast --all --spans`); the generated Milo decodes it (`frontend <ast.json> --check-json`)
+// and runs TypeChecker. A program TS cannot parse or resolve is only checked for a generated parse reject.
 // Builds the generated frontend once (ts2milo-frontend.ts --stub-errors --run), then per program in
 // tests/errors/*.milo (must fail) and tests/fixtures/*.milo runs `frontend <file> --check` (lex,
 // parse, resolve imports, TypeChecker) and `milo check <file> --json` (TS) and compares the
@@ -13,7 +16,8 @@
 // generated side finished.
 // --census N also tallies the stub reasons over ALL generated checker/resolver functions (static
 // scan of out/ts2milo-all), because while the entry points stub every program shows one reason.
-import { readdirSync, readFileSync } from "fs";
+import { mkdtempSync, readdirSync, readFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -25,6 +29,7 @@ const showDiffs = Number(opt("--diffs") ?? 8);
 const census = Number(opt("--census") ?? 10);
 const OUT = join(ROOT, "out/ts2milo-all");
 const BIN = join(OUT, "frontend");
+const TMP = mkdtempSync(join(tmpdir(), "checker-diff-"));
 
 if (!argv.includes("--no-build")) {
   const b = Bun.spawnSync(["bun", join(ROOT, "scripts/ts2milo-frontend.ts"), "--stub-errors", "--run", "examples/hello.milo"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
@@ -47,14 +52,27 @@ const run = async (cmd: string[]) => {
   return { code: await p.exited, out: o, err: e };
 };
 
-let same = 0, stubbed = 0, bothParseReject = 0;
+let same = 0, stubbed = 0, bothParseReject = 0, skippedResolve = 0;
 const stubs = new Map<string, number>();
 const failures: string[] = [];
 const kinds = new Map<string, number>();
 const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 let next = 0;
 const one = async (prog: string) => {
-  const gen = await run([BIN, prog, "--check"]);
+  // TS parses + resolves and dumps the resolved Program (the resolver is NOT part of this comparison);
+  // the generated checker decodes it and checks. If TS cannot produce a program (parse error or a
+  // resolve error), the generated parser alone is asked, and must reject at parse too.
+  const dump = join(TMP, prog.replace(/[\/]/g, "_") + ".json");
+  const ast = await run(["bun", "src/main.ts", "emit-ast", "--all", "--spans", prog, "-o", dump]);
+  let gen;
+  if (ast.code !== 0) {
+    gen = await run([BIN, prog, "--check"]);
+    const t0 = gen.out.trim();
+    if (t0 === "PARSE_ERROR" || t0 === "lex error") { same++; bothParseReject++; return; }
+    if (/ts2milo stub:/.test(gen.out + gen.err)) { stubbed++; bump(stubs, "(TS resolve error; generated parser stubbed)"); return; }
+    bump(kinds, "TS resolve error, generated parsed"); skippedResolve++; return;
+  }
+  gen = await run([BIN, dump, "--check-json"]);
   if (gen.code === 70 || /ts2milo stub:/.test(gen.out + gen.err)) {
     stubbed++;
     const m = /ts2milo stub: ([^\n]*)/.exec(gen.out + gen.err);
@@ -62,12 +80,7 @@ const one = async (prog: string) => {
     return;
   }
   const text = gen.out.trim();
-  if (text === "PARSE_ERROR" || text === "lex error") {
-    // The driver prints no parse-error text; agreement is "TS also rejects the program at parse" (emit-ast fails).
-    const ast = await run(["bun", "src/main.ts", "emit-ast", prog]);
-    if (ast.code !== 0) { same++; bothParseReject++; return; }
-  }
-  if (!text.startsWith("{")) { bump(kinds, `generated printed ${text.slice(0, 20) || "nothing"} (exit ${gen.code})`); failures.push(`${prog}: generated printed ${text.slice(0, 40) || gen.err.slice(0, 80)} (exit ${gen.code})`); return; }
+  if (!text.startsWith("{")) { bump(kinds, `generated printed ${text.slice(0, 20) || "nothing"} (exit ${gen.code})`); failures.push(`${prog}: generated printed ${text.slice(0, 40) || gen.err.slice(0, 120)} (exit ${gen.code})`); return; }
   const ts = await run(["bun", "src/main.ts", "check", prog, "--json"]);
   let a: D[], b: D[];
   try {
@@ -85,7 +98,7 @@ const one = async (prog: string) => {
 };
 await Promise.all(Array.from({ length: 8 }, async () => { while (next < programs.length) await one(programs[next++]); }));
 
-console.log(`same ${same} / ${programs.length}   (${bothParseReject} of them both reject at parse, message not compared; ${stubbed} hit a stub; ${failures.length} differ)`);
+console.log(`same ${same} / ${programs.length}   (${bothParseReject} of them both reject at parse, message not compared; ${stubbed} hit a stub; ${skippedResolve} TS resolve errors skipped; ${failures.length} differ)`);
 for (const f of failures.slice(0, showDiffs)) console.log("  " + f);
 if (stubs.size) { console.log("top stubs (first stub each program hits):"); for (const [w, n] of [...stubs].sort((x, y) => y[1] - x[1]).slice(0, 10)) console.log(`  ${String(n).padStart(5)}  ${w}`); }
 if (kinds.size) { console.log("diff kinds:"); for (const [w, n] of [...kinds].sort((x, y) => y[1] - x[1]).slice(0, 8)) console.log(`  ${String(n).padStart(5)}  ${w}`); }
