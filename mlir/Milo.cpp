@@ -224,8 +224,10 @@ LogicalResult EnumType::setBody(function_ref<InFlightDiagnostic()> emitError, in
     return emitError() << "size " << size << " is not stored as " << align << "-byte words";
   if (size == 0 && fields)
     return emitError() << "of size 0 has payload fields";
+  // A payload with no bytes (a struct with no fields) sits at the end: offset == size is in bounds for
+  // it, and the layout never puts a payload with bytes there.
   for (int64_t off : offsets)
-    if (off < 4 || off >= size)
+    if (off < 4 || off > size)
       return emitError() << "payload offset " << off << " is outside bytes 4.." << size;
   if (failed(Base::mutate(size, align, tags, variants, offsets, userDrop, 0, 0)))
     return emitError() << "enum \"" << getName() << "\" has two different bodies";

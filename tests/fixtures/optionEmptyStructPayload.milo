@@ -1,0 +1,23 @@
+// An Option whose payload is a struct with no fields: the payload takes no bytes, so it sits at
+// the end of the enum (offset == size), which the dialect verifier must accept.
+// @expect: some
+// @expect: none
+
+struct Marker {
+}
+
+fn pick(b: bool): Option<Marker> {
+    if b {
+        return Option.Some(Marker {})
+    }
+    return Option.None
+}
+
+fn main() {
+    if let Option.Some(_) = pick(true) {
+        print("some")
+    }
+    if pick(false).isNone() {
+        print("none")
+    }
+}
