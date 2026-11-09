@@ -115,6 +115,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ts2milo-identity-census.ts` | How many places a real rollout of node ids would touch: collections keyed by an AST node, and assignments to AST fields, counted with the TypeScript checker (not by pattern) per frontend file. |
 | `scripts/ts2milo-lexer-diff.ts` | Differential token gate for the ts2milo spike: lex every corpus file with src/lexer.ts and with the transpiled Milo lexer (compiled by `milo build`), compare the dumps byte for byte. |
 | `scripts/ts2milo-mut-diff.ts` | Differential gate for the stage 3 probe (docs/plans/ts2milo.md): the mutability pass run from TypeScript and from its generated Milo over every corpus program that reaches it. |
+| `scripts/ts2milo-nonescaping-diff.ts` | Differential gate for the generated non-escaping parameter pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds f… |
 | `scripts/ts2milo.ts` | TypeScript -> Milo transpiler for the portable subset (scripts/ts2milo/subset.ts). |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |

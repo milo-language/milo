@@ -6,8 +6,13 @@ import type { Program, Expr } from "./ast";
 import type { TypeKind } from "./types";
 import { RETAINING_MEMBERS } from "./builtin-members";
 import { collectStmts, type AnyNode } from "./ast-nodes";
-import { nonEscapingFindings, type BodyTask, type CallFact, type CaptureFact } from "./checker-nonescaping";
+import { nonEscapingFindings, type NonEscapingInput, type BodyTask, type CallFact, type CaptureFact } from "./checker-nonescaping";
 import { SCOPED_SPAWN_FN, isNonEscapingFnParam, type ProgramPassHost, type ProgramView } from "./checker-program-passes";
+
+// Test hook (scripts/ts2milo-nonescaping-diff.ts): sees each input the pass is about to run on.
+// Unset in every real compile, so it changes nothing.
+let captureInput: ((input: NonEscapingInput) => void) | undefined;
+export function setNonEscapingCapture(f: ((input: NonEscapingInput) => void) | undefined): void { captureInput = f; }
 
 export function checkNonEscapingParams(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const tasks: BodyTask[] = [];
@@ -77,5 +82,7 @@ export function checkNonEscapingParams(host: ProgramPassHost, program: Program, 
     if (fnParams.length > 0) tasks.push({ body: fn.body, base, params: fnParams, who: `'${view.pretty(fn.name)}'` });
   }
 
-  for (const f of nonEscapingFindings({ tasks, calls, captures })) host.error(f.message, f.span, f.hint);
+  const input: NonEscapingInput = { tasks, calls, captures };
+  if (captureInput) captureInput(input);
+  for (const f of nonEscapingFindings(input)) host.error(f.message, f.span, f.hint);
 }

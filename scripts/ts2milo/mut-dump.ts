@@ -13,21 +13,26 @@ export function decoderKeys(decodeMilo: string): Set<string> {
   return keys;
 }
 
+// JSON with every object trimmed to the keys the generated decoder reads; bigints as strings.
+export function stringifyKeyed(value: unknown, keys: Set<string>): string {
+  return JSON.stringify(value, function (this: unknown, _k, v) {
+    if (typeof v === "bigint") return String(v);
+    // Array indices and the root have no key to test; an object's own keys are filtered.
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const o: Record<string, unknown> = {};
+      for (const kk of Object.keys(v)) if (keys.has(kk)) o[kk] = (v as Record<string, unknown>)[kk];
+      return o;
+    }
+    return v;
+  });
+}
+
 export function dumpInput(input: MutInput, keys: Set<string>): string {
   const cache = new Map<Function, string>();
   const body = (f: Function): string => {
     let s = cache.get(f);
     if (s === undefined) {
-      s = JSON.stringify(f, function (this: unknown, _k, v) {
-        if (typeof v === "bigint") return String(v);
-        // Array indices and the root have no key to test; an object's own keys are filtered.
-        if (v && typeof v === "object" && !Array.isArray(v)) {
-          const o: Record<string, unknown> = {};
-          for (const kk of Object.keys(v)) if (keys.has(kk)) o[kk] = (v as Record<string, unknown>)[kk];
-          return o;
-        }
-        return v;
-      });
+      s = stringifyKeyed(f, keys);
       cache.set(f, s);
     }
     return s;
