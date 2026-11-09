@@ -1182,7 +1182,9 @@ export class TypeChecker {
   // fallout, not a new one. With no error on file it is a checker bug and still shows.
   private error(msg: string, span?: Span, hint?: string) {
     if ((msg.includes(UNKNOWN_TYPE_NAME) || hint?.includes(UNKNOWN_TYPE_NAME)) && this.diagnostics.some(d => d.severity === "error")) return;
-    this.diagnostics.push({ severity: "error", span, message: msg, hint });
+    // An expression the checker synthesized (a derived clone, a desugaring) has no span of its own; the
+    // enclosing function's is still a place to look, where none would print no location at all.
+    this.diagnostics.push({ severity: "error", span: span ?? this.currentFnDecl?.span, message: msg, hint });
   }
 
   private errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic {

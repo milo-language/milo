@@ -47,7 +47,7 @@
   "src/checker-task-scopes.ts": 567,
   "src/checker-thread-boundary-host.ts": 228,
   "src/checker-thread-boundary.ts": 597,
-  "src/checker.ts": 15710,
+  "src/checker.ts": 15712,
   "src/cli-help.ts": 350,
   "src/const-fold.ts": 176,
   "src/contract-tests.ts": 713,

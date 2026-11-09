@@ -39,13 +39,15 @@ export class Unsupported extends Error {}
 // `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
 // A declaration that turns into a stub can be named by code emitted before it, and the importer then fails to
 // compile. A second pass knows which declarations are dead, so their users stub too (the reason names the dead one).
-export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean } = {}): Report {
+// `stubNames` (--lenient): functions to emit as stubs by "<ts file>::<name>", with the reason (the
+// self-host meter's --stub-errors feeds back the Milo compile errors of the previous round).
+export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> } = {}): Report {
   const first = transpileOnce(inputs, opts, new Set());
   if (!opts.lenient || first.deadDecls.size === 0) return first;
   return transpileOnce(inputs, opts, first.deadDecls);
 }
 
-function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean }, dead: Set<string>): Report {
+function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> }, dead: Set<string>): Report {
   const files = inputs.map((f) => resolve(ROOT, f));
   const astFile = files.find((f) => basename(f) === "ast.ts");
   const program = makeProgram(ROOT, files);
@@ -1633,7 +1635,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       report.functions.push({ file: rel(file), name, override: false });
       const mark = out.length, markInd = ind;
       try {
-        const forced = forceStub.get(fn);
+        const forced = forceStub.get(fn) ?? opts.stubNames?.get(`${rel(file)}::${name}`);
         if (forced) throw new Unsupported(forced);
         curFn = fn; narrow.clear(); /* a function that threw mid-guard never ran its undo */ scopes = []; usedNames = []; push();
         prepareMutated(fn);
