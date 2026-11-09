@@ -1,0 +1,42 @@
+// Mutually recursive structs through Heap and Vec, plus an empty struct and a struct
+// holding an array: each type's body is defined once in the module's type aliases.
+// @expect: 30
+struct Empty {}
+
+struct A {
+    n: i32,
+    next: Option<Heap<B>>,
+}
+
+struct B {
+    n: i32,
+    kids: Vec<C>,
+    back: Option<Heap<A>>,
+}
+
+struct C {
+    n: i32,
+    up: Option<Heap<A>>,
+    e: Empty,
+    arr: [i32; 4],
+}
+
+fn total(a: &A): i32 {
+    var s = a.n
+    if let Some(b) = a.next {
+        s = s + (*b).n
+        for k in (*b).kids {
+            s = s + k.n + k.arr[2]
+        }
+    }
+    return s
+}
+
+pub fn main(): i32 {
+    var kids: Vec<C> = []
+    kids.push(C { n: 4, up: None, e: Empty {}, arr: [1, 2, 3, 4] })
+    kids.push(C { n: 5, up: None, e: Empty {}, arr: [1, 2, 5, 4] })
+    let a = A { n: 1, next: Some(Heap(B { n: 2, kids: kids, back: None })) }
+    print(total(a) + 10)
+    return 0
+}

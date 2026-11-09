@@ -10,9 +10,8 @@
 // the nightly sweep covered 589 fixtures and docs/testing.md said 470, against a real
 // 597 — because a count in a sentence is invisible to every other gate.
 //
-// Only LIVE claims get markers. A dated audit or decision record (e.g.
-// selfhost-endgame-decision.md) states what was true when it was
-// written; rewriting those numbers would falsify the record, so they stay untouched.
+// Only LIVE claims get markers. A dated audit or decision record states what was
+// true when it was written; rewriting those numbers would falsify the record, so they stay untouched.
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { join } from "path";

@@ -52,7 +52,7 @@ tool to the host language; the JSON survives a Rust or self-hosted rewrite.
 ### Tests
 
 `tests/run.test.ts` is a single driver that walks two directories:
-- `tests/fixtures/*.milo` — compiled + executed; stdout must match `// @expect: <line>` annotations (one per expected output line).
+- `tests/fixtures/*.milo` (<!-- stat:fixtures -->1077<!-- /stat --> files) — compiled + executed; stdout must match `// @expect: <line>` annotations (one per expected output line).
 - `tests/errors/*.milo` — must fail type-check; error output must contain the `// @error: <substring>` annotation.
 
 Add a new test by dropping a `.milo` file with the appropriate annotation in the right directory. No code changes needed.
@@ -100,31 +100,21 @@ has no home.
 
 ### Key Rules
 
-- **Self-host never gates a `src/` change.** Blocking work in `src/` on self-host parity is a tar pit and is what got `src-milo/` parked for months. A new language/stdlib feature lands in `src/` + `bun test tests/run.test.ts`; `src-milo/` may lag it, and that is fine.
-
-  Nor a `std/` change (decided 2026-09-20: std uses whatever `src/` supports, e.g. a method's own type parameter, and milo-self lags until someone chooses to catch it up; the sweep is red meanwhile and that is accepted). It DOES gate a `src-milo/` change. `.github/workflows/selfhost.yml` runs the fixpoint, the soundness ratchet and the HIR ratchet on any commit touching `src-milo/` or the selfhost scripts, and sweeps all <!-- stat:fixtures -->1071<!-- /stat --> fixtures nightly — scoped by path precisely so a `src/`-only commit never triggers it. So when you change `src-milo/`, run the gates before pushing:
-  `sh scripts/selfhost.sh`, `sh scripts/selfhost-fixpoint.sh`, `bun scripts/selfhost-rejects.ts --check`, `bun scripts/selfhost-sweep.ts --check` (the sweep is ~48 min — run it once, at the end). The fixpoint is the real one.
-
-  (The memory-guard rules below still stand — they're OS-safety, not self-host.)
+- **One compiler, one backend.** `src/` (TypeScript) emitting MLIR is the compiler; there is no second implementation to keep in step. Self-hosting is a Milo frontend GENERATED from `src/*.ts` by `scripts/ts2milo.ts` (docs/self-hosting.md, docs/plans/ts2milo.md), never a hand-written port: the hand-written `src-milo/` was deleted 2026-11-08. A `src/` change that makes a file less portable shows up in `bun scripts/ts-portable.ts --check`.
 
 - **Memory guards (macOS enforces no rlimits — a runaway allocation crashes the OS):**
-  - `.selfhost/milo-self` is a self-guarding wrapper (RSS/timeout watchdog built in);
-    the real binary is `.selfhost/milo-self.bin` — **NEVER run the `.bin` bare**, and
-    never build/copy other bare milo-self binaries. Manual guarded runs of anything:
+  - Manual guarded runs of anything:
     `bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- <cmd> <args>`.
   - Guards enforce caps against phys_footprint (not just RSS — the compressor
     hides a runaway's RSS exactly when the machine is dying) and shed guarded
     trees on system memory pressure. Pressure kills are fail-closed by design.
   - `milo run` / `milo test` / `milo fmt` guard their child binaries by default
-    (`MILO_RUN_MEM_MB` to raise, `MILO_RUN_UNGUARDED=1` to disable — don't, for
-    milo-self or anything it compiled).
+    (`MILO_RUN_MEM_MB` to raise, `MILO_RUN_UNGUARDED=1` to disable).
   - A guarded child is SIGKILLed, and a SIGKILL cannot flush stdio — so on a piped
     stdout a killed program used to print NOTHING. `guard.ts` now sets
     `MILO_LINE_BUFFERED=1` for its children, which makes the compiled binary
     line-buffer stdout at startup, so you see output up to the hang. Set it yourself
     for any un-guarded run you may kill; `MILO_GUARD_NO_LINE_BUFFER=1` opts back out.
-  - `bun test tests/selfhost.test.ts`, `scripts/selfhost.sh`, and
-    `scripts/selfhost-sweep.ts` are already guarded — prefer them.
   - Do not raise sweep/test concurrency or per-child mem caps without checking the
     math in `scripts/guard.ts` (N workers × cap must stay under half of RAM).
 

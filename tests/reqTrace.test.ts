@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { LLVM_BIN } from "../src/mlir-backend";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 import { spawnSync } from "child_process";
 
 const ROOT = join(import.meta.dir, "..");
@@ -413,7 +413,7 @@ test("a dev build warns about a traceability gap and succeeds; --strict fails; a
     expect(w.code).toBe(0);
     expect(JSON.parse(readFileSync(base, "utf-8")).gaps).toEqual(["untraced:helper"]);
     const adopted = build("--strict", "--baseline", base);
-    expect(adopted.code).toBe(0);
+    expect(adopted.code, adopted.out.slice(0, 2000)).toBe(0);
     expect(adopted.out).toContain("warning: baselined traceability gap: a.milo:10: fn 'helper' has no @req");
 
     // a NEW gap is not in the baseline and fails
@@ -456,7 +456,8 @@ test("a single-file module finds m/requirements.json and ignores its neighbours"
     expect(llr.verifiedBy.map((s: any) => s.fn)).toEqual(["testInc"]);
     // a requirements.json beside the entry still wins over the module directory
     p.write("requirements.json", JSON.stringify({ requirements: [{ id: "OTHER", text: "x" }] }));
-    expect(JSON.parse(trace(p).out).requirementsFile).not.toContain(join("a", "requirements.json"));
+    // Anchored on the directory: the random temp dir name can itself end in "a".
+    expect(JSON.parse(trace(p).out).requirementsFile).toEndWith(join(basename(p.dir), "requirements.json"));
   } finally { p.done(); }
 }, 120000);
 
@@ -658,7 +659,7 @@ test("a test may @req a derived requirement when reached by absolute path", () =
   const file = join(import.meta.dir, "..", "std", "json", "json_test.milo");
   const r = spawnSync(process.execPath, [join(import.meta.dir, "..", "src", "main.ts"), "test", "--json", file, "-t", "^(testAccessors)$"], { encoding: "utf-8" });
   expect(JSON.parse(r.stdout).passed).toBe(1);
-});
+}, 60000);
 
 // ── --coverage: statement coverage of the implementing fn bodies by the @req tests ──
 

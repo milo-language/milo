@@ -1,24 +1,15 @@
-// Differential + crash-safety probe for the Milo language server.
+// Crash-safety probe for the Milo language server (src/lsp.ts).
 //
-// Runs a scripted JSON-RPC sequence against EITHER server and asserts on the
-// responses/notifications — not just that the server answered *something*
-// (an LSP that answers null to every request looks like it works; this
-// probe fails that case on purpose, see the "never silently empty" checks
-// below). Usage:
-//
-//   bun scripts/lsp-probe.ts --server=ts             # oracle: src/lsp.ts
-//   bun scripts/lsp-probe.ts --server=self            # self-hosted: .selfhost/milo-self lsp
-//
-// `--server=self` requires `.selfhost/milo-self` to already exist (run
-// `sh scripts/selfhost.sh` first) — it is spawned as-is, which is the guarded
-// wrapper, never the bare `.selfhost/milo-self.bin`.
+// Runs a scripted JSON-RPC sequence and asserts on the responses/notifications,
+// not just that the server answered *something* (an LSP that answers null to
+// every request looks like it works; this probe fails that case on purpose, see
+// the "never silently empty" checks below). Usage: bun scripts/lsp-probe.ts
 import { spawn, type ChildProcessByStdio } from "child_process";
 import type { Readable, Writable } from "stream";
 
 // stderr is "inherit" so the server's own diagnostics reach the terminal — that makes
 // child.stderr null, which ChildProcessWithoutNullStreams does not model.
 type ProbeChild = ChildProcessByStdio<Writable, Readable, null>;
-import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -97,21 +88,8 @@ interface Server {
   stop(): void;
 }
 
-function startServer(kind: "ts" | "self"): Server {
-  let child: ProbeChild;
-  if (kind === "ts") {
-    child = spawn("bun", ["run", resolve(ROOT, "src/main.ts"), "lsp"], { cwd: ROOT, stdio: ["pipe", "pipe", "inherit"] });
-  } else {
-    const wrapper = resolve(ROOT, ".selfhost/milo-self");
-    if (!existsSync(wrapper)) {
-      console.error(`error: ${wrapper} does not exist — run 'sh scripts/selfhost.sh' first`);
-      process.exit(1);
-    }
-    // The wrapper script is itself the guard — never spawn milo-self.bin
-    // directly. See scripts/guard.ts: CLI mode now inherits stdin (needed
-    // for an interactive server) as well as stdout/stderr.
-    child = spawn(wrapper, ["lsp"], { cwd: ROOT, stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, MILO_ROOT: ROOT } });
-  }
+function startServer(): Server {
+  const child: ProbeChild = spawn("bun", ["run", resolve(ROOT, "src/main.ts"), "lsp"], { cwd: ROOT, stdio: ["pipe", "pipe", "inherit"] });
   const reader = new FrameReader();
   child.stdout.on("data", (c: Buffer) => reader.feed(c));
   let id = 1;
@@ -152,10 +130,7 @@ const CLEAN_MILO = [
   "",
 ].join("\n");
 
-// A LEX-FATAL buffer (unterminated string). src-milo/lexer.milo's lexError
-// calls exit(1) directly on this — the whole reason diagnostics.milo runs
-// the checker pipeline out of process. This is the single most important
-// case the self-hosted server has to survive.
+// A LEX-FATAL buffer (unterminated string): the server must report it and stay up.
 const LEX_FATAL_MILO = [
   "fn broken(: i32 {",
   '    let s = "unterminated',
@@ -172,9 +147,8 @@ const TYPE_ERROR_MILO = [
   "",
 ].join("\n");
 
-async function run(kind: "ts" | "self") {
-  console.log(`\n=== server: ${kind} ===`);
-  const server = startServer(kind);
+async function run() {
+  const server = startServer();
   const uri = "file:///tmp/lsp_probe_fixture.milo";
 
   const diagFor = (m: Json) => m.method === "textDocument/publishDiagnostics" && m.params?.uri === uri;
@@ -230,20 +204,14 @@ async function run(kind: "ts" | "self") {
     check("server exits after `exit` notification", exited);
   } catch (e: any) {
     failed++;
-    console.log(`  FAIL exception during ${kind} run — ${e.message ?? e}`);
+    console.log(`  FAIL exception during run — ${e.message ?? e}`);
   } finally {
     server.stop();
   }
 }
 
 async function main() {
-  const arg = process.argv.find(a => a.startsWith("--server="));
-  const kind = (arg ? arg.slice("--server=".length) : "ts") as "ts" | "self";
-  if (kind !== "ts" && kind !== "self") {
-    console.error(`usage: bun scripts/lsp-probe.ts --server=ts|self`);
-    process.exit(1);
-  }
-  await run(kind);
+  await run();
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }

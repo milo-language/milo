@@ -1,0 +1,27 @@
+// A plain 136-byte payload read out of a held box: passed by value, passed by reference,
+// and bound with let, all copy from the box's own place; the box stays usable.
+// @expect: 18
+// @expect: 18
+// @expect: 18
+// @expect: 1
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: i64,
+}
+
+fn sum(x: Big): i64 {
+    return x.a + x.q
+}
+
+fn peek(x: &Big): i64 {
+    return x.a + x.q
+}
+
+fn main() {
+    let b = Heap(Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17 })
+    print(peek(*b))
+    print(sum(*b))
+    let c = *b
+    print(c.a + c.q)
+    print((*b).a)
+}

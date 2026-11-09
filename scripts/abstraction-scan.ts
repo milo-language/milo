@@ -17,7 +17,7 @@ const lang = argv.includes("--lang") ? argv[argv.indexOf("--lang") + 1]! : "both
 const deadOnly = argv.includes("--dead");
 
 // git pathspec `**` is not portable here — list the trees and filter by extension.
-const trees = lang === "milo" ? ["std", "src-milo"] : lang === "ts" ? ["src"] : ["src", "std", "src-milo"];
+const trees = lang === "milo" ? ["std"] : lang === "ts" ? ["src"] : ["src", "std"];
 const wantMilo = lang !== "ts";
 const wantTs = lang !== "milo";
 const files = execSync(`git ls-files -- ${trees.join(" ")}`, { encoding: "utf8" })
@@ -32,7 +32,7 @@ const srcs = new Map<string, string[]>();
 
 // Callers are counted over the WHOLE corpus including tests and examples, or a helper
 // used only by a fixture would look dead and get deleted out from under it.
-const corpus = execSync(`git ls-files -- src std src-milo tests examples scripts benchmarks`, {
+const corpus = execSync(`git ls-files -- src std tests examples scripts benchmarks`, {
   encoding: "utf8",
   maxBuffer: 1 << 28,
 }).split("\n").filter(Boolean).filter((f) => /\.(ts|milo|js)$/.test(f));

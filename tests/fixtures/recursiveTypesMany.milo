@@ -1,0 +1,100 @@
+// @expect: 12
+enum E0 {
+    Leaf(i32),
+    A(Heap<E1>, Heap<E2>),
+    B(Vec<E3>),
+    C(i32, i32),
+}
+
+enum E1 {
+    Leaf(i32),
+    A(Heap<E2>, Heap<E3>),
+    B(Vec<E4>),
+    C(i32, i32),
+}
+
+enum E2 {
+    Leaf(i32),
+    A(Heap<E3>, Heap<E4>),
+    B(Vec<E5>),
+    C(i32, i32),
+}
+
+enum E3 {
+    Leaf(i32),
+    A(Heap<E4>, Heap<E5>),
+    B(Vec<E6>),
+    C(i32, i32),
+}
+
+enum E4 {
+    Leaf(i32),
+    A(Heap<E5>, Heap<E6>),
+    B(Vec<E7>),
+    C(i32, i32),
+}
+
+enum E5 {
+    Leaf(i32),
+    A(Heap<E6>, Heap<E7>),
+    B(Vec<E8>),
+    C(i32, i32),
+}
+
+enum E6 {
+    Leaf(i32),
+    A(Heap<E7>, Heap<E8>),
+    B(Vec<E9>),
+    C(i32, i32),
+}
+
+enum E7 {
+    Leaf(i32),
+    A(Heap<E8>, Heap<E9>),
+    B(Vec<E10>),
+    C(i32, i32),
+}
+
+enum E8 {
+    Leaf(i32),
+    A(Heap<E9>, Heap<E10>),
+    B(Vec<E11>),
+    C(i32, i32),
+}
+
+enum E9 {
+    Leaf(i32),
+    A(Heap<E10>, Heap<E11>),
+    B(Vec<E0>),
+    C(i32, i32),
+}
+
+enum E10 {
+    Leaf(i32),
+    A(Heap<E11>, Heap<E0>),
+    B(Vec<E1>),
+    C(i32, i32),
+}
+
+enum E11 {
+    Leaf(i32),
+    A(Heap<E0>, Heap<E1>),
+    B(Vec<E2>),
+    C(i32, i32),
+}
+
+fn score(e: &E0): i32 {
+    return match e {
+        E0.Leaf(v) => v
+        E0.A(_a, _b) => 1
+        E0.B(_v) => 2
+        E0.C(x, y) => x + y
+    }
+}
+
+pub fn main(): i32 {
+    let e = E0.A(Heap(E1.Leaf(3)), Heap(E2.C(4, 5)))
+    let c = E0.C(5, 6)
+    print(score(e) + score(c))
+    return 0
+}

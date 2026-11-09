@@ -941,11 +941,9 @@ fn freeArgv(argv: *u8, argc: i64): void {
 // command exits non-zero.
 @replayHooked
 pub fn capture(cmd: &string): Result<string> {
-    // Process-unique: a fixed path here let concurrent callers (e.g. milo-self
-    // builds under the sweep harness) truncate/read each other's capture file
-    // mid-flight, corrupting `uname` output that src-milo/target.milo derives
-    // the host triple from — a wrong triple then silently miscompiled whatever
-    // OTHER fixture happened to be building at the same moment.
+    // Process-unique: a fixed path here let concurrent callers truncate/read each
+    // other's capture file mid-flight (a corrupted `uname` once gave a wrong host
+    // triple and silently miscompiled another build running at the same moment).
     let myPid = replayRet("proc.getpid", "", false, (): i64 => {
         unsafe {
             return getpid() as i64
@@ -960,7 +958,6 @@ pub fn capture(cmd: &string): Result<string> {
         let _ = removeFile(tmpPath)
         return Result.Err("command failed with exit code")
     }
-    // match, not let-else: keep std within milo-self's parseable subset (no let-else)
     match readFile(tmpPath) {
         Result.Ok(s) => {
             let _ = removeFile(tmpPath)

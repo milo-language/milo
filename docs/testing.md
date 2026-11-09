@@ -157,7 +157,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->1071<!-- /stat --> fixtures, <!-- stat:error-fixtures -->761<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->52<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->1077<!-- /stat --> fixtures, <!-- stat:error-fixtures -->761<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->52<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -203,7 +203,6 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `modules.test.ts` | import resolution + cross-file merge |
 | `formatter.test.ts` | `milo fmt` output stability |
 | `lsp.test.ts` / `lspProject.test.ts` | LSP diagnostics/hover/go-to-def; project-wide LSP |
-| `selfhost.test.ts` | milo-self bootstrap convergence (guarded) |
 | `debugInfo.test.ts` | DWARF emission (`-g`) |
 | `wcet.test.ts` / `wcetCycles.test.ts` | worst-case-execution-time analysis |
 | `allocaHoist.test.ts` / `zeroStore.test.ts` | codegen optimizations |

@@ -86,15 +86,12 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-tmlanguage.ts` | Regenerates editors/vscode/syntaxes/milo.tmLanguage.json from the compiler's own keyword and primitive-type lists. |
 | `scripts/gen-vscode-icon.ts` | Renders the mascot to editors/vscode/icon.png. |
 | `scripts/guard.ts` | Guarded child execution: hard memory + wall-clock + CPU caps for every process the test harnesses spawn. |
-| `scripts/hir-cover.ts` | Which fixtures exercise which ops of the milo dialect's top layer? |
-| `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
 | `scripts/interp-coverage.ts` | What the reference interpreter (src/interp.ts, `milo interp`) can run, and whether what it prints is what the fixture's author wrote down. |
-| `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
 | `scripts/ir-same.ts` | Byte-identical IR gate: proves a codegen refactor changed no emitted LLVM IR, by emitting IR for every fixture and example in both a base commit and the working tree and comparing the bytes. |
 | `scripts/jpeg-grade.ts` | Grades std/jpeg against libjpeg-turbo: decoder pixels vs djpeg, encoder bytes vs cjpeg, and decode/encode speed. |
 | `scripts/leak-check.ts` | Leak gate: compile every stdout-comparable fixture, run it, and fail if the process exits still holding heap it allocated. |
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
-| `scripts/lsp-probe.ts` | Differential + crash-safety probe for the Milo language server. |
+| `scripts/lsp-probe.ts` | Crash-safety probe for the Milo language server (src/lsp.ts). |
 | `scripts/mascot.ts` | The Milo mascot as a char grid — the single source for every rendering of it (docs/site/scripts/gen-logo.ts → logo.svg, scripts/gen-vscode-icon.ts → the extension's icon.png). |
 | `scripts/mlir-census.ts` | Compile-only MLIR coverage census: emit-ir with MILO_MLIR_LOG over every fixture and example with a main plus milojs's two entry points, then the function-instance coverage and the top legacy reasons. |
 | `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend: each program's LLVM IR for a non-host target must be for that target. |
@@ -110,15 +107,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/rgdiff.sh` | Differential test: our Milo port of ripgrep (examples/cli-tools/rg.milo) vs real `rg`. |
 | `scripts/rte-census.ts` | Silver-progress number: `milo prove --rte` over examples/embedded and std, tallied per runtime-error site and kind (overflow / bounds / division) as proven / failed / unknown(+error). |
 | `scripts/run-examples.ts` | Compiles every example entrypoint and runs the ones marked runnable. |
-| `scripts/selfhost-asan.ts` | Is the code milo-self GENERATES memory-safe? |
-| `scripts/selfhost-examples.ts` | Compile every examples/ entrypoint with milo-self (the Milo compiler written in Milo) and bucket the failures — the examples-side counterpart to scripts/selfhost-sweep.ts. |
-| `scripts/selfhost-fixpoint.sh` | Verify the self-hosting FIXED POINT: milo0 compiled by the oracle and milo0 compiled by itself must emit byte-identical IR. |
-| `scripts/selfhost-irsize.ts` | How much IR does milo-self emit for its own source, and is that number drifting? |
-| `scripts/selfhost-rejects.ts` | Does milo-self REJECT the programs it is supposed to reject? |
-| `scripts/selfhost-selfcheck.sh` | Can milo-self still type-check src-milo? |
-| `scripts/selfhost-stamp.ts` | Provenance for .selfhost/milo-self.bin: which source built it. |
-| `scripts/selfhost-sweep.ts` | Differential sweep: run every tests/fixtures/*.milo through milo-self and bucket the failures. |
-| `scripts/selfhost.sh` | Build milo-self (the Milo compiler written in Milo) with the TS compiler. |
 | `scripts/stamp-version.ts` | Stamps the current commit into src/version.ts so a released binary can report which commit built it. |
 | `scripts/strip-string-clones.ts` | Deletes `.clone()` calls on strings: strings are values (copy on write, shared by count where the code reads them again), so every string clone is redundant and removing one changes no behaviour. |
 | `scripts/trace-semantics.ts` | Two-way trace between docs/semantics/milo.md and the reference interpreter (src/interp*.ts). |

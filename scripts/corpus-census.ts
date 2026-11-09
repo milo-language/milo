@@ -9,7 +9,7 @@
 // attribute histogram, and comments that name a Milo limit. `--check` is the gate:
 // the non-FFI unsafe counts may shrink, never grow, against the committed baseline.
 //
-// Roots: std, examples, src-milo, tests/fixtures here, plus every sibling under
+// Roots: std, examples, tests/fixtures here, plus every sibling under
 // ~/git/milo-language (MILO_PACKAGES_ROOT) that exists; missing checkouts are skipped
 // like check-packages.sh does. Worktrees, node_modules and dot-dirs are excluded.
 //
@@ -52,7 +52,6 @@ function walk(dir: string, out: string[] = []): string[] {
 const roots: [string, string][] = [
   ["std", join(REPO, "std")],
   ["examples", join(REPO, "examples")],
-  ["src-milo", join(REPO, "src-milo")],
   ["fixtures", join(REPO, "tests", "fixtures")],
 ];
 const PKG = process.env.MILO_PACKAGES_ROOT ?? join(homedir(), "git", "milo-language");
@@ -60,7 +59,7 @@ if (existsSync(PKG)) {
   for (const e of readdirSync(PKG).sort()) {
     const p = join(PKG, e);
     if (e.startsWith(".") || !statSync(p).isDirectory()) continue;
-    if (resolve(p) === REPO || (existsSync(join(p, "std")) && existsSync(join(p, "src-milo")))) continue; // the compiler checkout itself
+    if (resolve(p) === REPO || (existsSync(join(p, "std")) && existsSync(join(p, "src", "checker.ts")))) continue; // a compiler checkout (this one or a second clone)
     roots.push([e, p]);
   }
 }
@@ -192,10 +191,10 @@ if (asJson) {
   console.log(`\n${(total.lines / 1000).toFixed(0)}k lines; ${total.unsafe} unsafe blocks, ${total.ffi} (${pct}%) FFI; ${total.nonffi} non-FFI, ${nonffiOutsideStd} of those outside std`);
   const attrs: Record<string, number> = {};
   for (const [n, r] of Object.entries(results)) {
-    if (n === "std" || n === "fixtures" || n === "src-milo") continue;
+    if (n === "std" || n === "fixtures") continue;
     for (const [a, c] of Object.entries(r.attrs)) attrs[a] = (attrs[a] ?? 0) + c;
   }
-  console.log("attributes outside std/fixtures/src-milo: " + Object.entries(attrs).sort((a, b) => b[1] - a[1]).map(([a, c]) => `${a} ${c}`).join(", "));
+  console.log("attributes outside std/fixtures: " + Object.entries(attrs).sort((a, b) => b[1] - a[1]).map(([a, c]) => `${a} ${c}`).join(", "));
   const friction = Object.entries(results).filter(([n]) => n !== "std" && n !== "fixtures").map(([n, r]) => `${n} ${r.friction.length}`).join(", ");
   console.log("friction comments outside std/fixtures: " + friction);
   if (showComments) {
@@ -220,7 +219,7 @@ if (check || process.env.MILO_CENSUS_UPDATE) {
     // Sibling checkouts may be absent; this repo's own roots never are. Losing one, or the
     // block scanner matching nothing (std always has FFI unsafe), reads as a shrink and
     // would pass. Either way the census measured nothing it can vouch for.
-    const ownMissing = ["std", "examples", "src-milo", "fixtures"].filter(n => !(n in now));
+    const ownMissing = ["std", "examples", "fixtures"].filter(n => !(n in now));
     if (ownMissing.length) { console.error(`census gate BROKEN: this repo's own root(s) ${ownMissing.join(", ")} measured no files`); process.exit(2); }
     if (results.std!.unsafe === 0) { console.error("census gate BROKEN: found no `unsafe` block at all in std; the block scanner no longer matches"); process.exit(2); }
     if (absent.length) console.log(`not measured (checkout absent): ${absent.join(", ")}`);

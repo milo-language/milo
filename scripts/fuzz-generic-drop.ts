@@ -567,7 +567,7 @@ function render(path: Path, inst: Inst, sizeSeed: number): string {
 ${inst.prelude(sizeSeed)}
 ${path.decls ? sub(path.decls) : ""}
 pub fn main(): i32 {
-    var sink: i64 = 0
+    ${/\bsink = /.test(body) ? "var" : "let"} sink: i64 = 0
     if true {
 ${body}
     }

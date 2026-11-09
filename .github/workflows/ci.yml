@@ -56,7 +56,9 @@ jobs:
           done
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
-      - run: bun test
+      # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
+      # slower); a test that needs a tighter limit sets its own.
+      - run: bun test --timeout 30000
       # Dialect gates (FileCheck, hygiene, round-trip, test/programs against the reference interpreter). Until
       # 2026-11-03 they lived only in mlir/run.sh, which CI never ran.
       - name: MLIR dialect gates
@@ -88,16 +90,14 @@ jobs:
       - name: Unsafe census ratchet
         run: bun scripts/corpus-census.ts --check
       # `milo build --sanitize` existed for a long time and nothing ran it over the corpus.
-      # scripts/selfhost-asan.ts asks whether milo-self's OUTPUT is memory-safe; nobody asked
-      # it of the reference compiler's output, so use-after-free, out-of-bounds and
-      # double-free in generated code had no gate. The leak ratchet above cannot see any of
+      # Use-after-free, out-of-bounds and double-free in generated code had no gate. The leak ratchet above cannot see any of
       # those — different question, and it only sees blocks big enough for `leaks` to report.
       #
       # COST, measured on this runner rather than guessed: 4m38s for the fixtures corpus
       # (run 32382533309), against 9m11s for the leak ratchet immediately above. Each entry
       # is its own -fsanitize=address build plus a run, so it scales with the corpus.
-      # If it ever starts hurting, the precedent is in .github/workflows/selfhost.yml: keep
-      # the fast check on push, move the slow sweep to the nightly schedule. It finds
+      # If it ever starts hurting: keep the fast check on push, move the slow sweep to a
+      # nightly schedule. It finds
       # nothing today — the whole value is catching a future regression, which argues for
       # running it often rather than rarely.
       # `bun run test:asan` is the same command developers run locally (package.json), so
@@ -171,6 +171,15 @@ jobs:
       # `bun test`, at which point this job was the only one that could not link it. The
       # alternative was `@skip-os: linux`, which buys a green tick by deleting the coverage.
       - run: sudo apt-get update && sudo apt-get install -y clang z3 lld qemu-system-arm libssl-dev libsqlite3-dev libgl1-mesa-dev
+      # Noble's z3 4.8.12 hangs on arm64 on a linear query with bounds near 2^63 (tests/prove/
+      # rteCalleeNoEnsures, `n + 100` in i64) under every solver option tried; 4.13.4 answers in ms.
+      - name: Replace apt z3 on arm64
+        if: runner.arch == 'ARM64'
+        run: |
+          curl -fsSL -o /tmp/z3.zip https://github.com/Z3Prover/z3/releases/download/z3-4.13.4/z3-4.13.4-arm64-glibc-2.34.zip
+          unzip -qo /tmp/z3.zip -d /tmp/z3
+          sudo install /tmp/z3/z3-4.13.4-arm64-glibc-2.34/bin/z3 /usr/local/bin/z3
+          /usr/local/bin/z3 --version
       # When this job goes red, the toolchain it actually resolved is the first thing you
       # need and the most annoying to get after the fact (mirrors the Windows job).
       - name: Toolchain info
@@ -184,7 +193,9 @@ jobs:
           done
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
-      - run: bun test
+      # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
+      # slower); a test that needs a tighter limit sets its own.
+      - run: bun test --timeout 30000
       # Reads this runner's headers, so it's the only thing that can check the Linux decls.
       - run: bun run scripts/audit-extern-returns.ts
       # Same sweep as macOS. The seed is fixed, so this is not a second draw: it is the

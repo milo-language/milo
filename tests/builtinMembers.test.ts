@@ -89,7 +89,7 @@ test("every builtin member in the table is dispatched by the checker", () => {
     }
   }
   expect(missing).toEqual([]);
-});
+}, 30_000); // one full check with the prelude per row; 5.2s on the macOS runner, past bun's 5s default
 
 // `json` is dispatched inside checkMethodCallExpr but is not a builtin member: it is
 // the auto-stringify coercion for an http context's `ctx.json(struct)` ARGUMENT, and

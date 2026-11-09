@@ -1,0 +1,31 @@
+// Sample for tests/contractTests.test.ts. cooled holds its implication; cooledWrong breaks it
+// only when the left side is true, so a harness that dropped the clause would pass it.
+pub fn noParams(): i32
+ensures result == 7
+{
+    return 7
+}
+
+pub fn main(): i32
+ensures result == 7
+{
+    return noParams()
+}
+
+pub fn cooled(reading: i32, target: i32): i32
+ensures reading >= target ==> result == 0
+{
+    if reading >= target {
+        return 0
+    }
+    return 1
+}
+
+pub fn cooledWrong(reading: i32, target: i32): i32
+ensures reading >= target ==> result == 0
+{
+    if reading >= target {
+        return 1
+    }
+    return 0
+}

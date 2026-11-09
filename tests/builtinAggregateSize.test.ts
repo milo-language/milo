@@ -8,10 +8,8 @@
 //
 // Nothing in `bun test` noticed. The fixtures that put a map in a struct still passed,
 // because the bytes that stopped being copied were the ones the test did not read. What
-// caught it was the self-hosted compiler segfaulting on its first lookup — src-milo is full
-// of structs with HashMap fields — and that gate only runs on a commit touching src-milo/,
-// std/ or the selfhost scripts. A src/-only commit can break the bootstrap and nothing here
-// says a word.
+// caught it was the old hand-written self-hosted compiler (full of structs with HashMap
+// fields) segfaulting on its first lookup, which no test in this repo would have.
 //
 // So: compare the two directly. Emit a program using all three aggregates, parse the type
 // definitions out of the IR, and check each against typeSize.

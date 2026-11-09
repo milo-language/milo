@@ -1,3 +1,0 @@
-# Fixtures that still make the self-hosted compiler report an AddressSanitizer error.
-# Shrinking list, never a spec: a name may only be REMOVED. Empty is the goal state.
-# Refresh with: bun scripts/selfhost-asan.ts --write

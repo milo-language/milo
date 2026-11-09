@@ -36,7 +36,7 @@ takes a URL and writes a phone and a desktop shot.
 
 `Browser.launch` starts Chrome with `--headless=new`, DevTools bound to 127.0.0.1 on the
 given port, and a fresh temporary profile; it polls `/json/list` until the page target
-appears (10 s at most) and connects to it. Closing or dropping the `Browser` closes Chrome
+appears (30 s at most) and connects to it. Closing or dropping the `Browser` closes Chrome
 and removes the profile.
 
 `call(method, paramsJson)` is the whole protocol: send one command, read until the reply
@@ -112,7 +112,7 @@ fn Browser.launch(chrome: &string, port: u16): Result<Browser>
 ```
 
 Start `chrome` headless with DevTools on `port` (loopback only) and a fresh temporary
-profile, and connect to its page. Waits up to 10 s for the browser to come up.
+profile, and connect to its page. Waits up to 30 s for the browser to come up.
 
 #### `Browser.navigate`
 

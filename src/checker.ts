@@ -2612,7 +2612,8 @@ export class TypeChecker {
     if (!info?.decl) return;
     // A Copy instance (`Option<i32>`) already has `.clone()` as the identity.
     if (this.isCopyType({ tag: "enum", name: mangled })) return;
-    if (this.derive.enumCloneBlocker(mangled, this.cloneDerived)) return;
+    // Not `top`: an Option's generic clone calls its payload's clone(), which a Heap lacks.
+    if (this.derive.enumCloneBlocker(mangled, this.cloneDerived, false)) return;
     const impl = this.derive.deriveCloneEnum(info.decl, true);
     if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [], interfaces: [], globals: [], deriveTemplates: [] }, this._pendingImplFns);
   }
@@ -4878,7 +4879,8 @@ export class TypeChecker {
         shrunk = true;
       }
       for (const e of [...program.enums, ...builtinInstances]) {
-        if (!cloneDerived.has(e.name) || !this.derive.enumCloneBlocker(e.name, cloneDerived)) continue;
+        const conditional = CONDITIONAL_CLONE_BASES.has(this.enums.get(e.name)?.baseName ?? "");
+        if (!cloneDerived.has(e.name) || !this.derive.enumCloneBlocker(e.name, cloneDerived, !conditional)) continue;
         cloneDerived.delete(e.name);
         shrunk = true;
       }

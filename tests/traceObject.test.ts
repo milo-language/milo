@@ -69,9 +69,9 @@ describe("trace-object", () => {
     const bin = join(dir, "pid-host");
     expect(milo(["build", join(ROOT, "examples", "assured", "pid", "pid.milo"), "-g", "--debug", "-o", bin]).code).toBe(0);
     const r = milo(["trace-object", bin, "--strict", "--json"]);
-    expect(r.code).toBe(0);
     const t = JSON.parse(r.out);
     expect(t.untraced).toEqual([]);
+    expect(r.code).toBe(0);
     expect(t.coveredBytes).toBe(t.totalBytes);
     // the glue is in the binary (prelude's ErrorMessage and Unit) and every range has a line
     const glue = t.functions.filter((f: any) => /\$(Eq\$eq|Clone\$clone)$/.test(f.name));

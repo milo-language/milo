@@ -37,6 +37,16 @@ test("std/string's contracts hold under drawn inputs", () => {
   expect(json.passed).toBeGreaterThanOrEqual(9);
 });
 
+test("a clause using ==> is checked as an implication, and a fn with no params still compiles, main included", () => {
+  const { code, json } = run("tests/contracts/contractTestsImplies.milo");
+  expect(code).toBe(1);
+  const byName = new Map<string, any>(json.tests.map((t: any) => [t.name, t]));
+  expect(byName.get("testContract_noParams").ok).toBe(true);
+  expect(byName.get("testContract_main").ok).toBe(true);
+  expect(byName.get("testContract_cooled").ok).toBe(true);
+  expect(byName.get("testContract_cooledWrong").ok).toBe(false);
+});
+
 test("a struct param is built by its constructor, and the refutation names the ctor args", () => {
   const { code, json } = run("tests/contracts/contractTestsStructs.milo");
   expect(code).toBe(1);

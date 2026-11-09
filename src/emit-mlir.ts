@@ -177,9 +177,11 @@ function scalar(t: TypeKind, what: string): string {
 }
 
 const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
-// The aggregates placeType is spelling, outermost first, and the outermost of them the
-// spelling so far names by name alone.
-const spelling = new WeakMap<MlirEmitCtx, { keys: string[]; outer: number }>();
+// Every struct and enum is spelled by name alone (`!milo.struct<"N">`); its body is one
+// definition per type (typeAliasText), so the text is linear in the number of types. Spelled
+// whole at each use, mutually recursive types grew exponentially (30 MB for six enums).
+const typeDefs = new WeakMap<MlirEmitCtx, Map<string, string>>();
+const spelledOrder = new WeakMap<MlirEmitCtx, string[]>();
 
 /**
  * Every dialect type the emitter spells, interned once per context (an id per type text),
@@ -231,17 +233,31 @@ function recordType(cx: MlirEmitCtx, ty: string, t: TypeKind): void {
   if (id === undefined) { id = tt.flags.length; tt.ids.set(ty, id); tt.flags.push(0); }
   let f = tt.flags[id];
   if ((f & F_SPELLED) && tt.from[id] === t) return;
-  const own = (ownsStructurally(cx, t, []) ? F_DROP : 0) | (runsUserDropT(cx, t, []) ? F_USER_DROP : 0);
+  const own = (ownsStructurally(cx, t, []) ? F_DROP : 0) | (runsUserDropT(cx, t, new Set()) ? F_USER_DROP : 0);
   if (!(f & F_SPELLED)) { f |= F_SPELLED | own; tt.from[id] = t; }
   else if ((f & (F_DROP | F_USER_DROP)) !== own) f |= F_SHARED;
-  // A type met inside its own fields is spelled by name alone, which says nothing of its size.
-  const nameOnly = (t.tag === "struct" || t.tag === "enum") && ty === `!milo.${t.tag}<${quote(t.name)}>`;
-  if (!(f & F_SIZED) && !nameOnly) {
-    const big = t.tag === "array" || ((t.tag === "struct" || t.tag === "enum") && (cx.typeSizeOf(t) >= 128 || ty.includes("!milo.array<")));
+  if (!(f & F_SIZED)) {
+    const big = t.tag === "array" || ((t.tag === "struct" || t.tag === "enum") && (cx.typeSizeOf(t) >= 128 || holdsArray(cx, t, new Set())));
     const memory = big && !(t.tag === "enum" && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT);
     f |= F_SIZED | (big ? F_SLOT : 0) | (memory ? F_MEMORY : 0);
   }
   tt.flags[id] = f;
+}
+
+/** `t` holds a fixed-size array anywhere in its type (through boxes, Vecs, fields). */
+function holdsArray(cx: MlirEmitCtx, t: TypeKind, seen: Set<string>): boolean {
+  switch (t.tag) {
+    case "array": return t.size !== null || holdsArray(cx, t.element, seen);
+    case "heap": case "ref": return holdsArray(cx, t.inner, seen);
+    case "vec": return holdsArray(cx, t.element, seen);
+    case "hashmap": return holdsArray(cx, t.key, seen) || holdsArray(cx, t.value, seen);
+    case "fn": return t.params.some(p => holdsArray(cx, p, seen)) || holdsArray(cx, t.ret, seen);
+    case "struct": case "enum":
+      if (seen.has(t.name)) return false;
+      seen.add(t.name);
+      return fieldTypes(cx, t).some(f => holdsArray(cx, f, seen));
+    default: return false;
+  }
 }
 
 /** A binding of `ty` lives in a slot (F_SLOT). */
@@ -279,15 +295,17 @@ function fieldTypes(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): 
 }
 
 /** A user's Drop runs somewhere inside a value of `t` when it is dropped. */
-function runsUserDropT(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
+function runsUserDropT(cx: MlirEmitCtx, t: TypeKind, seen: Set<string>): boolean {
   switch (t.tag) {
     case "vec": case "array": return runsUserDropT(cx, t.element, seen);
     case "heap": return runsUserDropT(cx, t.inner, seen);
     case "hashmap": return runsUserDropT(cx, t.key, seen) || runsUserDropT(cx, t.value, seen);
     case "struct": case "enum":
       if (cx.dropImpls.has(t.name)) return true;
-      if (seen.includes(t.name)) return false;
-      return fieldTypes(cx, t).some(f => runsUserDropT(cx, f, [...seen, t.name]));
+      // One visit per type: an existence query, and a path-wise walk is exponential in a cycle.
+      if (seen.has(t.name)) return false;
+      seen.add(t.name);
+      return fieldTypes(cx, t).some(f => runsUserDropT(cx, f, seen));
     // The concrete type behind an interface is erased.
     case "interface": return true;
     // An owning closure's captures are not in its type; capturing one is refused instead.
@@ -355,26 +373,56 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
   if (m !== null || (t.tag !== "struct" && t.tag !== "enum")) return m;
   let cache = aggregates.get(cx);
   if (!cache) aggregates.set(cx, cache = new Map());
-  const key = `${t.tag} ${t.name}`;
+  // Cached before its fields are spelled: a type met inside its own fields is the same name.
+  const key = `!milo.${t.tag}<${quote(t.name)}>`;
   if (cache.has(key)) return cache.get(key)!;
-  let sp = spelling.get(cx);
-  if (!sp) spelling.set(cx, sp = { keys: [], outer: Infinity });
-  const at = sp.keys.indexOf(key);
-  if (at >= 0) {
-    // Met again inside its own fields (through a Vec): by name alone, the same type.
-    sp.outer = Math.min(sp.outer, at);
-    return `!milo.${t.tag}<${quote(t.name)}>`;
+  let order = spelledOrder.get(cx);
+  if (!order) spelledOrder.set(cx, order = []);
+  let defs = typeDefs.get(cx);
+  if (!defs) typeDefs.set(cx, defs = new Map());
+  const mark = order.length;
+  cache.set(key, key);
+  order.push(key);
+  const body = aggregateType(cx, t);
+  if (body === null) {
+    // Types spelled meanwhile named this one as spellable; forget them, they are re-spelled
+    // (and fail) on demand.
+    for (const k of order.splice(mark)) { cache.delete(k); defs.delete(k); }
+    cache.set(key, null);
+    return null;
   }
-  const depth = sp.keys.length, saved = sp.outer;
-  sp.keys.push(key);
-  sp.outer = Infinity;
-  let r: string | null;
-  try { r = aggregateType(cx, t); } finally { sp.keys.pop(); }
-  // A spelling that names an enclosing type by name alone is complete only inside that
-  // type's own, so it is not the one to reuse.
-  if (sp.outer >= depth) cache.set(key, r);
-  sp.outer = Math.min(saved, sp.outer);
-  return r;
+  defs.set(key, body);
+  return key;
+}
+
+/**
+ * The definitions of every struct and enum spelled so far, as MLIR type aliases for the
+ * head of the module. A bare `!milo.enum<"N">` resolves to the defined type of that name,
+ * but a bare struct met before its body is the empty struct, so a struct not yet defined is
+ * spelled whole where first mentioned, once (a mutually recursive group).
+ */
+export function typeAliasText(cx: MlirEmitCtx): string {
+  const defs = typeDefs.get(cx);
+  if (!defs) return "";
+  const done = new Set<string>(), open = new Set<string>();
+  const structRef = /!milo\.struct<"(?:[^"\\]|\\.)*">/g;
+  const whole = (token: string, body: string): string => {
+    open.add(token);
+    const text = body.replace(structRef, (m: string) => {
+      const inner = defs.get(m);
+      if (inner === undefined || inner === m || done.has(m) || open.has(m)) return m;
+      return whole(m, inner);
+    });
+    open.delete(token);
+    done.add(token);
+    return text;
+  };
+  const lines: string[] = [];
+  for (const [token, body] of defs) {
+    if (done.has(token)) continue;
+    lines.push(`!milo_t${lines.length} = ${whole(token, body)}`);
+  }
+  return lines.length ? lines.join("\n") + "\n" : "";
 }
 
 /**
@@ -953,9 +1001,7 @@ class FnEmitter {
     // isSretCall narrowed Call away; a call that is not sret returns a place-only value.
     const c = e as Form;
     if ((c.kind === "Call" && !this.cx.isBuiltinName(c.func)) || c.kind === "ClosureCall") {
-      this.abiResult = true;
-      const v = this.callScope(() => c.kind === "Call" ? this.call(c, false) : this.closureCall(c, false));
-      this.abiResult = false;
+      const v = this.callScope(() => c.kind === "Call" ? this.call(c, false, undefined, true) : this.closureCall(c, false, true));
       this.emit(`milo.store ${this.take(v, ty, "call result").ref}, ${dst} init : !milo.ref<${ty}>`);
       return;
     }
@@ -1270,6 +1316,13 @@ class FnEmitter {
       const pp = this.ptrPlace(e)!;
       return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
     }
+    // A plain-data payload read out of a held box: copied from the box's own place. An
+    // owning one would have to empty the box (a move) and a temporary box is freed after
+    // the read: neither is a place to copy from.
+    if (e.kind === "HeapDeref" && !this.hasDrop(ty) && !isTempBox(this.f(e.operand))) {
+      const p = this.heapPlace(e);
+      return p.ty === ty ? { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
+    }
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
@@ -1372,9 +1425,6 @@ class FnEmitter {
     return p ? { ref: p, ty: PTR } : this.def(`milo.addr ${ref} : ${ty}`, PTR);
   }
   private retPlaceOnly = false;
-  // Set by into() for the call it is about to emit: its place-only result may be an SSA
-  // value, the ABI's, stored straight into the destination.
-  private abiResult = false;
 
   /**
    * placeType, or the unsupported reason: what a place of `t` holds, and the
@@ -3812,10 +3862,8 @@ class FnEmitter {
   }
 
   /** `f(args)` through a fn value: the callee, then the args. */
-  private closureCall(e: FormOf<"ClosureCall">, _stmt: boolean): Val {
-    // For this call only, as call() takes it: a result that lives in memory is the ABI's value.
-    const abi = this.abiResult;
-    this.abiResult = false;
+  // abi: a result that lives in memory is the ABI's value (for this call only, not the calls in its arguments).
+  private closureCall(e: FormOf<"ClosureCall">, _stmt: boolean, abi = false): Val {
     const ft = stripRefs(this.fieldType(e.callee));
     if (ft.tag !== "fn") throw new MlirUnsupported("call of a non-fn");
     const f = this.expr(e.callee);
@@ -3991,7 +4039,12 @@ class FnEmitter {
     const op = this.f(e.operand);
     if (op.kind !== "Ident" && op.kind !== "FieldAccess" && op.kind !== "IndexAccess" && op.kind !== "HeapDeref")
       throw new MlirUnsupported("deref of a temporary box");
-    const h = this.expr(op);
+    // An element's box is read from the element's place: reading the element as a value
+    // would copy (own) the box, which is what a temporary is.
+    const slot = op.kind === "IndexAccess" ? this.elemRef(op) : null;
+    const h = slot && /^!milo\.heap</.test(slot.ty)
+      ? { ...this.def(`milo.load ${slot.ref} : !milo.ref<${slot.ty}>`, slot.ty), own: "view" as const }
+      : this.expr(op);
     const m = /^!milo\.heap<(.*)>$/.exec(h.ty);
     if (!m || h.own === "owned") throw new MlirUnsupported("deref of a temporary box");
     const ty = m[1];
@@ -4071,6 +4124,8 @@ class FnEmitter {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
+    // The value statement skips stmt(), where every other statement gets its guards.
+    this.lazyGuards(last);
     const tf = this.f(last.expr);
     const armLocal = tf.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(tf.name) : undefined;
     // The block's own binding (an arm's payload, as `let ... else` makes one) is moved out,
@@ -4106,6 +4161,8 @@ class FnEmitter {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
+    // The value statement skips stmt(), where every other statement gets its guards.
+    this.lazyGuards(last);
     const tf = this.f(last.expr);
     const armLocal = tf.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(tf.name) : undefined;
     if (armLocal?.kind === "var" && armLocal.owned && armLocal.ty === ty) {
@@ -5640,10 +5697,8 @@ class FnEmitter {
     return e.kind === "FieldAccess" && stripRefs(this.ty(e.object)).tag === "struct" && this.ty(e.object).tag !== "ref" && this.ownedLocal(e.object);
   }
 
-  private call(e: FormOf<"Call">, stmt: boolean, into?: string): Val {
-    // For this call only, not the calls in its arguments.
-    const abi = this.abiResult;
-    this.abiResult = false;
+  // abi: as closureCall's.
+  private call(e: FormOf<"Call">, stmt: boolean, into?: string, abi = false): Val {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (NATIVE_BUILTINS.has(e.func) || e.func.startsWith("_atomic")) return this.nativeBuiltin(e);

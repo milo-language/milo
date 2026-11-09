@@ -1,0 +1,48 @@
+// @derive(Clone) on mutually recursive types closes in the derive fixpoint, and the copy
+// owns its own boxes (the interpreter oracle checks the heap count at exit).
+// @expect: 6
+// @expect: 6
+// @expect: 106
+// @expect: 6
+@derive(Clone)
+enum Expr {
+    Num(i64),
+    Block(Heap<Stmt>),
+    Add(Heap<Expr>, Heap<Expr>),
+}
+
+@derive(Clone)
+struct Stmt {
+    label: string,
+    body: Vec<Expr>,
+}
+
+fn eval(e: &Expr): i64 {
+    return match e {
+        Expr.Num(n) => n
+        Expr.Block(s) => evalStmt(*s)
+        Expr.Add(a, b) => eval(*a) + eval(*b)
+    }
+}
+
+fn evalStmt(s: &Stmt): i64 {
+    var t = 0
+    for e in s.body {
+        t += eval(e)
+    }
+    return t
+}
+
+fn main() {
+    let a = Expr.Add(Heap(Expr.Num(1)), Heap(Expr.Num(2)))
+    let s = Stmt { label: "x", body: [a, Expr.Num(3)] }
+    let tree = Expr.Block(Heap(s))
+    let copy = tree.clone()
+    print(eval(tree))
+    print(eval(copy))
+    // Independent: the copy's boxes are its own, so changing it leaves the original alone.
+    var other = copy.clone()
+    other = Expr.Add(Heap(other), Heap(Expr.Num(100)))
+    print(eval(other))
+    print(eval(tree))
+}

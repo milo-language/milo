@@ -2,16 +2,13 @@
 # Format staged .milo files with bin/milo-fmt (built on demand by `milo fmt`).
 # Enable with: git config core.hooksPath .githooks
 #
-# src-milo/ is no longer excluded: M1 landed (docs/self-hosting.md), so nothing is
-# bisecting that history any more, and the directory has been run through fmt.
-#
 # tests/errors/ is excluded because those fixtures are intentionally malformed
 # (they must fail the type-checker/parser). Reformatting can rewrite or delete
 # the exact construct under test — e.g. the formatter strips a mid-expression
 # ';' that the parser is meant to reject — silently breaking the fixture.
 set -e
 
-# 1. Format staged .milo files (skip src-milo/ and tests/errors/ per the notes above).
+# 1. Format staged .milo files (skip tests/errors/ per the note above).
 staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.milo' | grep -vE '^tests/errors/' || true)
 if [ -n "$staged" ]; then
     # shellcheck disable=SC2086

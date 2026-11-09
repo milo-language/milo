@@ -162,7 +162,26 @@ test.if(hasQemu)("32-bit layout: structs, enums, clones and closures agree with 
   const src = join(DIR, "milo_embed_layout32.milo");
   writeFileSync(src, LAYOUT32_SRC);
   const r = milo(`run ${src} --target=cortex-m3`);
-  expect(r.out).toContain("exit=136");
+  expect(r.out, r.err.slice(0, 2000)).toContain("exit=136");
+  unlinkSync(src);
+}, COMPILE_TIMEOUT);
+
+// The box and itable hold pointers. Read as i64 slots, 32-bit drop glue took its function
+// from the wrong offset and jumped through garbage.
+const IFACE_DROP_SRC = `interface Shape { fn area(self: &Self): i64 }
+struct Sq { name: string, side: i64 }
+impl Sq { fn area(self: &Self): i64 { return self.side * self.side + self.name.len() } }
+fn main(): i32 {
+    let s: Heap<Shape> = Heap(Sq { name: "ab".clone(), side: 3 })
+    return s.area() as i32 + 30
+}
+`;
+
+test.if(hasQemu)("32-bit layout: dropping a boxed interface finds its destructor in the itable", () => {
+  const src = join(DIR, "milo_embed_iface32.milo");
+  writeFileSync(src, IFACE_DROP_SRC);
+  const r = milo(`run ${src} --target=cortex-m3`);
+  expect(r.out, r.err.slice(0, 2000)).toContain("exit=41");
   unlinkSync(src);
 }, COMPILE_TIMEOUT);
 

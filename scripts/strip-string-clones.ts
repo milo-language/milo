@@ -12,8 +12,7 @@
 //
 //   --dry-run              report what would change, write nothing
 //   --keep-closure <file>  leave alone every file that <file> imports, directly or not
-//                          (the self-hosted compiler's std closure: milo-self has no value
-//                          strings, so a clone it needs must stay)
+//                          (for a program that must keep its clones)
 //
 // It does not prove outputs unchanged; run the programs before and after.
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "fs";

@@ -4,7 +4,6 @@
 //   bun scripts/leak-check.ts                  # census, print leakers
 //   bun scripts/leak-check.ts --write          # rewrite tests/leak-clean.txt
 //   bun scripts/leak-check.ts --check          # ratchet: exit 1 if a clean fixture regressed
-//   bun scripts/leak-check.ts --compiler self  # gate milo-self's output instead of the oracle's
 //   bun scripts/leak-check.ts --filter json
 //
 // Why this exists: milo-self leaked EVERY owned local for months — `emitScopeDrops`
@@ -29,7 +28,6 @@ import { parseExpectedError, parseExpectedRuntimeError } from "../tests/annotati
 import { guardedRun } from "./guard";
 
 const MILO_ROOT = join(import.meta.dir, "..");
-const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self.bin");
 const FIXTURES_DIR = join(MILO_ROOT, "tests", "fixtures");
 // One manifest PER DETECTOR. LSan and `leaks` do not agree on what counts: LSan
 // reports blocks unreachable at exit from its own root set, `leaks` scans the live
@@ -44,20 +42,9 @@ const write = args.includes("--write");
 const check = args.includes("--check");
 const fi = args.indexOf("--filter");
 const filter = fi >= 0 ? args[fi + 1] : null;
-const ci = args.indexOf("--compiler");
-const compiler = ci >= 0 ? args[ci + 1] : "oracle";
-
-if (compiler !== "oracle" && compiler !== "self") {
-  console.error(`--compiler takes 'oracle' or 'self', got '${compiler}'`);
-  process.exit(2);
-}
 if (check && filter) {
   console.error("--check ratchets against the whole manifest; it cannot be combined with --filter");
   process.exit(2);
-}
-if (compiler === "self" && !existsSync(MILO_SELF)) {
-  console.error(`missing ${MILO_SELF} — run scripts/selfhost.sh first`);
-  process.exit(1);
 }
 
 // macOS has no LeakSanitizer; `leaks` is the only detector that sees unreachable
@@ -74,11 +61,6 @@ type Outcome = { name: string; ok: boolean; reason: string; detail: string };
 function buildCmd(src: string, outBin: string): [string, string[]] {
   const companionC = join(FIXTURES_DIR, `${basename(src, ".milo")}.c`);
   const extra = existsSync(companionC) ? [companionC] : [];
-  if (compiler === "self") {
-    // milo-self has no --sanitize; on Linux that costs this arm its detector, so
-    // the self gate is macOS-only for now (see the platform guard in main()).
-    return [MILO_SELF, ["build", src, "-o", outBin, ...extra]];
-  }
   const sanitize = IS_MAC ? [] : ["--sanitize"];
   return ["bun", [join(MILO_ROOT, "src", "main.ts"), "build", src, "-o", outBin, ...sanitize, ...extra]];
 }
@@ -149,11 +131,6 @@ async function checkOne(name: string, tmpDir: string): Promise<Outcome> {
 }
 
 async function main() {
-  if (compiler === "self" && !IS_MAC) {
-    console.error("--compiler self needs the `leaks` detector (macOS): milo-self has no --sanitize yet");
-    process.exit(2);
-  }
-
   const tmpDir = mkdtempSync(join(tmpdir(), "milo-leak-"));
   try {
     let names = readdirSync(FIXTURES_DIR)
@@ -183,7 +160,7 @@ async function main() {
 
     const clean = results.filter(r => r.ok).map(r => r.name);
     const dirty = results.filter(r => !r.ok);
-    console.log(`\n${clean.length}/${results.length} fixtures exit leak-free (${compiler}, ${IS_MAC ? "leaks -atExit" : "LeakSanitizer"})\n`);
+    console.log(`\n${clean.length}/${results.length} fixtures exit leak-free (${IS_MAC ? "leaks -atExit" : "LeakSanitizer"})\n`);
     for (const r of dirty) console.log(`  ${r.reason.padEnd(13)} ${r.name}: ${r.detail}`);
 
     if (write) {

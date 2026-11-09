@@ -1,0 +1,25 @@
+// Reading through a box held in a Vec element is a read of a place, not of a temporary box.
+// @expect: 7
+// @expect: 30
+// @expect: 3
+// @expect: ann
+// @expect: 5
+struct P {
+    name: string,
+    age: i64,
+}
+
+fn main() {
+    var v: Vec<Heap<i64>> = []
+    v.push(Heap(7))
+    v.push(Heap(23))
+    let i = 0
+    print(*v[i])
+    print(*v[0] + *v[1])
+    print(v.len + 1)
+
+    var ps: Vec<Heap<P>> = []
+    ps.push(Heap(P { name: "ann", age: 5 }))
+    print((*ps[0]).name)
+    print((*ps[0]).age)
+}

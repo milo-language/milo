@@ -19,7 +19,8 @@
 //
 // The line table of a linked image can carry sequences of discarded sections (their addresses
 // restart at 0 and overlap live code). A sequence counts only when it starts exactly at a
-// function's address.
+// function's address. It may run on over later functions: a build without
+// -ffunction-sections (every hosted ELF target) has one sequence per text section.
 import { existsSync } from "fs";
 import { basename, isAbsolute, resolve } from "path";
 import { isMachO, machoStubs, norm, run, tool } from "./object-checks";
@@ -41,8 +42,9 @@ const TRAP_TARGETS: [RegExp, string][] = [
 ];
 
 // Code that is not the program: the startup/semihosting shim (tools/cortex-m/startup.c), libc
-// shims and the process scaffold. It has no line table by design; reported apart, not gated.
-const RUNTIME_FN = /^(_*milo|\.Lmilo|__)|^(Reset_Handler|exit|_exit|printf|semihost\w*|print_exit_code|_start|start|malloc|calloc|realloc|free|mem\w+|str\w+|abort)$|^_*(replay|scheduler)/;
+// shims, the process scaffold and the glibc crt objects. It has no line table by design;
+// reported apart, not gated.
+const RUNTIME_FN = /^(_*milo|\.Lmilo|__)|^(Reset_Handler|exit|_exit|printf|semihost\w*|print_exit_code|_start|start|_init|_fini|call_weak_fn|init_have_lse_atomics|frame_dummy|(de)?register_tm_clones|_dl_relocate_static_pie|malloc|calloc|realloc|free|mem\w+|str\w+|abort)$|^_*(replay|scheduler)/;
 
 export interface FnSite { name: string; file: string; line: number; ids: string[] }
 
@@ -186,15 +188,20 @@ const bytes = (r: { start: number; end: number }) => r.end - r.start;
 export function traceObject(binary: string, sites: FnSite[]): ObjectTrace {
   const code = disassemble(binary);
   const byStart = new Map(code.map(f => [f.start, f]));
-  // ELF: only a sequence that starts at a function's address is live (see the header).
+  // ELF: only a sequence that starts at a function's address is live (see the header), and
+  // a function takes the one starting there, else a live one that runs on over it.
   // Mach-O: dsymutil has already dropped the dead ones and emits one sequence over many
   // functions, so every sequence is live and a function takes the one that contains it.
   const macho = isMachO(binary);
   const all = lineSequences(binary);
   const seqs = new Map<number, Row[]>();
   if (!macho) for (const s of all) if (byStart.has(s[0]!.addr) && !seqs.has(s[0]!.addr)) seqs.set(s[0]!.addr, s);
+  const containing = (list: Iterable<Row[]>, f: CodeFn): Row[] | undefined => {
+    for (const s of list) if (s[0]!.addr <= f.start && f.start < s[s.length - 1]!.addr) return s;
+    return undefined;
+  };
   const seqOf = (f: CodeFn): Row[] | undefined =>
-    macho ? all.find(s => s[0]!.addr <= f.start && f.start < s[s.length - 1]!.addr) : seqs.get(f.start);
+    macho ? containing(all, f) : seqs.get(f.start) ?? containing(seqs.values(), f);
 
   // Line -> owning function: the declaration at or before the line, in the same file.
   const decls = new Map<string, FnSite[]>();

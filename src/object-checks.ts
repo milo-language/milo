@@ -46,7 +46,7 @@ const HELPER_ALLOW = /^(__aeabi_\w+|__(u?div|u?mod|mul|add|sub)(di|si|ti|df|sf)3
 // Pure libm: no allocation, no state.
 const LIBM_ALLOW = new Set(["floor", "ceil", "fmod", "pow", "sqrt", "sin", "cos", "tan", "atan", "atan2", "exp", "log", "log2", "log10", "fabs", "trunc", "round"]);
 // A profile that allows allocation may also import the usual hosted libc.
-const HOSTED_ALLOW = /^(malloc|calloc|realloc|free|mmap|munmap|mprotect|read|write|open|close|lseek|stat|fstat|fcntl|ioctl|getenv|setenv|unsetenv|gettimeofday|clock_gettime|usleep|nanosleep|sched_yield|getpid|kill|raise|atexit|fflush|fwrite|snprintf|dprintf|setvbuf|strerror|waitpid|pthread_\w+|_?_?error|__errno_location|environ|_NSGetEnviron|\w*context|stdout|stderr|__stdoutp|__stderrp|_tlv_bootstrap)$/;
+const HOSTED_ALLOW = /^(__libc_start_main|malloc|calloc|realloc|free|mmap|munmap|mprotect|read|write|open|close|lseek|stat|fstat|fcntl|ioctl|getenv|setenv|unsetenv|gettimeofday|clock_gettime|usleep|nanosleep|sched_yield|getpid|kill|raise|atexit|fflush|fwrite|snprintf|dprintf|setvbuf|strerror|waitpid|pthread_\w+|_?_?error|__errno_location|environ|_NSGetEnviron|\w*context|stdout|stderr|__stdoutp|__stderrp|_tlv_bootstrap)$/;
 
 export function tool(name: string): string { return join(LLVM_BIN, name); }
 export function run(cmd: string, args: string[]): string {

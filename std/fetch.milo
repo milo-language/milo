@@ -361,7 +361,6 @@ impl TlsStream {
                     for i in 0..n as i64 {
                         data.push(buf[i])
                     }
-                    // if-let, not .isErr(): keep std in milo-self's subset (no isErr builtin)
                     if let Result.Err(_) = chPump.send(data) {
                         break
                     }
