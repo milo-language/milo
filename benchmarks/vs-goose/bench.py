@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 G = Path(os.environ["G"])
@@ -23,7 +24,10 @@ CLANGXX = os.environ["CLANGXX"]
 RUSTC = os.environ["RUSTC"]
 GOOSE = os.environ["GOOSE"]
 MILO = os.environ["MILO"]
-REPS, WARM = 3, 2
+# BENCH_REPS / BENCH_WARM / BENCH_SIZES (e.g. "medium") trade rigor for a quick pass.
+REPS = int(os.environ.get("BENCH_REPS", 3))
+WARM = int(os.environ.get("BENCH_WARM", 2))
+ONLY_SIZES = set(os.environ["BENCH_SIZES"].split(",")) if os.environ.get("BENCH_SIZES") else None
 STACK_RESERVE = "GS_STACK_RESERVE=2147483648ull"
 GOOSE_N = r"^(\s*let\s+\w+\s*=\s*)(\d+)(\s*;.*//\s*BENCH_N.*)$"
 RUST_N = r"^(\s*const\s+\w+\s*:\s*\w+\s*=\s*)(\d+)(\s*;.*//\s*BENCH_N.*)$"
@@ -185,7 +189,6 @@ def build(lang, file, variant, n, tag):
     if lang == "goose":
         src = GEN / f"{tag}.goose"
         sized(G / "bench/goose" / file, src, n, GOOSE_N)
-        (GEN / "rng.goose").write_text((G / "bench/goose/rng.goose").read_text())
         run([GOOSE, "-O2", "--standalone", "-o", GEN / f"{tag}.c", src], log)
         run([CLANG, "-O2", f"-D{STACK_RESERVE}", GEN / f"{tag}.c", "-o", exe, "-pthread", "-lm"], log)
     elif lang == "cpp":
@@ -194,12 +197,10 @@ def build(lang, file, variant, n, tag):
     elif lang == "rust":
         src = GEN / f"{tag}.rs"
         sized(G / "bench/rust" / file, src, n, RUST_N)
-        (GEN / "bench.rs").write_text((G / "bench/rust/bench.rs").read_text())
         run([RUSTC, "-O", "-C", "codegen-units=1", "-o", exe, src], log)
     else:
         src = GEN / f"{tag}.milo"
         sized(MILODIR / file, src, n, MILO_N)
-        (GEN / "bench.milo").write_text((MILODIR / "bench.milo").read_text())
         run([MILO, "build", "--release", src, "-o", exe], log)
     return exe
 
@@ -231,14 +232,33 @@ def main():
     resfile = HERE / "measurements.json"
     res = json.loads(resfile.read_text()) if resfile.exists() and only else {}
     bad = []
+    # Shared helpers are written once, so the parallel builds below never race on them.
+    (GEN / "rng.goose").write_text((G / "bench/goose/rng.goose").read_text())
+    (GEN / "bench.rs").write_text((G / "bench/rust/bench.rs").read_text())
+    (GEN / "bench.milo").write_text((MILODIR / "bench.milo").read_text())
+    jobs = {}
+    for name, param, sizes, rows in BENCHES:
+        if only and name not in only:
+            continue
+        for si, n in enumerate(sizes):
+            if ONLY_SIZES and SIZE_NAMES[si] not in ONLY_SIZES:
+                continue
+            for label, lang, file, variant in rows:
+                tag = re.sub(r"\W+", "_", f"{name}_{SIZE_NAMES[si]}_{label}").strip("_")
+                jobs[tag] = (lang, file, variant, n, tag)
+    # Builds run in parallel; timing below stays strictly sequential.
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+        exes = dict(zip(jobs, pool.map(lambda j: build(*j), jobs.values())))
     for name, param, sizes, rows in BENCHES:
         if only and name not in only:
             continue
         res[name] = {}
         for si, n in enumerate(sizes):
+            if ONLY_SIZES and SIZE_NAMES[si] not in ONLY_SIZES:
+                continue
             for label, lang, file, variant in rows:
                 tag = re.sub(r"\W+", "_", f"{name}_{SIZE_NAMES[si]}_{label}").strip("_")
-                m = measure(build(lang, file, variant, n, tag))
+                m = measure(exes[tag])
                 res[name].setdefault(label, {})[SIZE_NAMES[si]] = m
                 print(f"  {name:8} {SIZE_NAMES[si]:6} {label:38} "
                       f"{m.get('ms', 0):9.1f} ms {m.get('peak', 0) / 2**20:8.1f} MB", flush=True)
@@ -270,8 +290,8 @@ def report(res):
              f"Machine: {subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True).stdout.strip()}. "
              f"Toolchains: {first_line([CLANG, '--version'])}; {first_line([RUSTC, '--version'])}; "
              f"Milo `milo build --release` (-O3, overflow checks on, its default).", "",
-             "Wall time in ms: best of 3 whole-process runs after 2 warm-ups. Peak MB: max RSS "
-             "from `/usr/bin/time -l` at the largest size. A row whose stdout differs from the "
+             f"Wall time in ms: best of {REPS} whole-process runs after {WARM} warm-ups. Peak MB: max RSS "
+             "from `/usr/bin/time -l` at the largest size measured. A row whose stdout differs from the "
              "first C++ row is marked (mismatch).", ""]
     summary = []
     for name, param, sizes, rows in BENCHES:
