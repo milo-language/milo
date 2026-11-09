@@ -7,7 +7,7 @@ import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, ChainClause, Span, ImportDecl,
   TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl, GlobalDecl,
-  DeriveTemplate,
+  DeriveTemplate, StructLitField,
 } from "./ast";
 
 // Whether an identifier is spelled like a TYPE, which is what tells `Foo { … }` from a
@@ -1225,8 +1225,7 @@ export class Parser {
       if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
       this.pos = saved;
       this.exprDepth = savedDepth;
-      const clauses = this.parseChainClauses();
-      return this.finishIfChain(s, clauses);
+      return this.finishIfChain(s);
     }
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
@@ -1273,19 +1272,23 @@ export class Parser {
   // Rewrite a block's trailing statement-form if/else into an if-expression, in
   // place, recursing so deeply-nested arms convert too.
   private valueTailToExpr(body: Stmt[]): void {
-    if (body.length === 0) return;
-    const last = body[body.length - 1];
+    const last = body.pop();
+    if (last === undefined) return;
     if (last.kind === "IfStmt" && last.elseBody) {
       this.valueTailToExpr(last.thenBody);
       this.valueTailToExpr(last.elseBody);
       const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: last.thenBody, elseBody: last.elseBody, span: last.span };
-      body[body.length - 1] = { kind: "ExprStmt", expr: asExpr, span: last.span };
-    } else if (last.kind === "MatchStmt") {
+      body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
+      return;
+    }
+    if (last.kind === "MatchStmt") {
       // Same for a tail `match`; its arms become value arms in turn.
       for (const arm of last.arms) this.valueTailToExpr(arm.body);
       const asExpr: Expr = { kind: "MatchExpr", subject: last.subject, arms: last.arms, span: last.span };
-      body[body.length - 1] = { kind: "ExprStmt", expr: asExpr, span: last.span };
+      body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
+      return;
     }
+    body.push(last);
   }
 
   // The clauses of a let-chain, up to (not including) the body's `{`. Each operand is
@@ -1334,20 +1337,24 @@ export class Parser {
   }
 
   // A chain with a single `let` clause and nothing else is the plain if-let.
-  private finishIfChain(s: Span, clauses: ChainClause[]): Stmt {
+  // It parses the clauses itself so it owns them: the single let moves out of the list, the list moves into the chain.
+  private finishIfChain(s: Span): Stmt {
+    const clauses = this.parseChainClauses();
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
     const elseBody = this.parseIfElse();
-    const only = clauses[0];
-    if (clauses.length === 1 && only?.kind === "LetClause") {
-      return { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody, elseBody, span: s };
+    if (clauses.length === 1 && clauses[0].kind === "LetClause") {
+      const only = clauses.pop();
+      if (only !== undefined && only.kind === "LetClause") {
+        return { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody, elseBody, span: s };
+      }
     }
     return { kind: "IfChainStmt", clauses, thenBody, elseBody, span: s };
   }
 
   private parseIfLet(s: Span): Stmt {
-    return this.finishIfChain(s, this.parseChainClauses());
+    return this.finishIfChain(s);
   }
 
   private parseWhile(): Stmt {
@@ -1983,7 +1990,9 @@ export class Parser {
         }
         if (hasStructTurbofish) {
           this.pos = turbofishPos;
-          return this.parseStructLit(tok.value, s, turbofishArgs);
+          const fields: StructLitField[] = [];
+          const base = this.fillStructLit(fields);
+          return { kind: "StructLit", name: tok.value, fields, typeArgs: turbofishArgs, base, span: s };
         }
       }
       // struct literal: Name { field: value, ... }
@@ -2077,10 +2086,17 @@ export class Parser {
     this.error(`unexpected token '${tok.kind}'`, tok);
   }
 
-  private parseStructLit(name: string, span: Span, typeArgs?: import("./ast").MiloType[]): Expr {
-    this.expect(TokenKind.LBrace);
-    const fields: { name: string; value: Expr }[] = [];
+  private parseStructLit(name: string, span: Span): Expr {
+    const fields: StructLitField[] = [];
+    const base = this.fillStructLit(fields);
+    return { kind: "StructLit", name, fields, typeArgs: undefined, base, span };
+  }
+
+  // Fills the caller's field list and returns the `..base`: the caller owns both, so it can build the literal
+  // (with turbofish type arguments, say) by moving them in instead of copying.
+  private fillStructLit(fields: StructLitField[]): Expr | undefined {
     let base: Expr | undefined;
+    this.expect(TokenKind.LBrace);
     while (!this.at(TokenKind.RBrace)) {
       // Struct update `..base`: once, last, with at most a trailing comma after it.
       if (this.match(TokenKind.DotDot)) {
@@ -2104,7 +2120,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructLit", name, fields, typeArgs: typeArgs ? typeArgs : undefined, base: base ? base : undefined, span };
+    return base;
   }
 
   private parseCall(name: string, span: Span): Expr {
@@ -2122,14 +2138,19 @@ export class Parser {
     const s = this.span(this.peek());
     this.expect(TokenKind.LBracket);
     const elements: Expr[] = [];
-    while (!this.at(TokenKind.RBracket)) {
-      elements.push(this.parseExpr());
+    if (!this.at(TokenKind.RBracket)) {
+      const first = this.parseExpr();
       // [value; count] repeat syntax
-      if (elements.length === 1 && this.match(TokenKind.Semicolon)) {
+      if (this.match(TokenKind.Semicolon)) {
         const count = parseInt(this.expect(TokenKind.Int).value);
         this.expect(TokenKind.RBracket);
-        return { kind: "ArrayRepeat", value: elements[0], count, span: s };
+        return { kind: "ArrayRepeat", value: first, count, span: s };
       }
+      elements.push(first);
+      this.match(TokenKind.Comma);
+    }
+    while (!this.at(TokenKind.RBracket)) {
+      elements.push(this.parseExpr());
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBracket);

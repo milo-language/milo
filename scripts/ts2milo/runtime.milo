@@ -563,3 +563,15 @@ pub fn stubKeep<T>(x: &mut T) {
         stubKeep(&mut x)
     }
 }
+
+// xs.pop(): the last element moved out, or None when empty.
+pub fn vecPop<T>(v: &mut Vec<T>): Option<T> {
+    return v.pop()
+}
+
+pub fn vecPopHeap<T>(v: &mut Vec<Heap<T>>): Option<T> {
+    if let Option.Some(h) = v.pop() {
+        return Option.Some(*h)
+    }
+    return Option.None
+}

@@ -17,7 +17,7 @@ export const BUILTIN_CALLS = new Set([
   "Number.toString", "Array.push", "Set.has", "ReadonlySet.has", "Set.add", "Map.get", "Map.set", "Map.has",
   "Map.values", "ReadonlyMap.values", "Set.delete", "Map.delete", "ReadonlyMap.get", "ReadonlyMap.has", "WeakMap.get", "WeakMap.set", "WeakMap.has", "WeakMap.delete", "WeakSet.has", "WeakSet.add", "WeakSet.delete", "parseInt", "String()",
   "String.startsWith", "String.endsWith", "String.includes", "String.indexOf", "String.lastIndexOf", "String.split", "String.trim",
-  "Math.min", "Math.max", "String.charAt", "String.replace", "String.replaceAll", "Array.join",
+  "Math.min", "Math.max", "String.charAt", "String.replace", "String.replaceAll", "Array.join", "Array.pop",
 ]);
 
 import { mapValuesRecv, nodeKeyOfContainer } from "./node-identity";

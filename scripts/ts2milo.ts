@@ -592,6 +592,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const isLastUseLocal = (e0: ts.Expression): boolean => {
       let e = e0;
       while (ts.isParenthesizedExpression(e)) e = e.expression;
+      // `x.f` of an owned local `x` is a partial move: the last use of that field when no later read of `x` names `f` or `x` whole.
+      let field: string | undefined;
+      if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression)) { field = e.name.text; e = e.expression; }
       if (!ts.isIdentifier(e)) return false;
       const id = e;
       // A shorthand property `{ xs }` names the variable through its own symbol lookup.
@@ -634,7 +637,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       let later = false;
       const walk = (n: ts.Node) => {
         if (later) return;
-        if (ts.isIdentifier(n) && n !== id && n.text === id.text && n.pos >= id.end && n.pos < limit && !siblingFieldRead(n) && !inOtherBranch(n) && symOf(n) === sy) later = true;
+        if (ts.isIdentifier(n) && n !== id && n.text === id.text && n.pos >= id.end && n.pos < limit && !siblingFieldRead(n) && !(field !== undefined && ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n && n.parent.name.text !== field) &&!inOtherBranch(n) && symOf(n) === sy) later = true;
         ts.forEachChild(n, walk);
       };
       walk(scope);
@@ -985,6 +988,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             // xs.push(...ys): ys is consumed (a borrowed place is cloned under the usual rules).
             if (a.length === 1 && ts.isSpreadElement(a[0])) return `${ex(recv!)}.extend(${ownConv(a[0].expression, tOf(recv!))})`;
             const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${heapElem(el, ownConv(a[0], el))})`; }
+          // xs.pop(): the owned last element (the Milo Vec holds it boxed when its type is on a cycle).
+          case "Array.pop": {
+            const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0];
+            if (a.length !== 0) return fail(c, "Array.pop with arguments");
+            return `${useRuntime(onCycle(el) && !isOptionT(el) ? "vecPopHeap" : "vecPop", c)}(${ex(recv!)})`;
+          }
           case "Set.has": case "ReadonlySet.has": case "WeakSet.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Set.add": case "WeakSet.add": return `${ex(recv!)}.add(${keyEx(recv!, a[0], true)})`;
           case "Set.delete": case "WeakSet.delete": case "Map.delete": case "WeakMap.delete": return `${ex(recv!)}.remove(${keyEx(recv!, a[0])})`;
