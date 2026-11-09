@@ -1299,6 +1299,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
               hit("new Set([enums])", "HashSet.fromVec of Enum_value strings");
               return `${std("HashSet")}.fromVec([${(lit as ts.ArrayLiteralExpression).elements.map((x) => `${vf}(${ex(x)})`).join(", ")}])`;
             }
+            const keysOf = n.arguments?.length ? mapValuesRecv(checker, n.arguments[0], "keys") : null;
+            if (keysOf && !nodeKeyOfContainer(checker, tOf(keysOf)) && !enumDeclOf(checker.getTypeArguments(checker.getNonNullableType(tOf(keysOf)) as ts.TypeReference)[0])) { hit("new Set(map.keys())", "HashSet.fromVec(map.keys())"); return `${std("HashSet")}.fromVec(${ex(keysOf)}.keys())`; }
             hit("new Set([...])", "HashSet.fromVec");
             return n.arguments?.length ? `${std("HashSet")}.fromVec(${ownConv(n.arguments[0])})` : `${std("HashSet")}.new()`;
           }
