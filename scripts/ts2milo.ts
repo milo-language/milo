@@ -14,6 +14,8 @@ const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
 const RUNTIME_MOD = "./ts2milo_runtime";
 // JavaScript names the prelude already owns, mirrored under another name in the runtime.
 const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
+// Runtime-mirrored interfaces (runtime.milo) that derive Clone.
+const RUNTIME_CLONEABLE = new Set(["DiagnosticNote"]);
 const THROWN_ENUM = "Thrown";
 const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
 const safeId = (n: string): string => { const m = n.replace(/\$/g, "_d"); return RESERVED.has(m) ? m + "_" : m; };
@@ -670,7 +672,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       walk(scope);
       return !later;
     };
-    const needsClone = (e: ts.Expression) => isPlace(e) && !isCopyT(tOf(e)) && !isLastUseLocal(e);
+    const needsClone = (e: ts.Expression) => isPlace(e) && !(multiErr && ts.isPropertyAccessExpression(e) && isCatchVar(e.expression)) && !isCopyT(tOf(e)) && !isLastUseLocal(e);
     // A value of a recursive AST type: its clone is only safe where the copy is never mutated.
     const isRecursiveT = (t: ts.Type): boolean => {
       if (isCopyT(t)) return false;
@@ -696,7 +698,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
-      return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
+      return !!d && ts.isInterfaceDeclaration(d) && (astModel.cloneable.has(d.name.text) || RUNTIME_CLONEABLE.has(d.name.text));
     };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
     const ownBranches = new Set<ts.Node>();
@@ -784,6 +786,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const u = unparen(x);
       const sy = ts.isPropertyAccessExpression(u) ? checker.getSymbolAtLocation(u.name) : ts.isIdentifier(u) ? checker.getSymbolAtLocation(u) : undefined;
       const d0 = sy?.declarations?.[0];
+      // A catch variable is typed by the program-wide thrown enum and narrowed by instanceof, not by its declared type.
+      if (d0 && ts.isVariableDeclaration(d0) && ts.isCatchClause(d0.parent)) return false;
       return !!sy && !!d0 && (ts.isPropertyDeclaration(d0) || ts.isPropertySignature(d0) || ts.isParameter(d0) || ts.isVariableDeclaration(d0)) && !isLibDecl(program, d0) && unmappable(checker.getTypeOfSymbol(sy), u);
     };
     const memberAccess = (e: ts.PropertyAccessExpression): string => {
@@ -808,6 +812,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (!tu.variants.every((v) => v.members.some((m) => m.name?.getText() === e.name.text))) fail(e, `field ${e.name.text} is not on every variant of ${tu.name}`);
         hit("tagged union common field", "generated accessor Union_field(&u)");
         return `${useDeclared(`${tu.name}_${e.name.text}`, tu.decl.getSourceFile().fileName, e)}(${ex(e.expression)})`;
+      }
+      // A field of the caught error: with several thrown classes the variable is the enum, so the field is
+      // read out of its variant (moving the error; a later use of it is a compile error, which stubs the function).
+      if (multiErr && isCatchVar(e.expression)) {
+        const cls = tOf(e.expression).symbol;
+        if (!cls || !errTypes.includes(cls.name)) fail(e, "field of a caught value that is not a thrown class");
+        hit("catch variable field", "match on the Thrown variant, payload field moved out");
+        return `(match ${ex(e.expression)} { ${std(THROWN_ENUM)}.${thrownName(cls)}(p) => p.${safeId(e.name.text)}, _ => exit(70) })`;
       }
       const base = e.expression.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(e.expression);
       const code = `${base}.${safeId(e.name.text)}`;
@@ -1231,7 +1243,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         case ts.SyntaxKind.NonNullExpression: {
           // `xs[i]!` asserts what an index read already is; an operand that really is optional would need an unwrap.
           const inner = (e as ts.NonNullExpression).expression;
-          if (isOptionT(tOf(inner))) fail(e, "non-null assertion on an optional value");
+          // `x!` on an optional place unwraps (moving the payload out); the program checked it first, so the unwrap never traps.
+          if (isOptionT(tOf(inner))) {
+            if (!ts.isPropertyAccessExpression(unparen(inner)) && !ts.isIdentifier(unparen(inner))) fail(e, "non-null assertion on an optional value");
+            hit("non-null assertion on an optional place", "Option unwrap");
+            return `${ex(inner)}!`;
+          }
           return ex(inner, want);
         }
         case ts.SyntaxKind.ThisKeyword: return "self";
@@ -1717,6 +1734,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           } else body(t.catchClause!.block);
           ind--;
           line("}");
+          // Both the try body and the catch end in return/throw: nothing falls out the bottom, but Milo cannot see that through the flag.
+          const cs = t.catchClause!.block.statements;
+          if (tl && endsBlock(tl) && cs.length && endsBlock(cs[cs.length - 1])) { line("exit(70)"); line("while true {"); line("}"); }
           return;
         }
         case ts.SyntaxKind.ReturnStatement: {

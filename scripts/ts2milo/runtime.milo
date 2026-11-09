@@ -402,6 +402,7 @@ pub struct Span {
     file: Option<string>,
 }
 
+@derive(Clone)
 pub struct DiagnosticNote {
     message: string,
     span: Option<Span>,

@@ -52,7 +52,7 @@
   "src/mlir-llvm.ts": 93,
   "src/mutability-scan.ts": 0,
   "src/parser-stamp.ts": 0,
-  "src/parser.ts": 95,
+  "src/parser.ts": 97,
   "src/resolver.ts": 300,
   "src/scaffold.ts": 106,
   "src/tokens.ts": 0,

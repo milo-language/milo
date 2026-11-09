@@ -1282,11 +1282,13 @@ export class Parser {
     } catch (e) {
       if (!(e instanceof ParseError)) throw e;
       // Every field of the original with its span replaced (a field the original lacks stays absent).
-      const d: Diagnostic = { severity: e.diagnostic.severity, message: e.diagnostic.message, span };
-      if (e.diagnostic.len !== undefined) d.len = e.diagnostic.len;
-      if (e.diagnostic.hint !== undefined) d.hint = e.diagnostic.hint;
-      if (e.diagnostic.code !== undefined) d.code = e.diagnostic.code;
-      if (e.diagnostic.notes !== undefined) d.notes = e.diagnostic.notes;
+      const orig = e.diagnostic;
+      const d: Diagnostic = { severity: orig.severity, message: orig.message, span };
+      if (orig.len !== undefined) d.len = orig.len;
+      if (orig.hint !== undefined) d.hint = orig.hint;
+      if (orig.code !== undefined) d.code = orig.code;
+      const hasNotes = orig.notes !== undefined;
+      if (hasNotes) d.notes = orig.notes!;
       throw new ParseError(d, this.source, this.filePath);
     }
   }
@@ -1322,25 +1324,28 @@ export class Parser {
   private valueTailToExpr(body: Stmt[]): void {
     const last = body.pop();
     if (last === undefined) return;
-    if (last.kind === "IfStmt" && last.elseBody) {
+    if (last.kind === "IfStmt") {
+      const hasElse = last.elseBody !== undefined;
+      if (!hasElse) {
+        body.push(last);
+        return;
+      }
       // The branches are taken out of the narrowed statement into locals, which the recursion then mutates.
       const thenB = last.thenBody;
-      const elseB = last.elseBody;
+      const elseB = last.elseBody!;
       this.valueTailToExpr(thenB);
       this.valueTailToExpr(elseB);
       const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: thenB, elseBody: elseB, span: last.span };
       body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
-      return;
-    }
-    if (last.kind === "MatchStmt") {
+    } else if (last.kind === "MatchStmt") {
       // Same for a tail `match`; its arms become value arms in turn.
       const arms = last.arms;
       for (const arm of arms) this.valueTailToExpr(arm.body);
       const asExpr: Expr = { kind: "MatchExpr", subject: last.subject, arms, span: last.span };
       body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
-      return;
+    } else {
+      body.push(last);
     }
-    body.push(last);
   }
 
   // The clauses of a let-chain, up to (not including) the body's `{`. Each operand is
