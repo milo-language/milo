@@ -1,0 +1,14 @@
+// Stashing the borrowed element's field in an outer Vec from inside a sortByKey extractor
+// aliases its buffer: refused, only the returned key is exempt.
+// @error: cannot move 'u.tags' out of the borrowed 'u'
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    var keep: Vec<Vec<string>> = []
+    v.sortByKey((u: &User) => {
+        keep.push(u.tags)
+        return u.name
+    })
+    print(keep[0][0])
+}

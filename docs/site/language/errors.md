@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 594 distinct messages across 761 programs the compiler must reject.
+Every error message the test suite pins: 598 distinct messages across 767 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -131,6 +131,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'log's buffer; another run of this closure may push to 'log' before it resumes`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-log-s-buffer-another-run-of-this-closure-may-push-to-log-before-it-resumes)
 - [`'shatter' is private to shard.milo`](#shatter-is-private-to-shard-milo)
+- [`'show' can park this task while it holds a reference to 'G'; another task may push to 'G' before it resumes`](#show-can-park-this-task-while-it-holds-a-reference-to-g-another-task-may-push-to-g-before-it-resumes)
 - [`'show' can park this task while it holds a reference to 'log'; another run of this closure may push to 'log' before it resumes`](#show-can-park-this-task-while-it-holds-a-reference-to-log-another-run-of-this-closure-may-push-to-log-before-it-resumes)
 - [`'sign' returns i64 but can reach the end of its body without a 'return'`](#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
 - [`'sortBy' callback returns bool, but sortBy expects a signed integer`](#sortby-callback-returns-bool-but-sortby-expects-a-signed-integer)
@@ -280,6 +281,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move 'toks[...].e' out of 'toks': the element stays in the container, so the move would leave a zeroed 'e' behind`](#cannot-move-toks-e-out-of-toks-the-element-stays-in-the-container-so-the-move-would-leave-a-zeroed-e-behind)
 - [`cannot move 'toks[...].text' out of 'toks': the element stays in the container, so the move would leave a zeroed 'text' behind`](#cannot-move-toks-text-out-of-toks-the-element-stays-in-the-container-so-the-move-would-leave-a-zeroed-text-behind)
 - [`cannot move 'u.name' out of the borrowed 'u'`](#cannot-move-u-name-out-of-the-borrowed-u)
+- [`cannot move 'u.tags' out of the borrowed 'u'`](#cannot-move-u-tags-out-of-the-borrowed-u)
+- [`cannot move 'x.tags' out of the borrowed 'x'`](#cannot-move-x-tags-out-of-the-borrowed-x)
 - [`cannot move out of global`](#cannot-move-out-of-global)
 - [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
@@ -376,6 +379,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`expected '='`](#expected)
 - [`expected 'IDENT'`](#expected-ident)
 - [`expected *HandleA, got *HandleB`](#expected-handlea-got-handleb)
+- [`expected &Option<Heap<Span>>, got Option<Span>`](#expected-option-heap-span-got-option-span)
 - [`expected a type, but the file ended here`](#expected-a-type-but-the-file-ended-here)
 - [`expected an integer length`](#expected-an-integer-length)
 - [`expected NodeId, got EdgeId`](#expected-nodeid-got-edgeid)
@@ -3461,6 +3465,42 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/shardsManualPathPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardsManualPathPrivate.milo)</sub>
+
+## `'show' can park this task while it holds a reference to 'G'; another task may push to 'G' before it resumes` {#show-can-park-this-task-while-it-holds-a-reference-to-g-another-task-may-push-to-g-before-it-resumes}
+
+show() loops over its &Vec across a yield. Both tasks hand it the mutable global G, and the other task's push reallocates G's buffer under the loop inside show (a heap-use-after-free under ASan before this was rejected). show cannot see that its parameter is shared; the caller is the only place that can.
+
+```milo skip
+from "std/runtime" import { Task, schedulerYield }
+
+var G: Vec<string> = Vec.new()
+
+fn show(v: &Vec<string>): void {
+    for l in v {
+        schedulerYield()
+        print(l)
+    }
+}
+
+fn work(): void {
+    var i = 0
+    while i < 64 {
+        G.push("a string long enough to live on the heap".clone())
+        i = i + 1
+    }
+    show(G)
+}
+
+fn main(): void {
+    G.push("first".clone())
+    Task.scope((s) => {
+        s.spawn(() => work())
+        s.spawn(() => work())
+    })
+}
+```
+
+<sub>[tests/errors/globalRefArgAcrossPark.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalRefArgAcrossPark.milo)</sub>
 
 ## `'show' can park this task while it holds a reference to 'log'; another run of this closure may push to 'log' before it resumes` {#show-can-park-this-task-while-it-holds-a-reference-to-log-another-run-of-this-closure-may-push-to-log-before-it-resumes}
 
@@ -6882,6 +6922,84 @@ struct Text { s: string }
 
 <sub>[tests/errors/mapMoveFieldOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mapMoveFieldOutOfBorrow.milo)</sub>
 
+## `cannot move 'u.tags' out of the borrowed 'u'` {#cannot-move-u-tags-out-of-the-borrowed-u}
+
+Passing the borrowed element's field by value to a function from inside a sortByKey extractor hands the callee a buffer it will drop: refused.
+
+```milo skip
+struct User { name: string, tags: Vec<string> }
+
+fn eat(t: Vec<string>): i64 {
+    return t.len
+}
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    v.sortByKey((u: &User) => {
+        let n = eat(u.tags)
+        return n
+    })
+    print(v[0].tags[0])
+}
+```
+
+<sub>[tests/errors/keyExtractorArgMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorArgMove.milo)</sub>
+
+A sortByKey extractor may return a field of its borrowed element (the sort reads the key and forgets it), but nothing else in the body gets that pass: `let stolen = u.tags` owns the element's buffer and would free it at scope end. The checker used to exempt the whole body and left the refusal to the backend ("not covered").
+
+```milo skip
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }]
+    v.sortByKey((u: &User) => {
+        let stolen = u.tags
+        return u.name
+    })
+    print(v[0].tags[0])
+}
+```
+
+<sub>[tests/errors/keyExtractorLetMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorLetMove.milo)</sub>
+
+Stashing the borrowed element's field in an outer Vec from inside a sortByKey extractor aliases its buffer: refused, only the returned key is exempt.
+
+```milo skip
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    var keep: Vec<Vec<string>> = []
+    v.sortByKey((u: &User) => {
+        keep.push(u.tags)
+        return u.name
+    })
+    print(keep[0][0])
+}
+```
+
+<sub>[tests/errors/keyExtractorPushMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorPushMove.milo)</sub>
+
+## `cannot move 'x.tags' out of the borrowed 'x'` {#cannot-move-x-tags-out-of-the-borrowed-x}
+
+A closure nested inside a sortByKey extractor is not the extractor: `map` keeps what its closure returns, so returning a borrowed field from it aliases the element's buffer.
+
+```milo skip
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    let other: Vec<User> = [User { name: "zed" + "", tags: ["z" + "z"] }]
+    v.sortByKey((u: &User) => {
+        let all = other.map((x: &User) => x.tags)
+        return all.len
+    })
+    print(other[0].tags[0])
+}
+```
+
+<sub>[tests/errors/keyExtractorNestedClosureMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorNestedClosureMove.milo)</sub>
+
 ## `cannot move out of global` {#cannot-move-out-of-global}
 
 Passing a global to a by-value parameter moves it. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
@@ -9888,6 +10006,30 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/externTypeMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externTypeMismatch.milo)</sub>
+
+## `expected &Option<Heap<Span>>, got Option<Span>` {#expected-option-heap-span-got-option-span}
+
+```milo skip
+@derive(Clone)
+struct Span { line: i64 }
+
+fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
+    if let Option.Some(h) = o {
+        return Option.Some((*h).clone())
+    }
+    return Option.None
+}
+
+fn main() {
+    let plain: Option<Span> = Option.Some(Span { line: 3 })
+    let b = optUnbox<Span>(plain)
+    if let Option.Some(s) = b {
+        print(s.line.toString())
+    }
+}
+```
+
+<sub>[tests/errors/explicitTypeArgRefArgMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/explicitTypeArgRefArgMismatch.milo)</sub>
 
 ## `expected a type, but the file ended here` {#expected-a-type-but-the-file-ended-here}
 

@@ -420,6 +420,28 @@ a capture, and a closure value whose body the call cannot see.
 `tests/errors/closureEnvSharedRouteHandler.milo`, `closureEnvReentrant`,
 `closureEnvRefArgAcrossPark`, `concurrentClosureWritesCapture`.
 
+## Finding #24 (closed): the `sortByKey` extractor exemption covered its whole body
+
+Found 2026-11-08 while chasing backlog row 6. **Checker gap, backend failed closed**: no
+miscompiled binary was produced, so there is no ASan report, but the checker was the wrong
+layer to rely on the backend.
+
+A `sortByKey` key extractor may return a field of its borrowed element (`u.name`): the sort
+reads the key and forgets it. The checker implemented that as "inside the extractor body,
+moving out of a borrow is fine" (a depth counter), so every other move in the body passed
+too: `let stolen = u.tags`, `keep.push(u.tags)`, `eat(u.tags)`, and a nested
+`other.map((x: &User) => x.tags)`. Each of those owns the element's buffer and frees or
+aliases it. `milo check` said `ok`; `milo build --sanitize` died in the MLIR lowering with
+`main is not covered: let copies a borrowed value`. A lowering that learned to cover those
+shapes would have turned them into double frees with no checker error.
+
+Fix: the exemption is the set of expressions the extractor returns that are rooted at its
+parameter (`extractorKeyReads`), nothing else in the body and nothing in a nested closure.
+Everything else gets the ordinary `cannot move 'u.tags' out of the borrowed 'u'`. String
+fields not returned as the key take the existing shared-string path instead of an error.
+Guarded by `tests/errors/keyExtractorLetMove.milo`, `keyExtractorPushMove`,
+`keyExtractorArgMove`, `keyExtractorNestedClosureMove`.
+
 ## Finding #25 (closed): a mutable global handed to a callee that loops over it across a park
 
 `show(G)` from two tasks, where `show(v: &Vec<string>)` iterates `v` and yields inside the loop:

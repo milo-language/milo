@@ -1,0 +1,15 @@
+// A sortByKey extractor may return a field of its borrowed element (the sort reads the key
+// and forgets it), but nothing else in the body gets that pass: `let stolen = u.tags` owns
+// the element's buffer and would free it at scope end. The checker used to exempt the whole
+// body and left the refusal to the backend ("not covered").
+// @error: cannot move 'u.tags' out of the borrowed 'u'
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }]
+    v.sortByKey((u: &User) => {
+        let stolen = u.tags
+        return u.name
+    })
+    print(v[0].tags[0])
+}

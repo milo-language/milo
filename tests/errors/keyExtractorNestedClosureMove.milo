@@ -1,0 +1,14 @@
+// A closure nested inside a sortByKey extractor is not the extractor: `map` keeps what its
+// closure returns, so returning a borrowed field from it aliases the element's buffer.
+// @error: cannot move 'x.tags' out of the borrowed 'x'
+struct User { name: string, tags: Vec<string> }
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    let other: Vec<User> = [User { name: "zed" + "", tags: ["z" + "z"] }]
+    v.sortByKey((u: &User) => {
+        let all = other.map((x: &User) => x.tags)
+        return all.len
+    })
+    print(other[0].tags[0])
+}

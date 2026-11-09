@@ -1,0 +1,17 @@
+// Passing the borrowed element's field by value to a function from inside a sortByKey
+// extractor hands the callee a buffer it will drop: refused.
+// @error: cannot move 'u.tags' out of the borrowed 'u'
+struct User { name: string, tags: Vec<string> }
+
+fn eat(t: Vec<string>): i64 {
+    return t.len
+}
+
+fn main() {
+    var v: Vec<User> = [User { name: "bob" + "", tags: ["a" + "x"] }, User { name: "al" + "", tags: ["b" + "y"] }]
+    v.sortByKey((u: &User) => {
+        let n = eat(u.tags)
+        return n
+    })
+    print(v[0].tags[0])
+}

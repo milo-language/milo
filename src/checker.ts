@@ -938,10 +938,13 @@ export class TypeChecker {
     const f = this.closureFrames[this.closureFrames.length - 1];
     return f ? f.captures : null;
   }
-  // Nesting depth of a `sortByKey` key-extractor body currently being checked — the one
-  // callee known to read a returned field without retaining or dropping it. Only the
-  // move-out-of-a-borrow rule reads it; see the FieldAccess branch of tryMove.
-  private keyExtractorDepth = 0;
+  // The exact expressions a `sortByKey` extractor returns that are rooted at its borrowed
+  // parameter (`u.name`): the only moves out of a borrow the checker lets through, because
+  // the sort reads that key and forgets it. Keyed by expression, not by "inside the
+  // extractor", so a `let x = u.tags`, a call argument, or a nested closure's return in the
+  // same body is still refused. See the FieldAccess branch of tryMove.
+  private extractorKeyReads = new Set<Expr>();
+  private isExtractorKey(e: Expr): boolean { return this.extractorKeyReads.has(e); }
   // sortByKey's extractor arguments, so codegen can tell the ownership ledger that the
   // closure returns a view (codegen-own.ts keyExtractor).
   private keyExtractorClosures = new Set<Expr>();
@@ -8332,7 +8335,15 @@ export class TypeChecker {
   // rooted at its parameter (`p.name`), "owned" when none is (a fn value, `p.name + "!"`),
   // "mixed" otherwise. Nested closures are not this one's returns.
   private extractorKeys(arg: Expr): "borrowed" | "owned" | "mixed" {
-    if (arg.kind !== "Closure" || arg.params.length !== 1) return "owned";
+    const { values, rooted } = this.extractorReturns(arg);
+    const borrowed = values.filter(rooted).length;
+    return borrowed === 0 ? "owned" : borrowed === values.length ? "borrowed" : "mixed";
+  }
+
+  // The extractor's returned expressions (nested closures excluded) and whether one is a
+  // place rooted at its parameter.
+  private extractorReturns(arg: Expr): { values: Expr[]; rooted: (e: Expr) => boolean } {
+    if (arg.kind !== "Closure" || arg.params.length !== 1) return { values: [], rooted: () => false };
     const param = arg.params[0]!.name;
     const rooted = (e: Expr): boolean =>
       e.kind === "Ident" ? e.name === param : e.kind === "FieldAccess" ? rooted(e.object) : false;
@@ -8349,8 +8360,7 @@ export class TypeChecker {
     // An expression-bodied closure's value is its last statement.
     const last = arg.body[arg.body.length - 1];
     if (last?.kind === "ExprStmt") values.push(last.expr);
-    const borrowed = values.filter(rooted).length;
-    return borrowed === 0 ? "owned" : borrowed === values.length ? "borrowed" : "mixed";
+    return { values, rooted };
   }
 
   private consumeForwardedPayload(receiver: Expr, forwarded: TypeKind) {
@@ -8491,7 +8501,7 @@ export class TypeChecker {
       // with the real owner and double-freeing on drop. Reject; clone to own.
       // Not in a sortByKey extractor: the sort never drops its keys, so a shared copy
       // would leak its count (see the FieldAccess note below).
-      if (info && info.type.tag === "ref" && info.type.inner.tag === "string" && this.keyExtractorDepth === 0) {
+      if (info && info.type.tag === "ref" && info.type.inner.tag === "string" && !this.isExtractorKey(expr)) {
         this.sharedStringExprs.add(expr);
         return;
       }
@@ -8515,7 +8525,7 @@ export class TypeChecker {
       // a closure capture), read from inside a closure that captured it (moving it out of
       // the environment would make the closure call-once), or already turned into a share
       // by an earlier pass over this code: it shares now. Not in a sortByKey extractor.
-      if (info && info.type.tag === "string" && this.keyExtractorDepth === 0 && !this.forgetting) {
+      if (info && info.type.tag === "string" && !this.isExtractorKey(expr) && !this.forgetting) {
         let captured = false;
         this.eachCaptureOf(expr.name, () => { captured = true; });
         if (info.borrowed || captured || this.sharedStringExprs.has(expr)) { this.shareMovedExpr(expr); return; }
@@ -8642,7 +8652,7 @@ export class TypeChecker {
         // A string field the code does not own outright (behind a borrow, in a global, in
         // an element that stays in its container) is shared, never moved or refused. An
         // owned root keeps the move: that is free and leaves nothing to count.
-        if (fieldType.tag === "string" && this.keyExtractorDepth === 0 && (base !== null || this.globalRootOf(expr) !== null || this.fieldIsInElement(expr))) {
+        if (fieldType.tag === "string" && !this.isExtractorKey(expr) && (base !== null || this.globalRootOf(expr) !== null || this.fieldIsInElement(expr))) {
           this.sharedStringExprs.add(expr);
           return;
         }
@@ -8654,7 +8664,7 @@ export class TypeChecker {
           }
           const dropTy = this.dropTypeInPath(expr);
           // A string field leaving a Drop type shares instead: the value stays whole.
-          if (dropTy && fieldType.tag === "string" && this.keyExtractorDepth === 0) { this.shareMovedExpr(expr); return; }
+          if (dropTy && fieldType.tag === "string" && !this.isExtractorKey(expr)) { this.shareMovedExpr(expr); return; }
           if (dropTy) {
             this.error(`cannot move '${this.describeExpr(expr)}' out of '${dropTy}', which implements Drop`, expr.span,
               `a Drop impl runs against the whole value, so taking a field out of it would leave the destructor reading an empty one — clone the field, or consume the '${dropTy}' whole`);
@@ -8666,7 +8676,7 @@ export class TypeChecker {
           const place = this.staticFieldPath(expr);
           if (place) {
             const rootInfo = this.lookup(place.root);
-            const strField = fieldType.tag === "string" && this.keyExtractorDepth === 0;
+            const strField = fieldType.tag === "string" && !this.isExtractorKey(expr);
             if (strField && this.sharedStringExprs.has(expr)) { this.shareMovedExpr(expr); return; }
             if (rootInfo) this.markPlaceMoved(rootInfo, place.path);
             if (rootInfo && strField) this.noteStringMove(rootInfo, place.path, () => this.shareMovedExpr(expr));
@@ -8674,7 +8684,7 @@ export class TypeChecker {
             return;
           }
           this.movedExprs.add(expr);
-        } else if (this.keyExtractorDepth === 0) {
+        } else if (!this.isExtractorKey(expr)) {
           // `replace` is only offered for `&mut`: it swaps something in, which needs write
           // access. Through a shared `&` the only honest answer is to clone.
           const swap = base.mutable
@@ -8688,7 +8698,7 @@ export class TypeChecker {
         // and that field lives in the container being sorted, which silently emptied every
         // name (tests/fixtures/sortByKeyString.milo).
         //
-        // The exemption is deliberately keyed to sortByKey alone, and fail-closed: a new
+        // The exemption is the returned key expression of a sortByKey extractor, nothing else in its body, and fail-closed: a new
         // combinator is subject to the rule until someone proves it does not retain the
         // value. Exempting *closures* generally was unsound — `map` retains what its closure
         // returns, so `users.map((u: &User) => u.name)` built a Vec<string> aliasing the
@@ -13957,10 +13967,13 @@ export class TypeChecker {
         // parameter: the sort reads the key to compare it and never stores or drops it
         // (std/vec's sortByKey forgets every key it is handed).
         this.keyExtractorClosures.add(expr.args[0]!);
-        this.keyExtractorDepth++;
+        // Exempt only the returned key reads, not the whole body: any other move out of the
+        // borrowed element (a `let`, an argument, a nested closure's return) really would
+        // free or alias the element's buffer, and the backend refusing it is a backstop.
+        const ret = this.extractorReturns(expr.args[0]!);
+        for (const v of ret.values) if (ret.rooted(v)) this.extractorKeyReads.add(v);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortByKey", sp);
-        this.keyExtractorDepth--;
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'sortByKey' argument must be a function`, sp); return this.setType(expr, { tag: "void" }); }
         const keyType = cbType.ret;
