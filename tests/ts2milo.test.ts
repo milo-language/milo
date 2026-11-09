@@ -16,6 +16,13 @@ function tmpTs(name: string, body: string): { file: string; dir: string } {
 }
 
 describe("ts2milo", () => {
+  test("an overloaded method is emitted once, from its implementation", () => {
+    const { file, dir } = tmpTs("tsm_ovl.ts", "export class C {\n  f(a: number): number;\n  f(a: number | null): number | null;\n  f(a: number | null): number | null {\n    return a;\n  }\n}\n");
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const out = r.files.get("tsm_ovl.milo")!;
+    expect(out.match(/fn f\(/g)?.length).toBe(1);
+  });
+
   test("a plain function maps and is counted automatic", () => {
     const { file, dir } = tmpTs("tsm_add.ts", "export function add(a: number, b: number): number {\n  return a + b;\n}\n");
     const r = transpile([file], { overridesDir: join(dir, "none") });

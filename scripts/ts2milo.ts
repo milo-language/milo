@@ -134,7 +134,16 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const visit = (n: ts.Node) => {
       if ((ts.isInterfaceDeclaration(n) || ts.isClassDeclaration(n) || ts.isTypeAliasDeclaration(n) || ts.isEnumDeclaration(n)) && n.name) typeNames.add(n.name.text);
       if (inputSet.has(sf.fileName) && sf.fileName !== astFile && (ts.isUnionTypeNode(n) || ts.isTypeLiteralNode(n))) genCands.push({ node: n, file: sf.fileName });
-      if (ts.isTypeAliasDeclaration(n)) registerUnion(checker.getTypeFromTypeNode(n.type), n.name.text, sf.fileName);
+      if (ts.isTypeAliasDeclaration(n)) {
+        registerUnion(checker.getTypeFromTypeNode(n.type), n.name.text, sf.fileName);
+        // Registered up front so function bodies resolve `x.tag` to it; the declaring file emits the enum.
+        const isAstF = sf.fileName === astFile;
+        const tu0 = inputSet.has(sf.fileName) ? taggedUnionOf(checker, n) : null;
+        if (tu0 && (isAstF || tu0.variants.every((v) => ts.isTypeLiteralNode(v.decl))) && !litUnions.has(unionKey(tu0.variants.map((v) => v.kind)))) {
+          const lits = tu0.variants.map((v) => v.kind);
+          litUnions.set(unionKey(lits), { name: `${n.name.text}${isAstF ? "Kind" : "Tag"}`, lits, file: sf.fileName });
+        }
+      }
       if (ts.isInterfaceDeclaration(n)) {
         for (const m of n.members) if (ts.isPropertySignature(m) && m.type) {
           const t = checker.getNonNullableType(checker.getTypeFromTypeNode(m.type));
@@ -313,7 +322,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
 
   for (const file of files) {
     const sf = program.getSourceFile(file)!;
-    if (file === astFile) continue;
+    if (file === astFile && !opts.lenient) continue;
+    const isAst = file === astFile; // ast.ts: only its functions and consts (types come from emitAst) are appended to ast.milo
     const imports = new Map<string, Set<string>>();
     const use = (mod: string, name: string) => { if (!imports.has(mod)) imports.set(mod, new Set()); imports.get(mod)!.add(name); };
     const useRuntime = (name: string, at?: ts.Node) => {
@@ -371,7 +381,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
     // Whether `e` reads an array element held as Heap<T> (see `ty`).
     const boxedElem = (e: ts.Expression): boolean => ts.isElementAccessExpression(e) && checker.isArrayType(tOf(e.expression)) && onCycle(checker.getNonNullableType(checker.getTypeArguments(tOf(e.expression) as ts.TypeReference)[0]));
+    let opaqueFallback = false; // lenient signatures: a type with no mapping becomes TsOpaque so the function still exists for importers
     const ty = (t: ts.Type, at: ts.Node): string => {
+      try { return ty0(t, at); } catch (e) { if (opaqueFallback && e instanceof Unsupported) return useRuntime("TsOpaque", at); throw e; }
+    };
+    const ty0 = (t: ts.Type, at: ts.Node): string => {
       if (isOptionT(t)) { hit("T | undefined", "Option<T>"); return `Option<${ty(checker.getNonNullableType(t), at)}>`; }
       const ed = enumDeclOf(t);
       if (ed) return useDeclared(ed.name.text, ed.getSourceFile().fileName, at);
@@ -475,7 +489,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
       }
       if (want && isOptionT(want) && !isOptionT(tOf(e))) {
-        if (isUndefinedId(e)) return "Option.None";
+        if (isUndefinedId(e) || e.kind === ts.SyntaxKind.NullKeyword) return "Option.None";
         // Option.Some(x) takes x by value even where the argument itself is only borrowed.
         return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)), true)})`;
       }
@@ -1124,7 +1138,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       try {
         const forced = forceStub.get(fn);
         if (forced) throw new Unsupported(forced);
-        curFn = fn; scopes = []; usedNames = []; push();
+        curFn = fn; narrow.clear(); /* a function that threw mid-guard never ran its undo */ scopes = []; usedNames = []; push();
         prepareMutated(fn);
         const hdr = fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : "");
         line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
@@ -1141,7 +1155,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         out.length = mark; ind = markInd;
         report.stubs.push({ file: rel(file), name, reason: e.message });
         let hdr: string | null = null;
-        try { scopes = []; usedNames = []; push(); hdr = fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : ""); } catch (e2) { if (!(e2 instanceof Unsupported)) throw e2; }
+        const mkHdr = () => { scopes = []; usedNames = []; push(); return fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : ""); };
+        try { hdr = mkHdr(); } catch (e2) { if (!(e2 instanceof Unsupported)) throw e2; opaqueFallback = true; try { hdr = mkHdr(); } catch (e3) { if (!(e3 instanceof Unsupported)) throw e3; } finally { opaqueFallback = false; } }
         // A signature the transpiler cannot type is left out; its callers then fail to compile, which is the honest count.
         if (hdr !== null) {
           line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
@@ -1169,7 +1184,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
 
     const emitTop = (n: ts.Statement): void => {
       if (ts.isImportDeclaration(n) || ts.isEmptyStatement(n)) return;
-      const pub = isExported(n) ? "pub " : "";
+      if (isAst && !ts.isFunctionDeclaration(n) && !ts.isVariableStatement(n)) return;
+      // Types are always pub: a non-exported interface can still be imported by a sibling file's generated code.
+      const pub = isExported(n) || ts.isInterfaceDeclaration(n) || ts.isClassDeclaration(n) ? "pub " : "";
       if (ts.isEnumDeclaration(n)) {
         hit("string enum", "enum + Enum_value + Enum_fromValue");
         const name = n.name.text;
@@ -1210,12 +1227,35 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           line(`${pub}enum ${tu.name} {`);
           ind++; for (const v of tu.variants) line(`${pascal(v.kind)}(${v.name}),`); ind--;
           line("}");
-          for (const f of per[0]) {
-            if (f.ty.includes("Heap<") || !per.every((p) => p.some((x) => x.name === f.name && x.ty === f.ty))) continue;
+          // A field some variants lack is read only where TS narrowed to variants that have it; the other arms are unreachable.
+          const seenF = new Set<string>();
+          for (const f of per.flat()) {
+            if (seenF.has(f.name)) continue;
+            seenF.add(f.name);
+            const having = tu.variants.filter((_, i) => per[i].some((x) => x.name === f.name));
+            if (per.some((p) => p.some((x) => x.name === f.name && (x.ty !== f.ty || x.ty.includes("Heap<"))))) continue;
             const fn = safeId(f.name);
             line(`${pub}fn ${tu.name}_${f.name}(e: &${tu.name}): ${f.ty} {`);
             ind++; line("return match e {"); ind++;
-            for (const v of tu.variants) line(`${tu.name}.${pascal(v.kind)}(p) => p.${fn}.clone(),`);
+            for (const v of having) line(`${tu.name}.${pascal(v.kind)}(p) => p.${fn}.clone(),`);
+            if (having.length < tu.variants.length) {
+              line("_ => {"); ind++;
+              line(`eprint("ts2milo: ${tu.name}.${f.name} read on a variant without it")`);
+              line("exit(70)");
+              ind--; line("},");
+            }
+            ind--; line("}"); ind--;
+            line("}");
+          }
+          // The discriminant read outside a guard (`t.tag === "x"`) goes through `U_tag(e)`, an enum of the kinds.
+          const tagEnum = litUnions.get(unionKey(tu.variants.map((v) => v.kind)));
+          if (tagEnum) {
+            hit("tagged union discriminant", "U_tag accessor returning an enum of the kinds");
+            if (tagEnum.file === file) emitUnion(tagEnum);
+            else useDeclared(tagEnum.name, tagEnum.file, n);
+            line(`${pub}fn ${tu.name}_${tu.field}(e: &${tu.name}): ${tagEnum.name} {`);
+            ind++; line("return match e {"); ind++;
+            for (const v of tu.variants) line(`${tu.name}.${pascal(v.kind)}(p) => ${tagEnum.name}.${pascal(v.kind)},`);
             ind--; line("}"); ind--;
             line("}");
           }
@@ -1257,7 +1297,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         for (const m of n.members.filter(ts.isPropertySignature)) {
           const t = checker.getTypeAtLocation(m);
           const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : t;
-          line(`${safeId(mname(m.name))}: ${ty(pt, m)},`);
+          // An unmappable member type must not drop the whole declaration (siblings import it): lenient makes it opaque.
+          line(`${safeId(mname(m.name))}: ${lenientField(() => ({ type: ty(pt, m), init: null }), `${n.name.text}.${mname(m.name)}`).type},`);
         }
         ind--; line("}");
       } else if (ts.isClassDeclaration(n)) {
@@ -1342,7 +1383,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       try {
         const fields = lit.members.filter(ts.isPropertySignature).map((m) => {
           const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : checker.getTypeAtLocation(m);
-          return `${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${ty(pt, m)},`;
+          return `${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${lenientField(() => ({ type: ty(pt, m), init: null }), `${a.name}.${mname(m.name)}`).type},`;
         });
         line("@derive(Clone)");
         line(`pub struct ${a.name} {`);
@@ -1364,7 +1405,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
 
     const header = `// GENERATED by scripts/ts2milo.ts from ${rel(file)}. Do not edit; change the TypeScript.`;
     const impLines = [...imports.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, names]) => `from "${m}" import { ${[...names].sort().join(", ")} }`);
-    report.files.set(basename(file).replace(/\.ts$/, ".milo"), [header, ...impLines, "", ...out, ""].join("\n"));
+    if (isAst) report.files.set("ast.milo", [report.files.get("ast.milo")!.replace(/^(\/\/[^\n]*\n)/, (m) => m + impLines.map((l) => l + "\n").join("")), ...out, ""].join("\n"));
+    else report.files.set(basename(file).replace(/\.ts$/, ".milo"), [header, ...impLines, "", ...out, ""].join("\n"));
   }
   if (multiErr) {
     // One variant per thrown class. Declared classes come from their own generated file, the rest from the runtime.

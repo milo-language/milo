@@ -182,8 +182,8 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   for (const file of files) {
     for (const s of program.getSourceFile(file)!.statements) {
       // First file wins (ast.ts is first): a later file may reuse a name (backend-program.ts has its own StructDecl).
-      if (ts.isInterfaceDeclaration(s) && !ifaces.has(s.name.text)) { ifaces.set(s.name.text, s); fileOf.set(s.name.text, file); }
-      if (ts.isTypeAliasDeclaration(s) && !unions.has(s.name.text)) { const u = taggedUnionOf(checker, s); if (u) { unions.set(u.name, u); fileOf.set(u.name, file); } }
+      if (ts.isInterfaceDeclaration(s) && !(ifaces.has(s.name.text) && fileOf.get(s.name.text) === files[0])) { ifaces.set(s.name.text, s); fileOf.set(s.name.text, file); }
+      if (ts.isTypeAliasDeclaration(s) && !(unions.has(s.name.text) && fileOf.get(s.name.text) === files[0])) { const u = taggedUnionOf(checker, s); if (u) { unions.set(u.name, u); fileOf.set(u.name, file); } }
     }
   }
   // Direct (non-array) edges between named types. A union points at its variants, an interface at
