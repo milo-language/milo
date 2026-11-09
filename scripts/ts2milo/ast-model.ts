@@ -9,12 +9,25 @@
 import ts from "typescript";
 
 // `kind` is the discriminant's value, `name` the variant's struct, `decl` its declaration.
-export interface Variant { kind: string; name: string; decl: ts.InterfaceDeclaration | ts.TypeLiteralNode; members: readonly ts.TypeElement[] }
-export interface TaggedUnion { name: string; decl: ts.TypeAliasDeclaration; field: string; variants: Variant[] }
+export interface Variant { via?: string; kind: string; name: string; decl: ts.InterfaceDeclaration | ts.TypeLiteralNode; members: readonly ts.TypeElement[] }
+// A union of unions: `variants` are the leaves of every member, each `via` the member it sits under;
+// `members` is set only then.
+export interface NestedMember { name: string; decl: ts.Declaration; union: TaggedUnion | null }
+export interface TaggedUnion { name: string; decl: ts.TypeAliasDeclaration; field: string; variants: Variant[]; members?: NestedMember[] }
 
 const literalOf = (members: readonly ts.TypeElement[], field: string): string | null => {
   for (const m of members) {
     if (ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === field && m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal)) return m.type.literal.text;
+  }
+  return null;
+};
+
+const literalsOf = (members: readonly ts.TypeElement[], field: string): string[] | null => {
+  for (const m of members) {
+    if (!(ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === field && m.type)) continue;
+    const ts_ = ts.isUnionTypeNode(m.type) ? m.type.types : [m.type];
+    const out = ts_.map((x) => (ts.isLiteralTypeNode(x) && ts.isStringLiteral(x.literal) ? x.literal.text : null));
+    return out.some((x) => x === null) ? null : (out as string[]);
   }
   return null;
 };
@@ -40,6 +53,50 @@ export function taggedUnionOf(checker: ts.TypeChecker, d: ts.TypeAliasDeclaratio
     return { name: d.name.text, decl: d, field, variants };
   }
   return null;
+}
+
+// Rule (union of unions): `type U = A | B | ...` whose members are tagged unions and/or single
+// interfaces, all with one discriminant field and no literal in two members, is an enum with one
+// variant per MEMBER, wrapping it: `enum U { A(A), B(B) }`. A guard on a leaf narrows through both
+// levels. Passing an A where a U is wanted wraps it. `U` is never itself a flat tagged union.
+export function nestedUnionOf(checker: ts.TypeChecker, d: ts.TypeAliasDeclaration): TaggedUnion | null {
+  if (d.typeParameters || !ts.isUnionTypeNode(d.type) || !d.type.types.every(ts.isTypeReferenceNode)) return null;
+  const members: NestedMember[] = [];
+  const unionLeaves: Variant[] = [];
+  let field: string | null = null;
+  for (const t of d.type.types as unknown as ts.TypeReferenceNode[]) {
+    let sym = checker.getSymbolAtLocation(t.typeName);
+    if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym); // imported from another file
+    const decl = sym?.declarations?.[0];
+    if (!decl) return null;
+    let u: TaggedUnion | null = null;
+    if (ts.isTypeAliasDeclaration(decl)) {
+      u = taggedUnionOf(checker, decl);
+      if (!u || (field !== null && field !== u.field)) return null;
+      field = u.field;
+    } else if (!ts.isInterfaceDeclaration(decl)) return null;
+    const name = (decl as ts.InterfaceDeclaration | ts.TypeAliasDeclaration).name.text;
+    members.push({ name, decl, union: u });
+    if (u) unionLeaves.push(...u.variants.map((v) => ({ ...v, via: name })));
+  }
+  // With only interface members, the shared discriminant is found among the first one's string-literal fields.
+  if (!field) {
+    const first = (members[0].decl as ts.InterfaceDeclaration).members;
+    const cands = first.flatMap((m) => (ts.isPropertySignature(m) && ts.isIdentifier(m.name) ? [m.name.text] : [])).sort((a, b) => Number(b === "kind") - Number(a === "kind"));
+    field = cands.find((c) => literalsOf(first, c) !== null) ?? null;
+    if (!field) return null;
+  }
+  const variants: Variant[] = [];
+  for (const m of members) {
+    if (m.union) { variants.push(...unionLeaves.filter((v) => v.via === m.name)); continue; }
+    const decl = m.decl as ts.InterfaceDeclaration;
+    // A lone interface may carry several literals (`kind: "a" | "b"`): each is a leaf of the one member.
+    const lits = literalsOf(decl.members, field);
+    if (lits === null) return null;
+    for (const kind of lits) variants.push({ via: m.name, kind, name: m.name, decl, members: decl.members });
+  }
+  if (members.length < 2 || new Set(variants.map((v) => v.kind)).size !== variants.length) return null;
+  return { name: d.name.text, decl: d, field, variants, members };
 }
 
 // `e` is `x.<discriminant>` of a tagged-union value `x`: the one read of a union the transpiler
@@ -71,7 +128,7 @@ export function registerUnions(program: ts.Program, checker: ts.TypeChecker): vo
 // (an interface) is not a union.
 export function unionOfType(checker: ts.TypeChecker, t: ts.Type): TaggedUnion | null {
   const d = t.aliasSymbol?.declarations?.[0];
-  if (d && ts.isTypeAliasDeclaration(d)) return taggedUnionOf(checker, d);
+  if (d && ts.isTypeAliasDeclaration(d)) return taggedUnionOf(checker, d) ?? nestedUnionOf(checker, d);
   if (!t.isUnion()) return null;
   const reg = byVariant.get(checker);
   let found: TaggedUnion | null = null;

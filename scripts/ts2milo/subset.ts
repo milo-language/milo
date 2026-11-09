@@ -2,7 +2,7 @@
 // anything outside it) and scripts/ts-portable.ts (which counts what is outside it). The
 // transpiler only has emit code for what this file allows, so the two cannot disagree.
 import ts from "typescript";
-import { discriminantRead, registerUnions, taggedUnionOf, unionOfType } from "./ast-model";
+import { discriminantRead, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ast-model";
 
 export interface Violation {
   file: string;
@@ -191,7 +191,10 @@ function lastTerminates(c: ts.CaseOrDefaultClause): boolean {
 // no `break` but each clause's last statement (a `break` elsewhere would leave the chain, not the loop).
 export function switchHandled(checker: ts.TypeChecker, s: ts.SwitchStatement): "value" | "kind" | null {
   const d = unparenE(s.expression);
-  const kind = !!discriminantRead(checker, d);
+  const du = discriminantRead(checker, d);
+  // A switch is an else-if chain; a leaf of a union of unions needs two nested if-lets per arm.
+  if (du?.members) return null;
+  const kind = !!du;
   if (kind) { if (!sideEffectFree((d as ts.PropertyAccessExpression).expression) || !isPlaceE((d as ts.PropertyAccessExpression).expression)) return null; }
   else if (!sideEffectFree(d) || !isValueType(checker.getTypeAtLocation(d))) return null;
   const cs = s.caseBlock.clauses;
@@ -284,7 +287,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       const isNullish = (x: ts.TypeNode) => x.kind === K.UndefinedKeyword || (ts.isLiteralTypeNode(x) && x.literal.kind === K.NullKeyword);
       const rest = n.types.filter((x) => !isNullish(x));
       // The body of a tagged union declaration is the union rule itself, not a union type use.
-      const taggedBody = ts.isTypeAliasDeclaration(n.parent) && taggedUnionOf(checker, n.parent) !== null;
+      const taggedBody = ts.isTypeAliasDeclaration(n.parent) && (taggedUnionOf(checker, n.parent) !== null || nestedUnionOf(checker, n.parent) !== null);
       if (!lits && !taggedBody && !(rest.length === 1 && n.types.length === 2)) bad(n, "union type");
     } else if (ts.isLiteralTypeNode(n)) {
       const inOption = ts.isUnionTypeNode(n.parent) && n.parent.types.length === 2 && n.literal.kind === K.NullKeyword;
@@ -353,7 +356,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.TypeAliasDeclaration: {
         const a = n as ts.TypeAliasDeclaration;
         if (a.typeParameters) bad(n, "generic type alias");
-        else if (taggedUnionOf(checker, a) === null && !ts.isUnionTypeNode(a.type) && !(ts.isLiteralTypeNode(a.type))) bad(n, "type alias other than string literals");
+        else if (taggedUnionOf(checker, a) === null && nestedUnionOf(checker, a) === null && !ts.isUnionTypeNode(a.type) && !(ts.isLiteralTypeNode(a.type))) bad(n, "type alias other than string literals");
         return;
       }
       case K.VariableDeclaration: {

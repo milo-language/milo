@@ -420,6 +420,56 @@ describe("??, ?. and switch", () => {
     expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
   });
 
+  test("a union of unions wraps its members, narrows through both levels and runs", () => {
+    const r = gen("tsm_nest", [
+      "export type Lit = { kind: \"num\"; v: number } | { kind: \"neg\"; v: number };",
+      "export type Op = { kind: \"add\"; n: number } | { kind: \"mul\"; n: number };",
+      "export interface Mark { kind: \"mark\"; at: number }",
+      "export type Item = Lit | Op | Mark;",
+      "export function ofLit(l: Lit): Item { return l; }",
+      "export function ofOp(o: Op): Item { return o; }",
+      "export function ofMark(m: Mark): Item { return m; }",
+      "export function mkLit(v: number): Lit { return { kind: \"neg\", v: v }; }",
+      "export function mkOp(n: number): Op { return { kind: \"mul\", n: n }; }",
+      "export function mkMark(at: number): Mark { return { kind: \"mark\", at: at }; }",
+      // Guards after an early return still match the whole Item, and each leaf is reached through its member.
+      "export function score(i: Item): number {",
+      "  if (i.kind === \"add\") { return i.n; }",
+      "  if (i.kind === \"neg\") { return 0 - i.v; }",
+      "  if (i.kind === \"mark\") { return i.at + 1000; }",
+      "  if (i.kind === \"mul\") { return i.n * 10; }",
+      "  return 7;",
+      "}",
+    ].join("\n"), [
+      "from \"./tsm_nest\" import { ofLit, ofOp, ofMark, mkLit, mkOp, mkMark, score }",
+      "fn main(): i32 {",
+      "    if score(ofLit(mkLit(5))) != -5 { return 1 }",
+      "    if score(ofOp(mkOp(4))) != 40 { return 2 }",
+      "    if score(ofMark(mkMark(3))) != 1003 { return 3 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("pub enum Item {");
+    expect(r.out).toContain("if let Item.Op(");
+    expect(r.out).toContain("if let Op.Add(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("a union of unions narrowed by an early exit is refused with its reason", () => {
+    const { file } = tmpTs("tsm_nest_rej.ts", [
+      "export type A = { kind: \"a1\"; x: number } | { kind: \"a2\"; x: number };",
+      "export interface B { kind: \"b\"; y: number }",
+      "export type U = A | B;",
+      "export function f(u: U): number {",
+      "  if (u.kind === \"b\") { return 1; }",
+      "  return g(u);",
+      "}",
+      "function g(a: A): number { return 2; }",
+    ].join("\n"));
+    const r = transpile([file], { overridesDir: "/nonexistent", lenient: true });
+    expect(r.stubs.map((s) => s.reason).join("\n")).toContain("narrowed to a member by an early exit");
+  });
+
   test("switch on a tagged union kind narrows each case like a kind guard", () => {
     const r = gen("tsm_use", [
       "import type { Expr } from \"./ast\";",

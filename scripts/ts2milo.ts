@@ -6,7 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
-import { buildAstModel, discriminantRead, emitAst, guardUnion, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
+import { buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
@@ -473,6 +473,19 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         // Option.Some(x) takes x by value even where the argument itself is only borrowed.
         return `Option.Some(${owned(ex(e, checker.getNonNullableType(want)), true)})`;
       }
+      // A member of a union of unions where the union is wanted (an Expr for a Node) is wrapped in its variant.
+      const wu = want && !isOptionT(want) ? unionOfType(checker, want) : null;
+      if (wu?.members) {
+        const et = tOf(e);
+        const eu = unionOfType(checker, et);
+        if (eu?.name !== wu.name) {
+          const edecl = et.symbol?.declarations?.[0];
+          const m = wu.members.find((x) => (eu ? x.name === eu.name : !!edecl && ts.isInterfaceDeclaration(edecl) && x.name === edecl.name.text));
+          if (!m) fail(e, `a value of type ${checker.typeToString(et)} is not a member of the union of unions ${wu.name}`);
+          hit("union of unions member as the union", "wrapped in the member's variant");
+          return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${m!.name}(${owned(ex(e), true)})`;
+        }
+      }
       return owned(ex(e, want));
     };
     const ownConv = (e: ts.Expression, want?: ts.Type) => conv(e, want, true);
@@ -669,10 +682,19 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return withTry(c, code);
     };
 
+    let guardScrut: ts.Expression | null = null;
     const ex = (e: ts.Expression, want?: ts.Type): string => {
       if (narrow.size > 0 && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression || e.kind === ts.SyntaxKind.ElementAccessExpression)) {
         const nb = narrow.get(e.getText());
         if (nb) return nb.deref ? `(*${nb.name})` : nb.name;
+      }
+      // TS narrows a union of unions by an early exit or an else, but the Milo value is still the whole union.
+      // (A guard's own scrutinee is exempt: it is the whole union that gets matched.)
+      if (e !== guardScrut && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression)) {
+        const sym = checker.getSymbolAtLocation(e.kind === ts.SyntaxKind.Identifier ? e : (e as ts.PropertyAccessExpression).name);
+        const declT = sym && sym.declarations?.[0] && !ts.isTypeAliasDeclaration(sym.declarations[0]) ? checker.getNonNullableType(checker.getTypeOfSymbol(sym)) : undefined;
+        const du = declT?.aliasSymbol ? unionOfType(checker, declT) : null;
+        if (du?.members && unionOfType(checker, checker.getNonNullableType(tOf(e)))?.name !== du.name) fail(e, `${e.getText()} is a ${du.name} narrowed to a member by an early exit or an else (narrow with an if guard)`);
       }
       switch (e.kind) {
         case ts.SyntaxKind.ParenthesizedExpression: return `(${ex((e as ts.ParenthesizedExpression).expression, want)})`;
@@ -963,7 +985,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       let plain: string[] = [];
       const flush = () => { if (plain.length) { heads.push(`if ${plain.join(" && ")} {`); plain = []; } };
       for (const c of conjuncts(test)) {
-        let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string; then?: (code: string) => string } | null = null;
+        let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string; then?: (code: string) => string; outer?: (n: string) => string } | null = null;
         const tk = truthyHandled(checker, c);
         if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isStringLiteral(c.right)) {
           const tu = discriminantRead(checker, c.left);
@@ -971,6 +993,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             const useName = useDeclared(tu.name, tu.decl.getSourceFile().fileName, c);
             const kind = c.right.text;
             bind = { scrut: c.left.expression, pat: (n) => `${useName}.${pascal(kind)}(${n})`, deref: false, what: "tagged union kind guard" };
+            // A leaf of a union of unions is reached through its member: Node.Expr(o) first, then Expr.Call(n).
+            const via = tu.members?.find((m) => m.name === tu.variants.find((v) => v.kind === kind)?.via);
+            if (via?.union) {
+              const inner = useDeclared(via.union.name, via.union.decl.getSourceFile().fileName, c);
+              bind.outer = (o) => `${useName}.${via.name}(${o})`;
+              bind.pat = (n) => `${inner}.${pascal(kind)}(${n})`;
+            } else if (via) bind.pat = (n) => `${useName}.${via.name}(${n})`;
           }
         } else if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && (isUndefinedId(c.right) || c.right.kind === ts.SyntaxKind.NullKeyword)) {
           bind = { scrut: c.left, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(c.left), what: "undefined guard" };
@@ -986,7 +1015,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         hit(bind.what, "if let binding the payload, which replaces the guarded expression inside");
         const key = bind.scrut.getText();
         const name = fresh(key);
-        heads.push(`if let ${bind.pat(name)} = ${ex(bind.scrut)} {`);
+        guardScrut = bind.scrut;
+        let scrutCode = ex(bind.scrut);
+        guardScrut = null;
+        if (bind.outer) { const o = fresh(key); heads.push(`if let ${bind.outer(o)} = ${scrutCode} {`); scrutCode = o; }
+        heads.push(`if let ${bind.pat(name)} = ${scrutCode} {`);
         saved.push([key, narrow.get(key)]);
         narrow.set(key, { name, deref: bind.deref });
         if (bind.then) plain.push(bind.then(ex(bind.scrut)));
@@ -1175,6 +1208,30 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             line(`${pub}fn ${tu.name}_${f.name}(e: &${tu.name}): ${f.ty} {`);
             ind++; line("return match e {"); ind++;
             for (const v of tu.variants) line(`${tu.name}.${pascal(v.kind)}(p) => p.${fn}.clone(),`);
+            ind--; line("}"); ind--;
+            line("}");
+          }
+        }
+        // A union of unions (ast-model.ts nestedUnionOf): one variant per member, wrapping it.
+        const nu = nestedUnionOf(checker, n);
+        if (nu) {
+          hit("union of unions", "enum with one variant per member union/interface, wrapping it");
+          const memberFile = (m: { decl: ts.Declaration }) => m.decl.getSourceFile().fileName;
+          line(`${pub}enum ${nu.name} {`);
+          ind++; for (const m of nu.members!) line(`${m.name}(${useDeclared(m.name, memberFile(m), n)}),`); ind--;
+          line("}");
+          // A field every leaf has, delegating to each member union's own accessor.
+          const fieldOf = (v: (typeof nu.variants)[number], name: string) => v.members.find((x): x is ts.PropertySignature => ts.isPropertySignature(x) && (x.name as ts.Identifier).text === name);
+          for (const f of nu.variants[0].members.filter(ts.isPropertySignature)) {
+            const fname = mname(f.name);
+            if (fname === nu.field) continue;
+            const sigs = nu.variants.map((v) => fieldOf(v, fname));
+            if (sigs.some((x) => !x)) continue;
+            const tys = sigs.map((x) => ty(x!.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(x!.name)!) : checker.getTypeAtLocation(x!), x!));
+            if (tys.some((t) => t !== tys[0] || t.includes("Heap<")) || sigs.some((x) => astModel.boxed.has(x!))) continue;
+            line(`${pub}fn ${nu.name}_${fname}(e: &${nu.name}): ${tys[0]} {`);
+            ind++; line("return match e {"); ind++;
+            for (const m of nu.members!) line(`${nu.name}.${m.name}(p) => ${m.union ? `${useDeclared(`${m.name}_${fname}`, memberFile(m), n)}(p)` : `p.${safeId(fname)}.clone()`},`);
             ind--; line("}"); ind--;
             line("}");
           }
