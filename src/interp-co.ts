@@ -87,7 +87,8 @@ export class InterpCo extends InterpGen {
     this.touch("spawn"); // task ids come from one counter, so two spawns do not commute
     const t: Task = { id: this.nextTaskId++, state: "ready", gen: null, ctx: { frames: [], temps: [], depth: 0, pend: [] }, isMain: false, joiner: null, scopesOpen: 0, scope, cacheable: true, why: "" };
     t.cacheable = cacheable;
-    if (f.env.length > 0) t.envBlock = this.alloc(); // R-TASK-ABANDON: a task whose closure captures owns its environment on the heap
+    if (f.envId !== undefined) { t.envBlock = f.envId; f.envId = undefined; } // the closure's own block becomes the task's
+    else if (f.env.length > 0) t.envBlock = this.alloc(); // R-TASK-ABANDON: a task whose closure captures owns its environment on the heap
     t.gen = this.taskBody(f);
     this.tasks.set(t.id, t);
     this.runq.push(t);

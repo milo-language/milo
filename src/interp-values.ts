@@ -59,6 +59,7 @@ export interface ClosureV {
   body: unknown[];
   env: { name: string; slot: Slot }[];
   owning: boolean;
+  envId?: number; // the heap block of an owning closure's environment (the compiled env is one allocation)
   ret: import("./types").TypeKind;
 }
 export type Step = string | number;

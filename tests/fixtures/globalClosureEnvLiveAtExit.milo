@@ -1,0 +1,13 @@
+// @expect: ccc1
+// A global is never dropped, so a global owning closure and the string it captured stay live
+// at exit: two heap blocks (environment and string) in the binary and in the interpreter.
+fn mk(n: i64): move () => string {
+    let s = "c".repeat(3) + n.toString()
+    return move(): string => s
+}
+var G: move () => string = mk(1)
+
+pub fn main(): i32 {
+    print(G())
+    return 0
+}
