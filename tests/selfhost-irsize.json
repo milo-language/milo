@@ -1,7 +1,0 @@
-{
-  "lines": 572059,
-  "loc": 35596,
-  "ratio": 16.071,
-  "commit": "f5176655",
-  "note": "IR milo-self emits for src-milo. Rebaseline deliberately: bun scripts/selfhost-irsize.ts --write"
-}
