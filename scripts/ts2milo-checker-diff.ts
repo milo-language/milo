@@ -21,6 +21,23 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
+
+export type D = { severity: string; message: string; line?: number; col?: number };
+const key = (d: D) => `${d.severity} ${d.line ?? "-"}:${d.col ?? "-"} ${d.message}`;
+
+// First position where the two diagnostic lists differ, or null when identical.
+export const compareDiagnostics = (a: D[], b: D[]): { index: number; kind: string; ts?: D; gen?: D } | null => {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] && b[i] && key(a[i]) === key(b[i])) continue;
+    const kind = !a[i] ? "generated reports extra" : !b[i] ? "generated misses one" : a[i].message === b[i].message ? "same message, other position/severity" : "different message";
+    return { index: i, kind, ts: a[i], gen: b[i] };
+  }
+  return null;
+};
+
+// The CLI body is a function (not reindented) so importing this file for compareDiagnostics runs nothing.
+async function main() {
 const argv = process.argv.slice(2);
 const opt = (n: string) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : undefined);
 const only = opt("--only");
@@ -43,16 +60,13 @@ let programs: string[] = opt("--files")?.split(",") ?? [...list("tests/errors"),
 if (only) programs = programs.filter((p) => p.includes(only));
 if (limit) programs = programs.slice(0, limit);
 
-type D = { severity: string; message: string; line?: number; col?: number };
-const key = (d: D) => `${d.severity} ${d.line ?? "-"}:${d.col ?? "-"} ${d.message}`;
-
 const run = async (cmd: string[]) => {
   const p = Bun.spawn(cmd, { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const [o, e] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out: o, err: e };
 };
 
-let same = 0, stubbed = 0, bothParseReject = 0, skippedResolve = 0;
+let sameDiag = 0, sameEmpty = 0, stubbed = 0, bothParseReject = 0, skippedResolve = 0;
 const stubs = new Map<string, number>();
 const failures: string[] = [];
 const kinds = new Map<string, number>();
@@ -68,7 +82,7 @@ const one = async (prog: string) => {
   if (ast.code !== 0) {
     gen = await run([BIN, prog, "--check"]);
     const t0 = gen.out.trim();
-    if (t0 === "PARSE_ERROR" || t0 === "lex error") { same++; bothParseReject++; return; }
+    if (t0 === "PARSE_ERROR" || t0 === "lex error") { bothParseReject++; return; }
     if (/ts2milo stub:/.test(gen.out + gen.err)) { stubbed++; bump(stubs, "(TS resolve error; generated parser stubbed)"); return; }
     bump(kinds, "TS resolve error, generated parsed"); skippedResolve++; return;
   }
@@ -87,18 +101,18 @@ const one = async (prog: string) => {
     a = (JSON.parse(ts.out).diagnostics as D[]).map((d) => ({ severity: d.severity, message: d.message, line: d.line, col: d.col }));
     b = (JSON.parse(text).diagnostics as D[]).map((d) => ({ severity: d.severity, message: d.message, line: d.line, col: d.col }));
   } catch { bump(kinds, "unparseable output"); failures.push(`${prog}: unparseable output: ${(ts.out + gen.out).slice(0, 80)}`); return; }
-  const n = Math.max(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    if (a[i] && b[i] && key(a[i]) === key(b[i])) continue;
-    bump(kinds, !a[i] ? "generated reports extra" : !b[i] ? "generated misses one" : a[i].message === b[i].message ? "same message, other position/severity" : "different message");
-    failures.push(`${prog}: #${i} ts=${a[i] ? key(a[i]).slice(0, 90) : "(none)"} | gen=${b[i] ? key(b[i]).slice(0, 90) : "(none)"}`);
+  const d = compareDiagnostics(a, b);
+  if (d) {
+    bump(kinds, d.kind);
+    failures.push(`${prog}: #${d.index} ts=${d.ts ? key(d.ts).slice(0, 90) : "(none)"} | gen=${d.gen ? key(d.gen).slice(0, 90) : "(none)"}`);
     return;
   }
-  same++;
+  if (a.length) sameDiag++; else sameEmpty++;
 };
 await Promise.all(Array.from({ length: 8 }, async () => { while (next < programs.length) await one(programs[next++]); }));
 
-console.log(`same ${same} / ${programs.length}   (${bothParseReject} of them both reject at parse, message not compared; ${stubbed} hit a stub; ${skippedResolve} TS resolve errors skipped; ${failures.length} differ)`);
+const same = sameDiag + sameEmpty;
+console.log(`same ${same} / ${programs.length}   (same with diagnostics ${sameDiag}, same both empty ${sameEmpty}; parse-reject (not compared) ${bothParseReject}; ${stubbed} hit a stub; ${skippedResolve} TS resolve errors skipped; ${failures.length} differ)`);
 for (const f of failures.slice(0, showDiffs)) console.log("  " + f);
 if (stubs.size) { console.log("top stubs (first stub each program hits):"); for (const [w, n] of [...stubs].sort((x, y) => y[1] - x[1]).slice(0, 10)) console.log(`  ${String(n).padStart(5)}  ${w}`); }
 if (kinds.size) { console.log("diff kinds:"); for (const [w, n] of [...kinds].sort((x, y) => y[1] - x[1]).slice(0, 8)) console.log(`  ${String(n).padStart(5)}  ${w}`); }
@@ -121,3 +135,7 @@ if (census) {
   console.log(`census: ${total} stubbed fns in generated resolver + checker files; top reasons:`);
   for (const [w, n] of [...reasons].sort((x, y) => y[1] - x[1]).slice(0, census)) console.log(`  ${String(n).padStart(5)}  ${w}`);
 }
+  process.exit(same === programs.length ? 0 : 1);
+}
+
+if (import.meta.main) await main();

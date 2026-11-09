@@ -603,7 +603,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   decRoots.forEach((r, i) => !incomplete.has(r) && out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
 
   // ---- encoder: the mirror of the decoder, writing a generated AST as JSON (the parser differential compares it with
-  // emit-ast). Spans and the hidden node id are not written: the TS AST has no id, and spans are compared elsewhere. ----
+  // emit-ast). Spans are written as `emit-ast --spans` prints them; the hidden node id is not (the TS AST has no id). ----
   const e: string[] = [];
   const edone = new Set<string>();
   const enc = (ty: string): string => {
@@ -613,6 +613,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     const head = `fn ${name}(v: &${ty}, out: &mut string) {`;
     const lines: string[] = [];
     if (ty === "JsPrim") lines.push(head, `    match v {`, `        JsPrim.Big(s) => {`, `            jsonQuote(s, &mut out)`, `        }`, `        JsPrim.Num(x) => {`, `            out.pushStr(jsF64Json(x))`, `        }`, `        JsPrim.Str(s) => {`, `            jsonQuote(s, &mut out)`, `        }`, `        JsPrim.Bool(b) => {`, `            if b {`, `                out.pushStr("true")`, `            } else {`, `                out.pushStr("false")`, `            }`, `        }`, `    }`, `}`, "");
+    else if (ty === "Span") lines.push(head, `    out.pushStr("{\\"line\\":")`, `    out.pushStr(v.line.toString())`, `    out.pushStr(",\\"col\\":")`, `    out.pushStr(v.col.toString())`, `    if let Option.Some(fl) = v.file {`, `        out.pushStr(",\\"file\\":")`, `        jsonQuote(fl, &mut out)`, `    }`, `    out.pushStr("}")`, `}`, "");
     else if (ty === "i64") lines.push(head, `    out.pushStr(v.toString())`, `}`, "");
     else if (ty === "f64") lines.push(head, `    out.pushStr(jsF64Json(v))`, `}`, "");
     else if (ty === "bool") lines.push(head, `    if v {`, `        out.pushStr("true")`, `    } else {`, `        out.pushStr("false")`, `    }`, `}`, "");
@@ -643,7 +644,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       }
       lines.push(`    out.pushStr("}")`, `}`, "");
     } else {
-      const fs = (structFields.get(ty) ?? []).filter((f) => f.node && (!f.fill || f.fill === "Vec.new()") && !/\bSpan\b/.test(f.ty) && !/Hash(Set|Map)</.test(f.ty));
+      const fs = (structFields.get(ty) ?? []).filter((f) => f.node && (!f.fill || f.fill === "Vec.new()") && !/Hash(Set|Map)</.test(f.ty));
       const un = variantOf.get(ty) ? model.unions.get(variantOf.get(ty)!)! : null;
       const kind = un ? un.variants.find((vt) => vt.name === ty)!.kind : null;
       lines.push(head, `    out.pushStr("{")`);
