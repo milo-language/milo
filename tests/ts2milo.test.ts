@@ -1385,3 +1385,98 @@ describe("replaceNode intrinsic", () => {
     expect(r.functions.some((f) => f.name === "replaceNode")).toBe(false);
   }, WHOLE_FRONTEND_MS);
 });
+
+describe("destructuring declarations", () => {
+  const SRC = [
+    "interface V { a: number; b: string; items: number[] }",
+    "export function g(): V { return { a: 1, b: \"x\", items: [] }; }",
+    "export function obj(view: V): number { const { a, b } = view; return a + b.length; }",
+    "export function renamed(view: V): number { const { a: x } = view; return x; }",
+    "export function fresh(): number { const { a } = g(); return a; }",
+    "export function heads(vs: V[]): number { let n = 0; for (const { a, b } of vs) { n += a + b.length; } return n; }",
+    "export function entries(m: Map<string, number>): number { let n = 0; for (const [k, v] of m) { n += v + k.length; } return n; }",
+    "export function entriesCall(m: Map<string, V>): number { let n = 0; for (const [k, v] of m.entries()) n += v.a + k.length; return n; }",
+    "export function valuesOnly(m: Map<string, number>): number { let n = 0; for (const [, v] of m) n += v; return n; }",
+    "export function dflt(view: V): number { const { a = 1 } = view; return a; }",
+    "export function rest(view: V): number { const { ...r } = view; return r.a; }",
+    "export function nested(view: { v: V }): number { const { v: { a } } = view; return a; }",
+    "export function computed(view: V, k: \"a\"): number { const { [k]: a } = view; return a; }",
+    "export function arr(p: number[]): number { const [a, b] = p; return a + b; }",
+    "export function tuples(p: [number, number][]): number { let n = 0; for (const [a] of p) n += a; return n; }",
+    "export function param({ a }: V): number { return a; }",
+    "export function aliased(view: V): number { const { items } = view; items.push(1); return view.items.length; }",
+  ].join("\n") + "\n";
+  const run = () => {
+    const { file, dir } = tmpTs("tsm_destr.ts", SRC);
+    return { r: transpile([file], { overridesDir: join(dir, "none"), lenient: true }), name: "tsm_destr.milo" };
+  };
+  const stubOf = (r: ReturnType<typeof transpile>, fn: string) => r.stubs.find((s) => s.name === fn)?.reason ?? "";
+
+  test("an object pattern becomes one let per field, read like an explicit property", () => {
+    const { r, name } = run();
+    const out = r.files.get(name)!;
+    expect(out).toContain("pub fn obj(view: &V): i64 {\n    let a: i64 = view.a\n    let b: string = view.b\n");
+    expect(out).toContain("let x: i64 = view.a");
+    // A call initializer is bound once; the elements read the temp.
+    expect(out).toMatch(/let destr_\d+: V = g\(\)\n\s+let a: i64 = destr_\d+\.a/);
+    for (const f of ["obj", "renamed", "fresh"]) expect(r.stubs.map((s) => s.name)).not.toContain(f);
+  });
+
+  test("a for-of destructuring head reads the fields at the top of the body; a Map head walks the keys", () => {
+    const { r, name } = run();
+    const out = r.files.get(name)!;
+    expect(out).toMatch(/for destr_\d+ in vs \{\n\s+let a: i64 = destr_\d+\.a\n\s+let b: string = destr_\d+\.b/);
+    expect(out).toContain("for k in m.keys() {\n        let v: i64 = m.get(k)!");
+    expect(out).toContain("let v: V = m.get(k)!");
+    expect(out).toContain("for v in m.values() {");
+    for (const f of ["heads", "entries", "entriesCall", "valuesOnly"]) expect(r.stubs.map((s) => s.name)).not.toContain(f);
+  });
+
+  test("destructuring forms outside the lowering are refused by name, never a crash", () => {
+    const { r } = run();
+    expect(stubOf(r, "dflt")).toContain("destructuring with a default value");
+    expect(stubOf(r, "rest")).toContain("destructuring with a rest element");
+    expect(stubOf(r, "nested")).toContain("destructuring with a nested pattern");
+    expect(stubOf(r, "computed")).toContain("destructuring with a computed key");
+    expect(stubOf(r, "arr")).toContain("array destructuring (tuples have no Milo mapping)");
+    expect(stubOf(r, "tuples")).toContain("type [number, number]");
+    expect(stubOf(r, "param")).toContain("destructuring in this position");
+    expect(stubOf(r, "aliased")).toContain("is mutated through the local");
+    expect(r.stubs.filter((s) => s.reason.includes("transpiler crash"))).toEqual([]);
+  });
+
+  test("the old crash input (const { a, b } = view) no longer throws a non-Unsupported error", () => {
+    const { file, dir } = tmpTs("tsm_crash.ts", "export function f(view: { a: number; b: number }): number {\n  const { a, b } = view;\n  return a + b;\n}\n");
+    expect(transpile([file], { overridesDir: join(dir, "none") }).files.get("tsm_crash.milo")!).toContain("let a: i64 = view.a");
+    const bad = tmpTs("tsm_crash2.ts", "export function f(view: { a: number }): number {\n  const { a = 2 } = view;\n  return a;\n}\n");
+    expect(() => transpile([bad.file], { overridesDir: join(bad.dir, "none") })).toThrow(Unsupported);
+  });
+
+  test("lowered destructuring compiles and runs", () => {
+    const { file, dir } = tmpTs("tsm_destr_run.ts", [
+      "export interface V { a: number; b: string }",
+      "export function sum(vs: V[], m: Map<string, V>): number {",
+      "  let n = 0;",
+      "  for (const { a, b } of vs) { n += a + b.length; }",
+      "  for (const [k, v] of m) { n += v.a + k.length; }",
+      "  const { a: x } = vs[0];",
+      "  return n + x;",
+      "}",
+    ].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none") });
+    for (const [name, text] of r.files) writeFileSync(join(dir, name), text);
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_destr_run\" import { V, sum }",
+      "fn main(): i32 {",
+      "    var vs: Vec<V> = Vec.new()",
+      "    vs.push(V { a: 1, b: \"\\x78\\x00\" })",
+      "    var m: HashMap<string, V> = HashMap.new()",
+      "    m.insert(\"\\x6b\\x00\", V { a: 10, b: \"\" })",
+      "    if sum(vs, m) != 14 { return 1 }",
+      "    return 0",
+      "}",
+    ].join("\n") + "\n");
+    const res = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: res.status, err: res.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+});

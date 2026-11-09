@@ -21,6 +21,7 @@ export const BUILTIN_CALLS = new Set([
 ]);
 
 import { mapValuesRecv, nodeKeyOfContainer } from "./node-identity";
+import { destructureHandled, entriesRecv } from "./destructure";
 
 const K = ts.SyntaxKind;
 
@@ -488,7 +489,14 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         return;
       }
       case K.VariableDeclaration: {
-        if (!ts.isIdentifier((n as ts.VariableDeclaration).name)) bad(n, "destructuring");
+        const vd = n as ts.VariableDeclaration;
+        if (!ts.isIdentifier(vd.name) && !destructureHandled(checker, vd)) bad(n, "destructuring");
+        return;
+      }
+      // The pattern of a destructuring declaration destructure.ts lowers; the VariableDeclaration rule above counts the rest.
+      case K.ObjectBindingPattern: case K.ArrayBindingPattern: case K.BindingElement: {
+        const pat = n.kind === K.BindingElement ? n.parent : n;
+        if (!(ts.isVariableDeclaration(pat.parent) && pat.parent.name === pat && destructureHandled(checker, pat.parent))) bad(n, K[n.kind]);
         return;
       }
       case K.NumericLiteral: {
@@ -531,7 +539,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const recvT = ts.isPropertyAccessExpression(c.expression) ? checker.getTypeAtLocation(c.expression.expression) : null;
         const cl = arrayClosureCall(program, checker, c);
         if (cl !== null) { if (typeof cl === "string") bad(n, cl); }
-        else if (key !== null && !BUILTIN_CALLS.has(key)) bad(n, recvT && /\.(keys|entries|forEach)$/.test(key) && nodeKeyOfContainer(checker, recvT) ? `iteration over node-identity keys (${key})` : `library call ${key}`);
+        else if (key !== null && !BUILTIN_CALLS.has(key) && !(/^(Readonly)?Map\.keys$/.test(key) && ts.isForOfStatement(c.parent) && c.parent.expression === c)) bad(n, recvT && /\.(keys|entries|forEach)$/.test(key) && nodeKeyOfContainer(checker, recvT) ? `iteration over node-identity keys (${key})` : `library call ${key}`);
         else if (key === null && !ts.isIdentifier(c.expression) && !(ts.isPropertyAccessExpression(c.expression))) bad(n, "call of a computed callee");
         return;
       }
@@ -609,8 +617,11 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const f = n as ts.ForOfStatement;
         const src = ts.isCallExpression(f.expression) && ts.isPropertyAccessExpression(f.expression.expression) && f.expression.expression.name.text !== "values" ? f.expression.expression.expression : f.expression;
         if (nodeKeyOfContainer(checker, checker.getTypeAtLocation(src))) { bad(n, "iteration over node-identity keys (for-of)"); return; }
-        const one = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 && ts.isIdentifier(f.initializer.declarations[0].name);
-        if (!one || !(isArr(checker.getTypeAtLocation(f.expression)) || mapValuesRecv(checker, f.expression) || mapValuesRecv(checker, f.expression, "keys")) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
+        const head = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 ? f.initializer.declarations[0] : null;
+        // A destructuring head is lowered by destructure.ts: an object pattern over an array, or [k, v] over a Map place.
+        const one = !!head && destructureHandled(checker, head);
+        const mapPairs = !!head && ts.isArrayBindingPattern(head.name) && entriesRecv(checker, f) !== null;
+        if (!one || !(isArr(checker.getTypeAtLocation(f.expression)) || mapValuesRecv(checker, f.expression) || mapValuesRecv(checker, f.expression, "keys") || mapPairs) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
         return;
       }
       case K.ArrowFunction: {
@@ -648,8 +659,17 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
 }
 
 // Same compiler options the repo type-checks with, so types resolve the way `tsc` sees them.
-export function makeProgram(root: string, files: string[]): ts.Program {
+// `sources` replaces a file's text (the destructuring rewrite).
+export function makeProgram(root: string, files: string[], sources?: Map<string, string>): ts.Program {
   const cfgPath = ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json")!;
   const cfg = ts.parseJsonConfigFileContent(ts.readConfigFile(cfgPath, ts.sys.readFile).config, ts.sys, root);
-  return ts.createProgram(files, { ...cfg.options, noEmit: true });
+  const options = { ...cfg.options, noEmit: true };
+  if (!sources?.size) return ts.createProgram(files, options);
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (name, lang, ...rest) => {
+    const text = sources.get(name);
+    return text === undefined ? getSourceFile(name, lang, ...rest) : ts.createSourceFile(name, text, lang, true);
+  };
+  return ts.createProgram(files, options, host);
 }

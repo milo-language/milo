@@ -6,6 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { desugarDestructuring, destructureRefusal } from "./ts2milo/destructure";
 import { buildImmutability } from "./ts2milo/written-props";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { RUNTIME_OWNED, buildAstModel, isPrimUnion, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
@@ -57,10 +58,28 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   return r;
 }
 
+// Destructuring is lowered as a source rewrite (scripts/ts2milo/destructure.ts), decided with the first program's types.
+// Cached by file text: the fixed-point passes in transpile() would otherwise redo it six times.
+const desugared = new Map<string, string | null>();
+// `original` is the unrewritten program: the portable-subset gate reads the user's source, not the lowered form.
+function makeDesugaredProgram(files: string[]): { program: ReturnType<typeof makeProgram>; original: ReturnType<typeof makeProgram> } {
+  const first = makeProgram(ROOT, files);
+  const checker = first.getTypeChecker();
+  const sources = new Map<string, string>();
+  for (const f of files) {
+    const sf = first.getSourceFile(f);
+    if (!sf) continue;
+    if (!desugared.has(sf.text)) desugared.set(sf.text, desugarDestructuring(checker, sf));
+    const text = desugared.get(sf.text);
+    if (text != null) sources.set(sf.fileName, text);
+  }
+  return { program: sources.size ? makeProgram(ROOT, files, sources) : first, original: first };
+}
+
 function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> }, dead: Set<string>): Report {
   const files = inputs.map((f) => resolve(ROOT, f));
   const astFile = files.find((f) => basename(f) === "ast.ts");
-  const program = makeProgram(ROOT, files);
+  const { program, original } = makeDesugaredProgram(files);
   const checker = program.getTypeChecker();
   registerUnions(program, checker);
   const runtimeSrc = readFileSync(RUNTIME_FILE, "utf8");
@@ -79,9 +98,11 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const p = sf.getLineAndCharacterOfPosition(n.getStart(sf));
     throw new Unsupported(`${rel(sf.fileName)}:${p.line + 1}: ${what}`);
   };
+  // A binding name the emitter can name: a pattern that reaches here was not lowered, so refuse it by form.
+  const bindingId = (n: ts.BindingName): ts.Identifier => ts.isIdentifier(n) ? n : fail(n, destructureRefusal(checker, n) ?? "destructuring in this position");
 
   // 1. The subset gate: nothing outside it reaches the emitter.
-  const viol = files.filter((f) => f !== astFile).flatMap((f) => violationsOf(program, checker, program.getSourceFile(f)!));
+  const viol = files.filter((f) => f !== astFile).flatMap((f) => violationsOf(original, original.getTypeChecker(), original.getSourceFile(f)!));
   // --lenient generates the whole tree anyway: each function that hits an unsupported construct
   // becomes a stub, so the generated frontend compiles and the stubs are the list of what is left.
   if (viol.length && !opts.lenient) {
@@ -1120,8 +1141,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       curFn = arrow; closureDepth++; push();
       try {
         const ps = arrow.parameters.map((p, i) => {
-          const sym = symOf(p.name as ts.Identifier)!;
-          const nm = declareLocal(sym, (p.name as ts.Identifier).text);
+          const sym = symOf(bindingId(p.name))!;
+          const nm = declareLocal(sym, bindingId(p.name).text);
           if (method === "reduce" && i === 0) return `${nm}: ${ty(ret, p)}`;
           if (boxed) elemBoxed.add(sym);
           return `${nm}: ${elemTy}`;
@@ -1146,7 +1167,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const savedFn = curFn;
       curFn = arrow; closureDepth++; push();
       try {
-        const ps = params.map(({ p, ref }) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ref ? "&" : ""}${ty(checker.getTypeAtLocation(p), p)}`);
+        const ps = params.map(({ p, ref }) => `${declareLocal(symOf(bindingId(p.name))!, bindingId(p.name).text)}: ${ref ? "&" : ""}${ty(checker.getTypeAtLocation(p), p)}`);
         const isVoid = !!(ret.flags & ts.TypeFlags.Void);
         const mark = out.length;
         ind++;
@@ -1387,7 +1408,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const inner = (e as ts.NonNullExpression).expression;
           // `x!` on an optional place unwraps (moving the payload out); the program checked it first, so the unwrap never traps.
           if (isOptionT(tOf(inner))) {
-            if (!ts.isPropertyAccessExpression(unparen(inner)) && !ts.isIdentifier(unparen(inner))) fail(e, "non-null assertion on an optional value");
+            const ui = unparen(inner);
+            const mapGet = ts.isCallExpression(ui) && /^(Readonly)?Map\.get$/.test(calleeKey(program, checker, ui) ?? "");
+            if (!ts.isPropertyAccessExpression(ui) && !ts.isIdentifier(ui) && !mapGet) fail(e, "non-null assertion on an optional value");
             hit("non-null assertion on an optional place", "Option unwrap");
             return `${ex(inner)}!`;
           }
@@ -1725,13 +1748,14 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const retWrap = (fn: ts.FunctionLikeDeclaration) => throwing.has(fn) && !isThrower(fn);
     const varDecls = (list: ts.VariableDeclarationList) => {
           for (const d of list.declarations) {
-            const sym = symOf(d.name as ts.Identifier)!;
+            const dn = bindingId(d.name);
+            const sym = symOf(dn)!;
             const t = checker.getTypeAtLocation(d.name);
             const hoist = hoistedClosure(checker, d);
             if (typeof hoist === "string") fail(d, hoist);
             if (hoist) {
               hit("hoisted const closure", "let f = (params) => closure literal; only called by name");
-              const nm = declareLocal(sym, (d.name as ts.Identifier).text);
+              const nm = declareLocal(sym, dn.text);
               const arrow = hoist as ts.ArrowFunction;
               line(`let ${nm} = ${closureLit(arrow, arrow.parameters.map((p) => ({ p, ref: !isScalar(checker.getTypeAtLocation(p)) })))}`);
               continue;
@@ -1742,7 +1766,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const init = d.initializer ? ownConv(d.initializer, t) : defaultOf(t, d);
             roDest = false;
             hit("const/let", "let, or var when reassigned or mutated");
-            const name = declareLocal(sym, (d.name as ts.Identifier).text);
+            const name = declareLocal(sym, dn.text);
             line(`${isVar ? "var" : "let"} ${name}: ${ty(t, d)} = ${init}`);
           }
     };
@@ -1823,7 +1847,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
-          if (!ts.isVariableDeclarationList(f.initializer) || !ts.isIdentifier(f.initializer.declarations[0].name)) fail(f, "for-of with a destructuring or non-declaration head");
+          if (!ts.isVariableDeclarationList(f.initializer)) fail(f, "for-of with a non-declaration head");
+          bindingId((f.initializer as ts.VariableDeclarationList).declarations[0].name);
           // Map.values() / Map.keys(): a Vec copy in slot order, not insertion order (a body that depends on the order is wrong).
           const mk = mapValuesRecv(checker, f.expression, "keys");
           const mv = mapValuesRecv(checker, f.expression) ?? mk;
@@ -1932,7 +1957,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           ind++;
           if (bound) {
             scopes.push(new Map()); usedNames.push(new Set());
-            const en = declareLocal(symOf(bound.name as ts.Identifier)!, (bound.name as ts.Identifier).text);
+            const en = declareLocal(symOf(bindingId(bound.name))!, bindingId(bound.name).text);
             // `failed` is only set together with the recorded error, so the unwrap never traps.
             line(`let ${en} = ${errVar}!`);
             body(t.catchClause!.block);
@@ -2198,8 +2223,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const t = checker.getTypeAtLocation(p);
         const borrow = isScalar(t) ? "" : mutParams.get(fn)?.has(i) ? "&mut " : "&";
         const heapOpt = heapOptParam(p);
-        const name = declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text);
-        if (heapOpt) { elemBoxed.add(symOf(p.name as ts.Identifier)!); return `${name}: ${borrow}Option<Heap<${ty(checker.getNonNullableType(t), p)}>>`; }
+        const name = declareLocal(symOf(bindingId(p.name))!, bindingId(p.name).text);
+        if (heapOpt) { elemBoxed.add(symOf(bindingId(p.name))!); return `${name}: ${borrow}Option<Heap<${ty(checker.getNonNullableType(t), p)}>>`; }
         return `${name}: ${borrow}${ty(t, p)}`;
       });
       if (selfKind) ps.unshift(`self: ${selfKind}${(fn.parent as ts.ClassDeclaration).name!.text}`);
@@ -2477,7 +2502,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const newMark = out.length, newInd = ind;
         try {
         scopes = []; usedNames = []; push();
-        const ps = (ctor?.parameters ?? []).map((p) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
+        const ps = (ctor?.parameters ?? []).map((p) => `${declareLocal(symOf(bindingId(p.name))!, bindingId(p.name).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
         line(`fn new(${ps.join(", ")}): ${cname} {`);
         ind++;
         // A constructor body of `this.f = e;` statements only: each e initializes field f. Anything else would be dropped silently, so it stubs.
@@ -2496,7 +2521,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         ind++;
         for (const p of props) {
           // A field with no initializer that is no parameter property is assigned in the constructor body, which is not translated.
-          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : ctorInit.get(p.name) ?? p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
+          const init = p.param ? lookupLocal(symOf(bindingId(p.param.name))!)! : ctorInit.get(p.name) ?? p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
           line(`${safeId(p.name)}: ${init},`);
         }
         ind--; line("}");
@@ -2523,7 +2548,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         for (const d of n.declarationList.declarations) {
           hit("module-level const", "global (initialized on first read)");
           const t = checker.getTypeAtLocation(d.name);
-          line(`${pub}let ${(d.name as ts.Identifier).text}: ${ty(t, d)} = ${conv(d.initializer!, t)}`);
+          line(`${pub}let ${bindingId(d.name).text}: ${ty(t, d)} = ${conv(d.initializer!, t)}`);
         }
         pop();
       } else fail(n, `top-level ${ts.SyntaxKind[n.kind]}`);
