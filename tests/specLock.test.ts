@@ -277,7 +277,7 @@ fn testPacketOffAtTarget() {
     expect(checkErrors(join(out, "packet_test.milo"))).toEqual({ ok: true, errors: [] });
     writeFileSync(join(proj, "packet_test.milo"), t);
     const opt = [process.env.MILO_OPT, join(ROOT, "mlir/build/milo-opt"), join(homedir(), "git/milo/mlir/build/milo-opt")].find(p => p && existsSync(p));
-    if (!opt) { console.warn("skipped: no milo-opt, the real-project run needs a built MLIR backend"); return; }
+    expect(opt, "milo-opt not found: build it with sh mlir/build.sh or set MILO_OPT").toBeDefined();
     const run = spawnSync("bun", [MAIN, "test", join(proj, "packet_test.milo")], { encoding: "utf-8", env: { ...process.env, MILO_OPT: opt } });
     expect(run.stdout + run.stderr).toContain("2 pass, 0 fail");
     expect(run.status).toBe(0);

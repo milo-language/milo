@@ -31,22 +31,32 @@ test("it still rejects everything else", () => {
 // exist, which fails at link with no span. Two gates, one rule, and only one of them was
 // fixed. So the rule is enforced on the source itself: the raw suffix test may not come
 // back anywhere.
+const RAW_MODULE_TEST = /(?:sourceFile|\.file)\??\.(?:includes|endsWith|startsWith)\("std\//;
+
+test("the raw-module regex flags a known offender", () => {
+  expect(RAW_MODULE_TEST.test('if (decl.file?.includes("std/arena")) {')).toBe(true);
+});
+
 test("no source file compares the foreign module path by bare suffix", () => {
   const dir = join(import.meta.dir, "..", "src");
   const offenders: string[] = [];
+  let scanned = 0;
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".ts")) continue;
+    scanned++;
     const src = readFileSync(join(dir, f), "utf-8");
     // `isForeignModule` is the one place allowed to spell the comparison out.
     for (const [i, line] of src.split("\n").entries()) {
       // The same bug class, one rule wider: any module recognised from a raw path.
-      const rawModuleTest = /(?:sourceFile|\.file)\??\.(?:includes|endsWith|startsWith)\("std\//.test(line);
+      const rawModuleTest = RAW_MODULE_TEST.test(line);
       if (line.includes("endsWith(FOREIGN_MODULE)") || line.includes(`endsWith("${FOREIGN_MODULE}")`) || rawModuleTest) {
         if (f === "checker.ts" && line.includes("posix.endsWith")) continue;
         offenders.push(`${f}:${i + 1}`);
       }
     }
   }
+  // a scan that matched nothing proves nothing
+  expect(scanned, "source scan found too few files: the detector is broken").toBeGreaterThan(20);
   expect(offenders).toEqual([]);
 });
 

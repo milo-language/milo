@@ -26,6 +26,7 @@ const CHECKER = join(import.meta.dir, "..", "src", "checker.ts");
 test("resolving a variable by matching Ident is exempted only with a written reason", () => {
   const lines = readFileSync(CHECKER, "utf8").split("\n");
   const unexplained: string[] = [];
+  let visited = 0;
 
   for (let i = 0; i < lines.length; i++) {
     // Two spellings of the same habit, and the first version of this gate caught only the
@@ -46,12 +47,15 @@ test("resolving a variable by matching Ident is exempted only with a written rea
     // A line that only DESCRIBES the pattern (this file's own prose lives in checker.ts's
     // comments too) is not an instance of it.
     if (/^\s*(\/\/|\*)/.test(lines[i])) continue;
+    visited++;
     // The reason may sit on the line itself or in the comment block just above it.
     const window = lines.slice(Math.max(0, i - 5), i + 1).join("\n");
     if (window.includes("ident-ok:")) continue;
     unexplained.push(`checker.ts:${i + 1}: ${lines[i].trim().slice(0, 90)}`);
   }
 
+  // a scan that matched nothing proves nothing
+  expect(visited, "place-rule scan found nothing: the detector is broken").toBeGreaterThanOrEqual(20);
   expect({
     unexplained,
     fix: unexplained.length

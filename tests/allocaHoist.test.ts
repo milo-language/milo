@@ -56,9 +56,10 @@ test("no allocas outside any function's entry block", () => {
   let currentFn = "";
   let pastEntryBlock = false;
   let sawBody = false;
+  let defines = 0;
   for (const line of ir.split("\n")) {
     const def = line.match(/^define .*@(\S+)\(/);
-    if (def) { currentFn = def[1]; pastEntryBlock = false; sawBody = false; continue; }
+    if (def) { defines++; currentFn = def[1]; pastEntryBlock = false; sawBody = false; continue; }
     if (line === "}") { currentFn = ""; continue; }
     if (!currentFn) continue;
     // block labels are column-0 lines ending in ':'. A label is the entry block only when
@@ -75,5 +76,6 @@ test("no allocas outside any function's entry block", () => {
       offenders.push(`${currentFn}: ${line.trim()}`);
     }
   }
+  expect(defines, "alloca scan saw no function: the detector is broken").toBeGreaterThan(0);
   expect(offenders).toEqual([]);
 });

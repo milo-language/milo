@@ -28,9 +28,11 @@ const CHECKER = join(import.meta.dir, "..", "src", "checker.ts");
 test("every cbHint site checks the callback's signature", () => {
   const lines = readFileSync(CHECKER, "utf8").split("\n");
   const unchecked: string[] = [];
+  let visited = 0;
 
   for (let i = 0; i < lines.length; i++) {
     if (!/const cbHint(:| =)/.test(lines[i])) continue;
+    visited++;
     // Bounded by the ARM, not by a line count. The check may sit anywhere in the block
     // that consumes the hint, and the widest today is 8 lines — but a fixed window is a
     // constant nobody rechecks, and one that silently stops reaching is how a site goes
@@ -50,6 +52,8 @@ test("every cbHint site checks the callback's signature", () => {
     unchecked.push(`checker.ts:${i + 1}: '${method}' builds a cbHint and never checks the callback against it`);
   }
 
+  // a scan that matched nothing proves nothing
+  expect(visited, "cbHint scan found nothing: the detector is broken").toBeGreaterThanOrEqual(10);
   expect({
     unchecked,
     fix: unchecked.length

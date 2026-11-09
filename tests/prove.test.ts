@@ -38,6 +38,10 @@ function annCount(src: string, key: string): number | null {
 describe("prove (z3)", () => {
   const files = readdirSync(PROVE_DIR).filter(f => f.endsWith(".milo"));
 
+  test("the prove corpus is not empty", () => {
+    expect(files.length, "no tests/prove/*.milo fixtures found: the corpus scan is broken").toBeGreaterThan(0);
+  });
+
   for (const file of files) {
     const flags = (readFileSync(join(PROVE_DIR, file), "utf-8").match(/\/\/\s*@flags:\s*(.*)$/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
     test(file.replace(".milo", ""), async () => {

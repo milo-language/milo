@@ -12,11 +12,14 @@ test("no instruction follows a terminator in matchVoidNested", () => {
   const ir = execSync(`bun run src/main.ts emit-ir tests/fixtures/matchVoidNested.milo`, { cwd: ROOT, encoding: "utf8" });
   const lines = ir.split("\n");
   const dead: string[] = [];
+  let terminators = 0;
   for (let i = 0; i + 1 < lines.length; i++) {
     if (!/^\s+(ret\b|br\b|unreachable\b)/.test(lines[i])) continue;
+    terminators++;
     const next = lines[i + 1];
     if (next.trim() === "" || next === "}" || /^[\w.$"-]+:/.test(next)) continue;
     dead.push(`${i + 2}: ${next.trim()} (after: ${lines[i].trim()})`);
   }
+  expect(terminators, "terminator scan saw none: the detector is broken").toBeGreaterThan(0);
   expect(dead).toEqual([]);
 });
