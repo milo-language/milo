@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 598 distinct messages across 767 programs the compiler must reject.
+Every error message the test suite pins: 602 distinct messages across 771 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -80,7 +80,10 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'G' is a mutable global, and this code runs on a real OS thread (via 'work' → the implicit 'D.drop')`](#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-the-implicit-d-drop)
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
+- [`'get' would copy 'Heap<Sh>' out of the HashMap: it carries an interface value`](#get-would-copy-heap-sh-out-of-the-hashmap-it-carries-an-interface-value)
+- [`'get' would copy 'Holder' out of the HashMap: it carries an interface value`](#get-would-copy-holder-out-of-the-hashmap-it-carries-an-interface-value)
 - [`'get' would copy 'move () => i64' out of the Vec: it carries an owning closure's environment`](#get-would-copy-move-i64-out-of-the-vec-it-carries-an-owning-closure-s-environment)
+- [`'get' would copy 'Option<Heap<Sh>>' out of the HashMap: it carries an interface value`](#get-would-copy-option-heap-sh-out-of-the-hashmap-it-carries-an-interface-value)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop`](#getorinsert-is-not-available-on-hashmap-i64-res-getorinsert-copies-its-element-out-and-res-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
@@ -408,6 +411,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`has signature extern (*u8, i64) => i32, expected extern (*u8, i32) => i32`](#has-signature-extern-u8-i64-i32-expected-extern-u8-i32-i32)
 - [`if condition must be bool, got i64`](#if-condition-must-be-bool-got-i64)
 - [`if condition must be bool, got Result<JwtClaims, JwtError>`](#if-condition-must-be-bool-got-result-jwtclaims-jwterror)
+- [`if-else branches have mismatched types: 'i64' vs 'void'`](#if-else-branches-have-mismatched-types-i64-vs-void)
 - [`infinite size`](#infinite-size)
 - [`instantiation exceeded depth`](#instantiation-exceeded-depth)
 - [`integer literal 200 overflows i8`](#integer-literal-200-overflows-i8)
@@ -2067,6 +2071,70 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/copyOutArenaGet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/copyOutArenaGet.milo)</sub>
 
+## `'get' would copy 'Heap<Sh>' out of the HashMap: it carries an interface value` {#get-would-copy-heap-sh-out-of-the-hashmap-it-carries-an-interface-value}
+
+A Heap\<interface\> has no structural copy (the concrete type is erased), so `get` would hand back a bitwise duplicate of the owning block and both would be freed.
+
+```milo skip
+interface Sh {
+    fn show(self: &Self): string
+}
+
+struct Impl { name: string }
+
+impl Impl {
+    fn show(self: &Self): string { return self.name }
+}
+
+impl Drop for Impl {
+    fn drop(self: &mut Self): void { print("drop " + self.name) }
+}
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Heap<Sh>> = HashMap.new()
+    let h: Heap<Sh> = Heap(Impl { name: "x".repeat(2) })
+    m.insert(1, h)
+    let a = m.get(1)
+    print("got")
+    return 0
+}
+```
+
+<sub>[tests/errors/hashMapGetHeapInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapGetHeapInterface.milo)</sub>
+
+## `'get' would copy 'Holder' out of the HashMap: it carries an interface value` {#get-would-copy-holder-out-of-the-hashmap-it-carries-an-interface-value}
+
+A struct field that is a Heap\<interface\> makes the whole struct uncopyable.
+
+```milo skip
+interface Sh {
+    fn show(self: &Self): string
+}
+
+struct Impl { name: string }
+
+impl Impl {
+    fn show(self: &Self): string { return self.name }
+}
+
+impl Drop for Impl {
+    fn drop(self: &mut Self): void { print("drop " + self.name) }
+}
+
+struct Holder { s: Heap<Sh> }
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Holder> = HashMap.new()
+    let h: Heap<Sh> = Heap(Impl { name: "x".repeat(2) })
+    m.insert(1, Holder { s: h })
+    let a = m.get(1)
+    print("got")
+    return 0
+}
+```
+
+<sub>[tests/errors/hashMapGetStructHeapInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapGetStructHeapInterface.milo)</sub>
+
 ## `'get' would copy 'move () => i64' out of the Vec: it carries an owning closure's environment` {#get-would-copy-move-i64-out-of-the-vec-it-carries-an-owning-closure-s-environment}
 
 A copy of an owning closure would share its env, and both copies' drops would free it.
@@ -2083,6 +2151,37 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/getOwningClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOwningClosure.milo)</sub>
+
+## `'get' would copy 'Option<Heap<Sh>>' out of the HashMap: it carries an interface value` {#get-would-copy-option-heap-sh-out-of-the-hashmap-it-carries-an-interface-value}
+
+The interface sits behind an Option payload; the rule follows the payload, not the wrapper.
+
+```milo skip
+interface Sh {
+    fn show(self: &Self): string
+}
+
+struct Impl { name: string }
+
+impl Impl {
+    fn show(self: &Self): string { return self.name }
+}
+
+impl Drop for Impl {
+    fn drop(self: &mut Self): void { print("drop " + self.name) }
+}
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Option<Heap<Sh>>> = HashMap.new()
+    let h: Heap<Sh> = Heap(Impl { name: "x".repeat(2) })
+    m.insert(1, Option.Some(h))
+    let a = m.get(1)
+    print("got")
+    return 0
+}
+```
+
+<sub>[tests/errors/hashMapGetOptionHeapInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapGetOptionHeapInterface.milo)</sub>
 
 ## `'get' would copy 'Res' out of the HashMap: it carries Drop` {#get-would-copy-res-out-of-the-hashmap-it-carries-drop}
 
@@ -10558,6 +10657,25 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/jwtVerifyIsNotBool.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jwtVerifyIsNotBool.milo)</sub>
+
+## `if-else branches have mismatched types: 'i64' vs 'void'` {#if-else-branches-have-mismatched-types-i64-vs-void}
+
+A statement-form `if` with no else at the tail of an if-expression arm stays a statement: the arm has no value, and the parser must not look for an else body to convert.
+
+```milo skip
+fn main(): void {
+    let c = true
+    let x = if c { // @error: if-else branches have mismatched types: 'i64' vs 'void'
+        if c { print("inner") }
+        1
+    } else {
+        if c { print("else inner") }
+    }
+    print(x.toString())
+}
+```
+
+<sub>[tests/errors/ifExprArmTailIfNoElse.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifExprArmTailIfNoElse.milo)</sub>
 
 ## `infinite size` {#infinite-size}
 

@@ -30,6 +30,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`harden <file\|dir>`](#harden) | Rewrite into stricter Milo (index loop to for-in, match to ?, isSome to if let, last-use clone to move); prints a diff. |
 | [`emit-ast <file>`](#emit-ast) | Emit the parsed AST as JSON. |
 | [`emit-mlir <file>`](#emit-mlir) | Emit the milo dialect module before milo-opt (the source-faithful top layer). |
+| [`emit-checked <file>`](#emit-checked) | Emit the checked program (AST plus the checker's facts) as JSON. |
 | [`interp <file>`](#interp) | Run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck. |
 | [`emit-ir <file>`](#emit-ir) | Emit LLVM IR. |
 | [`emit-obj <file>`](#emit-obj) | Compile to object file (.o). |
@@ -153,6 +154,15 @@ Emit the milo dialect module before milo-opt (the source-faithful top layer).
 | Flag | Effect |
 |---|---|
 | `--all` | The whole module: imported functions, glue, scaffold. |
+| `--from-checked <json>` | Skip the frontend, lower that emit-checked dump. |
+
+### emit-checked
+
+```sh
+milo emit-checked <file>
+```
+
+Emit the checked program (AST plus the checker's facts) as JSON.
 
 ### interp
 
