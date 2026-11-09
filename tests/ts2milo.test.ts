@@ -106,6 +106,52 @@ describe("tagged unions", () => {
     expect(summary(r)).toContain("0 overrides");
   });
 
+  // The copy is only a stand-in for the TS shared reference where nothing writes through either side.
+  const holderSrc = (extra: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "ast.ts"), [
+      "export interface Num { kind: \"Num\"; n: number }",
+      "export interface Neg { kind: \"Neg\"; e: Expr }",
+      "export type Expr = Num | Neg;",
+    ].join("\n"));
+    writeFileSync(join(dir, "use.ts"), [
+      "import type { Expr } from \"./ast\";",
+      "export interface Holder { e: Expr; f: Expr }",
+      "export function val(e: Expr): number {",
+      "  if (e.kind === \"Num\") { return e.n; } else if (e.kind === \"Neg\") { return 0 - val(e.e); }",
+      "  return 0;",
+      "}",
+      extra,
+    ].join("\n"));
+    return dir;
+  };
+
+  test("a recursive AST value copied into a never-mutated const is cloned, compiled and run", () => {
+    const dir = holderSrc("export function peek(h: Holder): number {\n  const x = h.e;\n  return val(x);\n}\n");
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
+    const use = r.files.get("use.milo")!;
+    expect(use).toContain(".clone()");
+    expect(r.recursiveClones).toBe(1);
+    expect(r.files.get("ast.milo")!).toContain("@derive(Clone)");
+    for (const [name, text] of r.files) writeFileSync(join(dir, name), text);
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./ast\" import { Expr, Neg, Num }",
+      "from \"./use\" import { Holder, peek }",
+      "fn main(): i32 {",
+      "    let h = Holder { e: Expr.Neg(Neg { e: Heap(Expr.Num(Num { n: 3 })) }), f: Expr.Num(Num { n: 1 }) }",
+      "    if peek(h) != -3 { return 1 }",
+      "    return 0",
+      "}",
+    ].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+
+  test("a recursive AST value copied into a local that is mutated afterwards is still refused", () => {
+    const dir = holderSrc("export function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
+    expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") })).toThrow("mutated afterwards");
+  });
+
   test("a kind read outside an if guard is refused", () => {
     const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
     writeFileSync(join(dir, "ast.ts"), "export interface A { kind: \"A\" }\nexport interface B { kind: \"B\" }\nexport type U = A | B;\n");

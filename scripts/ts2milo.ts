@@ -23,6 +23,8 @@ export interface Report {
   functions: { file: string; name: string; override: boolean }[];
   // --lenient: functions whose body hit an unsupported construct, emitted as a stub that names it.
   stubs: { file: string; name: string; reason: string }[];
+  // Copies of recursive AST values the read-only rule allowed (a perf note: each is a deep clone).
+  recursiveClones: number;
   constructs: Map<string, { count: number; how: string }>;
   // src/ast.ts is types-only: Milo types and a JSON decoder are generated from its interfaces
   // and tagged unions. Fields with no Milo type are listed, not silently lost.
@@ -44,7 +46,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   const modOf = (f: string) => "./" + basename(f).replace(/\.ts$/, "");
   const inputSet = new Set(files);
 
-  const report: Report = { files: new Map(), functions: [], constructs: new Map(), stubs: [] };
+  const report: Report = { files: new Map(), functions: [], constructs: new Map(), stubs: [], recursiveClones: 0 };
   const hit = (construct: string, how: string) => {
     const e = report.constructs.get(construct);
     if (e) e.count++; else report.constructs.set(construct, { count: 1, how });
@@ -287,6 +289,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   // src/ast.ts: Milo types and a decoder from its interfaces and tagged unions; no functions.
   const astModel = buildAstModel(program, checker, astFile ? [astFile, ...files.filter((f) => f !== astFile)] : files);
 
+
   // Emitted before any function: sizing the variant structs boxes fields, and reads of a boxed
   // field in the functions must deref.
   if (astFile) {
@@ -463,6 +466,23 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
     const isCopyT = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike | ts.TypeFlags.Void | ts.TypeFlags.Never | ts.TypeFlags.Undefined | ts.TypeFlags.Null)) || !!enumDeclOf(t) || !!litsOf(t);
     const needsClone = (e: ts.Expression) => isPlace(e) && !isCopyT(tOf(e));
+    // A value of a recursive AST type: its clone is only safe where the copy is never mutated.
+    const isRecursiveT = (t: ts.Type): boolean => {
+      if (isCopyT(t)) return false;
+      if (isOptionT(t)) return isRecursiveT(checker.getNonNullableType(t));
+      if (checker.isArrayType(t)) return isRecursiveT(checker.getTypeArguments(t as ts.TypeReference)[0]);
+      const tu = unionOfType(checker, t);
+      if (tu) return astModel.recursive.has(tu.name);
+      const d = t.symbol?.declarations?.[0];
+      return !!d && ts.isInterfaceDeclaration(d) && astModel.recursive.has(d.name.text);
+    };
+    let roDest = false;
+    const cloneFail = (n: ts.Node, t: ts.Type, ro = false): void => {
+      if (!canClone(t)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: the type is a class, so it has no Clone; use the place itself`);
+      if (!isRecursiveT(t)) return;
+      if (!ro) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: copy of a recursive value that is mutated afterwards, or whose destination is not known to be read-only`);
+      report.recursiveClones++;
+    };
     const canClone = (t: ts.Type): boolean => {
       if (isCopyT(t)) return true;
       if (isOptionT(t)) return canClone(checker.getNonNullableType(t));
@@ -474,9 +494,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
     const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
+      // The read-only flag belongs to this value only, never to the expressions nested inside it.
+      const ro = roDest;
+      roDest = false;
       const owned = (s: string, force = false) => {
         if (!(own || force) || !needsClone(e)) return s;
-        if (!canClone(tOf(e))) fail(e, `a value of type ${checker.typeToString(tOf(e))} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+        cloneFail(e, tOf(e), ro);
         return `${s}.clone()`;
       };
       // A boxed optional field is an Option<Heap<T>> in Milo; anywhere an Option<T> is wanted it
@@ -569,12 +592,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const boxed = !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d));
           if (!own) return bindTo(code, boxed);
           if (boxed) return bindTo(`${useRuntime("optUnbox", n)}<${ty(payloadT, n)}>(${code})`, false);
-          if (!canClone(fieldT)) fail(n, `a value of type ${checker.typeToString(fieldT)} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+          cloneFail(n, fieldT);
           return bindTo(`${code}.clone()`, false);
         }
         let v = code;
         if (own && !isCopyT(fieldT)) {
-          if (!canClone(fieldT)) fail(n, `a value of type ${checker.typeToString(fieldT)} copied out of a borrowed place: the type is recursive or a class, so it has no Clone; use the place itself`);
+          cloneFail(n, fieldT);
           v = `${code}.clone()`;
         }
         narrow.set(key, { name: code, deref: false });
@@ -940,8 +963,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
               line(`let ${nm} = ${closureLit(arrow, arrow.parameters.map((p) => ({ p, ref: !isScalar(checker.getTypeAtLocation(p)) })))}`);
               continue;
             }
-            const init = d.initializer ? ownConv(d.initializer, t) : defaultOf(t, d);
             const isVar = mutated.has(sym) || !d.initializer;
+            // A local nothing mutates may share a clone of a recursive value: no write can tell the copy from the TS shared reference.
+            if (!isVar) roDest = true;
+            const init = d.initializer ? ownConv(d.initializer, t) : defaultOf(t, d);
+            roDest = false;
             hit("const/let", "let, or var when reassigned or mutated");
             const name = declareLocal(sym, (d.name as ts.Identifier).text);
             line(`${isVar ? "var" : "let"} ${name}: ${ty(t, d)} = ${init}`);
