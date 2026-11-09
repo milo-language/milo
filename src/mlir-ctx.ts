@@ -39,7 +39,7 @@ export interface ExternAbi {
   ret: RetClass;
 }
 
-const BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet", "_panicHookSet"]);
+export const BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet", "_panicHookSet"]);
 
 const PROCESS_GLOBALS = { argc: "_milo_argc_global", argv: "_milo_argv_global", scheduler: "_milo_scheduler", panicHook: "_milo_panic_hook" } as const;
 export const processGlobalNames = PROCESS_GLOBALS;

@@ -1,0 +1,23 @@
+// @expect: end
+// @expect: drop 3
+// @expect: drop 2
+// @expect: drop 1
+// @expect: drop 5
+// @expect: drop 4
+
+// An enum variant drops its payloads last-to-first, the order struct fields drop in.
+// The compiled binary used to drop them first-to-last while the interpreter went last-first.
+struct D { id: i64 }
+
+impl Drop for D {
+    fn drop(self: &mut D) { print("drop ", self.id) }
+}
+
+enum E { P(D, D, D), Q(D, D), R }
+
+fn main() {
+    let _q = E.Q(D { id: 4 }, D { id: 5 })
+    let _p = E.P(D { id: 1 }, D { id: 2 }, D { id: 3 })
+    let _r = E.R
+    print("end")
+}

@@ -42,12 +42,15 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
 | `scripts/checked-roundtrip.ts` | Gate for the checked-program dump (src/checked-dump.ts): for each program, lower the checker's own Program + CheckResult and lower the copy that went through encode + decode, and compare the two MLIR… |
+| `scripts/checker-diag-snapshot.ts` | Diagnostics oracle for checker refactors: every diagnostic of every corpus program, as one JSON file. |
+| `scripts/checker-seam.ts` | Seam measurement for src/checker.ts: every top-level declaration and TypeChecker member with its line span, the reference graph among them, and the cost of cutting a cluster out. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
 | `scripts/dialect-hygiene.ts` | Hygiene gate for the milo MLIR dialect (mlir/Milo.td): docs on every op, type and attribute, and no hygiene count below its baseline. |
 | `scripts/differential.ts` | Differential gate: builds every runtime fixture and `// @run:` example twice (A and B flags or checkouts) and compares stdout and exit code; any difference is a finding. |
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |
 | `scripts/edit-loop.ts` | Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios over a fixed set of real programs, with the MILO_TIMING phase breakdown per build. |
+| `scripts/emit-seam.ts` | Seam measurement for src/emit-mlir.ts (docs/plans/emit-mlir-split.md, plan A). |
 | `scripts/explicit-mut.ts` | Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter. |
 | `scripts/fetch-assets.sh` | Regenerates the game assets that are deliberately NOT in git: the FLYBY city files (82 MB of terrain, footprints and aerial drape) and the APSIS planet maps. |
 | `scripts/file-size-ratchet.ts` | File-size ratchet for src/*.ts: no file over LIMIT lines may grow past its recorded line count. |

@@ -113,6 +113,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/layout.ts` | Type layout: struct and enum registration, sizes, alignments, field offsets, niches and which types need drop glue. |
 | `src/lazy-globals.ts` | Lazy module globals: where the first-use guard goes in front of a read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
+| `src/llvm-toolchain.ts` | Locates the LLVM bin directory (clang, llvm-cov, ...) for tools that must not depend on the codegen backend. |
 | `src/lsp.ts` | milod — Milo Language Server Speaks LSP over JSON-RPC/stdio. |
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |
@@ -152,6 +153,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/specLock.ts` | Spec lock: agents may change code freely but may not silently weaken intent. |
 | `src/specPacket.ts` | Clean-room packet (`milo spec --packet <outdir> <entry>`): the interface a test author may see (requirements, declarations, signatures, contracts) and nothing about how the code works. |
 | `src/startup.ts` | What runs before and around `main`: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a green task of its ow… |
+| `src/stdlib-dir.ts` | The directory holding std/ (the repo root in a checkout). |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |
 | `src/suggest.ts` | "Did you mean ...?" hints for the checker. |

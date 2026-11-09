@@ -17,7 +17,7 @@ import { tmpdir } from "os";
 import { dirname, isAbsolute, join, resolve } from "path";
 import { Lexer } from "./lexer";
 import { TokenKind, type Token } from "./tokens";
-import { LLVM_BIN } from "./mlir-backend";
+import { LLVM_BIN } from "./llvm-toolchain";
 
 /** A fn that the report accounts for. `line` is the line of its name. */
 export interface CoverageSite { name: string; file: string; line: number }
