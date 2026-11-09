@@ -121,6 +121,32 @@ export function truthyHandled(checker: ts.TypeChecker, e: ts.Expression): Truthy
 // Each predicate is the one both the gate and the emitter ask, so they cannot drift.
 const NULLISH = ts.TypeFlags.Undefined | ts.TypeFlags.Null;
 export const isOptionalType = (t: ts.Type): boolean => t.isUnion() && t.types.some((x) => !!(x.flags & NULLISH)) && !(t.flags & ts.TypeFlags.Boolean);
+// A type assertion that changes nothing in the Milo value: `as const`, an assertion to the expression's own type,
+// or a literal asserted to the type it is already contextually typed by (the emitter types the literal from that context).
+export const isConstAssertion = (a: ts.AsExpression) => ts.isTypeReferenceNode(a.type) && a.type.typeName.getText() === "const";
+export const assertionIsNoop = (checker: ts.TypeChecker, a: ts.AsExpression): boolean => {
+  if (isConstAssertion(a)) return true;
+  const target = checker.getTypeFromTypeNode(a.type);
+  if (target.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
+  const e = unparenE(a.expression);
+  if (ts.isObjectLiteralExpression(e)) return true;
+  const from = checker.getTypeAtLocation(a.expression);
+  return from === target || checker.typeToString(from) === checker.typeToString(target);
+};
+export const assertionReason = (checker: ts.TypeChecker, a: ts.AsExpression): string => {
+  const to = checker.getTypeFromTypeNode(a.type);
+  const from = checker.getTypeAtLocation(a.expression);
+  if (to.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return `'as' to ${checker.typeToString(to)}`;
+  if (from.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return `'as' from ${checker.typeToString(from)} to ${checker.typeToString(to)}: an unchecked cast`;
+  return `'as' from ${checker.typeToString(from)} to ${checker.typeToString(to)}: a narrowing or widening that changes the Milo value`;
+};
+export const stripConst = (e: ts.Expression): ts.Expression => {
+  while (true) {
+    if (ts.isParenthesizedExpression(e)) e = e.expression;
+    else if (ts.isAsExpression(e) && isConstAssertion(e)) e = e.expression;
+    else return e;
+  }
+};
 const unparenE = (e: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(e) ? unparenE(e.expression) : e);
 // A place or literal: reading it twice, or not at all, is not observable.
 export function sideEffectFree(e: ts.Node): boolean {
@@ -509,6 +535,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.BinaryExpression: {
         const b = n as ts.BinaryExpression;
         const op = b.operatorToken.kind;
+        if (op === K.CommaToken) { bad(n, "comma operator"); return; }
         // `x !== undefined` (or null) binds the Option's payload, so it is a guard or nothing.
         if ((op === K.EqualsEqualsEqualsToken || op === K.ExclamationEqualsEqualsToken) && (isNullishExpr(b.left) || isNullishExpr(b.right))) {
           if (!inIfGuard(b) || op === K.EqualsEqualsEqualsToken) bad(n, "undefined or null comparison outside a positive if guard");
@@ -548,8 +575,8 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.AsExpression: {
         const a = n as ts.AsExpression;
         const target = checker.getTypeFromTypeNode(a.type);
-        const ok = isStringLike(checker.getTypeAtLocation(a.expression)) && isProjectSymbolType(target, (d) => ts.isEnumDeclaration(d));
-        if (!ok) bad(n, "type assertion other than string to enum");
+        const ok = (isStringLike(checker.getTypeAtLocation(a.expression)) && isProjectSymbolType(target, (d) => ts.isEnumDeclaration(d))) || assertionIsNoop(checker, a);
+        if (!ok) bad(n, assertionReason(checker, a));
         return;
       }
       case K.ObjectLiteralExpression: {
@@ -557,7 +584,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const ctx = checker.getContextualType(o);
         const t = ctx && checker.getNonNullableType(ctx);
         // A tagged union's variant is picked by a literal discriminant property.
-        const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(p.initializer) && p.name.getText() === unionOfType(checker, t)!.field);
+        const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(stripConst(p.initializer)) && p.name.getText() === unionOfType(checker, t)!.field);
         if (!t || !(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d) || (ts.isTypeLiteralNode(d) && anonStructHandled(checker, d))))) bad(n, "object literal without an interface type");
         for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p)) bad(p, "object literal member");
         return;

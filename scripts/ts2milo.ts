@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { RUNTIME_OWNED, buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
@@ -490,7 +490,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (t.flags & ts.TypeFlags.BooleanLike) return "false";
       // `let x: T | undefined;` starts undefined in TS: a typed None (a bare Option.None has no inferable payload).
       if (isOptionT(t)) return `${useRuntime("optNone", at)}<${ty(checker.getNonNullableType(t), at)}>()`;
+      // A non-optional array: TS definite assignment (strict) rejects any read before every path has assigned it, so the
+      // empty Vec is never observed. A closure could read it before the assignment runs, and TS does not check that.
+      if (checker.isArrayType(t) && ts.isVariableDeclaration(at) && ts.isIdentifier(at.name) && !readInNestedFn(at)) { hit("declaration without initializer", "empty Vec: TS definite assignment guarantees it is overwritten before any read"); return "Vec.new()"; }
       return fail(at, `declaration without initializer of type ${checker.typeToString(t)}`);
+    };
+    const readInNestedFn = (d: ts.VariableDeclaration): boolean => {
+      const sym = checker.getSymbolAtLocation(d.name as ts.Identifier);
+      let fn: ts.Node = d;
+      while (fn && !ts.isFunctionLike(fn)) fn = fn.parent;
+      let found = false;
+      const walk = (n: ts.Node, nested: boolean) => {
+        if (found) return;
+        if (nested && ts.isIdentifier(n) && checker.getSymbolAtLocation(n) === sym) { found = true; return; }
+        ts.forEachChild(n, (c) => walk(c, nested || (ts.isFunctionLike(c) && c !== fn)));
+      };
+      if (fn) walk(fn, false);
+      return found;
     };
 
     // ---- expressions ----
@@ -1248,6 +1264,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const b = e as ts.BinaryExpression;
           const op = b.operatorToken.kind;
           const text = b.operatorToken.getText();
+          if (op === ts.SyntaxKind.CommaToken) fail(b, "comma operator");
           if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) fail(b, `assignment ${text} used as a value`);
           if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
           if (op === ts.SyntaxKind.InstanceOfKeyword && isCatchVar(b.left)) {
@@ -1359,8 +1376,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.AsExpression: {
           const a = e as ts.AsExpression;
+          if (assertionIsNoop(checker, a)) { hit("type assertion", "dropped: the Milo value is the same"); return ex(a.expression); }
           const en = enumDeclOf(checker.getTypeFromTypeNode(a.type));
-          if (!en) fail(a, "'as' to a type that is not a string enum");
+          if (!en) fail(a, assertionReason(checker, a));
           hit("string as StringEnum", "generated Enum_fromValue");
           return `${useDeclared(en!.name.text + "_fromValue", en!.getSourceFile().fileName, e)}(${ex(a.expression)})`;
         }
@@ -1375,7 +1393,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           if (lu) {
             // The variant is picked by the literal discriminant property (`{ tag: "ptr", inner }`).
             const dp = o.properties.find((p) => ts.isPropertyAssignment(p) && (p.name as ts.Identifier).text === lu.field) as ts.PropertyAssignment | undefined;
-            const lit = dp && ts.isStringLiteral(dp.initializer) ? dp.initializer.text : fail(e, `object literal of ${lu.name} without a literal ${lu.field}`);
+            const lit = dp && ts.isStringLiteral(stripConst(dp.initializer)) ? (stripConst(dp.initializer) as ts.StringLiteral).text : fail(e, `object literal of ${lu.name} without a literal ${lu.field}`);
             const v = lu.variants.find((x) => x.kind === lit) ?? fail(e, `${lu.name} has no variant ${lit}`);
             hit("tagged union literal", "Union.Variant(Struct { fields })");
             const uname = useDeclared(lu.name, lu.decl.getSourceFile().fileName, e);
@@ -1590,7 +1608,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           tryFlags.push(flag);
           tryErr.push(errVar);
           try { body(t.tryBlock); } finally { tryFlags.pop(); tryErr.pop(); }
-          line("break");
+          const tl = t.tryBlock.statements[t.tryBlock.statements.length - 1];
+          if (!tl || !endsBlock(tl)) line("break");
           ind--;
           line("}");
           line(`if ${flag} {`);
@@ -1598,7 +1617,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           if (bound) {
             scopes.push(new Map()); usedNames.push(new Set());
             const en = declareLocal(symOf(bound.name as ts.Identifier)!, (bound.name as ts.Identifier).text);
-            line(`let ${en} = match ${errVar} { Option.Some(v) => v, Option.None => panic("catch without an error") }`);
+            // `failed` is only set together with the recorded error, so the unwrap never traps.
+            line(`let ${en} = ${errVar}!`);
             body(t.catchClause!.block);
             scopes.pop(); usedNames.pop();
           } else body(t.catchClause!.block);
@@ -1714,11 +1734,21 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
       return x && (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x)) && !isChainMember(x) ? { x } : null;
     };
+    const endsBlock = (s: ts.Statement): boolean => {
+      if (ts.isReturnStatement(s) || ts.isThrowStatement(s) || ts.isBreakStatement(s) || ts.isContinueStatement(s)) return true;
+      if (!ts.isExpressionStatement(s)) return false;
+      const e = unparen(s.expression);
+      if (!ts.isCallExpression(e)) return false;
+      const d = declOf(e);
+      return !!d && isThrower(d);
+    };
     const block = (b: ts.Block) => {
       const saved: [string, { name: string; deref: boolean } | undefined][] = [];
       for (const s of b.statements) {
         const en = earlyExitNarrow(s);
-        if (!en) { stmt(s); continue; }
+        // What follows an exit is dead code in TS; Milo rejects it ("unreachable code"). A call of a never-returning
+        // function is emitted as a return (or a break out of the try), so it ends the block like return/throw.
+        if (!en) { stmt(s); if (endsBlock(s)) break; continue; }
         const x = en.x;
         const key = x.getText();
         const name = fresh(key);
@@ -1780,7 +1810,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (d && isThrower(d)) {
           if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws");
           if (tryFlags.length) { if (tryErr[tryErr.length - 1]) line(recordErr(callEx(e)).trim().replace(/;$/, "")); line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
-          line(`return Result.Err(${callEx(e)})`);
+          // A never-returning function's own return value is the error, so passing one on is a plain return.
+          line(curFn && isThrower(curFn) ? `return ${callEx(e)}` : `return Result.Err(${callEx(e)})`);
           return;
         }
         line(callEx(e));

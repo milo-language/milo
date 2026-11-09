@@ -1054,14 +1054,10 @@ export class Parser {
     this.expect(TokenKind.Eq);
     const value = this.parseExpr();
     const out: Stmt[] = [];
-    let source: Expr;
-    if (value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess") {
-      source = value;
-    } else {
-      const tmp = `_destructure${this.destructureCount++}`;
-      out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
-      source = { kind: "Ident", name: tmp, span: s };
-    }
+    const isPlace = value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess";
+    const tmp = isPlace ? "" : `_destructure${this.destructureCount++}`;
+    if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
+    const source: Expr = isPlace ? value : { kind: "Ident", name: tmp, span: s };
     for (const f of fields) {
       const read: Expr = { kind: "FieldAccess", object: source, field: f.field, span: f.span };
       out.push(mutable
@@ -1216,18 +1212,12 @@ export class Parser {
     // `if ready && let Some(x) = y`: a chain whose `let` is not the first clause. The
     // ordinary condition parse stops at that `let` (it is not an expression), so retry
     // as a chain from the same token. Any other parse error is the real one.
-    const saved = this.pos;
-    const savedDepth = this.exprDepth;
-    let cond: Expr;
-    try {
-      cond = this.parseExpr();
-    } catch (e) {
-      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
-      this.pos = saved;
-      this.exprDepth = savedDepth;
+    const parsedCond = this.parseCondOrNull();
+    if (parsedCond === null) {
       const clauses = this.parseChainClauses();
       return this.finishIfChain(s, clauses);
     }
+    const cond: Expr = parsedCond;
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
@@ -1242,6 +1232,21 @@ export class Parser {
       }
     }
     return { kind: "IfStmt", cond, thenBody, elseBody, span: s };
+  }
+
+  // The condition of an `if`, or null (position restored) when a `let` clause follows and the caller should retry as a chain.
+  private parseCondOrNull(): Expr | null {
+    const saved = this.pos;
+    const savedDepth = this.exprDepth;
+    let cond: Expr | null = null;
+    try {
+      cond = this.parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
+      this.pos = saved;
+      this.exprDepth = savedDepth;
+    }
+    return cond;
   }
 
   private parseIfExpr(s: Span): Expr {
