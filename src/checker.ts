@@ -12966,7 +12966,7 @@ export class TypeChecker {
   // printed once checking is done (scripts/strip-string-clones.ts deletes them). One that
   // is itself mutated (an explicit `&mut` argument, a mutating receiver) is left out: its
   // copy is what keeps the write off the original. So is one on a `&string` receiver.
-  private reportStringClones = !!process.env.MILO_REPORT_STRING_CLONES;
+  private reportStringClones = (process.env.MILO_REPORT_STRING_CLONES ?? "") !== "";
   private stringCloneCalls: ExprOf<"MethodCall">[] = [];
 
   private printStringClones() {

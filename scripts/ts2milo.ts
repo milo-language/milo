@@ -823,6 +823,11 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return !!sy && !!d0 && (ts.isPropertyDeclaration(d0) || ts.isPropertySignature(d0) || ts.isParameter(d0) || ts.isVariableDeclaration(d0)) && !isLibDecl(program, d0) && unmappable(checker.getTypeOfSymbol(sy), u);
     };
     const memberAccess = (e: ts.PropertyAccessExpression): string => {
+      // `process.env.NAME` (string | undefined): the runtime's jsEnv reads the real environment.
+      if (ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === "env" && ts.isIdentifier(e.expression.expression) && e.expression.expression.text === "process") {
+        hit("process.env.NAME", "runtime jsEnv(name) over std/env getEnv");
+        return `${useRuntime("jsEnv", e)}(${JSON.stringify(e.name.text)})`;
+      }
       const sym = checker.getSymbolAtLocation(e.name);
       const d = sym?.declarations?.[0];
       // A field whose own type has no mapping was left out of its struct (or is a TsOpaque there).

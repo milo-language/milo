@@ -9,6 +9,7 @@
 // (src/diagnostics.ts, src/ast.ts) also live here, mirroring those interfaces.
 from "std/unicode" import { decodeCodepoint }
 from "std/set" import { HashSet }
+from "std/env" import { Env }
 
 // Node identity: every struct that TypeScript uses as a Map/Set key or compares with `===` carries a
 // fresh id (scripts/ts2milo/node-identity.ts). A copy keeps the id, as a reference does in TypeScript.
@@ -973,4 +974,12 @@ pub fn jsF64Json(x: f64): string {
         out.pushStr((if e < 0 { 0 - e } else { e }).toString())
     }
     return out
+}
+
+// `process.env.NAME`: the variable's value as a TypeScript string, absent when unset.
+pub fn jsEnv(name: string): Option<string> {
+    match Env.get(name) {
+        Option.Some(v) => { return Option.Some(jsFromUtf8(v)) }
+        Option.None => { return Option.None }
+    }
 }
