@@ -1145,7 +1145,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           }
           if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
             // `a && b` as a value yields an operand, not a bool; only the boolean test has a Milo form.
-            if (!(tOf(b).flags & ts.TypeFlags.BooleanLike) && !inCondPos(b)) return fail(b, `${b.operatorToken.getText()} as a value`);
+            // An operand of a boolean && / || (`(a && b) && a.n === b.n`) is only tested, whatever its own type.
+            const par = b.parent;
+            const inBoolLogical = ts.isBinaryExpression(par) && (par.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || par.operatorToken.kind === ts.SyntaxKind.BarBarToken) && !!(tOf(par).flags & ts.TypeFlags.BooleanLike);
+            if (!(tOf(b).flags & ts.TypeFlags.BooleanLike) && !inCondPos(b) && !inBoolLogical) return fail(b, `${b.operatorToken.getText()} as a value`);
             const g = foldKindGuards(b);
             if (g) return g;
             return `(${cond(b.left)} ${text} ${cond(b.right)})`;
