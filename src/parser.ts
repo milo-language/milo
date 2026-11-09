@@ -1325,7 +1325,7 @@ export class Parser {
     const last = body.pop();
     if (last === undefined) return;
     if (last.kind === "IfStmt") {
-      const hasElse = last.elseBody !== undefined;
+      const hasElse = last.elseBody !== null;
       if (!hasElse) {
         body.push(last);
         return;

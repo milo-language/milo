@@ -1,0 +1,12 @@
+// A statement-form `if` with no else at the tail of an if-expression arm stays a statement:
+// the arm has no value, and the parser must not look for an else body to convert.
+fn main(): void {
+    let c = true
+    let x = if c { // @error: if-else branches have mismatched types: 'i64' vs 'void'
+        if c { print("inner") }
+        1
+    } else {
+        if c { print("else inner") }
+    }
+    print(x.toString())
+}
