@@ -996,6 +996,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         pop(); curFn = null;
       }
     };
+    const lenientField = (f: () => { type: string; init: string | null }, what: string): { type: string; init: string | null; opaque: boolean } => {
+      try { return { ...f(), opaque: false }; } catch (err) {
+        if (!opts.lenient) throw err;
+        const e = err instanceof Unsupported ? err : new Unsupported(`transpiler crash: ${(err as Error).message}`);
+        report.stubs.push({ file: rel(file), name: what, reason: e.message });
+        return { type: useRuntime("TsOpaque", sf), init: `${useRuntime("TsOpaque", sf)} {}`, opaque: true };
+      }
+    };
     const isExported = (n: ts.Node) => !!(ts.canHaveModifiers(n) && ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
     const mname = (n: ts.PropertyName) => (n as ts.Identifier).text;
 
@@ -1076,12 +1084,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         for (const m of n.members) {
           if (ts.isPropertyDeclaration(m)) {
             const t = checker.getTypeAtLocation(m);
-            props.push({ name: mname(m.name), type: ty(t, m), init: m.initializer ? ownConv(m.initializer, t) : null, param: null });
+            const field = (): { type: string; init: string | null } => ({ type: ty(t, m), init: m.initializer ? ownConv(m.initializer, t) : null });
+            props.push({ name: mname(m.name), ...lenientField(field, `${cname}.${mname(m.name)}`), param: null });
           }
         }
         for (const p of ctor?.parameters ?? []) if (p.modifiers?.length) {
           hit("constructor parameter property", "struct field + parameter of new");
-          props.push({ name: (p.name as ts.Identifier).text, type: ty(checker.getTypeAtLocation(p), p), init: null, param: p });
+          const pt = lenientField(() => ({ type: ty(checker.getTypeAtLocation(p), p), init: null }), `${cname}.${(p.name as ts.Identifier).text}`);
+          props.push({ name: (p.name as ts.Identifier).text, type: pt.type, init: pt.opaque ? pt.init : null, param: pt.opaque ? null : p });
         }
         line(`${pub}struct ${cname} {`);
         ind++; for (const p of props) line(`${p.name}: ${p.type},`); ind--;
@@ -1089,6 +1099,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         line(`impl ${cname} {`);
         ind++;
         report.functions.push({ file: rel(file), name: `${cname}.new`, override: false });
+        const newMark = out.length, newInd = ind;
+        try {
         scopes = []; usedNames = []; push();
         const ps = (ctor?.parameters ?? []).map((p) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
         line(`fn new(${ps.join(", ")}): ${cname} {`);
@@ -1099,6 +1111,18 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         ind--; line("}");
         ind--; line("}");
         pop();
+        } catch (err) {
+          if (!opts.lenient) throw err;
+          const e = err instanceof Unsupported ? err : new Unsupported(`transpiler crash: ${(err as Error).message}`);
+          out.length = newMark; ind = newInd; pop();
+          report.stubs.push({ file: rel(file), name: `${cname}.new`, reason: e.message });
+          line(`fn new(): ${cname} {`);
+          line(`    eprint(${JSON.stringify("ts2milo stub: " + e.message)})`);
+          line("    exit(70)");
+          line("    while true {");
+          line("    }");
+          line("}");
+        }
         for (const m of n.members) if (ts.isMethodDeclaration(m)) emitFn(m, mname(m.name), true, false);
         ind--; line("}");
       } else if (ts.isFunctionDeclaration(n)) {

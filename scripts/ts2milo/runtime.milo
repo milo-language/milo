@@ -243,3 +243,8 @@ pub fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
     }
     return Option.None
 }
+
+// --lenient: the type of a field whose TypeScript type does not translate yet. Code that reads
+// the field fails to compile, which marks it; everything else in the class still translates.
+pub struct TsOpaque {
+}
