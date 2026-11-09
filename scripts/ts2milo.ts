@@ -1121,6 +1121,17 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const lt = checker.getNonNullableType(tOf(l));
             return chainFold(l, eq ? "false" : "true", (v) => `(${v} ${eq ? "==" : "!="} ${ex(b.right, litsOf(lt) ? lt : undefined)})`, false);
           }
+          // `x !== null` / `x === undefined` on an Option is a presence test: a bare Option.None operand has no
+          // inferable payload type, and payloads need not support ==.
+          if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken) {
+            const isNil = (x: ts.Expression) => { const u = unparen(x); return u.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(u) && u.text === "undefined"); };
+            const side = isNil(b.right) ? b.left : isNil(b.left) ? b.right : null;
+            if (side && isOptionT(tOf(side))) {
+              hit("compare with null/undefined", "x.isSome()");
+              const eqNil = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
+              return `${eqNil ? "!" : ""}${ex(side)}.isSome()`;
+            }
+          }
           const nc = nodeCompare(checker, b);
           if (nc) {
             hit("=== on nodes", "compare node ids");
