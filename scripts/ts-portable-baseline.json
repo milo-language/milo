@@ -33,7 +33,7 @@
   "src/checker-sql.ts": 196,
   "src/checker-task-scopes-host.ts": 43,
   "src/checker-task-scopes.ts": 0,
-  "src/checker.ts": 5491,
+  "src/checker.ts": 5494,
   "src/emit-forms.ts": 771,
   "src/emit-mlir.ts": 2671,
   "src/lexer.ts": 0,
