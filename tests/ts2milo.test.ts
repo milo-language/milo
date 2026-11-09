@@ -261,11 +261,21 @@ describe("tagged unions", () => {
     expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") })).toThrow("mutated afterwards");
   });
 
-  // A write in a function no caller connects to the copy site runs in another phase (the driver orders the phases), so it cannot be seen through the copy.
-  test("a write in a function unconnected to the copy site does not block the clone", () => {
-    const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
-    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
-    expect(r.files.get("use.milo")!).toContain(".clone()");
+  // A stored copy outlives the call that made it, so a write the driver reaches later is seen through it. Only a
+  // write in a file of a strictly earlier phase is dropped (written-props.ts PHASES).
+  test("a write in an unconnected function blocks the clone unless its file is an earlier phase", () => {
+    const poke = "import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\n";
+    const pick = "import type { Holder } from \"./use\";\nimport { val } from \"./use\";\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n";
+    const refusal = (pokeFile: string, pickFile: string): string => {
+      const dir = holderSrc("");
+      writeFileSync(join(dir, pokeFile), poke);
+      writeFileSync(join(dir, pickFile), pick);
+      const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts"), join(dir, pokeFile), join(dir, pickFile)], { astRoots: ["Expr"], overridesDir: join(dir, "none"), lenient: true });
+      return r.stubs.filter((st) => st.name === "pick").map((st) => st.reason).join("");
+    };
+    expect(refusal("parser.ts", "checker.ts")).toBe("");
+    expect(refusal("checker.ts", "parser.ts")).toContain("mutated afterwards");
+    expect(refusal("helpers.ts", "checker.ts")).toContain("mutated afterwards");
   });
 
   // A copy borrowed only for one call dies with it: a write elsewhere in the program cannot be seen through it.

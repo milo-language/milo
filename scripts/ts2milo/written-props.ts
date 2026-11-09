@@ -9,8 +9,12 @@
 // code (it runs once at load) is in reach only for a site in it. A write in a phase no caller connects to F is not counted.
 // A temporary borrowed for one call (a variant wrapped as its union to be passed as `&Union`) dies when the call ends,
 // so its reach is the call expression's own writes and callees, with no caller continuation (regionReach).
-// Assumes the translated entry points are driven in phase order by code outside the files (the generated frontend
-// driver parses, then checks); functions no translated caller connects are different phases, not interleaved ones.
+// A copy can be stored and outlive the entry call that made it, so code the driver runs LATER counts too. The driver
+// lives outside the translated files; the one thing assumed of it is that it calls translated functions in
+// non-decreasing phase order of their files (PHASES: lex, parse, resolve, check, emit). So a site whose earliest
+// possible entry is in phase p also gets every write reachable from a function of phase >= p, and from every function
+// in a file with no phase (ast.ts, types.ts: callable at any time). Only writes of strictly earlier phases are dropped:
+// the parser filling in a node cannot be seen through a copy the checker makes afterwards.
 // A write `o.p = v` to a fresh local object (isConstruction) is no write: no alias of o exists yet.
 import ts from "typescript";
 
@@ -18,6 +22,15 @@ import ts from "typescript";
 // function using one is stubbed and the write never happens in the generated program.
 const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin", "set", "add", "delete", "clear"]);
 const MODULE = "<module>";
+// Driver order of the frontend's files. A file matching none can run in any phase.
+const PHASES = [/^(tokens|lexer)$/, /^parser(-.*)?$/, /^resolver$/, /^(checker(-.*)?|mutability-scan)$/, /^(backend-program|emit-.*|mlir-.*|scaffold)$/];
+// The phase of a function key ("<file>.ts:<pos>" or "class:<file>.ts:<pos>"); undefined = any phase.
+function phaseOfKey(k: string): number | undefined {
+  const m = /([^/]+)\.ts:\d+$/.exec(k);
+  if (!m) return undefined;
+  const i = PHASES.findIndex((re) => re.test(m[1]));
+  return i < 0 ? undefined : i;
+}
 
 type Writes = { decls: Set<ts.Declaration>; opaque: boolean };
 
@@ -256,9 +269,28 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
     }
     return { decls, opaque, id };
   };
+  // Every function key, without module-level code (it ran before any copy) and without call regions (their writes
+  // are already their enclosing function's).
+  const allFns = new Set<string>();
+  for (const [a, bs] of edges) { allFns.add(a); for (const b of bs) allFns.add(b); }
+  for (const k of writesOf.keys()) allFns.add(k);
+  for (const k of [...allFns]) if (k === MODULE || k.startsWith("region:")) allFns.delete(k);
+  const laterCache = new Map<number, string[]>();
+  // Functions the driver may still enter once a phase-p entry has run.
+  const laterEntries = (p: number): string[] => {
+    let r = laterCache.get(p);
+    if (!r) laterCache.set(p, (r = [...allFns].filter((f) => { const q = phaseOfKey(f); return q === undefined || q >= p; })));
+    return r;
+  };
   const reach = (k: string): Reach => {
     let r = reachCache.get(k);
-    if (!r) reachCache.set(k, (r = unionWrites(closure([k, ...closure([k], rev)], edges), reachCache.size)));
+    if (!r) {
+      const callers = closure([k], rev);
+      // Any transitive caller may be the function the driver entered; one with no phase could be entered at any time.
+      let p = Infinity;
+      for (const c of callers) if (c !== MODULE) p = Math.min(p, phaseOfKey(c) ?? -1);
+      reachCache.set(k, (r = unionWrites(closure([...callers, ...(k === MODULE ? [] : laterEntries(p))], edges), reachCache.size)));
+    }
     return r;
   };
   // A temporary that dies at the end of `region` (a call argument borrowed for the call): only code the region itself
