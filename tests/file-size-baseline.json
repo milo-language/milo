@@ -86,7 +86,7 @@
   "src/mlir-llvm.ts": 207,
   "src/must.ts": 15,
   "src/mutability-scan.ts": 212,
-  "src/noalias.ts": 277,
+  "src/noalias.ts": 278,
   "src/objcache.ts": 153,
   "src/object-checks.ts": 225,
   "src/object-trace.ts": 299,
