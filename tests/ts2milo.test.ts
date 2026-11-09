@@ -232,8 +232,26 @@ describe("tagged unions", () => {
   });
 
   test("a recursive AST value copied into a local that is mutated afterwards is still refused", () => {
-    const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
+    const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\nexport function drive(h: Holder, n: Num): number {\n  const r = pick(h, true);\n  poke(n);\n  return r;\n}\n");
     expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") })).toThrow("mutated afterwards");
+  });
+
+  // A write in a function no caller connects to the copy site runs in another phase (the driver orders the phases), so it cannot be seen through the copy.
+  test("a write in a function unconnected to the copy site does not block the clone", () => {
+    const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
+    expect(r.files.get("use.milo")!).toContain(".clone()");
+  });
+
+  // A copy borrowed only for one call dies with it: a write elsewhere in the program cannot be seen through it.
+  test("a union-wrapped argument copy is cloned when the call itself writes nothing, refused when a callee writes", () => {
+    const body = (callee: string) => "import type { Num, Neg, Expr } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\n" + callee + "export function pass(g: Neg): number {\n  return show(g);\n}\nexport function other(n: Num, g: Neg, e: Expr): number {\n  poke(n);\n  return pass(g) + show(e);\n}\n";
+    const reads = holderSrc(body("export function show(e: Expr): number {\n  return val(e);\n}\n"));
+    const ok = transpile([join(reads, "ast.ts"), join(reads, "use.ts")], { astRoots: ["Expr"], overridesDir: join(reads, "none"), lenient: true });
+    expect(ok.stubs.filter((s) => s.name === "pass")).toEqual([]);
+    const writes = holderSrc(body("export function show(e: Expr): number {\n  if (e.kind === \"Num\") { poke(e); }\n  return val(e);\n}\n"));
+    const bad = transpile([join(writes, "ast.ts"), join(writes, "use.ts")], { astRoots: ["Expr"], overridesDir: join(writes, "none"), lenient: true });
+    expect(bad.stubs.filter((s) => s.name === "pass").map((s) => s.reason).join("")).toContain("mutated afterwards");
   });
 
   test("a recursive value no code writes into is cloned even into a mutated local", () => {

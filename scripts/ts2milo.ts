@@ -713,10 +713,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return !!d && ts.isInterfaceDeclaration(d) && astModel.recursive.has(d.name.text);
     };
     let roDest = false;
-    const cloneFail = (n: ts.Node, t: ts.Type, ro = false): void => {
+    // The call whose borrowed argument is being converted: a copy made only to be passed by reference dies with the call.
+    let argRegion: ts.Node | undefined;
+    const cloneFail = (n: ts.Node, t: ts.Type, ro = false, region?: ts.Node): void => {
       if (!canClone(t)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: the type is a class, so it has no Clone; use the place itself`);
       if (!isRecursiveT(t)) return;
-      if (!ro && !neverWritten(t)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: copy of a recursive value that is mutated afterwards, or whose destination is not known to be read-only`);
+      if (!ro && !neverWritten(t, n, region)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: copy of a recursive value that is mutated afterwards, or whose destination is not known to be read-only`);
       report.recursiveClones++;
     };
     const canClone = (t: ts.Type): boolean => {
@@ -764,6 +766,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       // The read-only flag belongs to this value only, never to the expressions nested inside it.
       const ro = roDest;
       roDest = false;
+      const region = argRegion;
+      argRegion = undefined;
       const owned = (s: string, force = false) => {
         if (!(own || force) || !needsClone(e)) return s;
         const taken = takeFromThis(e, s);
@@ -771,7 +775,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         // A local annotated with a union is that union in Milo even where TS has narrowed this read to one variant.
         const sy = ts.isIdentifier(unparen(e)) ? symOf(unparen(e) as ts.Identifier) : undefined;
         const declared = sy && sy.valueDeclaration && ts.isVariableDeclaration(sy.valueDeclaration) && sy.valueDeclaration.type ? checker.getTypeOfSymbol(sy) : undefined;
-        cloneFail(e, declared && unionOfType(checker, declared) ? declared : tOf(e), ro);
+        cloneFail(e, declared && unionOfType(checker, declared) ? declared : tOf(e), ro, force ? region : undefined);
         return `${s}.clone()`;
       };
       // A boxed optional field is an Option<Heap<T>> in Milo; anywhere an Option<T> is wanted it
@@ -990,7 +994,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const pt = checker.getTypeAtLocation(p);
         if (i < given.length && heapOptParam(p)) { hit("boxed optional field", "passed as Option<Heap<T>> to an optional parameter"); parts.push(`${mp?.has(i) ? "&mut " : ""}${ex(given[i])}`); }
         else if (i < given.length && mp?.has(i)) { hit("&mut parameter", "argument written `&mut x`"); parts.push(`&mut ${conv(given[i], pt)}`); }
-        else if (i < given.length) parts.push(conv(given[i], pt, byValue));
+        else if (i < given.length) { if (!byValue) argRegion = call; parts.push(conv(given[i], pt, byValue)); argRegion = undefined; }
         else if (p.initializer) { hit("default parameter", "default expression filled in at the call site"); parts.push(ex(p.initializer)); }
         else if (p.questionToken) parts.push("Option.None");
         else fail(call, "missing argument");
