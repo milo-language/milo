@@ -44,6 +44,8 @@ export class InterpCo extends InterpGen {
   runq: Task[] = [];
   cur!: Task;
   drainWaiter: Task | null = null;
+  // The blocking pool's own block: allocated by the first job, live until exit (std/runtime blockingPool).
+  blockingPoolBlock: number | null = null;
   // quiet: a timed wait that is not sleepMs (a Select timer arm, poll's timeout) costs no sleep-select blocks when abandoned
   sleepers: { t: Task; at: number; quiet?: boolean }[] = [];
   private nextTaskId = 1;

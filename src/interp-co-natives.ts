@@ -106,7 +106,13 @@ plain("sleepBlockingMs", (it, [ms]) => { (it as InterpCo).clock += Math.max(0, N
 plain("ensureTimersLive", () => undefined);
 plain("schedulerEnsureInit", () => undefined);
 // A blocking-pool job or OS thread runs as one more task (R-TASK-BLOCKING): the interpreter has no second thread.
-plain("runtime$blockingPoolSubmit", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
+// The pool itself is one heap block built by the first job and never freed, so it is live at exit.
+plain("runtime$blockingPoolSubmit", (it, [f]) => {
+  const co = it as InterpCo;
+  if (co.blockingPoolBlock === null) co.blockingPoolBlock = co.alloc();
+  co.spawnTask(f as ClosureV);
+  return undefined;
+});
 plain("spawnOsThreadDetached", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 plain("spawnWorkerAudited", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
 
