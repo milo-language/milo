@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Unsupported, summary, transpile } from "../scripts/ts2milo";
-import { countViolations } from "../scripts/ts-portable";
+import { countViolations, frontendFiles } from "../scripts/ts-portable";
 
 function tmpTs(name: string, body: string): { file: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
@@ -101,5 +101,16 @@ describe("ts-portable", () => {
     const res = countViolations(["src/lexer.ts", "src/tokens.ts"]);
     expect(res.get("src/lexer.ts")!.length).toBe(0);
     expect(res.get("src/tokens.ts")!.length).toBe(0);
+  });
+  // The port is measured by this count, so it may only shrink. It went unchecked from
+  // 2026-11-04 to 2026-11-08 (no test ran --check) and grew by ~90 in that time.
+  test("no frontend file grows past its portability baseline", () => {
+    const base: Record<string, number> = JSON.parse(readFileSync(join(import.meta.dir, "..", "scripts/ts-portable-baseline.json"), "utf8"));
+    const over: string[] = [];
+    for (const [f, v] of countViolations(frontendFiles())) {
+      if (base[f] === undefined) over.push(`${f}: not in baseline (bun scripts/ts-portable.ts --write)`);
+      else if (v.length > base[f]) over.push(`${f}: ${v.length} > ${base[f]}`);
+    }
+    expect(over).toEqual([]);
   });
 });

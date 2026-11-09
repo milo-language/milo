@@ -216,7 +216,7 @@ export function generate(): Map<string, string> {
       return [`collect${e.family}(${p}, out);`];
     };
     if (e.array) {
-      n.push(`${ind}if (${path}) for (const x of ${path}) if (x) { ${e.struct ? "" : `collect${e.family}(x, out);`}`);
+      n.push(`${ind}if (${path}) for (const x of ${path}) if (x) {${e.struct ? "" : ` collect${e.family}(x, out);`}`);
       if (e.struct) for (const se of structEdges(e.struct)) n.push(`${ind}  ${se.array ? `if (x.${se.field}) for (const y of x.${se.field}) collect${se.family}(y, out);` : `if (x.${se.field}) collect${se.family}(x.${se.field}, out);`}`);
       n.push(`${ind}}`);
     } else {
