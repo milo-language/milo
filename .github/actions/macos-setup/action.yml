@@ -1,0 +1,33 @@
+name: macOS test setup
+description: >
+  Everything a macOS job needs before it compiles and runs Milo programs: bun, milo-opt, node
+  deps, z3, lld, SDL2 and the example packages. Shared by the test job and the soundness lanes
+  so the lanes see exactly what the old single job saw. Run actions/checkout first.
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    # MLIR is the default build path: every Milo program compiled runs milo-opt and the clang
+    # of its LLVM.
+    - uses: ./.github/actions/milo-opt
+    # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules: without it
+    # every `console`/`process`/`Buffer` is an error, and `bun test` runs fine without deps,
+    # which is exactly why this gap stayed invisible.
+    - shell: sh
+      run: bun install --frozen-lockfile
+    # z3 is the only prover (verify-contracts, prove, dead, reqTrace and the pid demo's
+    # `trace --strict` fail without it). lld gives ld.lld for `--target=cortex-m3`
+    # (tests/embedded.test.ts). 14 shipped examples bind SDL2 and fail at link time without it.
+    - shell: sh
+      run: brew install z3 lld sdl2
+    # Sync the dependencies of every example that declares some. Without them an example
+    # whose package cannot resolve is type-checked no further, and a fixture carrying
+    # `@requires-package` is skipped (flybyGeometry needs `gl`). NON-FATAL on purpose: the
+    # only network fetch for a package, and a registry hiccup must not redden a compiler run.
+    - name: Sync example package deps (non-fatal)
+      shell: sh
+      continue-on-error: true
+      run: |
+        for f in $(find examples -name milo.json); do
+          (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" pkg install) || true
+        done

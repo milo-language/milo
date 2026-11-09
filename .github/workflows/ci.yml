@@ -19,41 +19,7 @@ jobs:
           # none and failed rather than silently passing — which is the right failure,
           # but the fix belongs here.
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-      # MLIR is the default build path: every Milo program compiled below runs milo-opt
-      # and the clang of its LLVM. Windows is the one host without it (MILO_LEGACY there).
-      - uses: ./.github/actions/milo-opt
-      # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules —
-      # without it every `console`/`process`/`Buffer` is an error. `bun test` happens to
-      # run fine without deps, which is exactly why this gap stayed invisible.
-      - run: bun install --frozen-lockfile
-      # z3 is the only prover: tests/verify-contracts.test.ts, prove.test.ts, dead.test.ts,
-      # reqTrace.test.ts and the pid demo's `trace --strict` all fail without it.
-      - run: brew install z3
-      # lld provides ld.lld, which `milo build --target=cortex-m3` invokes via
-      # -fuse-ld=lld to link freestanding ARM ELF executables (tests/embedded.test.ts).
-      - run: brew install lld
-      # 14 of the shipped examples — every game, both raytracers, the simulations — bind
-      # SDL2 through the `sdl` package and fail at LINK time without it ("ld: library
-      # 'SDL2' not found"). tests/examples.test.ts never noticed because it stops at
-      # emit-ir; scripts/run-examples.ts links and runs, which is the point of it.
-      - run: brew install sdl2
-      # Sync the dependencies of every example that declares some. Two things skip
-      # silently without them: an example whose package cannot resolve is type-checked no
-      # further (~4.5k lines of apsis), and a FIXTURE carrying `@requires-package` is
-      # skipped by tests/run.test.ts (flybyGeometry, which needs `gl`). That is why this
-      # runs BEFORE `bun test` rather than next to the example harness -- placed after it,
-      # the fixture stayed skipped on every CI run and said so in a line nobody reads.
-      #
-      # NON-FATAL on purpose: the only step in this lane that reaches the network for a
-      # package, and a registry hiccup must not redden a run about the compiler. When it
-      # fails, both harnesses fall back to the skips they already do.
-      - name: Sync example package deps (non-fatal)
-        continue-on-error: true
-        run: |
-          for f in $(find examples -name milo.json); do
-            (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" pkg install) || true
-          done
+      - uses: ./.github/actions/macos-setup
       # tests/playground.test.ts tests the built browser bundle, never builds it.
       - run: bun scripts/build-playground.ts
       # bun's default 5s is shorter than two compiles on a slow runner (a whole run can be 1.5x
@@ -79,16 +45,31 @@ jobs:
       - name: Contract sweep
         run: bun run src/main.ts test --contracts std examples
 
+      # Non-FFI unsafe may shrink, never grow. It sat outside CI and drifted 19 -> 186 in std
+      # unnoticed; sibling roots are absent here, which can only lower the counts.
+      - name: Unsafe census ratchet
+        run: bun scripts/corpus-census.ts --check
+
+  # The three slow soundness gates, each its own macOS job so they run beside `test` instead
+  # of after it: one job running everything in turn took ~94 min (bun test 27, fuzzers 29,
+  # ASan 18, leaks 15), and the verdict on main waited for all of it.
+  soundness:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [leak, asan, fuzz]
+    name: soundness (${{ matrix.lane }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-setup
       # A fixture that leaks still prints the right bytes, so `bun test` cannot see one.
       # That blind spot let the self-hosted compiler leak every owned local for months
       # while the sweep stayed green. This ratchets against tests/leak-clean.txt.
       # macOS gets `leaks -atExit`; LeakSanitizer does not exist on darwin/arm64.
       - name: Leak ratchet
+        if: matrix.lane == 'leak'
         run: bun run scripts/leak-check.ts --check
-      # Non-FFI unsafe may shrink, never grow. It sat outside CI and drifted 19 -> 186 in std
-      # unnoticed; sibling roots are absent here, which can only lower the counts.
-      - name: Unsafe census ratchet
-        run: bun scripts/corpus-census.ts --check
       # `milo build --sanitize` existed for a long time and nothing ran it over the corpus.
       # Use-after-free, out-of-bounds and double-free in generated code had no gate. The leak ratchet above cannot see any of
       # those — different question, and it only sees blocks big enough for `leaks` to report.
@@ -104,6 +85,7 @@ jobs:
       # the two cannot drift. It does NOT consult tests/known-red.txt: a fixture the test
       # driver excuses is still built and run here, which is where an open hole shows red.
       - name: AddressSanitizer sweep
+        if: matrix.lane == 'asan'
         run: bun run test:asan
 
       # The soundness fuzzers.
@@ -116,6 +98,7 @@ jobs:
       # balance, ASan, the ownership ledger and a read-integrity check. A reverted fix
       # among those is red within its first ~15 cases. COST: ~5 CPU-s per case, so ~70s for 40 at --jobs 3.
       - name: Soundness fuzzers
+        if: matrix.lane == 'fuzz'
         run: |
           bun run fuzz:tasks --n=100 --seed=${{ github.run_number }} --reduce-probes=0
           bun run fuzz:generic-drop --seed=${{ github.run_number }}
