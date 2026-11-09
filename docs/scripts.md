@@ -94,7 +94,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
 | `scripts/lsp-probe.ts` | Crash-safety probe for the Milo language server (src/lsp.ts). |
 | `scripts/mascot.ts` | The Milo mascot as a char grid — the single source for every rendering of it (docs/site/scripts/gen-logo.ts → logo.svg, scripts/gen-vscode-icon.ts → the extension's icon.png). |
-| `scripts/mlir-census.ts` | Compile-only MLIR coverage census: emit-ir with MILO_MLIR_LOG over every fixture and example with a main plus milojs's two entry points, then the function-instance coverage and the top legacy reasons. |
 | `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend: each program's LLVM IR for a non-host target must be for that target. |
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
 | `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
