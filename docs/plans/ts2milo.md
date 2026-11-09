@@ -285,6 +285,13 @@ Gates for every step: `bun scripts/ir-same.ts --emit mlir` (byte-identical milo 
 cached, so a rerun only re-emits the working tree) on the fixtures a change can reach, the
 portability ratchet in `tests/ts2milo.test.ts`, and the differential gate for generated files.
 
+The nine generated checker passes (purity, nonescaping, concurrent-args, escaping-closures,
+global-borrow, mut-bundle, pointer-escape, task-scopes, thread-boundary) share one driver,
+`scripts/ts2milo/pass-diff.ts`; each `scripts/ts2milo-<pass>-diff.ts` is only its spec.
+`bun scripts/ts2milo-pass-diffs.ts` runs all nine over one walk of the corpus and is a CI step on
+linux x64 (since 2026-11-09; before that no test or job ran them, and the purity pass had stopped
+building). A pass that does not build, or that no program reaches, is red.
+
 ### Stage 4 progress (2026-11-08)
 
 - `checkNonEscapingParams`: ported (net -56), generated 39/39 functions automatic, compiles,
