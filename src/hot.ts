@@ -573,7 +573,6 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
   writeFileSync(ack, "");
   let child: ChildProcess | null = null;
   let stopGuard = () => {};
-  let restarting = false;
   let manifest: HotManifest;
   let current: Record<string, string> = {};
   let n = 0;
@@ -596,26 +595,27 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     manifest = JSON.parse(readFileSync(`${bin}.hot.json`, "utf-8"));
     current = initialHashes(manifest);
     snapshot();
-    child = spawn(bin, args, { stdio: "inherit", env: { ...process.env, MILO_HOT_FIFO: fifo, MILO_HOT_ACK: ack } });
+    const c = spawn(bin, args, { stdio: "inherit", env: { ...process.env, MILO_HOT_FIFO: fifo, MILO_HOT_ACK: ack } });
+    child = c;
     const memMb = Number(process.env.MILO_RUN_MEM_MB || 0) || DEFAULT_MEM_MB;
-    stopGuard = process.env.MILO_RUN_UNGUARDED === "1" ? () => {} : monitorPidTree(child.pid!, memMb, (mb) => {
+    stopGuard = process.env.MILO_RUN_UNGUARDED === "1" ? () => {} : monitorPidTree(c.pid!, memMb, (mb) => {
       console.error(`hot: program exceeded its memory cap (footprint ${mb} MB) and was killed`);
     });
-    child.on("close", (code, signal) => {
+    c.on("close", (code, signal) => {
       stopGuard();
-      if (!restarting) console.error(`hot: program exited (${signal ?? code}); waiting for a change to restart`);
-      child = null;
+      // c.killed: we sent the signal (a restart, or ^C), so the exit is expected and not reported.
+      if (!c.killed) console.error(`hot: program exited (${signal ?? code}); waiting for a change to restart`);
+      // Only this process's own exit clears the slot: a late close must not orphan its successor.
+      if (child === c) child = null;
     });
     return true;
   };
   const kill = async () => {
     if (!child) return;
-    restarting = true;
     const c = child;
     const closed = new Promise(res => c.once("close", res));
     c.kill("SIGKILL");
     await closed;
-    restarting = false;
   };
   const cleanup = () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} };
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => { child?.kill("SIGKILL"); cleanup(); process.exit(130); });
@@ -635,7 +635,7 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     }
     if (!dirty) continue;
     const t0 = performance.now();
-    if (!child) { await kill(); start(); continue; }
+    if (!child) { start(); continue; }
     const ir = deps.compileIR();
     if (ir === null) continue;
     const tCompiled = performance.now();
