@@ -55,8 +55,8 @@ export function collectIdentity(program: ts.Program, checker: ts.TypeChecker, fi
 }
 
 // `m.values()` of a Map: the one iteration over a map that yields what TypeScript yields (the values).
-export function mapValuesRecv(checker: ts.TypeChecker, e: ts.Expression): ts.Expression | null {
-  if (!ts.isCallExpression(e) || e.arguments.length || !ts.isPropertyAccessExpression(e.expression) || e.expression.name.text !== "values") return null;
+export function mapValuesRecv(checker: ts.TypeChecker, e: ts.Expression, method: "values" | "keys" = "values"): ts.Expression | null {
+  if (!ts.isCallExpression(e) || e.arguments.length || !ts.isPropertyAccessExpression(e.expression) || e.expression.name.text !== method) return null;
   const t = checker.getTypeAtLocation(e.expression.expression);
   return t.symbol && (t.symbol.name === "Map" || t.symbol.name === "ReadonlyMap") ? e.expression.expression : null;
 }

@@ -458,8 +458,11 @@ export interface Program {
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file
   // Imported names the entry file never mentions (resolver-computed; see unused-import).
-  unusedImports?: { name: string; path: string; span?: Span }[];
+  unusedImports?: UnusedImport[];
   // User fns that shadow a stdlib/prelude fn with the same signature but a different
   // body (resolver-computed; see shadows-stdlib-override). Silent last-wins rebind.
-  shadowedStdlib?: { name: string; stdlibFile: string; span?: Span }[];
+  shadowedStdlib?: ShadowedStdlib[];
 }
+
+export interface UnusedImport { name: string; path: string; span?: Span }
+export interface ShadowedStdlib { name: string; stdlibFile: string; span?: Span }

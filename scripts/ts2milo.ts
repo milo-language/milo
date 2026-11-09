@@ -14,11 +14,11 @@ const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
 const RUNTIME_MOD = "./ts2milo_runtime";
 // JavaScript names the prelude already owns, mirrored under another name in the runtime.
 const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
-// Runtime-mirrored interfaces (runtime.milo) that derive Clone.
-const RUNTIME_CLONEABLE = new Set(["DiagnosticNote"]);
 const THROWN_ENUM = "Thrown";
 const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
 const safeId = (n: string): string => { const m = n.replace(/\$/g, "_d"); return RESERVED.has(m) ? m + "_" : m; };
+// Runtime-mirrored interfaces (runtime.milo) that derive Clone.
+const RUNTIME_CLONEABLE = new Set(["Diagnostic", "DiagnosticNote", "ReplayPlan", "TargetInfo"]);
 const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub clone drop".split(" "));
 
 export interface Report {
@@ -589,7 +589,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const idOf = (x: ts.Expression, k: NodeKey): string => k.union ? `${useDeclared(`${k.name}_${ID_FIELD}`, k.union.decl.getSourceFile().fileName, x)}(${ex(x)})` : `${ex(x)}.${ID_FIELD}`;
     // The key argument of a Map/Set call: the node id when the container is keyed by nodes.
     const keyEx = (recv: ts.Expression, arg: ts.Expression, own = false): string => {
-      const rt = tOf(recv);
+      const rt = checker.getNonNullableType(tOf(recv)); // `a?.map.get(k)`: the receiver is `Map | undefined`
       const k = nodeKeyOfContainer(checker, rt);
       if (!k) { const ed = enumDeclOf(checker.getTypeArguments(rt as ts.TypeReference)[0]); if (ed) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, arg)}(${ex(arg)})`; }
       return k ? idEx(arg, k) : own ? ownConv(arg, checker.getTypeArguments(rt as ts.TypeReference)[0]) : ex(arg);
@@ -698,7 +698,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
-      return !!d && ts.isInterfaceDeclaration(d) && (astModel.cloneable.has(d.name.text) || RUNTIME_CLONEABLE.has(d.name.text));
+      // Interfaces the runtime declares by hand (@derive(Clone) in runtime.milo).
+      if (d && ts.isInterfaceDeclaration(d) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
+      return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
     const ownBranches = new Set<ts.Node>();
@@ -892,6 +894,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const t = checker.getNonNullableType(tOf(n));
       return chainFold(n, `${useRuntime("optNone", n)}<${ty(t, n)}>()`, (v) => `Option.Some(${v})`, true);
     };
+    // The left side of a `place ?? []` loop head whose body never writes the loop variable: iterating a clone is unobservable.
+    let roNullishLeft: ts.Expression | null = null;
     const nullish = (b: ts.BinaryExpression): string => {
       const mode = nullishHandled(checker, b) ?? fail(b, "?? outside the subset");
       hit("nullish coalescing", mode === "value" ? "Milo ?? (the default runs only when absent)" : "if isSome, else the default");
@@ -899,6 +903,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const l = unparen(b.left);
       const dflt = ownConv(b.right, rt);
       if (isChainMember(l)) return mode === "value" ? chainFold(l, dflt, (v) => v, true) : chainFold(l, dflt, (v) => `Option.Some(${v})`, true);
+      if (l === roNullishLeft) roDest = true;
       if (mode === "value") return `(${conv(l, tOf(l), true)} ?? ${dflt})`;
       return `(if ${ex(l)}.isSome() { ${conv(l, tOf(l), true)} } else { ${dflt} })`;
     };
@@ -1310,6 +1315,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
               hit("new Set([enums])", "HashSet.fromVec of Enum_value strings");
               return `${std("HashSet")}.fromVec([${(lit as ts.ArrayLiteralExpression).elements.map((x) => `${vf}(${ex(x)})`).join(", ")}])`;
             }
+            const keysOf = n.arguments?.length ? mapValuesRecv(checker, n.arguments[0], "keys") : null;
+            if (keysOf && !nodeKeyOfContainer(checker, tOf(keysOf)) && !enumDeclOf(checker.getTypeArguments(checker.getNonNullableType(tOf(keysOf)) as ts.TypeReference)[0])) { hit("new Set(map.keys())", "HashSet.fromVec(map.keys())"); return `${std("HashSet")}.fromVec(${ex(keysOf)}.keys())`; }
             hit("new Set([...])", "HashSet.fromVec");
             return n.arguments?.length ? `${std("HashSet")}.fromVec(${ownConv(n.arguments[0])})` : `${std("HashSet")}.new()`;
           }
@@ -1524,6 +1531,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const a = e as ts.ArrayLiteralExpression;
           if (a.elements.length === 0) return want && checker.isArrayType(want) && boxedFieldInit ? `${ty(want, e)}.new()` : "Vec.new()";
           const et = want && checker.isArrayType(want) ? checker.getTypeArguments(want as ts.TypeReference)[0] : undefined;
+          // `[...set]` of a scalar-element Set: its elements as a Vec, in slot order, not insertion order.
+          if (a.elements.length === 1 && ts.isSpreadElement(a.elements[0])) {
+            const st = tOf(a.elements[0].expression);
+            const el = st.symbol && (st.symbol.name === "Set" || st.symbol.name === "ReadonlySet") ? checker.getTypeArguments(st as ts.TypeReference)[0] : null;
+            if (el && isCopyT(el)) { hit("[...set]", "Set.toVec()"); return `${ex(a.elements[0].expression)}.toVec()`; }
+          }
           if (boxedFieldInit && et && a.elements.length === 1 && !ts.isSpreadElement(a.elements[0])) { boxedFieldInit = false; return `${useRuntime("vec1", e)}<${heapElem(et, "X") !== "X" ? `Heap<${ty(et, e)}>` : ty(et, e)}>(${heapElem(et, ownConv(a.elements[0], et))})`; }
           return `[${a.elements.map((x) => (et ? heapElem(et, ownConv(x, et)) : ownConv(x, et))).join(", ")}]`;
         }
@@ -1634,12 +1647,17 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
           if (!ts.isVariableDeclarationList(f.initializer) || !ts.isIdentifier(f.initializer.declarations[0].name)) fail(f, "for-of with a destructuring or non-declaration head");
-          const mv = mapValuesRecv(checker, f.expression);
+          // Map.values() / Map.keys(): a Vec copy in slot order, not insertion order (a body that depends on the order is wrong).
+          const mk = mapValuesRecv(checker, f.expression, "keys");
+          const mv = mapValuesRecv(checker, f.expression) ?? mk;
           if (!mv && !checker.isArrayType(tOf(f.expression))) fail(f, "for-of over something other than an array");
           const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
           const sym = symOf(d.name as ts.Identifier)!;
-          const arr = mv ? `${ex(mv)}.values()` : ex(f.expression);
-          const el = mv ? checker.getTypeArguments(tOf(mv) as ts.TypeReference)[1] : checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
+          const he = unparen(f.expression);
+          if (!mv && ts.isBinaryExpression(he) && he.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken && !forOfMutates(f)) roNullishLeft = unparen(he.left);
+          const arr = mv ? `${ex(mv)}.${mk ? "keys" : "values"}()` : ex(f.expression);
+          roNullishLeft = null;
+          const el = mv ? checker.getTypeArguments(tOf(mv) as ts.TypeReference)[mk ? 0 : 1] : checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
           hit("for-of over an array", "for x in array (borrowed elements)");
           push();
           const name = declareLocal(sym, (d.name as ts.Identifier).text);
@@ -2010,7 +2028,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       } catch (err) {
         let e = err as Error;
         if (!opts.lenient) throw e;
-        if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
+        if (!(e instanceof Unsupported) && process.env.TS2MILO_STACK) console.error((e as Error).stack); if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
         out.length = mark; ind = markInd;
         report.stubs.push({ file: rel(file), name, reason: e.message });
         let hdr: string | null = null;
@@ -2199,11 +2217,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const ps = (ctor?.parameters ?? []).map((p) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
         line(`fn new(${ps.join(", ")}): ${cname} {`);
         ind++;
+        // A constructor body of `this.f = e;` statements only: each e initializes field f. Anything else would be dropped silently, so it stubs.
+        const ctorInit = new Map<string, string>();
+        for (const st of ctor?.body?.statements ?? []) {
+          if (ts.isExpressionStatement(st) && ts.isCallExpression(st.expression) && st.expression.expression.kind === ts.SyntaxKind.SuperKeyword) continue; // an Error subclass's message, as before
+          const b = ts.isExpressionStatement(st) && ts.isBinaryExpression(st.expression) ? st.expression : null;
+          if (!b || b.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isPropertyAccessExpression(b.left) || b.left.expression.kind !== ts.SyntaxKind.ThisKeyword) throw new Unsupported("constructor body statement other than this.field = expression");
+          const fname = b.left.name.text;
+          const decl = n.members.find((m): m is ts.PropertyDeclaration => ts.isPropertyDeclaration(m) && mname(m.name) === fname);
+          if (!decl || ctorInit.has(fname)) throw new Unsupported("constructor assigns a field twice or one that is not declared");
+          hit("constructor field assignment", "field initializer in new");
+          ctorInit.set(fname, ownConv(b.right, checker.getTypeAtLocation(decl)));
+        }
         line(`return ${cname} {`);
         ind++;
         for (const p of props) {
           // A field with no initializer that is no parameter property is assigned in the constructor body, which is not translated.
-          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
+          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : ctorInit.get(p.name) ?? p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
           line(`${safeId(p.name)}: ${init},`);
         }
         ind--; line("}");

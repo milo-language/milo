@@ -609,7 +609,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const src = ts.isCallExpression(f.expression) && ts.isPropertyAccessExpression(f.expression.expression) && f.expression.expression.name.text !== "values" ? f.expression.expression.expression : f.expression;
         if (nodeKeyOfContainer(checker, checker.getTypeAtLocation(src))) { bad(n, "iteration over node-identity keys (for-of)"); return; }
         const one = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 && ts.isIdentifier(f.initializer.declarations[0].name);
-        if (!one || !(isArr(checker.getTypeAtLocation(f.expression)) || mapValuesRecv(checker, f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
+        if (!one || !(isArr(checker.getTypeAtLocation(f.expression)) || mapValuesRecv(checker, f.expression) || mapValuesRecv(checker, f.expression, "keys")) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
         return;
       }
       case K.ArrowFunction: {
