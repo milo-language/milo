@@ -11470,7 +11470,14 @@ export class TypeChecker {
           // them to it yet: with explicit type arguments (`f<T>(x)`) no inference step
           // ever notices a mismatch, and codegen died on it ("by-ref arg of another type").
           const argTy = this.exprTypes.get(expr.args[i]) ?? { tag: "unknown" as const };
-          this.matchCallArg(expr.args[i], argTy, sigParamTy, sp, argType =>
+          // A bare numeric literal was typed with no context (so `100000` is i64); the
+          // non-generic path types it against the parameter, so it takes the parameter's
+          // type here too (codegen reads it). Its range is checked below.
+          const a0 = expr.args[i];
+          const lit = a0.kind === "UnaryOp" && a0.op === "-" ? a0.operand : a0;
+          const litFits = (lit.kind === "IntLit" && sigParamTy.tag === "int") || (lit.kind === "FloatLit" && sigParamTy.tag === "float");
+          if (litFits) { this.setType(lit, sigParamTy); if (a0 !== lit) this.setType(a0, sigParamTy); }
+          else this.matchCallArg(expr.args[i], argTy, sigParamTy, sp, argType =>
             this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(sigParamTy)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(sigParamTy, argType)));
         }
         if (sigParamTy?.tag === "ref") continue;

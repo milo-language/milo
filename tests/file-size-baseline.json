@@ -40,7 +40,7 @@
   "src/checker-sql.ts": 360,
   "src/checker-task-scopes-host.ts": 84,
   "src/checker-task-scopes.ts": 567,
-  "src/checker.ts": 15698,
+  "src/checker.ts": 15705,
   "src/cli-help.ts": 350,
   "src/const-fold.ts": 176,
   "src/contract-tests.ts": 713,

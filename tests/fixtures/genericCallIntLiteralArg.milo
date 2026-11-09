@@ -1,0 +1,18 @@
+// An integer literal passed to a generic fn's i32 parameter takes the parameter's type, as in
+// a non-generic call; checking generic arguments against the concrete signature must not
+// reject it as i64.
+// @expect: 7
+// @expect: 2.5
+
+fn addN<T>(x: T, n: i32): i32 {
+    return n + 2
+}
+
+fn half<T>(x: T, f: f64): f64 {
+    return f / 2.0
+}
+
+fn main() {
+    print(addN<string>("a", 5).toString())
+    print(half<i64>(1, 5.0).toString())
+}
