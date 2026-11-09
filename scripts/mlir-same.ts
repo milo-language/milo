@@ -33,6 +33,8 @@ const MILO_OPT = process.env.MILO_OPT ?? join(ROOT, "mlir", "build", "milo-opt")
 const argv = process.argv.slice(2);
 const opt = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const filter = opt("--filter");
+const dirOpt = opt("--dir"); // compare this directory's programs instead of tests/fixtures (scripts/gen-ownership-cells.ts)
+const jsonOut = opt("--json"); // per-program verdicts and the reasons functions were not lowered
 const jobs = Number(opt("--jobs") ?? 2);
 const GUARD_TRIES = 3;
 const NOISE = new Set(["pressure", "global-memory", "watchdog-blind"]);
@@ -61,7 +63,8 @@ const PROGRAMS = join(ROOT, "mlir", "test", "programs");
 const list = (dir: string) => readdirSync(dir).filter(f => f.endsWith(".milo")).map(f => join(dir, f.slice(0, -5)))
   .filter(n => !filter || new RegExp(filter).test(basename(n))).sort();
 const programs = list(PROGRAMS);
-const names = [...programs, ...(argv.includes("--programs") ? [] : list(FIXTURES))];
+const names = dirOpt ? list(dirOpt) : [...programs, ...(argv.includes("--programs") ? [] : list(FIXTURES))];
+const refused = new Map<string, string[]>();
 const tmp = mkdtempSync(join(tmpdir(), "milo-mlir-same-"));
 const OWNED = argv.includes("--owned");
 // The live-block counter, built once; darwin only (Linux has LeakSanitizer in the ASan run).
@@ -103,6 +106,7 @@ async function build(name: string): Promise<{ bin: string; res: RunResult; lower
       if (!line) continue;
       const reason = line.split("\t")[1] ?? "?";
       fnTotal.all++;
+      if (reason !== "ok") refused.set(name, [...(refused.get(name) ?? []), reason]);
       if (reason === "ok") { fnTotal.ok++; lowered++; }
       else reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
     }
@@ -231,6 +235,7 @@ await Promise.all(Array.from({ length: jobs }, async () => {
   while (next < names.length) await one(names[next++]);
 }));
 rmSync(tmp, { recursive: true, force: true });
+if (jsonOut) await Bun.write(jsonOut, JSON.stringify(results.map(r => ({ ...r, name: basename(r.name), refused: refused.get(r.name) ?? [] })), null, 1));
 
 const count = (v: Verdict) => results.filter(r => r.verdict === v).length;
 for (const r of results) if (r.verdict === "differ" || r.verdict === "build-differ" || r.verdict === "owned-differ") console.log(`DIFF ${basename(r.name)}: ${r.verdict} ${r.detail ?? ""}`);
