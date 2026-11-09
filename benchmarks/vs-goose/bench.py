@@ -201,7 +201,7 @@ def build(lang, file, variant, n, tag):
     else:
         src = GEN / f"{tag}.milo"
         sized(MILODIR / file, src, n, MILO_N)
-        run([MILO, "build", "--release", src, "-o", exe], log)
+        run([MILO, "build", "--release", *os.environ.get("MILO_FLAGS", "").split(), src, "-o", exe], log)
     return exe
 
 
