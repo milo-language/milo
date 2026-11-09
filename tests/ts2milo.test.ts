@@ -11,6 +11,19 @@ import { spawnSync } from "child_process";
 import { Unsupported, summary, transpile } from "../scripts/ts2milo";
 import { countViolations, frontendFiles } from "../scripts/ts-portable";
 
+// The whole frontend through ts2milo, once for every test that inspects it: it is the slowest step
+// in this file (28 s on the Linux CI runners), so each test that asks gets WHOLE_FRONTEND_MS.
+const WHOLE_FRONTEND_MS = 120_000;
+let wholeFrontendResult: ReturnType<typeof transpile> | undefined;
+function wholeFrontend(): ReturnType<typeof transpile> {
+  if (!wholeFrontendResult) {
+    const root = join(import.meta.dir, "..");
+    const files = ["src/ast.ts", ...frontendFiles().filter((x) => x !== "src/ast.ts")];
+    wholeFrontendResult = transpile(files.map((x) => join(root, x)), { astRoots: ["Program"], lenient: true });
+  }
+  return wholeFrontendResult;
+}
+
 function tmpTs(name: string, body: string): { file: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
   const file = join(dir, name);
@@ -1292,15 +1305,14 @@ describe("optional chain narrowing", () => {
   });
 
   test("the stamp walker: optional children go through &mut Option<Heap<T>> params, boxed Vec fields by index, spans through set_span", () => {
-    const root = join(import.meta.dir, "..");
-    const r = transpile(["src/ast.ts", ...frontendFiles().filter((f) => f !== "src/ast.ts")].map((f) => join(root, f)), { astRoots: ["Program"], lenient: true });
+    const r = wholeFrontend();
     const walk = r.files.get("ast-walk-stamp.milo")!;
     const stamp = r.files.get("parser-stamp.milo")!;
     expect(r.stubs.map((x) => x.name)).not.toContain("walkExpr");
     expect(walk).toMatch(/fn walkOptExpr\(v: &mut StampScan, o: &mut Option<Heap<Expr>>/);
     expect(walk).toContain("_at: i64 = -1");
     expect(stamp).toContain("Expr_set_span(&mut e,");
-  });
+  }, WHOLE_FRONTEND_MS);
 
   test("a ctor param moves at its last use, @consumesThis takes returned fields, process.env and Map.size translate", () => {
     const { file, dir } = tmpTs("tsm_cc.ts", [
@@ -1329,13 +1341,12 @@ describe("optional chain narrowing", () => {
 
 describe("replaceNode intrinsic", () => {
   test("a node rewrite through replaceNode is an assignment through the &mut place that keeps the hidden id", () => {
-    const files = ["src/ast.ts", ...frontendFiles().filter((f) => f !== "src/ast.ts")];
-    const r = transpile(files, { astRoots: ["Program"], lenient: true });
+    const r = wholeFrontend();
     const out = r.files.get("checker.milo")!;
     const fn = out.slice(out.indexOf("fn canonicalizePreludeVariant("));
     const body = fn.slice(0, fn.indexOf("\n    fn ", 10));
     expect(body).toContain("expr: &mut Expr");
     expect(body).toMatch(/let id = Expr_id\(expr\)\n\s+expr = \w+\n\s+Expr_set_id\(&mut expr, id\)/);
     expect(r.functions.some((f) => f.name === "replaceNode")).toBe(false);
-  });
+  }, WHOLE_FRONTEND_MS);
 });

@@ -49,7 +49,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/edit-loop.ts` | Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios over a fixed set of real programs, with the MILO_TIMING phase breakdown per build. |
 | `scripts/explicit-mut.ts` | Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter. |
 | `scripts/fetch-assets.sh` | Regenerates the game assets that are deliberately NOT in git: the FLYBY city files (82 MB of terrain, footprints and aerial drape) and the APSIS planet maps. |
-| `scripts/file-size-ratchet.ts` | File-size ratchet for src/*.ts: no file may grow past its recorded line count. |
+| `scripts/file-size-ratchet.ts` | File-size ratchet for src/*.ts: no file over LIMIT lines may grow past its recorded line count. |
 | `scripts/fuzz-arena.ts` | Differential falsifier for the GENERATIONAL ARENA — std/arena's Handle<T>. |
 | `scripts/fuzz-check.ts` | The frontend contract the fuzzer tests, in one place so the Worker and the main-thread confirmation stage run byte-identical logic. |
 | `scripts/fuzz-confirm.ts` | Re-runs one fuzz case on a fresh process's MAIN thread and reports the verdict as JSON on stdout. |
@@ -76,7 +76,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |
 | `scripts/gen-lang-docs.ts` | Renders the published language reference from `milo lang --json`. |
 | `scripts/gen-language-requirements.ts` | Generates docs/semantics/requirements.json: Milo's language requirements, one per semantics rule in docs/semantics/milo.md (grouped under its section) plus the MILO-O ownership rules in docs/spec.md. |
-| `scripts/gen-ownership-cells.ts` | The ownership table (docs/plans/ownership-table.md, step 1): one program per cell (semantic op x backend representation x type class), each run through the checker and the MLIR-vs-interpreter compari… |
+| `scripts/gen-ownership-cells.ts` | The ownership table (docs/plans/ownership-table.md, step 1): one program per cell (semantic op x backend representation x type class), compiled and compared with the interpreter. |
 | `scripts/gen-programs-grammar.ts` | Random Milo program generator for scripts/gen-programs.ts, deterministic from a seed. |
 | `scripts/gen-programs.ts` | Differential fuzzer over random well-typed Milo programs (scripts/gen-programs-grammar.ts). |
 | `scripts/gen-scripts-doc.ts` | Regenerates the Index table in docs/scripts.md from each script's own first comment line, so the index cannot fall behind the directory. |
@@ -97,7 +97,6 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-cross.ts` | Cross-target gate for the MLIR backend: each program's LLVM IR for a non-host target must be for that target. |
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
 | `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
-| `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
 | `scripts/prove-soundness-fuzz.ts` | Differential falsifier for `milo prove`. |
@@ -113,20 +112,21 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ts-closure-tiers.ts` | Sorts every closure in the frontend files by how hard it is to make portable, using the TypeScript checker's symbols for what each one captures (scripts/ts-portable.ts only counts them). |
 | `scripts/ts-portable.ts` | Counts, per frontend file, the TypeScript constructs outside the portable subset that scripts/ts2milo.ts can translate (rule list: scripts/ts2milo/subset.ts, shared with it). |
 | `scripts/ts2milo-checker-diff.ts` | Correctness gate for the GENERATED Milo type checker: run it and the TypeScript checker on the same programs and compare the diagnostics. |
-| `scripts/ts2milo-concurrent-args-diff.ts` | Differential gate for the generated @concurrent closure-argument pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker bu… |
-| `scripts/ts2milo-escaping-closures-diff.ts` | Differential gate for the generated escaping-closure pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for eve… |
-| `scripts/ts2milo-frontend.ts` | The self-host meter: generate the whole Milo frontend from src/*.ts (ts2milo --lenient, so what does not translate yet becomes a stub that names itself), compile-check every generated file, and print… |
-| `scripts/ts2milo-global-borrow-diff.ts` | Differential gate for the generated global borrow invalidation pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker buil… |
+| `scripts/ts2milo-concurrent-args-diff.ts` | Differential gate for the generated @concurrent closure-argument pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
+| `scripts/ts2milo-escaping-closures-diff.ts` | Differential gate for the generated escaping-closure pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
+| `scripts/ts2milo-frontend.ts` | The self-host meter: generate the whole Milo frontend from src/*.ts, compile-check every generated file, and print one number: compile errors left. |
+| `scripts/ts2milo-global-borrow-diff.ts` | Differential gate for the generated global borrow invalidation pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-identity-census.ts` | How many places a real rollout of node ids would touch: collections keyed by an AST node, and assignments to AST fields, counted with the TypeScript checker (not by pattern) per frontend file. |
 | `scripts/ts2milo-lexer-diff.ts` | Differential token gate for the ts2milo spike: lex every corpus file with src/lexer.ts and with the transpiled Milo lexer (compiled by `milo build`), compare the dumps byte for byte. |
-| `scripts/ts2milo-mut-bundle-diff.ts` | Differential gate for the generated &mut parameter bundle pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds fo… |
+| `scripts/ts2milo-mut-bundle-diff.ts` | Differential gate for the generated &mut parameter bundle pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-mut-diff.ts` | Differential gate for the stage 3 probe (docs/plans/ts2milo.md): the mutability pass run from TypeScript and from its generated Milo over every corpus program that reaches it. |
-| `scripts/ts2milo-nonescaping-diff.ts` | Differential gate for the generated non-escaping parameter pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds f… |
+| `scripts/ts2milo-nonescaping-diff.ts` | Differential gate for the generated non-escaping parameter pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo-parser-diff.ts` | Correctness gate for the GENERATED Milo parser: run it and the TypeScript parser on the same programs and compare the ASTs. |
-| `scripts/ts2milo-pointer-escape-diff.ts` | Differential gate for the generated pointer-parameter-escape pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds… |
-| `scripts/ts2milo-purity-diff.ts` | Differential gate for the generated @pure body pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for every cor… |
-| `scripts/ts2milo-task-scopes-diff.ts` | Differential gate for the generated Task.scope pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for every cor… |
-| `scripts/ts2milo-thread-boundary-diff.ts` | Differential gate for the generated thread boundary pass (same shape as ts2milo-mut-diff.ts): the pass run from TypeScript and from its generated Milo over the exact input the checker builds for ever… |
+| `scripts/ts2milo-pass-diffs.ts` | Every generated checker pass against its TypeScript original in one walk of the corpus: the nine ts2milo-<pass>-diff.ts gates, with each program parsed and checked once instead of once per gate. |
+| `scripts/ts2milo-pointer-escape-diff.ts` | Differential gate for the generated pointer-parameter-escape pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
+| `scripts/ts2milo-purity-diff.ts` | Differential gate for the generated @pure body pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
+| `scripts/ts2milo-task-scopes-diff.ts` | Differential gate for the generated Task.scope pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
+| `scripts/ts2milo-thread-boundary-diff.ts` | Differential gate for the generated thread boundary pass: TypeScript against its generated Milo, on the checker's input for every corpus program that reaches the pass. |
 | `scripts/ts2milo.ts` | TypeScript -> Milo transpiler for the portable subset (scripts/ts2milo/subset.ts). |
 | `scripts/value-rules.ts` | The value-semantics rules of Milo: how a value prints, how it is cloned, in what order it is dropped, and how HashMap keys compare. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |

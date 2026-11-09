@@ -1,8 +1,8 @@
-// The self-host meter: generate the whole Milo frontend from src/*.ts (ts2milo --lenient, so
-// what does not translate yet becomes a stub that names itself), compile-check every generated
-// file, and print one number: compile errors left. Stubs compile, so this reaches 0 before
-// everything is translated; after that the number that matters is which stub a real program
-// hits first (--run).
+// The self-host meter: generate the whole Milo frontend from src/*.ts, compile-check every
+// generated file, and print one number: compile errors left. Generation is ts2milo --lenient, so
+// what does not translate yet becomes a stub that names itself. Stubs compile, so the number
+// reaches 0 before everything is translated; after that the number that matters is which stub a
+// real program hits first (--run).
 //   bun scripts/ts2milo-frontend.ts            regenerate + check: errors per file and total
 //   bun scripts/ts2milo-frontend.ts --top 15   also the most common error messages
 //   bun scripts/ts2milo-frontend.ts --stub-errors      also stub every function that holds a compile error

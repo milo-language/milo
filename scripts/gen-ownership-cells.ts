@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // The ownership table (docs/plans/ownership-table.md, step 1): one program per cell
-// (semantic op x backend representation x type class), each run through the checker and the
-// MLIR-vs-interpreter comparison of scripts/mlir-same.ts (stdout, exit code, live heap blocks).
+// (semantic op x backend representation x type class), compiled and compared with the interpreter.
+// Each goes through the checker and the comparison of scripts/mlir-same.ts (stdout, exit code,
+// live heap blocks).
 // Measurement only: it classifies every cell as covered, refused (MlirUnsupported), WRONG
 // (differs from the interpreter: a miscompile), no oracle, or rejected by the checker.
 //
