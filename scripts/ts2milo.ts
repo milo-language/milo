@@ -102,7 +102,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   // `<fn>_<local>`, `<Owner>_<field>`; identical literal sets share one generated enum. Declared names win,
   // so these register after the whole program has been walked. Emitted at the end of the declaring file.
   const typeNames = new Set<string>();
-  const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean }>();
+  const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean; dup?: boolean }>();
+  const anonShapes = new Map<string, { name: string; file: string; emitted: boolean }>();
   const genUnions = new Set<{ name: string; lits: string[]; file: string }>();
   const fnLabel = (n: ts.Node): string => {
     for (let c: ts.Node | undefined = n; c; c = c.parent) {
@@ -177,7 +178,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     if (ts.isTypeLiteralNode(node)) {
       if (!anonStructHandled(checker, node)) continue;
       const alias = ts.isTypeAliasDeclaration(node.parent) ? node.parent.name.text : null;
-      anonStructs.set(node, { name: alias ?? freshName(nameFrom(node)), file, emitted: false });
+      // Two unnamed literals of the same text in one file are one structural type in TypeScript (a class field and the result
+      // interface that copies it): one struct, so a value of one is accepted where the other is expected.
+      let generic = false;
+      for (let q: ts.Node | undefined = node.parent; q; q = q.parent) if ((ts.isFunctionLike(q) || ts.isClassLike(q) || ts.isInterfaceDeclaration(q) || ts.isTypeAliasDeclaration(q)) && (q as { typeParameters?: unknown }).typeParameters) generic = true;
+      const shape = alias || generic ? null : file + "|" + node.members.map((m) => m.getText().replace(/\s+/g, " ")).join(";");
+      const same = shape ? anonShapes.get(shape) : undefined;
+      if (same) { anonStructs.set(node, { ...same, emitted: false, dup: true }); continue; }
+      const rec = { name: alias ?? freshName(nameFrom(node)), file, emitted: false };
+      if (shape) anonShapes.set(shape, rec);
+      anonStructs.set(node, rec);
     } else registerGenUnion(checker.getTypeFromTypeNode(node as ts.TypeNode), node);
   }
   // A union narrowed by earlier `||` operands (`k === "A" || k === "B"`) has fewer members than the
@@ -2321,7 +2331,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
     }
     // Generated types for this file (names synthesized in step 2); emitting a struct can create more unions.
-    for (const [node, a] of anonStructs) if (a.file === file) {
+    for (const [node, a] of anonStructs) if (a.file === file && !a.dup) {
       const lit = node as ts.TypeLiteralNode;
       const tmark = out.length;
       try {
