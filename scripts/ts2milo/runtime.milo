@@ -440,6 +440,15 @@ pub struct TargetInfo {
     qemuMachine: Option<string>,
 }
 
+// src/replay-externs.ts ReplayPlan.
+@derive(Clone)
+pub struct ReplayPlan {
+    wrapper: string,
+    variadic: bool,
+    fixed: i64,
+    hole: Option<string>,
+}
+
 pub struct ParseError {
     diagnostic: Diagnostic,
     source: Option<string>,

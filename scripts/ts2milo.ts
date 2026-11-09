@@ -2179,11 +2179,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const ps = (ctor?.parameters ?? []).map((p) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ty(checker.getTypeAtLocation(p), p)}`);
         line(`fn new(${ps.join(", ")}): ${cname} {`);
         ind++;
+        // A constructor body of `this.f = e;` statements only: each e initializes field f. Anything else would be dropped silently, so it stubs.
+        const ctorInit = new Map<string, string>();
+        for (const st of ctor?.body?.statements ?? []) {
+          if (ts.isExpressionStatement(st) && ts.isCallExpression(st.expression) && st.expression.expression.kind === ts.SyntaxKind.SuperKeyword) continue; // an Error subclass's message, as before
+          const b = ts.isExpressionStatement(st) && ts.isBinaryExpression(st.expression) ? st.expression : null;
+          if (!b || b.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isPropertyAccessExpression(b.left) || b.left.expression.kind !== ts.SyntaxKind.ThisKeyword) throw new Unsupported("constructor body statement other than this.field = expression");
+          const fname = b.left.name.text;
+          const decl = n.members.find((m): m is ts.PropertyDeclaration => ts.isPropertyDeclaration(m) && mname(m.name) === fname);
+          if (!decl || ctorInit.has(fname)) throw new Unsupported("constructor assigns a field twice or one that is not declared");
+          hit("constructor field assignment", "field initializer in new");
+          ctorInit.set(fname, ownConv(b.right, checker.getTypeAtLocation(decl)));
+        }
         line(`return ${cname} {`);
         ind++;
         for (const p of props) {
           // A field with no initializer that is no parameter property is assigned in the constructor body, which is not translated.
-          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
+          const init = p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : ctorInit.get(p.name) ?? p.init ?? (p.type.startsWith("Option<") ? "Option.None" : fail(n, `field ${p.name} is assigned in the constructor body`));
           line(`${safeId(p.name)}: ${init},`);
         }
         ind--; line("}");

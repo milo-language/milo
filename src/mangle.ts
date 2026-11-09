@@ -522,11 +522,11 @@ export function display(map: DisplayNames | undefined, text: string): string {
  * `b$Pt` both read `Pt`, so "expected Pt, got Pt" would point at correct-looking code.
  * When a written name stands for more than one decl in `text` (two renamed ones, or one
  * renamed and one that kept the bare name, such as std's), each renamed occurrence is
- * qualified with `origin(symbol)`, typically its file: "expected Pt (b.milo), got Pt
+ * qualified with `origins.get(symbol)`, typically its file: "expected Pt (b.milo), got Pt
  * (a.milo)". A message naming one decl renders exactly as `display` would.
  */
 export function displayQualified(
-  map: DisplayNames | undefined, text: string, origin: (sym: string) => string | undefined,
+  map: DisplayNames | undefined, text: string, origins: Map<string, string>,
 ): string {
   if (!map || map.size === 0) return text;
   display(map, ""); // builds and caches the matcher
@@ -548,7 +548,7 @@ export function displayQualified(
   return text.replace(re, (m) => {
     const w = map.get(m) ?? m;
     if (!ambiguous.has(w)) return w;
-    const o = origin(m);
+    const o = origins.get(m);
     return o ? `${w} (${o})` : w;
   });
 }

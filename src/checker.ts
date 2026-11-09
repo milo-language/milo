@@ -727,6 +727,72 @@ class CheckAbort extends Error {
 // Narrow an Expr union member by its `kind`, so an extracted arm keeps exactly the
 // type the switch gave it without importing every node interface.
 type ExprOf<K extends Expr["kind"]> = Extract<Expr, { kind: K }>;
+// Defaults and the off-by-default lints for a TypeChecker's warning config. Mutates and returns the config it is given.
+function defaultedWarningConfig(warningConfig?: WarningConfig): WarningConfig {
+    const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
+    // `--expect=<name>` counts as asking for the warning, exactly as `--deny` does.
+    // Without this an off-by-default lint stayed off, never fired, and the expectation
+    // then reported itself unfulfilled against code that does contain the finding.
+    if (!config.denied.has("unused-move") && !config.expected?.has("unused-move")) config.allowed.add("unused-move");
+    // unverified-extern is OFF unless asked for: pairing an `extern struct` with a local
+    // .c peer (no header) is a legitimate, common FFI shape — this repo's own ABI-test
+    // fixtures do exactly that — and @cLayout has no header to name there. A lint that
+    // fires on code that cannot be fixed is one users turn off wholesale, taking the
+    // cases that *are* fixable with it. `--deny=unverified-extern` opts a project in
+    // (e.g. a binding crate or a safety-critical build where every layout must be pinned).
+    if (!config.denied.has("unverified-extern") && !config.expected?.has("unverified-extern")) config.allowed.add("unverified-extern");
+    // unused-import is OFF unless asked for. An import can be needed without the
+    // entry file ever naming the symbol: node-milo's main.milo imports binding symbols
+    // purely so those modules get compiled and linked. Warning by default would fire on
+    // every one of them, and the fix ("just delete it") would break the build — so the
+    // projects that don't do that opt in.
+    if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
+    // replay-hole is OFF unless asked for (`--replay-holes`, or `--deny=replay-hole` to fail
+    // a build that has one): an unrecorded extern only matters to a program that is
+    // recorded, and the run itself reports the first call to each one.
+    if (!config.denied.has("replay-hole") && !config.expected?.has("replay-hole") && !config.warned?.has("replay-hole")) config.allowed.add("replay-hole");
+    // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
+    // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
+    // that work fine), so warning by default would nag every graphics program. The
+    // always-on hover note already surfaces the size; projects opt into the hard lint.
+    if (!config.denied.has("large-stack-array") && !config.expected?.has("large-stack-array")) config.allowed.add("large-stack-array");
+    // unchecked-ffi-contract is OFF unless asked for: a `requires` that is really a
+    // state precondition (`self.fd >= 0`) fails as a benign errno, and the lint cannot
+    // tell that from a length that C will trust. `--deny=` runs the audit.
+    if (!config.denied.has("unchecked-ffi-contract") && !config.expected?.has("unchecked-ffi-contract")) config.allowed.add("unchecked-ffi-contract");
+    // single-variant-match is OFF while the tree is still being swept. The rewrite it asks
+    // for is always an improvement, but the shape is everywhere: 304 sites in src-milo, 110
+    // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
+    // would bury every real warning under it. Flip it on once those reach zero.
+    if (!config.denied.has("single-variant-match") && !config.expected?.has("single-variant-match")) config.allowed.add("single-variant-match");
+    // opaque-call-on-thread is OFF until the thread-boundary scan resolves function values
+    // with a statically known target. Every hit in the tree today (rg.milo, the Once
+    // fixture) is a callback that touches no global, so on-by-default would be two false
+    // positives and no true ones. Flip it on once the scan can see through `let f = bump`.
+    if (!config.denied.has("opaque-call-on-thread") && !config.expected?.has("opaque-call-on-thread")) config.allowed.add("opaque-call-on-thread");
+    // unowned-pointer-copy is OFF by default: it fires on every `@copy` struct, which is to
+    // say on a deliberate annotation, not a smell. It exists so `--deny=unowned-pointer-copy`
+    // can enumerate the pointer-holding Copy types of a build and audit each claim.
+    if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
+    // mut-param-bundle is OFF by default: a free fn threading three or more `&mut`
+    // parameters is a method with its struct un-bundled, but the tree has about 34 of them
+    // (gifdec, the plink and redline world builders). `--deny=mut-param-bundle` lists them
+    // for the restructuring sweep; flip it on once that reaches zero.
+    if (!config.denied.has("mut-param-bundle") && !config.expected?.has("mut-param-bundle")) config.allowed.add("mut-param-bundle");
+    // index-clone is ON by default. It was off on the theory that most hits are working
+    // code paying a cost the author accepted, but the lint does not fire on the cases
+    // where that is true: `isCopy` skips register copies, so a `Vec<Pod>` bind is silent
+    // and only an element that owns heap is reported. What is left is a malloc per
+    // element per iteration written in syntax that looks free, with two free spellings
+    // (`for x in v`, `v[i].n`) sitting right there in the hint. A cost that invisible is
+    // exactly what a default-on warning is for; measured across examples/ it is tens of
+    // hits, not hundreds. `--allow=index-clone` silences it for a project that wants it.
+    // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
+    // the permissive safe-extern rule makes most stdlib unsafe blocks technically
+    // removable, so warning on imported std would flood every compile.
+  return config;
+}
+
 
 export class TypeChecker {
   private warningConfig: WarningConfig;
@@ -1063,68 +1129,7 @@ export class TypeChecker {
   private currentFnIsDep = false;
 
   constructor(warningConfig?: WarningConfig) {
-    const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
-    // `--expect=<name>` counts as asking for the warning, exactly as `--deny` does.
-    // Without this an off-by-default lint stayed off, never fired, and the expectation
-    // then reported itself unfulfilled against code that does contain the finding.
-    if (!config.denied.has("unused-move") && !config.expected?.has("unused-move")) config.allowed.add("unused-move");
-    // unverified-extern is OFF unless asked for: pairing an `extern struct` with a local
-    // .c peer (no header) is a legitimate, common FFI shape — this repo's own ABI-test
-    // fixtures do exactly that — and @cLayout has no header to name there. A lint that
-    // fires on code that cannot be fixed is one users turn off wholesale, taking the
-    // cases that *are* fixable with it. `--deny=unverified-extern` opts a project in
-    // (e.g. a binding crate or a safety-critical build where every layout must be pinned).
-    if (!config.denied.has("unverified-extern") && !config.expected?.has("unverified-extern")) config.allowed.add("unverified-extern");
-    // unused-import is OFF unless asked for. An import can be needed without the
-    // entry file ever naming the symbol: node-milo's main.milo imports binding symbols
-    // purely so those modules get compiled and linked. Warning by default would fire on
-    // every one of them, and the fix ("just delete it") would break the build — so the
-    // projects that don't do that opt in.
-    if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
-    // replay-hole is OFF unless asked for (`--replay-holes`, or `--deny=replay-hole` to fail
-    // a build that has one): an unrecorded extern only matters to a program that is
-    // recorded, and the run itself reports the first call to each one.
-    if (!config.denied.has("replay-hole") && !config.expected?.has("replay-hole") && !config.warned?.has("replay-hole")) config.allowed.add("replay-hole");
-    // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
-    // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
-    // that work fine), so warning by default would nag every graphics program. The
-    // always-on hover note already surfaces the size; projects opt into the hard lint.
-    if (!config.denied.has("large-stack-array") && !config.expected?.has("large-stack-array")) config.allowed.add("large-stack-array");
-    // unchecked-ffi-contract is OFF unless asked for: a `requires` that is really a
-    // state precondition (`self.fd >= 0`) fails as a benign errno, and the lint cannot
-    // tell that from a length that C will trust. `--deny=` runs the audit.
-    if (!config.denied.has("unchecked-ffi-contract") && !config.expected?.has("unchecked-ffi-contract")) config.allowed.add("unchecked-ffi-contract");
-    // single-variant-match is OFF while the tree is still being swept. The rewrite it asks
-    // for is always an improvement, but the shape is everywhere: 304 sites in src-milo, 110
-    // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
-    // would bury every real warning under it. Flip it on once those reach zero.
-    if (!config.denied.has("single-variant-match") && !config.expected?.has("single-variant-match")) config.allowed.add("single-variant-match");
-    // opaque-call-on-thread is OFF until the thread-boundary scan resolves function values
-    // with a statically known target. Every hit in the tree today (rg.milo, the Once
-    // fixture) is a callback that touches no global, so on-by-default would be two false
-    // positives and no true ones. Flip it on once the scan can see through `let f = bump`.
-    if (!config.denied.has("opaque-call-on-thread") && !config.expected?.has("opaque-call-on-thread")) config.allowed.add("opaque-call-on-thread");
-    // unowned-pointer-copy is OFF by default: it fires on every `@copy` struct, which is to
-    // say on a deliberate annotation, not a smell. It exists so `--deny=unowned-pointer-copy`
-    // can enumerate the pointer-holding Copy types of a build and audit each claim.
-    if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
-    // mut-param-bundle is OFF by default: a free fn threading three or more `&mut`
-    // parameters is a method with its struct un-bundled, but the tree has about 34 of them
-    // (gifdec, the plink and redline world builders). `--deny=mut-param-bundle` lists them
-    // for the restructuring sweep; flip it on once that reaches zero.
-    if (!config.denied.has("mut-param-bundle") && !config.expected?.has("mut-param-bundle")) config.allowed.add("mut-param-bundle");
-    // index-clone is ON by default. It was off on the theory that most hits are working
-    // code paying a cost the author accepted, but the lint does not fire on the cases
-    // where that is true: `isCopy` skips register copies, so a `Vec<Pod>` bind is silent
-    // and only an element that owns heap is reported. What is left is a malloc per
-    // element per iteration written in syntax that looks free, with two free spellings
-    // (`for x in v`, `v[i].n`) sitting right there in the hint. A cost that invisible is
-    // exactly what a default-on warning is for; measured across examples/ it is tens of
-    // hits, not hundreds. `--allow=index-clone` silences it for a project that wants it.
-    // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
-    // the permissive safe-extern rule makes most stdlib unsafe blocks technically
-    // removable, so warning on imported std would flood every compile.
-    this.warningConfig = config;
+    this.warningConfig = defaultedWarningConfig(warningConfig);
   }
 
   // `adopt<T>`/`adoptSlice<T>` on a struct whose fields are raw pointers frees the struct
@@ -3852,13 +3857,15 @@ export class TypeChecker {
     }
     if (this.reportStringClones) this.printStringClones();
     if (this._displayNames?.size) {
-      const origin = (sym: string) => {
+      // The file a renamed symbol came from, when exactly one file declared it.
+      const origins = new Map<string, string>();
+      for (const sym of this._displayNames.keys()) {
         const files = this.declOrigins?.types.get(sym)?.files ?? this.declOrigins?.values.get(sym)?.files;
-        return files?.size === 1 ? basename([...files][0]) : undefined;
-      };
+        if (files?.size === 1) origins.set(sym, basename([...files][0]));
+      }
       for (const d of this.diagnostics) {
-        d.message = displayQualified(this._displayNames, d.message, origin);
-        if (d.hint) d.hint = displayQualified(this._displayNames, d.hint, origin);
+        d.message = displayQualified(this._displayNames, d.message, origins);
+        if (d.hint) d.hint = displayQualified(this._displayNames, d.hint, origins);
       }
     }
     return {
