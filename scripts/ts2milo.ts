@@ -912,7 +912,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const sym = checker.getSymbolAtLocation(e.kind === ts.SyntaxKind.Identifier ? e : (e as ts.PropertyAccessExpression).name);
         const declT = sym && sym.declarations?.[0] && !ts.isTypeAliasDeclaration(sym.declarations[0]) ? checker.getNonNullableType(checker.getTypeOfSymbol(sym)) : undefined;
         const du = declT?.aliasSymbol ? unionOfType(checker, declT) : null;
-        if (du && unionOfType(checker, checker.getNonNullableType(tOf(e)))?.name !== du.name) fail(e, `${e.getText()} is a ${du.name} narrowed to a member by an early exit or an else (narrow with an if guard)`);
+        // Used where the whole union is wanted (`m.set(a, 1)` after `const a: N = { kind: "a" }`, which TS narrows
+        // by its initializer), the Milo value is exactly what is wanted: only a member-typed use needs the guard.
+        const wantsUnion = !!want && unionOfType(checker, checker.getNonNullableType(want))?.name === du?.name;
+        // A const never reassigned is narrowed only by its own initializer: a fact about the value, which a member
+        // field read through the union accessor (its other arms unreachable) reproduces exactly.
+        const d0 = sym?.declarations?.[0];
+        const byInit = !!d0 && ts.isVariableDeclaration(d0) && !!d0.initializer && (ts.getCombinedNodeFlags(d0) & ts.NodeFlags.Const) !== 0;
+        if (du && !wantsUnion && !byInit && unionOfType(checker, checker.getNonNullableType(tOf(e)))?.name !== du.name) fail(e, `${e.getText()} is a ${du.name} narrowed to a member by an early exit or an else (narrow with an if guard)`);
       }
       switch (e.kind) {
         case ts.SyntaxKind.ParenthesizedExpression: return `(${ex((e as ts.ParenthesizedExpression).expression, want)})`;
