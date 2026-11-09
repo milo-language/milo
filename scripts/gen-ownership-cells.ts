@@ -8,7 +8,9 @@
 //
 //   bun scripts/gen-ownership-cells.ts [--filter regex] [--jobs 6] [--no-run] [--reuse]
 //   bun scripts/gen-ownership-cells.ts --check [--reuse]   # ratchet: exit 1 if a baseline-covered cell
-//                                      # is no longer covered, or any cell is WRONG
+//                                      # is no longer covered, any cell is newly WRONG,
+//                                      # or a cell is newly refused (baseline refusedCells; an old-format
+//                                      # baseline compares refused counts, full runs only)
 //   bun scripts/gen-ownership-cells.ts --update-baseline    # after a full run: rewrite the baseline
 //   bun scripts/gen-ownership-cells.ts --sites              # map ownership-shaped MlirUnsupported
 //                                      # sites to the cells of the last run that hit them
@@ -31,6 +33,51 @@ const JOBS = Number(opt("--jobs") ?? 6);
 const filterArg = opt("--filter");
 const filter = filterArg?.startsWith("@") ? readFileSync(filterArg.slice(1), "utf-8").trim() : filterArg; // @file: regex from a file
 const BASELINE = join(import.meta.dir, "ownership-cells-baseline.json");
+
+// ---- the ratchet comparison, pure so a test can drive it without running a cell.
+// Every comparison here is fatal unless a comment says otherwise.
+type Baseline = { refused: number; wrong: number; covered: string[]; refusedCells?: string[]; knownWrong?: Record<string, string> };
+type CheckRow = { name: string; status: string; message?: string };
+export function compareToBaseline(base: Baseline, list: CheckRow[], filter?: string): { failures: string[]; notes: string[] } {
+  const failures: string[] = [], notes: string[] = [];
+  const status = new Map(list.map(r => [r.name, r.status]));
+  const inScope = (c: string) => !filter || new RegExp(filter).test(c);
+  // 1. A filtered run only judges the cells it ran; a full run also fails on a cell that vanished.
+  for (const c of base.covered) if (inScope(c) && status.get(c) !== "covered") failures.push(`REGRESSED: ${c} (${status.get(c) ?? "missing"})`);
+  // 2. knownWrong: WRONG cells already triaged (name -> why); only a NEW WRONG fails.
+  for (const r of list) if (r.status === "WRONG" && !(r.name in (base.knownWrong ?? {}))) failures.push(`WRONG: ${r.name}: ${r.message ?? ""}`);
+  // 3. Refused growth: the checker (MlirUnsupported) turning away more programs than the baseline knew.
+  const refusedNow = list.filter(r => r.status === "refused").map(r => r.name);
+  if (base.refusedCells) {
+    const known = new Set(base.refusedCells);
+    for (const c of refusedNow) if (!known.has(c) && inScope(c)) failures.push(`NEWLY REFUSED: ${c}`);
+  } else if (filter) {
+    // Not fatal on purpose: an old-format baseline has only the total, and a filtered run's rows merge
+    // with the last run's, so a total comparison would blame cells this run never touched.
+    notes.push("baseline has no refusedCells (old format): refused growth is not comparable under --filter; run --update-baseline on a full run");
+  } else {
+    notes.push("baseline has no refusedCells (old format): comparing refused counts only");
+    if (refusedNow.length > base.refused) failures.push(`REFUSED GREW: ${refusedNow.length} > baseline ${base.refused} (old-format baseline: cell names unknown)`);
+  }
+  // Not compared, deliberately: "no oracle" and "rejected" counts (a baseline-covered cell that falls into
+  // either is already caught by 1); and base.wrong (2 judges WRONG cells by name instead).
+  return { failures, notes };
+}
+// Test-only: reclassify one covered cell after the run, to prove the gate fails. Never set outside tests.
+export function plantRegression(list: CheckRow[], mode: string | undefined): void {
+  if (mode !== "refused") return;
+  const c = list.find(r => r.status === "covered");
+  if (c) c.status = "refused";
+}
+
+if (argv.includes("--compare-rows")) { // no cells run: compare a saved rows file against --baseline (test seam)
+  const rows = JSON.parse(readFileSync(opt("--compare-rows")!, "utf-8")) as CheckRow[];
+  plantRegression(rows, process.env.OWNERSHIP_CELLS_PLANT);
+  const { failures, notes } = compareToBaseline(JSON.parse(readFileSync(opt("--baseline") ?? BASELINE, "utf-8")), rows, filter);
+  for (const m of notes) console.error(`note: ${m}`);
+  for (const m of failures) console.error(m);
+  process.exit(failures.length ? 1 : 0);
+}
 
 if (argv.includes("--sites")) { // no cells are generated: read the last run's rows
   const rows = JSON.parse(readFileSync(join(OUT, "ownership-cells.json"), "utf-8")) as { name: string; status: string; message: string }[];
@@ -382,19 +429,18 @@ console.log(`\ncells: ${n("covered")} covered, ${n("refused")} refused, ${n("WRO
 
 if (argv.includes("--update-baseline")) {
   if (filter) { console.error("--update-baseline needs a full run (no --filter)"); process.exit(2); }
-  const base = { refused: n("refused"), wrong: n("WRONG"), covered: list.filter(r => r.status === "covered").map(r => r.name) };
+  let knownWrong: Record<string, string> | undefined; // hand-written triage notes survive a rewrite
+  try { knownWrong = (JSON.parse(readFileSync(BASELINE, "utf-8")) as Baseline).knownWrong; } catch {}
+  const base: Baseline = { refused: n("refused"), wrong: n("WRONG"), covered: list.filter(r => r.status === "covered").map(r => r.name), refusedCells: list.filter(r => r.status === "refused").map(r => r.name) };
+  // Only for cells still WRONG: a note left on a fixed cell would excuse its next regression.
+  const stillWrong = Object.entries(knownWrong ?? {}).filter(([c]) => list.some(r => r.name === c && r.status === "WRONG"));
+  if (stillWrong.length) base.knownWrong = Object.fromEntries(stillWrong);
   writeFileSync(BASELINE, JSON.stringify(base, null, 1) + "\n");
   console.log(`baseline written: ${base.covered.length} covered, ${base.refused} refused`);
 }
 if (argv.includes("--check")) {
-  const base = JSON.parse(readFileSync(BASELINE, "utf-8")) as { refused: number; wrong: number; covered: string[]; knownWrong?: Record<string, string> };
-  const status = new Map(list.map(r => [r.name, r.status]));
-  // A filtered run only judges the cells it ran; a full run also fails on a cell that vanished.
-  const lost = base.covered.filter(c => (filter ? new RegExp(filter).test(c) : true) && status.get(c) !== "covered");
-  // knownWrong: WRONG cells already triaged (name -> why); only a NEW WRONG fails the check.
-  const wrong = list.filter(r => r.status === "WRONG" && !(r.name in (base.knownWrong ?? {})));
-  for (const c of lost) console.error(`REGRESSED: ${c} (${status.get(c) ?? "missing"})`);
-  for (const r of wrong) console.error(`WRONG: ${r.name}: ${r.message}`);
-  if (n("refused") > base.refused) console.error(`note: refused ${n("refused")} > baseline ${base.refused} (not fatal)`);
-  process.exit(lost.length || wrong.length ? 1 : 0);
+  const { failures, notes } = compareToBaseline(JSON.parse(readFileSync(BASELINE, "utf-8")), list, filter);
+  for (const m of notes) console.error(`note: ${m}`);
+  for (const m of failures) console.error(m);
+  process.exit(failures.length ? 1 : 0);
 }

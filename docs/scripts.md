@@ -98,6 +98,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
 | `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
+| `scripts/ownership-sites.ts` | Ownership diagnostic-site census: how many ownership-worded checker diagnostics does at least one tests/errors fixture reach? |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
 | `scripts/prove-soundness-fuzz.ts` | Differential falsifier for `milo prove`. |
 | `scripts/release-meta.ts` | Shared facts about a release: the target list and how a git tag maps to a version string. |
