@@ -727,9 +727,8 @@ class CheckAbort extends Error {
 // Narrow an Expr union member by its `kind`, so an extracted arm keeps exactly the
 // type the switch gave it without importing every node interface.
 type ExprOf<K extends Expr["kind"]> = Extract<Expr, { kind: K }>;
-// Defaults and the off-by-default lints for a TypeChecker's warning config. Mutates and returns the config it is given.
-function defaultedWarningConfig(warningConfig?: WarningConfig): WarningConfig {
-    const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
+// Defaults and the off-by-default lints for a TypeChecker's warning config. Mutates the config it is given.
+function applyWarningDefaults(config: WarningConfig): void {
     // `--expect=<name>` counts as asking for the warning, exactly as `--deny` does.
     // Without this an off-by-default lint stayed off, never fired, and the expectation
     // then reported itself unfulfilled against code that does contain the finding.
@@ -790,7 +789,6 @@ function defaultedWarningConfig(warningConfig?: WarningConfig): WarningConfig {
     // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
     // the permissive safe-extern rule makes most stdlib unsafe blocks technically
     // removable, so warning on imported std would flood every compile.
-  return config;
 }
 
 
@@ -1129,7 +1127,8 @@ export class TypeChecker {
   private currentFnIsDep = false;
 
   constructor(warningConfig?: WarningConfig) {
-    this.warningConfig = defaultedWarningConfig(warningConfig);
+    this.warningConfig = warningConfig ?? { denied: new Set(), allowed: new Set() };
+    applyWarningDefaults(this.warningConfig);
   }
 
   // `adopt<T>`/`adoptSlice<T>` on a struct whose fields are raw pointers frees the struct
