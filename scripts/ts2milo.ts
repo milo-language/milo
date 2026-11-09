@@ -299,7 +299,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     }
     // --lenient: every AST type is a root (the parser builds kinds Program alone does not reach).
     const roots = opts.lenient ? [...new Set([...opts.astRoots, ...astModel.ifaces.keys()])] : opts.astRoots;
-    const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used);
+    const kindEnum = (u: { name: string; variants: { kind: string }[] }) => {
+      const lits = u.variants.map((v) => v.kind);
+      let e = litUnions.get(unionKey(lits));
+      if (!e) { e = { name: `${u.name}Kind`, lits, file: astFile }; litUnions.set(unionKey(lits), e); }
+      return e;
+    };
+    const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used, kindEnum);
     report.files.set("ast.milo", em.types);
     report.files.set("ast_decode.milo", em.decoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
@@ -1104,6 +1110,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       });
     };
     const emitFn = (fn: ts.FunctionLikeDeclaration, name: string, isMethod: boolean, exported: boolean) => {
+      // An overload signature has no body; only the implementation is emitted.
+      if (!fn.body) return;
       const ovPath = join(overridesDir, `${fileBase}.${name}.milo`);
       if (existsSync(ovPath)) {
         hit("override", "whole function replaced by hand");

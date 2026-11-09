@@ -181,8 +181,9 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   const fileOf = new Map<string, string>();
   for (const file of files) {
     for (const s of program.getSourceFile(file)!.statements) {
-      if (ts.isInterfaceDeclaration(s)) { ifaces.set(s.name.text, s); fileOf.set(s.name.text, file); }
-      if (ts.isTypeAliasDeclaration(s)) { const u = taggedUnionOf(checker, s); if (u) { unions.set(u.name, u); fileOf.set(u.name, file); } }
+      // First file wins (ast.ts is first): a later file may reuse a name (backend-program.ts has its own StructDecl).
+      if (ts.isInterfaceDeclaration(s) && !ifaces.has(s.name.text)) { ifaces.set(s.name.text, s); fileOf.set(s.name.text, file); }
+      if (ts.isTypeAliasDeclaration(s) && !unions.has(s.name.text)) { const u = taggedUnionOf(checker, s); if (u) { unions.set(u.name, u); fileOf.set(u.name, file); } }
     }
   }
   // Direct (non-array) edges between named types. A union points at its variants, an interface at
@@ -257,7 +258,7 @@ export interface LitName { name: string; lits: string[]; file: string }
 // in `astFile`, and a JSON decoder (cursors into a std/json document) for all of them wherever
 // declared. `litName` names a string-literal union the way the function emitter does, so both
 // sides agree on the enum; `modOf` gives the Milo module a file's declarations live in.
-export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>): AstEmit {
+export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>, kindEnum: (u: TaggedUnion) => LitName): AstEmit {
   const enums = new Map<string, LitName>();
   const order: string[] = [];
   const seen = new Set<string>();
@@ -281,6 +282,14 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     }
   };
   for (const r of roots) visit(r);
+  // The discriminant has no field in a variant struct, so a read of it outside a guard (`e.kind === "X"`)
+  // goes through `U_kind(e)`, which returns an enum of the variant kinds.
+  const kindOf = new Map<string, LitName>();
+  for (const u of model.unions.values()) {
+    if (!seen.has(u.name) || model.fileOf.get(u.name) !== astFile) continue;
+    const l = kindEnum(u);
+    if (l.file === astFile) { enums.set(l.name, l); kindOf.set(u.name, l); }
+  }
 
   // Milo type of a field, or null when it has none (an untagged union of primitives).
   const typeOf = (m: ts.PropertySignature): string | null => {
@@ -428,6 +437,10 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
           return `${read}.clone()`;
         };
         t.push(`pub fn ${name}_${f.name}(e: &${name}): ${plain} {`, `    return match e {`, ...u.variants.map((v) => `        ${name}.${pascal(v.kind)}(p) => ${arm(v)},`), `    }`, `}`);
+      }
+      const ke = kindOf.get(name);
+      if (ke) {
+        t.push(`pub fn ${name}_${u.field}(e: &${name}): ${ke.name} {`, `    return match e {`, ...u.variants.map((v) => `        ${name}.${pascal(v.kind)}(p) => ${ke.name}.${pascal(v.kind)},`), `    }`, `}`);
       }
       continue;
     }
