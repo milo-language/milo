@@ -15,6 +15,7 @@ const RUNTIME_MOD = "./ts2milo_runtime";
 const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
 const THROWN_ENUM = "Thrown";
 const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
+const safeId = (n: string): string => { const m = n.replace(/\$/g, "_d"); return RESERVED.has(m) ? m + "_" : m; };
 const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub".split(" "));
 
 export interface Report {
@@ -227,7 +228,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     // The AST fields the input files read (a union property read names every variant's declaration).
     const used = new Set<ts.Node>();
     // TS2MILO_AST_ALL_FIELDS=1 carries every field (what a checker that reads the whole tree needs): a probe of whether the full AST builds.
-    if (process.env.TS2MILO_AST_ALL_FIELDS) for (const d of astModel.ifaces.values()) for (const m of d.members) used.add(m);
+    if (process.env.TS2MILO_AST_ALL_FIELDS || opts.lenient) for (const d of astModel.ifaces.values()) for (const m of d.members) used.add(m);
     for (const f of files) if (f !== astFile) {
       const visitUse = (n: ts.Node) => {
         if (ts.isPropertyAccessExpression(n)) for (const d of checker.getSymbolAtLocation(n.name)?.declarations ?? []) if (ts.isPropertySignature(d)) used.add(d);
@@ -235,7 +236,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       };
       visitUse(program.getSourceFile(f)!);
     }
-    const em = emitAst(checker, astModel, astFile, opts.astRoots, litName, modOf, used);
+    // --lenient: every AST type is a root (the parser builds kinds Program alone does not reach).
+    const roots = opts.lenient ? [...new Set([...opts.astRoots, ...astModel.ifaces.keys()])] : opts.astRoots;
+    const em = emitAst(checker, astModel, astFile, roots, litName, modOf, used);
     report.files.set("ast.milo", em.types);
     report.files.set("ast_decode.milo", em.decoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
@@ -270,7 +273,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     let mutated = new Set<ts.Symbol>();
     const symOf = (id: ts.Identifier) => checker.getSymbolAtLocation(id);
     const declareLocal = (sym: ts.Symbol, base: string) => {
-      let name = RESERVED.has(base) ? base + "_" : base;
+      let name = safeId(base);
       const taken = () => usedNames.some((s) => s.has(name));
       for (let i = 2; taken(); i++) name = `${base}_${i}`;
       scopes[scopes.length - 1].set(sym, name);
@@ -361,7 +364,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const fresh = (text: string) => {
       const ids = text.match(/[A-Za-z_][A-Za-z0-9_]*/g);
       const base = ids ? ids[ids.length - 1] : "v";
-      let name = RESERVED.has(base) ? base + "_" : base;
+      let name = safeId(base);
       for (let i = 2; usedNames.some((s) => s.has(name)); i++) name = `${base}_${i}`;
       usedNames[usedNames.length - 1].add(name);
       return name;
@@ -430,7 +433,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         return `${useDeclared(`${tu.name}_${e.name.text}`, tu.decl.getSourceFile().fileName, e)}(${ex(e.expression)})`;
       }
       const base = e.expression.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(e.expression);
-      const code = `${base}.${RESERVED.has(e.name.text) ? e.name.text + "_" : e.name.text}`;
+      const code = `${base}.${safeId(e.name.text)}`;
       // A field that closes a by-value cycle is a Heap<T> in Milo: reading it derefs.
       if (d && ts.isPropertySignature(d) && astModel.boxed.has(d) && !isOptionT(tOf(e))) { hit("boxed field", "Heap<T> field read as *field"); return `(*${code})`; }
       return code;
@@ -595,7 +598,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       let code: string;
       if (ts.isPropertyAccessExpression(c.expression)) {
         const r = c.expression.expression;
-        code = `${r.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(r)}.${c.expression.name.text}(${argStr})`;
+        code = `${r.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(r)}.${safeId(c.expression.name.text)}(${argStr})`;
       } else {
         const id = c.expression as ts.Identifier;
         code = `${useDeclared(id.text, symDeclFile(symOf(id)), c)}(${argStr})`;
@@ -665,6 +668,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const b = e as ts.BinaryExpression;
           const op = b.operatorToken.kind;
           const text = b.operatorToken.getText();
+          if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) fail(b, `assignment ${text} used as a value`);
           if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
           if ((op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) && isChainMember(unparen(b.left)) && chainCompareHandled(checker, b)) {
             // Absent compares unequal to any value, so `!==` is true there.
@@ -722,7 +726,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
                 if (isOptionT(pt)) return fail(e, "object literal with a boxed optional field");
                 val = `Heap(${val})`;
               }
-              return `${RESERVED.has(fname) ? fname + "_" : fname}: ${val}`;
+              return `${safeId(fname)}: ${val}`;
             });
             return `${uname}.${pascal(v.kind)}(${sname} { ${vfields.join(", ")} })`;
           }
@@ -735,7 +739,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
             const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
-            return `${RESERVED.has(fname) ? fname + "_" : fname}: ${v}`;
+            return `${safeId(fname)}: ${v}`;
           });
           return `${name} { ${fields.join(", ")} }`;
         }
@@ -935,6 +939,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const lt = tOf(e.left);
         if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${ownConv(e.right, lt)}`); return; }
         if (op === ts.SyntaxKind.PlusEqualsToken && isStr(e.left)) { hit("string +=", "pushStr in place"); line(`${ex(e.left)}.pushStr(${ex(e.right)})`); return; }
+        // Only the compound assignments Milo has; `??=`, `||=`, `&&=`, `**=` and `>>>=` would be emitted verbatim.
+        const MILO_COMPOUND = new Set([ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.PercentEqualsToken]);
+        if (!MILO_COMPOUND.has(op)) fail(e, `assignment operator ${e.operatorToken.getText()}`);
         line(`${ex(e.left)} ${e.operatorToken.getText()} ${ex(e.right)}`);
         return;
       }
@@ -968,7 +975,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       let r = sig.getReturnType();
       let rs = isThrower(fn) ? errNameFor(fn) : ty(r, fn);
       if (retWrap(fn)) rs = `Result<${r.flags & ts.TypeFlags.Void ? "bool" : rs}, ${errNameFor(fn)}>`;
-      return `fn ${RESERVED.has(name) ? name + "_" : name}(${ps.join(", ")})${rs === "void" ? "" : `: ${rs}`}`;
+      return `fn ${safeId(name)}(${ps.join(", ")})${rs === "void" ? "" : `: ${rs}`}`;
     };
     // The error class a function throws: resolved through the first `throw new X` in the program.
     let errDeclFile: string | undefined;
@@ -1092,7 +1099,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const per = tu.variants.map(fieldsOfV);
           tu.variants.forEach((v, i) => {
             line(`${pub}struct ${v.name} {`);
-            ind++; for (const f of per[i]) line(`${RESERVED.has(f.name) ? f.name + "_" : f.name}: ${f.ty},`); ind--;
+            ind++; for (const f of per[i]) line(`${safeId(f.name)}: ${f.ty},`); ind--;
             line("}");
           });
           if (astModel.cloneable.has(tu.name)) line("@derive(Clone)");
@@ -1101,7 +1108,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           line("}");
           for (const f of per[0]) {
             if (f.ty.includes("Heap<") || !per.every((p) => p.some((x) => x.name === f.name && x.ty === f.ty))) continue;
-            const fn = RESERVED.has(f.name) ? f.name + "_" : f.name;
+            const fn = safeId(f.name);
             line(`${pub}fn ${tu.name}_${f.name}(e: &${tu.name}): ${f.ty} {`);
             ind++; line("return match e {"); ind++;
             for (const v of tu.variants) line(`${tu.name}.${pascal(v.kind)}(p) => p.${fn}.clone(),`);
@@ -1122,7 +1129,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         for (const m of n.members.filter(ts.isPropertySignature)) {
           const t = checker.getTypeAtLocation(m);
           const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : t;
-          line(`${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${ty(pt, m)},`);
+          line(`${safeId(mname(m.name))}: ${ty(pt, m)},`);
         }
         ind--; line("}");
       } else if (ts.isClassDeclaration(n)) {
@@ -1143,7 +1150,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           props.push({ name: (p.name as ts.Identifier).text, type: pt.type, init: pt.opaque ? pt.init : null, param: pt.opaque ? null : p });
         }
         line(`${pub}struct ${cname} {`);
-        ind++; for (const p of props) line(`${p.name}: ${p.type},`); ind--;
+        ind++; for (const p of props) line(`${safeId(p.name)}: ${p.type},`); ind--;
         line("}");
         line(`impl ${cname} {`);
         ind++;
@@ -1156,7 +1163,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         ind++;
         line(`return ${cname} {`);
         ind++;
-        for (const p of props) line(`${p.name}: ${p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init},`);
+        for (const p of props) line(`${safeId(p.name)}: ${p.param ? lookupLocal(symOf(p.param.name as ts.Identifier)!)! : p.init},`);
         ind--; line("}");
         ind--; line("}");
         pop();
