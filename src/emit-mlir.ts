@@ -593,7 +593,7 @@ function quoteBytes(bytes: Uint8Array): string {
     else out[k++] = ch;
   }
   out[k++] = 0x22;
-  return out.latin1Slice(0, k);
+  return out.toString("latin1", 0, k);
 }
 
 // Bit-exact float literals: NaN payloads and -0 survive, f32 is rounded the way
