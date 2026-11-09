@@ -27,7 +27,7 @@ const K = ts.SyntaxKind;
 // Node kinds that need no further rule. Anything not here or in `ruleFor` is a violation.
 const PLAIN = new Set<ts.SyntaxKind>([
   K.SourceFile, K.EndOfFileToken, K.SyntaxList, K.Block, K.EmptyStatement, K.ExpressionStatement, K.IfStatement,
-  K.WhileStatement, K.ReturnStatement, K.BreakStatement, K.ContinueStatement, K.ThrowStatement, K.VariableStatement,
+  K.WhileStatement, K.ForStatement, K.ReturnStatement, K.BreakStatement, K.ContinueStatement, K.ThrowStatement, K.VariableStatement,
   K.VariableDeclarationList, K.ImportDeclaration, K.ImportClause, K.NamedImports, K.ImportSpecifier,
   K.ParenthesizedExpression, K.Identifier, K.ThisKeyword, K.TrueKeyword, K.FalseKeyword, K.StringLiteral,
   K.NoSubstitutionTemplateLiteral, K.TemplateExpression, K.TemplateHead, K.TemplateMiddle, K.TemplateTail,
@@ -147,6 +147,8 @@ export const stripConst = (e: ts.Expression): ts.Expression => {
     else return e;
   }
 };
+// `x++` whose value is unused: a statement, or the init/step slot of a C-style for.
+export const inStmtPosition = (n: ts.Node): boolean => ts.isExpressionStatement(n.parent) || (ts.isForStatement(n.parent) && (n.parent.initializer === n || n.parent.incrementor === n));
 const unparenE = (e: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(e) ? unparenE(e.expression) : e);
 // A place or literal: reading it twice, or not at all, is not observable.
 export function sideEffectFree(e: ts.Node): boolean {
@@ -564,12 +566,12 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const u = n as ts.PrefixUnaryExpression;
         if (u.operator === K.ExclamationToken) needBool(u.operand, "operand of !");
         else if (u.operator === K.PlusPlusToken || u.operator === K.MinusMinusToken) {
-          if (!ts.isExpressionStatement(u.parent)) bad(n, "increment as expression");
+          if (!inStmtPosition(u)) bad(n, "increment as expression");
         } else if (u.operator !== K.MinusToken) bad(n, "unary operator");
         return;
       }
       case K.PostfixUnaryExpression: {
-        if (!ts.isExpressionStatement(n.parent)) bad(n, "increment as expression");
+        if (!inStmtPosition(n)) bad(n, "increment as expression");
         return;
       }
       case K.AsExpression: {
@@ -618,6 +620,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.RegularExpressionLiteral: if (!(ts.isCallExpression(n.parent) && n.parent.arguments[0] === n && ts.isPropertyAccessExpression(n.parent.expression) && n.parent.expression.name.text === "replace")) bad(n, "RegularExpressionLiteral"); return;
       case K.IfStatement: needBool((n as ts.IfStatement).expression, "if condition"); return;
       case K.WhileStatement: needBool((n as ts.WhileStatement).expression, "while condition"); return;
+      case K.ForStatement: { const f = n as ts.ForStatement; if (f.condition) needBool(f.condition, "for condition"); return; }
       default:
         if (PLAIN.has(n.kind)) {
           if (n.kind === K.ConditionalExpression) needBool((n as ts.ConditionalExpression).condition, "ternary condition");

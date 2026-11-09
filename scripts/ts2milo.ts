@@ -780,6 +780,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       // A field every variant of a tagged union has (`span`) is read through a generated accessor.
       const tu = unionOfType(checker, tOf(e.expression));
       if (tu) {
+        // Only a field every variant declares has an accessor; a TS-narrowed subset of the union may read one the others lack.
+        if (!tu.variants.every((v) => v.members.some((m) => m.name?.getText() === e.name.text))) fail(e, `field ${e.name.text} is not on every variant of ${tu.name}`);
         hit("tagged union common field", "generated accessor Union_field(&u)");
         return `${useDeclared(`${tu.name}_${e.name.text}`, tu.decl.getSourceFile().fileName, e)}(${ex(e.expression)})`;
       }
@@ -1350,8 +1352,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
           const u = e as ts.PrefixUnaryExpression;
+          if (u.operator !== ts.SyntaxKind.ExclamationToken && u.operator !== ts.SyntaxKind.MinusToken) fail(u, `${ts.tokenToString(u.operator)}x used as a value (its result is read)`);
           return u.operator === ts.SyntaxKind.ExclamationToken ? `!${cond(u.operand)}` : `(-${ex(u.operand)})`;
         }
+        case ts.SyntaxKind.PostfixUnaryExpression: return fail(e, `x${ts.tokenToString((e as ts.PostfixUnaryExpression).operator)} used as a value (its result is read)`);
         case ts.SyntaxKind.ConditionalExpression: {
           const c = e as ts.ConditionalExpression;
           hit("ternary", "if-expression");
@@ -1457,12 +1461,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
 
     // ---- statements ----
     const retWrap = (fn: ts.FunctionLikeDeclaration) => throwing.has(fn) && !isThrower(fn);
-    const stmt = (s: ts.Statement) => {
-      switch (s.kind) {
-        case ts.SyntaxKind.EmptyStatement: return;
-        case ts.SyntaxKind.Block: { line("{"); ind++; block(s as ts.Block); ind--; line("}"); return; }
-        case ts.SyntaxKind.VariableStatement: {
-          for (const d of (s as ts.VariableStatement).declarationList.declarations) {
+    const varDecls = (list: ts.VariableDeclarationList) => {
+          for (const d of list.declarations) {
             const sym = symOf(d.name as ts.Identifier)!;
             const t = checker.getTypeAtLocation(d.name);
             const hoist = hoistedClosure(checker, d);
@@ -1483,8 +1483,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const name = declareLocal(sym, (d.name as ts.Identifier).text);
             line(`${isVar ? "var" : "let"} ${name}: ${ty(t, d)} = ${init}`);
           }
-          return;
-        }
+    };
+    const stmt = (s: ts.Statement) => {
+      switch (s.kind) {
+        case ts.SyntaxKind.EmptyStatement: return;
+        case ts.SyntaxKind.Block: { line("{"); ind++; block(s as ts.Block); ind--; line("}"); return; }
+        case ts.SyntaxKind.VariableStatement: varDecls((s as ts.VariableStatement).declarationList); return;
         case ts.SyntaxKind.IfStatement: {
           let n: ts.Statement | undefined = s;
           let first = true;
@@ -1575,6 +1579,34 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           afterLoop();
           return;
         }
+        case ts.SyntaxKind.ForStatement: {
+          const f = s as ts.ForStatement;
+          // A `let` in the head is a fresh binding per iteration in TS; a closure capturing it would see that, a while loop's variable would not.
+          const headSyms = new Set<ts.Symbol>();
+          if (f.initializer && ts.isVariableDeclarationList(f.initializer)) {
+            if (!(f.initializer.flags & ts.NodeFlags.Let)) fail(f, "for with a var or const head");
+            for (const d of f.initializer.declarations) { if (!ts.isIdentifier(d.name) || !d.initializer) fail(d, "for head declaration without a plain initializer"); headSyms.add(symOf(d.name)!); }
+          } else if (f.initializer && !(ts.isBinaryExpression(f.initializer) || ts.isPostfixUnaryExpression(f.initializer) || ts.isPrefixUnaryExpression(f.initializer) || ts.isCallExpression(f.initializer))) fail(f, "for head other than a let list or a statement expression");
+          if (headSyms.size) {
+            const walkCap = (n: ts.Node, nested: boolean) => {
+              if (nested && ts.isIdentifier(n)) { const sy = checker.getSymbolAtLocation(n); if (sy && headSyms.has(sy)) fail(n, "for loop variable captured by a closure (per-iteration binding)"); }
+              ts.forEachChild(n, (c) => walkCap(c, nested || ts.isFunctionLike(c)));
+            };
+            walkCap(f, false);
+          }
+          hit("C-style for", "init; while cond { body; step }, with the step also run before each continue of this loop");
+          if (f.initializer) { if (ts.isVariableDeclarationList(f.initializer)) varDecls(f.initializer); else exprStmt(f.initializer); }
+          line(`while ${f.condition ? cond(f.condition) : "true"} {`);
+          ind++;
+          body(f.statement);
+          // After a body that ends in an exit the step is dead code.
+          const lastS = ts.isBlock(f.statement) ? f.statement.statements[f.statement.statements.length - 1] : f.statement;
+          if (f.incrementor && !(lastS && endsBlock(lastS))) exprStmt(f.incrementor);
+          ind--;
+          line("}");
+          afterLoop();
+          return;
+        }
         case ts.SyntaxKind.WhileStatement: {
           const w = s as ts.WhileStatement;
           line(`while ${cond(w.expression)} {`);
@@ -1588,6 +1620,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           for (let p: ts.Node | undefined = s.parent; p && !ts.isFunctionLike(p); p = p.parent) {
             if (ts.isIterationStatement(p, false) || ts.isSwitchStatement(p)) break;
             if (ts.isTryStatement(p)) fail(s, "break or continue out of a try block");
+          }
+          if ((s as ts.BreakOrContinueStatement).label) fail(s, "labeled break or continue");
+          if (s.kind === ts.SyntaxKind.ContinueStatement) {
+            let lp: ts.Node | undefined = s.parent;
+            while (lp && !ts.isIterationStatement(lp, false)) lp = lp.parent;
+            if (lp && ts.isForStatement(lp) && lp.incrementor) exprStmt(lp.incrementor);
           }
           line(s.kind === ts.SyntaxKind.BreakStatement ? "break" : "continue");
           return;

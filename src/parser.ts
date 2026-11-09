@@ -763,7 +763,7 @@ export class Parser {
         for (let depth = 0; p < this.tokens.length; p++) {
           const k = this.tokens[p]!.kind;
           if (k === TokenKind.LParen) depth++;
-          else if (k === TokenKind.RParen && --depth === 0) { p++; break; }
+          else if (k === TokenKind.RParen) { depth--; if (depth === 0) { p++; break; } }
           else if (k === TokenKind.Eof) return false;
         }
       }
@@ -1055,7 +1055,9 @@ export class Parser {
     const value = this.parseExpr();
     const out: Stmt[] = [];
     const isPlace = value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess";
-    const tmp = isPlace ? "" : `_destructure${this.destructureCount++}`;
+    const tmpId = this.destructureCount;
+    if (!isPlace) this.destructureCount += 1;
+    const tmp = isPlace ? "" : `_destructure${tmpId}`;
     if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
     const source: Expr = isPlace ? value : { kind: "Ident", name: tmp, span: s };
     for (const f of fields) {
@@ -1247,6 +1249,12 @@ export class Parser {
       this.exprDepth = savedDepth;
     }
     return cond;
+  }
+
+  // `: T` when a colon follows, else null.
+  private parseColonType(): MiloType | null {
+    if (this.match(TokenKind.Colon)) return this.parseType();
+    return null;
   }
 
   private parseIfExpr(s: Span): Expr {
@@ -1447,7 +1455,8 @@ export class Parser {
     const id = (name: string): Expr => ({ kind: "Ident", name, span: s });
     // Unique-ish names: a nested codePoints loop must not shadow the outer
     // cursor, and neither may collide with a user binding.
-    const uid = this.codePointLoopCounter++;
+    const uid = this.codePointLoopCounter;
+    this.codePointLoopCounter += 1;
     const cursor = `__cpAt${uid}`;
     const decoded = `__cp${uid}`;
 
@@ -1644,7 +1653,8 @@ export class Parser {
   // call stack` into a clean diagnostic. 2000 is far past any human-written nesting.
 
   private parseExpr(): Expr {
-    if (++this.exprDepth > MAX_EXPR_DEPTH) {
+    this.exprDepth += 1;
+    if (this.exprDepth > MAX_EXPR_DEPTH) {
       this.error(`expression nesting too deep (>${MAX_EXPR_DEPTH})`, this.peek(), undefined,
         `deeply nested expressions exceed the parser's depth limit — flatten the expression`);
     }
@@ -2191,12 +2201,12 @@ export class Parser {
     while (!this.at(TokenKind.RParen)) {
       const nameTok = this.expect(TokenKind.Ident);
       const name = nameTok.value;
-      const type = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+      const type = this.parseColonType();
       params.push({ name, type, span: this.span(nameTok) });
       if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
     }
     this.expect(TokenKind.RParen);
-    const retType = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+    const retType = this.parseColonType();
     this.expect(TokenKind.FatArrow);
     let body: Stmt[];
     if (this.match(TokenKind.LBrace)) {
@@ -2245,12 +2255,14 @@ export class Parser {
           // skip a nested string or char literal whole (the lexer kept it verbatim)
           if (raw[i] === '"' || raw[i] === "'") {
             const q = raw[i];
-            exprStr += raw[i++];
+            exprStr += raw[i];
+            i++;
             while (i < raw.length && raw[i] !== q) {
-              if (raw[i] === "\\") exprStr += raw[i++];
-              exprStr += raw[i++];
+              if (raw[i] === "\\") { exprStr += raw[i]; i++; }
+              exprStr += raw[i];
+              i++;
             }
-            if (i < raw.length) exprStr += raw[i++];
+            if (i < raw.length) { exprStr += raw[i]; i++; }
             continue;
           }
           if (raw[i] === "{") depth++;
