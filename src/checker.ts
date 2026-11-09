@@ -3877,7 +3877,8 @@ export class TypeChecker {
       }
       for (const d of this.diagnostics) {
         d.message = displayQualified(this._displayNames, d.message, origins);
-        if (d.hint) d.hint = displayQualified(this._displayNames, d.hint, origins);
+        const hint = d.hint;
+        if (hint) d.hint = displayQualified(this._displayNames, hint, origins);
       }
     }
     return {
