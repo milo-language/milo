@@ -57,6 +57,8 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
       if (body) {
         if (!fileSet.has(body.getSourceFile().fileName)) continue;
         addEdge(from, keyOf(body));
+        // A call through a base type may run a same-named override.
+        if (ts.isMethodDeclaration(body)) bySignatureName.push({ from, name: body.name.getText() });
         if (!isCall) { const k = keyOf(body); let s = addressTaken.get(k); if (!s) addressTaken.set(k, (s = new Set())); s.add(body); }
       } else if (ts.isClassDeclaration(d)) {
         addEdge(from, classKey(d));
