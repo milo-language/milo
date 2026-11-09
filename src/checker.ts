@@ -732,52 +732,52 @@ function applyWarningDefaults(config: WarningConfig): void {
     // `--expect=<name>` counts as asking for the warning, exactly as `--deny` does.
     // Without this an off-by-default lint stayed off, never fired, and the expectation
     // then reported itself unfulfilled against code that does contain the finding.
-    if (!config.denied.has("unused-move") && !config.expected?.has("unused-move")) config.allowed.add("unused-move");
+    if (!config.denied.has("unused-move") && !(config.expected !== undefined && config.expected.has("unused-move"))) config.allowed.add("unused-move");
     // unverified-extern is OFF unless asked for: pairing an `extern struct` with a local
     // .c peer (no header) is a legitimate, common FFI shape — this repo's own ABI-test
     // fixtures do exactly that — and @cLayout has no header to name there. A lint that
     // fires on code that cannot be fixed is one users turn off wholesale, taking the
     // cases that *are* fixable with it. `--deny=unverified-extern` opts a project in
     // (e.g. a binding crate or a safety-critical build where every layout must be pinned).
-    if (!config.denied.has("unverified-extern") && !config.expected?.has("unverified-extern")) config.allowed.add("unverified-extern");
+    if (!config.denied.has("unverified-extern") && !(config.expected !== undefined && config.expected.has("unverified-extern"))) config.allowed.add("unverified-extern");
     // unused-import is OFF unless asked for. An import can be needed without the
     // entry file ever naming the symbol: node-milo's main.milo imports binding symbols
     // purely so those modules get compiled and linked. Warning by default would fire on
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
-    if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
+    if (!config.denied.has("unused-import") && !(config.expected !== undefined && config.expected.has("unused-import"))) config.allowed.add("unused-import");
     // replay-hole is OFF unless asked for (`--replay-holes`, or `--deny=replay-hole` to fail
     // a build that has one): an unrecorded extern only matters to a program that is
     // recorded, and the run itself reports the first call to each one.
-    if (!config.denied.has("replay-hole") && !config.expected?.has("replay-hole") && !config.warned?.has("replay-hole")) config.allowed.add("replay-hole");
+    if (!config.denied.has("replay-hole") && !(config.expected !== undefined && config.expected.has("replay-hole")) && !(config.warned !== undefined && config.warned.has("replay-hole"))) config.allowed.add("replay-hole");
     // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
     // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
     // that work fine), so warning by default would nag every graphics program. The
     // always-on hover note already surfaces the size; projects opt into the hard lint.
-    if (!config.denied.has("large-stack-array") && !config.expected?.has("large-stack-array")) config.allowed.add("large-stack-array");
+    if (!config.denied.has("large-stack-array") && !(config.expected !== undefined && config.expected.has("large-stack-array"))) config.allowed.add("large-stack-array");
     // unchecked-ffi-contract is OFF unless asked for: a `requires` that is really a
     // state precondition (`self.fd >= 0`) fails as a benign errno, and the lint cannot
     // tell that from a length that C will trust. `--deny=` runs the audit.
-    if (!config.denied.has("unchecked-ffi-contract") && !config.expected?.has("unchecked-ffi-contract")) config.allowed.add("unchecked-ffi-contract");
+    if (!config.denied.has("unchecked-ffi-contract") && !(config.expected !== undefined && config.expected.has("unchecked-ffi-contract"))) config.allowed.add("unchecked-ffi-contract");
     // single-variant-match is OFF while the tree is still being swept. The rewrite it asks
     // for is always an improvement, but the shape is everywhere: 304 sites in src-milo, 110
     // in milojs, 55 in examples/ at the census that shipped it. Default-on before the sweep
     // would bury every real warning under it. Flip it on once those reach zero.
-    if (!config.denied.has("single-variant-match") && !config.expected?.has("single-variant-match")) config.allowed.add("single-variant-match");
+    if (!config.denied.has("single-variant-match") && !(config.expected !== undefined && config.expected.has("single-variant-match"))) config.allowed.add("single-variant-match");
     // opaque-call-on-thread is OFF until the thread-boundary scan resolves function values
     // with a statically known target. Every hit in the tree today (rg.milo, the Once
     // fixture) is a callback that touches no global, so on-by-default would be two false
     // positives and no true ones. Flip it on once the scan can see through `let f = bump`.
-    if (!config.denied.has("opaque-call-on-thread") && !config.expected?.has("opaque-call-on-thread")) config.allowed.add("opaque-call-on-thread");
+    if (!config.denied.has("opaque-call-on-thread") && !(config.expected !== undefined && config.expected.has("opaque-call-on-thread"))) config.allowed.add("opaque-call-on-thread");
     // unowned-pointer-copy is OFF by default: it fires on every `@copy` struct, which is to
     // say on a deliberate annotation, not a smell. It exists so `--deny=unowned-pointer-copy`
     // can enumerate the pointer-holding Copy types of a build and audit each claim.
-    if (!config.denied.has("unowned-pointer-copy") && !config.expected?.has("unowned-pointer-copy")) config.allowed.add("unowned-pointer-copy");
+    if (!config.denied.has("unowned-pointer-copy") && !(config.expected !== undefined && config.expected.has("unowned-pointer-copy"))) config.allowed.add("unowned-pointer-copy");
     // mut-param-bundle is OFF by default: a free fn threading three or more `&mut`
     // parameters is a method with its struct un-bundled, but the tree has about 34 of them
     // (gifdec, the plink and redline world builders). `--deny=mut-param-bundle` lists them
     // for the restructuring sweep; flip it on once that reaches zero.
-    if (!config.denied.has("mut-param-bundle") && !config.expected?.has("mut-param-bundle")) config.allowed.add("mut-param-bundle");
+    if (!config.denied.has("mut-param-bundle") && !(config.expected !== undefined && config.expected.has("mut-param-bundle"))) config.allowed.add("mut-param-bundle");
     // index-clone is ON by default. It was off on the theory that most hits are working
     // code paying a cost the author accepted, but the lint does not fire on the cases
     // where that is true: `isCopy` skips register copies, so a `Vec<Pod>` bind is silent
@@ -1521,7 +1521,7 @@ export class TypeChecker {
       this.diagnostics.push({ severity: "error", span, len, message: msg, hint, code });
       return;
     }
-    if (this.warningConfig.expected?.has(code)) {
+    if ((this.warningConfig.expected !== undefined && this.warningConfig.expected.has(code))) {
       this.firedWarnings.add(code);
       return; // expected findings are suppressed, exactly like an allow
     }
@@ -1909,11 +1909,11 @@ export class TypeChecker {
     // Only dep files are ever mangled, so a known package prefix settles it: not
     // user code. Empty when the program has no deps, i.e. a no-op by default.
     const firstSep = name.indexOf("$");
-    if (firstSep > 0 && this._packageNames?.has(name.slice(0, firstSep))) return false;
+    if (firstSep > 0 && (this._packageNames !== undefined && this._packageNames.has(name.slice(0, firstSep)))) return false;
     const parts = name.split("$");
     if (parts.length > 1) {
       if (this._userFnNames.has(parts[0])) return true;
-      if (this._userImplKeys?.has(`${parts[0]}.${parts[parts.length - 1]}`)) return true;
+      if ((this._userImplKeys !== undefined && this._userImplKeys.has(`${parts[0]}.${parts[parts.length - 1]}`))) return true;
     }
     return false;
   }
@@ -2007,7 +2007,7 @@ export class TypeChecker {
   // Manifest deps are the only mangled code, so a `<pkg>$` prefix settles it.
   private fnIsDependencyCode(name: string): boolean {
     const firstSep = name.indexOf("$");
-    return firstSep > 0 && !!this._packageNames?.has(name.slice(0, firstSep));
+    return firstSep > 0 && !!(this._packageNames !== undefined && this._packageNames.has(name.slice(0, firstSep)));
   }
 
   // `@unsafe` on a method: the same obligation as on a free fn. Keyed by the mangled
@@ -7138,7 +7138,7 @@ export class TypeChecker {
         }
         if (assignPath && !indexQualified) {
           const info = this.lookup(assignPath.root);
-          const isCapturedMutation = this.closureScopeDepth !== null && this.currentClosureCaptures?.has(assignPath.root);
+          const isCapturedMutation = this.closureScopeDepth !== null && (this.currentClosureCaptures !== null && this.currentClosureCaptures.has(assignPath.root));
           const ph = info && !isCapturedMutation ? this.pointerBorrowAgainst(info, stmt.target) : null;
           if (ph) {
             this.requireUnsafe(`'${this.describeExpr(stmt.target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
@@ -10092,7 +10092,7 @@ export class TypeChecker {
     // to print the call as the package's own source spells it, or it names a symbol
     // nobody can write.
     const sep = callee.indexOf("$");
-    const shown = sep > 0 && this._packageNames?.has(callee.slice(0, sep)) ? callee.slice(sep + 1) : callee;
+    const shown = sep > 0 && (this._packageNames !== undefined && this._packageNames.has(callee.slice(0, sep))) ? callee.slice(sep + 1) : callee;
     // A hard error, not a warning-table entry: no --allow reaches it. The code stays so
     // tooling (scripts/explicit-mut.ts, the LSP) can match the diagnostic.
     this.diagnostics.push({
