@@ -540,7 +540,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           case "Map.get": return `${ex(recv!)}.get(${ex(a[0])})`;
           case "Map.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
           case "Map.set": { const [kt, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${ownConv(a[0], kt)}, ${ownConv(a[1], vt)})`; }
-          case "parseInt": return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
+          case "parseInt": if (!a[1]) fail(c, "parseInt without a radix"); return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
         }
         return fail(c, `library call ${key}`);
@@ -646,17 +646,23 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
         case ts.SyntaxKind.AsExpression: {
           const a = e as ts.AsExpression;
-          const en = enumDeclOf(checker.getTypeFromTypeNode(a.type))!;
+          const en = enumDeclOf(checker.getTypeFromTypeNode(a.type));
+          if (!en) fail(a, "'as' to a type that is not a string enum");
           hit("string as StringEnum", "generated Enum_fromValue");
-          return `${useDeclared(en.name.text + "_fromValue", en.getSourceFile().fileName, e)}(${ex(a.expression)})`;
+          return `${useDeclared(en!.name.text + "_fromValue", en!.getSourceFile().fileName, e)}(${ex(a.expression)})`;
         }
         case ts.SyntaxKind.ObjectLiteralExpression: {
           const o = e as ts.ObjectLiteralExpression;
-          const t = checker.getNonNullableType(checker.getContextualType(o)!);
-          const d = t.symbol.declarations![0] as ts.InterfaceDeclaration;
+          const ctxT = checker.getContextualType(o);
+          if (!ctxT) fail(o, "object literal without a contextual type");
+          const t = checker.getNonNullableType(ctxT!);
+          const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | undefined;
+          if (!d || !ts.isInterfaceDeclaration(d)) fail(o, "object literal whose contextual type is not a named interface");
+          if (!o.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p))) fail(o, "object literal with spread or method members");
+          if (!o.properties.every((p) => ts.isIdentifier(p.name!))) fail(o, "object literal with a non-identifier key");
           hit("object literal", "struct literal, missing optionals are Option.None");
-          const name = useDeclared(d.name.text, d.getSourceFile().fileName, e);
-          const fields = d.members.filter(ts.isPropertySignature).map((m) => {
+          const name = useDeclared(d!.name.text, d!.getSourceFile().fileName, e);
+          const fields = d!.members.filter(ts.isPropertySignature).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
@@ -765,6 +771,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
+          if (!ts.isVariableDeclarationList(f.initializer) || !ts.isIdentifier(f.initializer.declarations[0].name)) fail(f, "for-of with a destructuring or non-declaration head");
+          if (!checker.isArrayType(tOf(f.expression))) fail(f, "for-of over something other than an array");
           const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
           const sym = symOf(d.name as ts.Identifier)!;
           const arr = ex(f.expression);

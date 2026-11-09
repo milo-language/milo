@@ -26,6 +26,23 @@ describe("ts2milo", () => {
     expect(summary(r)).toContain("functions: 1 total, 1 automatic, 0 overrides = 100.0% automatic");
   });
 
+  test("lenient mode refuses odd shapes with a named reason, never a crash", () => {
+    const src = [
+      "export type P = { a: number } | { b: number };",
+      "export function lit(): P { return { a: 1 }; }",
+      "export function spread(o: { x: number }): { x: number } { return { ...o }; }",
+      "export function walk(m: Map<string, number>): number { let n = 0; for (const [k, v] of m) { n += v; } return n; }",
+      "export function pi(s: string): number { return parseInt(s); }",
+      "export function str(s: string): string { return s as string; }",
+    ].join("\n") + "\n";
+    const { file, dir } = tmpTs("tsm_odd.ts", src);
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const reasons = r.stubs.map((s) => s.reason);
+    expect(reasons.filter((x) => x.includes("transpiler crash"))).toEqual([]);
+    expect(reasons.some((x) => x.includes("parseInt without a radix"))).toBe(true);
+    expect(reasons.some((x) => x.includes("for-of"))).toBe(true);
+  });
+
   test("output is deterministic", () => {
     const { file, dir } = tmpTs("tsm_det.ts", "export function f(x: number): number {\n  let y = x;\n  y += 1;\n  return y;\n}\n");
     const a = transpile([file], { overridesDir: join(dir, "none") }).files.get("tsm_det.milo");
