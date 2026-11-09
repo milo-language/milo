@@ -149,7 +149,12 @@ export function generate(): Map<string, string> {
       };
       const single = (i1: string, p: string, idx: string, opt: string) => opt ? guard(`${p} !== ${opt}`, i1, (i2) => body(i2, p, idx)) : body(i1, p, idx);
       if (!e.array) { single(ind, path, "-1", e.optional); return; }
+      // A statement list is a lexical scope: a visitor with enterStmts/exitStmts hooks is told
+      // where each one begins and ends (a pass tracking bindings needs both; the after<Kind>
+      // hooks fire only once per node, after all of its lists).
+      const scoped = e.family === "Stmt" && !e.struct;
       const emitLoop = (i1: string) => {
+        if (scoped && hooks.has("enterStmts")) w.push(`${i1}v.enterStmts(p.id, "${e.field}");`);
         const i = `i${uid++}`;
         w.push(`${i1}let ${i} = 0;`);
         const x = `x${uid++}`;
@@ -157,6 +162,7 @@ export function generate(): Map<string, string> {
         single(i1 + "  ", x, i, e.elemOptional);
         w.push(`${i1}  ${i}++;`);
         w.push(`${i1}}`);
+        if (scoped && hooks.has("exitStmts")) w.push(`${i1}v.exitStmts(p.id, "${e.field}");`);
       };
       if (e.optional) guard(`${path} !== ${e.optional}`, ind, emitLoop); else emitLoop(ind);
     };
