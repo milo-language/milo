@@ -6,7 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
-import { buildAstModel, emitAst, guardUnion, registerUnions, unionOfType } from "./ts2milo/ast-model";
+import { buildAstModel, discriminantRead, emitAst, guardUnion, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
@@ -656,10 +656,32 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const ctxT = checker.getContextualType(o);
           if (!ctxT) fail(o, "object literal without a contextual type");
           const t = checker.getNonNullableType(ctxT!);
-          const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | undefined;
-          if (!d || !ts.isInterfaceDeclaration(d)) fail(o, "object literal whose contextual type is not a named interface");
           if (!o.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p))) fail(o, "object literal with spread or method members");
           if (!o.properties.every((p) => ts.isIdentifier(p.name!))) fail(o, "object literal with a non-identifier key");
+          const lu = unionOfType(checker, t);
+          if (lu) {
+            // The variant is picked by the literal discriminant property (`{ tag: "ptr", inner }`).
+            const dp = o.properties.find((p) => ts.isPropertyAssignment(p) && (p.name as ts.Identifier).text === lu.field) as ts.PropertyAssignment | undefined;
+            const lit = dp && ts.isStringLiteral(dp.initializer) ? dp.initializer.text : fail(e, `object literal of ${lu.name} without a literal ${lu.field}`);
+            const v = lu.variants.find((x) => x.kind === lit) ?? fail(e, `${lu.name} has no variant ${lit}`);
+            hit("tagged union literal", "Union.Variant(Struct { fields })");
+            const uname = useDeclared(lu.name, lu.decl.getSourceFile().fileName, e);
+            const sname = useDeclared(v.name, lu.decl.getSourceFile().fileName, e);
+            const vfields = v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== lu.field).map((m) => {
+              const fname = (m.name as ts.Identifier).text;
+              const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
+              const pt = checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!);
+              let val = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
+              if (astModel.boxed.has(m)) {
+                if (isOptionT(pt)) return fail(e, "object literal with a boxed optional field");
+                val = `Heap(${val})`;
+              }
+              return `${RESERVED.has(fname) ? fname + "_" : fname}: ${val}`;
+            });
+            return `${uname}.${pascal(v.kind)}(${sname} { ${vfields.join(", ")} })`;
+          }
+          const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | undefined;
+          if (!d || !ts.isInterfaceDeclaration(d)) fail(o, "object literal whose contextual type is not a named interface");
           hit("object literal", "struct literal, missing optionals are Option.None");
           const name = useDeclared(d!.name.text, d!.getSourceFile().fileName, e);
           const fields = d!.members.filter(ts.isPropertySignature).map((m) => {
@@ -828,9 +850,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       for (const c of conjuncts(test)) {
         let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string; then?: (code: string) => string } | null = null;
         const tk = truthyHandled(checker, c);
-        if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isPropertyAccessExpression(c.left) && c.left.name.text === "kind" && ts.isStringLiteral(c.right)) {
-          const tu = guardUnion(checker, c.left.expression);
-          if (tu) {
+        if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isStringLiteral(c.right)) {
+          const tu = discriminantRead(checker, c.left);
+          if (tu && ts.isPropertyAccessExpression(c.left)) {
             const useName = useDeclared(tu.name, tu.decl.getSourceFile().fileName, c);
             const kind = c.right.text;
             bind = { scrut: c.left.expression, pat: (n) => `${useName}.${pascal(kind)}(${n})`, deref: false, what: "tagged union kind guard" };
@@ -999,6 +1021,37 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const lits = litsOf(checker.getTypeFromTypeNode(n.type));
         const u = lits && litUnions.get(unionKey(lits));
         if (u && u.name === n.name.text && u.file === file) emitUnion(u);
+        // A tagged union of inline object types (`{ tag: "int"; bits: number } | ...`) is declared where it
+        // is written: a struct per variant, the enum, and an accessor per field every variant has.
+        const tu = taggedUnionOf(checker, n);
+        if (tu && file !== astFile && tu.variants.every((v) => ts.isTypeLiteralNode(v.decl))) {
+          hit("tagged union of inline types", "enum + one struct per variant + common-field accessors");
+          const fieldsOfV = (v: (typeof tu.variants)[number]) => v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== tu.field).map((m) => {
+            const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : checker.getTypeAtLocation(m);
+            let t = ty(pt, m);
+            if (astModel.boxed.has(m)) t = isOptionT(pt) ? `Option<Heap<${ty(checker.getNonNullableType(pt), m)}>>` : `Heap<${t}>`;
+            return { name: mname(m.name), ty: t };
+          });
+          const per = tu.variants.map(fieldsOfV);
+          tu.variants.forEach((v, i) => {
+            line(`${pub}struct ${v.name} {`);
+            ind++; for (const f of per[i]) line(`${RESERVED.has(f.name) ? f.name + "_" : f.name}: ${f.ty},`); ind--;
+            line("}");
+          });
+          if (astModel.cloneable.has(tu.name)) line("@derive(Clone)");
+          line(`${pub}enum ${tu.name} {`);
+          ind++; for (const v of tu.variants) line(`${pascal(v.kind)}(${v.name}),`); ind--;
+          line("}");
+          for (const f of per[0]) {
+            if (f.ty.includes("Heap<") || !per.every((p) => p.some((x) => x.name === f.name && x.ty === f.ty))) continue;
+            const fn = RESERVED.has(f.name) ? f.name + "_" : f.name;
+            line(`${pub}fn ${tu.name}_${f.name}(e: &${tu.name}): ${f.ty} {`);
+            ind++; line("return match e {"); ind++;
+            for (const v of tu.variants) line(`${tu.name}.${pascal(v.kind)}(p) => p.${fn}.clone(),`);
+            ind--; line("}"); ind--;
+            line("}");
+          }
+        }
       } else if (ts.isInterfaceDeclaration(n)) {
         hit("interface", "struct");
         for (const m of n.members) if (ts.isPropertySignature(m)) {

@@ -2,7 +2,7 @@
 // anything outside it) and scripts/ts-portable.ts (which counts what is outside it). The
 // transpiler only has emit code for what this file allows, so the two cannot disagree.
 import ts from "typescript";
-import { guardUnion, registerUnions, taggedUnionOf, unionOfType } from "./ast-model";
+import { discriminantRead, registerUnions, taggedUnionOf, unionOfType } from "./ast-model";
 
 export interface Violation {
   file: string;
@@ -182,8 +182,8 @@ function lastTerminates(c: ts.CaseOrDefaultClause): boolean {
 // no `break` but each clause's last statement (a `break` elsewhere would leave the chain, not the loop).
 export function switchHandled(checker: ts.TypeChecker, s: ts.SwitchStatement): "value" | "kind" | null {
   const d = unparenE(s.expression);
-  const kind = ts.isPropertyAccessExpression(d) && d.name.text === "kind" && !!guardUnion(checker, d.expression);
-  if (kind) { if (!sideEffectFree(d.expression) || !isPlaceE(d.expression)) return null; }
+  const kind = !!discriminantRead(checker, d);
+  if (kind) { if (!sideEffectFree((d as ts.PropertyAccessExpression).expression) || !isPlaceE((d as ts.PropertyAccessExpression).expression)) return null; }
   else if (!sideEffectFree(d) || !isValueType(checker.getTypeAtLocation(d))) return null;
   const cs = s.caseBlock.clauses;
   let stacked = false;
@@ -283,11 +283,15 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     }
   };
 
+  // An inline object type that is one member of a tagged union declaration is a variant, not a type use.
+  const inTaggedBody = (n: ts.Node) => ts.isUnionTypeNode(n.parent) && ts.isTypeAliasDeclaration(n.parent.parent) && taggedUnionOf(checker, n.parent.parent) !== null;
+
   const rule = (n: ts.Node) => {
     // Operators and punctuation are judged by their parent node (BinaryExpression etc.).
     if (n.kind >= K.FirstPunctuation && n.kind <= K.LastPunctuation) return;
     if (ts.isTypeNode(n) && n.kind !== K.ExpressionWithTypeArguments) {
       if (ts.isTypeReferenceNode(n) || ts.isUnionTypeNode(n) || ts.isLiteralTypeNode(n)) typeNode(n);
+      else if (ts.isTypeLiteralNode(n) && inTaggedBody(n)) return;
       else if (!PLAIN.has(n.kind)) bad(n, `type ${K[n.kind]}`);
       return;
     }
@@ -354,12 +358,13 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.PropertyAccessExpression: {
         const p = n as ts.PropertyAccessExpression;
         if (isChainMember(p)) { if (!chainHandled(checker, p)) bad(n, "optional chaining"); return; }
-        const u = p.name.text === "kind" ? guardUnion(checker, p.expression) : unionOfType(checker, checker.getTypeAtLocation(p.expression));
+        const disc = discriminantRead(checker, p);
+        const u = disc ?? unionOfType(checker, checker.getTypeAtLocation(p.expression));
         if (u) {
-          // A tagged union value has no fields of its own: `kind` only in a guard, and a field only
+          // A tagged union value has no fields of its own: its discriminant only in a guard, and a field only
           // if every variant has it (the transpiler emits an accessor for those).
-          if (p.name.text === "kind") { if (!isKindGuard(p)) bad(n, "tagged union kind read outside an if guard"); }
-          else if (!u.variants.every((v) => v.iface.members.some((m) => ts.isPropertySignature(m) && (m.name as ts.Identifier).text === p.name.text))) bad(n, `field ${p.name.text} is not on every variant of ${u.name}`);
+          if (disc) { if (!isKindGuard(p)) bad(n, "tagged union kind read outside an if guard"); }
+          else if (!u.variants.every((v) => v.members.some((m) => ts.isPropertySignature(m) && (m.name as ts.Identifier).text === p.name.text))) bad(n, `field ${p.name.text} is not on every variant of ${u.name}`);
           return;
         }
         const sym = checker.getSymbolAtLocation(p.name);
@@ -444,7 +449,9 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const o = n as ts.ObjectLiteralExpression;
         const ctx = checker.getContextualType(o);
         const t = ctx && checker.getNonNullableType(ctx);
-        if (!t || !isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d))) bad(n, "object literal without an interface type");
+        // A tagged union's variant is picked by a literal discriminant property.
+        const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(p.initializer) && p.name.getText() === unionOfType(checker, t)!.field);
+        if (!t || !(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d)))) bad(n, "object literal without an interface type");
         for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p)) bad(p, "object literal member");
         return;
       }

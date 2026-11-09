@@ -335,6 +335,56 @@ describe("??, ?. and switch", () => {
     expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
   });
 
+  test("a union discriminated by `tag` (not `kind`) narrows in a guard and runs", () => {
+    const r = gen("tsm_use", [
+      "import type { Shape } from \"./ast\";",
+      "export function area(s: Shape): number {",
+      "  if (s.tag === \"sq\") { return s.side * s.side; } else if (s.tag === \"rect\") { return s.w * s.h; }",
+      "  return 0;",
+      "}",
+    ].join("\n"), [
+      "from \"./ast\" import { Shape, Rect }",
+      "from \"./tsm_use\" import { area }",
+      "fn main(): i32 {",
+      "    let s = Shape.Rect(Rect { w: 3, h: 4 })",
+      "    if area(s) != 12 { return 1 }",
+      "    return 0",
+      "}",
+    ], {
+      "ast.ts": [
+        "export interface Sq { tag: \"sq\"; side: number }",
+        "export interface Rect { tag: \"rect\"; w: number; h: number }",
+        "export type Shape = Sq | Rect;",
+      ].join("\n"),
+    }, ["Shape"]);
+    expect(r.out).toContain("if let Shape.Sq(");
+    expect(r.out).toContain("} else if let Shape.Rect(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("a `tag` union of inline object types is declared, built from literals and narrowed", () => {
+    const r = gen("tsm_use", [
+      "import type { Ty } from \"./tsm_ty\";",
+      "export function depth(t: Ty): number {",
+      "  if (t.tag === \"ptr\") { return 1 + depth(t.inner); } else if (t.tag === \"int\") { return t.bits; }",
+      "  return 0;",
+      "}",
+      "export function mk(): Ty {",
+      "  return { tag: \"ptr\", inner: { tag: \"int\", bits: 8 } };",
+      "}",
+    ].join("\n"), [
+      "from \"./tsm_use\" import { depth, mk }",
+      "fn main(): i32 {",
+      "    if depth(mk()) != 9 { return 1 }",
+      "    return 0",
+      "}",
+    ], {
+      "tsm_ty.ts": "export type Ty = { tag: \"int\"; bits: number } | { tag: \"ptr\"; inner: Ty } | { tag: \"void\" };",
+    });
+    expect(r.out).toContain("if let Ty.Ptr(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
   test("switch on a tagged union kind narrows each case like a kind guard", () => {
     const r = gen("tsm_use", [
       "import type { Expr } from \"./ast\";",

@@ -1,35 +1,53 @@
 // The tagged-union and AST-type rules of the portable subset, shared by the transpiler (which
 // maps expressions over these types) and by the Milo AST emitter below (which maps the types).
 //
-// Rule: a TS `type U = A | B | ...` whose members are interfaces, each carrying a `kind` property
-// of a distinct string-literal type, is a tagged union. It becomes `enum U { A_kind(A), ... }`,
-// one variant per member named by the kind literal, holding a struct named for the interface
-// (without its `kind` field, which the variant now carries).
+// Rule: a TS `type U = A | B | ...` whose members are interfaces (or inline object types), each
+// carrying the same property (the discriminant: `kind`, `tag`, ...) of a distinct string-literal
+// type, is a tagged union. It becomes `enum U { A_kind(A), ... }`, one variant per member named by
+// the literal, holding a struct named for the interface (without its discriminant field, which the
+// variant now carries). An inline member's struct is named `U_<Literal>`.
 import ts from "typescript";
 
-export interface Variant { kind: string; iface: ts.InterfaceDeclaration }
-export interface TaggedUnion { name: string; decl: ts.TypeAliasDeclaration; variants: Variant[] }
+// `kind` is the discriminant's value, `name` the variant's struct, `decl` its declaration.
+export interface Variant { kind: string; name: string; decl: ts.InterfaceDeclaration | ts.TypeLiteralNode; members: readonly ts.TypeElement[] }
+export interface TaggedUnion { name: string; decl: ts.TypeAliasDeclaration; field: string; variants: Variant[] }
 
-const kindLiteral = (i: ts.InterfaceDeclaration): string | null => {
-  for (const m of i.members) {
-    if (ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === "kind" && m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal)) return m.type.literal.text;
+const literalOf = (members: readonly ts.TypeElement[], field: string): string | null => {
+  for (const m of members) {
+    if (ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === field && m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal)) return m.type.literal.text;
   }
   return null;
 };
 
-// The declaration is a tagged union if every member resolves to an interface with a distinct kind.
+// The declaration is a tagged union if every member is an interface or an inline object type and
+// one property of them all has a distinct string-literal type per member. That property is the
+// discriminant; `kind` wins when several qualify.
 export function taggedUnionOf(checker: ts.TypeChecker, d: ts.TypeAliasDeclaration): TaggedUnion | null {
   if (d.typeParameters || !ts.isUnionTypeNode(d.type)) return null;
-  const variants: Variant[] = [];
+  const raw: { decl: ts.InterfaceDeclaration | ts.TypeLiteralNode; members: readonly ts.TypeElement[] }[] = [];
   for (const t of d.type.types) {
+    if (ts.isTypeLiteralNode(t)) { raw.push({ decl: t, members: t.members }); continue; }
     if (!ts.isTypeReferenceNode(t)) return null;
     const decl = checker.getSymbolAtLocation(t.typeName)?.declarations?.[0];
     if (!decl || !ts.isInterfaceDeclaration(decl)) return null;
-    const kind = kindLiteral(decl);
-    if (kind === null || variants.some((v) => v.kind === kind)) return null;
-    variants.push({ kind, iface: decl });
+    raw.push({ decl, members: decl.members });
   }
-  return { name: d.name.text, decl: d, variants };
+  const cands = raw[0].members.flatMap((m) => (ts.isPropertySignature(m) && ts.isIdentifier(m.name) ? [m.name.text] : [])).sort((a, b) => Number(b === "kind") - Number(a === "kind"));
+  for (const field of cands) {
+    const lits = raw.map((r) => literalOf(r.members, field));
+    if (lits.some((l) => l === null) || new Set(lits).size !== lits.length) continue;
+    const variants = raw.map((r, i): Variant => ({ kind: lits[i]!, name: ts.isInterfaceDeclaration(r.decl) ? r.decl.name.text : `${d.name.text}_${pascal(lits[i]!)}`, decl: r.decl, members: r.members }));
+    return { name: d.name.text, decl: d, field, variants };
+  }
+  return null;
+}
+
+// `e` is `x.<discriminant>` of a tagged-union value `x`: the one read of a union the transpiler
+// turns into narrowing, and the one read the portable subset allows (in a guard).
+export function discriminantRead(checker: ts.TypeChecker, e: ts.Node): TaggedUnion | null {
+  if (!ts.isPropertyAccessExpression(e)) return null;
+  const u = guardUnion(checker, e.expression);
+  return u && u.field === e.name.text ? u : null;
 }
 
 // Variant interface -> its union, per program, so a union narrowed by earlier `else if` branches
@@ -43,7 +61,7 @@ export function registerUnions(program: ts.Program, checker: ts.TypeChecker): vo
     for (const s of sf.statements) {
       if (!ts.isTypeAliasDeclaration(s)) continue;
       const u = taggedUnionOf(checker, s);
-      if (u) for (const v of u.variants) m.set(v.iface, u);
+      if (u) for (const v of u.variants) m.set(v.decl, u);
     }
   }
   byVariant.set(checker, m);
@@ -67,7 +85,7 @@ export function unionOfType(checker: ts.TypeChecker, t: ts.Type): TaggedUnion | 
 }
 
 // The union an expression is a value of by declaration: after earlier `else if` branches TS has
-// narrowed the last variant down to a lone interface, but the next `x.kind === "K"` still guards the
+// narrowed the last variant down to a lone interface, but the next `x.kind === "K"` (or the union's own discriminant) still guards the
 // union it was declared as.
 export function guardUnion(checker: ts.TypeChecker, e: ts.Expression): TaggedUnion | null {
   const sym = ts.isIdentifier(e) ? checker.getSymbolAtLocation(e) : undefined;
@@ -115,14 +133,18 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   const edges = new Map<string, { field: ts.PropertySignature | null; to: string }[]>();
   const add = (from: string, to: string, field: ts.PropertySignature | null) => { if (!edges.has(from)) edges.set(from, []); edges.get(from)!.push({ field, to }); };
   const dropped: AstModel["dropped"] = [];
-  for (const u of unions.values()) for (const v of u.variants) add(u.name, v.iface.name.text, null);
-  for (const i of ifaces.values()) {
-    for (const m of i.members) {
+  for (const u of unions.values()) for (const v of u.variants) add(u.name, v.name, null);
+  // Inline variants are structs of their own, outside `ifaces`; walked the same way.
+  const members = new Map<string, readonly ts.TypeElement[]>();
+  for (const i of ifaces.values()) members.set(i.name.text, i.members);
+  for (const u of unions.values()) for (const v of u.variants) if (ts.isTypeLiteralNode(v.decl)) members.set(v.name, v.members);
+  for (const [iname, mems] of members) {
+    for (const m of mems) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       const t = stripOptional(m.type);
       if (ts.isTypeReferenceNode(t)) {
         const n = t.typeName.getText();
-        if (ifaces.has(n) || unions.has(n)) add(i.name.text, n, m);
+        if (ifaces.has(n) || unions.has(n)) add(iname, n, m);
       }
     }
   }
@@ -141,16 +163,16 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   // Types `@derive(Clone)` can be put on: no cycle through them, and none among the types they hold
   // (the derive cannot be applied to mutually recursive types, so a clone of one is a Milo error).
   const all = new Map<string, Set<string>>();
-  for (const u of unions.values()) all.set(u.name, new Set(u.variants.map((v) => v.iface.name.text)));
-  for (const i of ifaces.values()) {
+  for (const u of unions.values()) all.set(u.name, new Set(u.variants.map((v) => v.name)));
+  for (const [iname, mems] of members) {
     const s = new Set<string>();
-    for (const m of i.members) {
+    for (const m of mems) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       let t = stripOptional(m.type);
       if (ts.isArrayTypeNode(t)) t = stripOptional(t.elementType);
       if (ts.isTypeReferenceNode(t)) { const n = t.typeName.getText(); if (ifaces.has(n) || unions.has(n)) s.add(n); }
     }
-    all.set(i.name.text, s);
+    all.set(iname, s);
   }
   const closure = (n: string): Set<string> => {
     const out = new Set<string>();
@@ -183,18 +205,18 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   const order: string[] = [];
   const seen = new Set<string>();
   const variantOf = new Map<string, string>();
-  for (const u of model.unions.values()) for (const v of u.variants) variantOf.set(v.iface.name.text, u.name);
+  for (const u of model.unions.values()) for (const v of u.variants) variantOf.set(v.name, u.name);
   const visit = (name: string) => {
     if (seen.has(name)) return;
     seen.add(name);
     order.push(name);
     const u = model.unions.get(name);
-    if (u) { for (const v of u.variants) visit(v.iface.name.text); return; }
+    if (u) { for (const v of u.variants) visit(v.name); return; }
     const i = model.ifaces.get(name);
     if (!i) return;
     for (const m of i.members) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
-      if ((m.name as ts.Identifier).text === "kind" && variantOf.has(name)) continue;
+      if (variantOf.has(name) && (m.name as ts.Identifier).text === model.unions.get(variantOf.get(name)!)!.field) continue;
       if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
       const base = stripOptional(m.type);
       const elem = ts.isArrayTypeNode(base) ? stripOptional(base.elementType) : base;
@@ -239,7 +261,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     for (const m of i.members) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       const fname = (m.name as ts.Identifier).text;
-      if (fname === "kind" && variantOf.has(name)) continue;
+      if (variantOf.has(name) && fname === model.unions.get(variantOf.get(name)!)!.field) continue;
       // A field no input file reads is not carried: a smaller type, a smaller dump, a smaller decoder.
       if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
       const t = typeOf(m);
@@ -262,7 +284,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     if (ty.startsWith("Option<")) return sizeOf(ty.slice(7, -1)) + 8;
     if (enums.has(ty)) return 8;
     const u = model.unions.get(ty);
-    if (u) return Math.max(...u.variants.map((v) => sizeOf(v.iface.name.text))) + 8;
+    if (u) return Math.max(...u.variants.map((v) => sizeOf(v.name))) + 8;
     return (structFields.get(ty) ?? []).reduce((a, f) => a + sizeOf(f.ty), 0);
   };
   const sizeBoxed: string[] = [];
@@ -270,7 +292,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     if (!seen.has(u.name)) continue;
     const names = new Set<string>();
     for (const v of u.variants) {
-      const s = v.iface.name.text;
+      const s = v.name;
       // Optionals and structs first (a string or a Vec is already a handle, a Heap<string> buys
       // nothing); a Vec only when nothing else is left.
       for (const allowVec of [false, true]) {
@@ -290,7 +312,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     // A field boxed in one variant is boxed in all of them, so the common-field accessor and every
     // read of it agree.
     for (const v of u.variants) {
-      const s = v.iface.name.text;
+      const s = v.name;
       let changed = false;
       for (const f of structFields.get(s) ?? []) {
         if (names.has(f.name) && !model.boxed.has(f.node) && sizeOf(f.ty) > 8) { model.boxed.add(f.node); changed = true; }
@@ -333,16 +355,16 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     const u = model.unions.get(name);
     if (u) {
       typeNames.push(name);
-      t.push(...(model.cloneable.has(name) ? ["@derive(Clone)"] : []), `pub enum ${name} {`, ...u.variants.map((v) => `    ${pascal(v.kind)}(${v.iface.name.text}),`), `}`);
+      t.push(...(model.cloneable.has(name) ? ["@derive(Clone)"] : []), `pub enum ${name} {`, ...u.variants.map((v) => `    ${pascal(v.kind)}(${v.name}),`), `}`);
       // A field every variant has, read through one accessor (`Expr_span(e)`): a union has no fields of its own.
       // A boxed field is returned unboxed (cloned out of its Heap).
-      const per = u.variants.map((v) => structFields.get(v.iface.name.text) ?? []);
+      const per = u.variants.map((v) => structFields.get(v.name) ?? []);
       const unbox = (ty: string) => (ty.startsWith("Option<Heap<") ? `Option<${ty.slice(12, -2)}>` : ty.startsWith("Heap<") ? ty.slice(5, -1) : ty);
       for (const f of per[0] ?? []) {
         const plain = unbox(f.ty);
         if (plain.includes("Heap<") || !per.every((p) => p.some((x) => x.name === f.name && unbox(x.ty) === plain))) continue;
         const arm = (v: Variant) => {
-          const x = structFields.get(v.iface.name.text)!.find((y) => y.name === f.name)!;
+          const x = structFields.get(v.name)!.find((y) => y.name === f.name)!;
           const read = `p.${field_(f.name)}`;
           if (x.ty.startsWith("Option<Heap<")) return `match ${read} { Option.Some(h) => Option.Some((*h).clone()), Option.None => Option.None }`;
           if (x.ty.startsWith("Heap<")) return `(*${read}).clone()`;
@@ -386,10 +408,10 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       lines.push(`    return ${ty}.${pascal(lits[lits.length - 1])}`, `}`, "");
     } else if (model.unions.has(ty)) {
       const u = model.unions.get(ty)!;
-      lines.push(head, `    let k = rawStr(j, j.curField(c, "kind"))`);
-      for (const v of u.variants.slice(0, -1)) lines.push(`    if k == ${JSON.stringify(v.kind)} {`, `        return ${ty}.${pascal(v.kind)}(${dec(v.iface.name.text)}(j, c))`, `    }`);
+      lines.push(head, `    let k = rawStr(j, j.curField(c, ${JSON.stringify(u.field)}))`);
+      for (const v of u.variants.slice(0, -1)) lines.push(`    if k == ${JSON.stringify(v.kind)} {`, `        return ${ty}.${pascal(v.kind)}(${dec(v.name)}(j, c))`, `    }`);
       const last = u.variants[u.variants.length - 1];
-      lines.push(`    return ${ty}.${pascal(last.kind)}(${dec(last.iface.name.text)}(j, c))`, `}`, "");
+      lines.push(`    return ${ty}.${pascal(last.kind)}(${dec(last.name)}(j, c))`, `}`, "");
     } else {
       const fs = structFields.get(ty) ?? [];
       lines.push(head, `    return ${ty} {`, ...fs.map((f) => `        ${field_(f.name)}: ${dec(f.ty)}(j, j.curField(c, ${JSON.stringify(f.name)})),`), `    }`, `}`, "");
