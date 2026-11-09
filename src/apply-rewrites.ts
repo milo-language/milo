@@ -51,8 +51,20 @@ export function applyRewrites(checker: object): void {
   const exprRewrites = owner.rewrites as Map<object, object> | undefined;
   const patternRewrites = owner.patternRewrites as Map<object, object> | undefined;
   const pending = [exprRewrites, patternRewrites].filter((m): m is Map<object, object> => m !== undefined && m.size > 0);
-  if (pending.length === 0) return;
+  const home = owner.globalsHome as object[] | null | undefined;
+  const ordered = owner.globalsOrdered as object[] | undefined;
+  const moves = owner.moveClosures as Set<{ isMove?: boolean }> | undefined;
+  const hasMoves = moves !== undefined && moves.size > 0;
+  if (pending.length === 0 && !hasMoves && (home === null || home === undefined || ordered === undefined)) return;
   applyWindow(() => {
+    // Before the replacements, so a promoted closure that was itself a replacement carries the flag over.
+    if (hasMoves) { for (const c of moves) c.isMove = true; moves.clear(); }
+    if (home !== null && home !== undefined && ordered !== undefined) {
+      // The dependency order of the globals; written once, so a second apply writes the same thing.
+      home.length = 0;
+      home.push(...ordered);
+      owner.globalsHome = null;
+    }
     const skip = new Set<unknown>([exprRewrites, patternRewrites]);
     for (const rw of pending) {
       const chain = chains(rw);

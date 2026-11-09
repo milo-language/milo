@@ -20,7 +20,9 @@ function note(what: string): void {
   if (applying) return;
   const frames = (new Error().stack ?? "").split("\n").slice(1).filter((l) => !l.includes("ast-oracle.ts"));
   // A native frame (Object.entries, a spread) has no file: the first frame that has one is the site.
-  const at = frames.map((l) => /([^/\s(]+\.ts:\d+)/.exec(l)?.[1]).find((m) => m !== undefined) ?? "?";
+  // MILO_AST_ORACLE_DEPTH=n names the n innermost callers too (site<-caller<-...), to find who held the node.
+  const depth = Number(process.env.MILO_AST_ORACLE_DEPTH ?? "1");
+  const at = frames.map((l) => /([^/\s(]+\.ts:\d+)/.exec(l)?.[1]).filter((m) => m !== undefined).slice(0, depth).join("<-") || "?";
   const key = `${at} ${what}`;
   sites.set(key, (sites.get(key) ?? 0) + 1);
 }
