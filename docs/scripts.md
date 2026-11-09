@@ -36,14 +36,14 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/api-sweep.ts` | API sweep before deploy: build a web app with an old and a new compiler, run both on copies of the same data, request every GET route and byte-diff status + body. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/ast-oracle.ts` | Sweeps fixtures with a src/ast-oracle.ts oracle armed and prints every site it noted, most hit first. |
-| `scripts/ast-writes.ts` | Census of writes to AST nodes after the parser: every assignment or mutating call in the frontend whose target is a property declared in src/ast.ts, as scripts/ts2milo/written-props.ts sees it (the s… |
+| `scripts/ast-writes.ts` | Census of writes to AST nodes after the parser, grouped by stage. |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
-| `scripts/checked-roundtrip.ts` | Gate for the checked-program dump (src/checked-dump.ts): for each program, lower the checker's own Program + CheckResult and lower the copy that went through encode + decode, and compare the two MLIR… |
+| `scripts/checked-roundtrip.ts` | Round-trip gate for the checked-program dump (src/checked-dump.ts): both copies lower to identical MLIR. |
 | `scripts/checker-diag-snapshot.ts` | Diagnostics oracle for checker refactors: every diagnostic of every corpus program, as one JSON file. |
 | `scripts/checker-seam.ts` | Seam measurement for src/checker.ts: every top-level declaration and TypeChecker member with its line span, the reference graph among them, and the cost of cutting a cluster out. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |

@@ -1,7 +1,9 @@
-// Census of writes to AST nodes after the parser: every assignment or mutating call in the frontend whose
-// target is a property declared in src/ast.ts, as scripts/ts2milo/written-props.ts sees it (the same scan
-// that decides whether the generated Milo frontend may copy a node). The AST is meant to be immutable once
-// parsed, so the number for the checker and later stages is the one to drive to zero.
+// Census of writes to AST nodes after the parser, grouped by stage.
+//
+// Every assignment or mutating call in the frontend whose target is a property declared in src/ast.ts,
+// as scripts/ts2milo/written-props.ts sees it (the same scan that decides whether the generated Milo
+// frontend may copy a node). The AST is meant to be immutable once parsed, so the number for the
+// checker and later stages is the one to drive to zero.
 //   bun scripts/ast-writes.ts            every write site, grouped by stage, and the totals
 //   bun scripts/ast-writes.ts --check    exit 1 when a stage after the resolver writes a node
 import { join, relative } from "path";

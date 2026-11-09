@@ -1,6 +1,7 @@
-// Gate for the checked-program dump (src/checked-dump.ts): for each program, lower the checker's
-// own Program + CheckResult and lower the copy that went through encode + decode, and compare
-// the two MLIR modules byte for byte. In one process, no subprocess per program.
+// Round-trip gate for the checked-program dump (src/checked-dump.ts): both copies lower to identical MLIR.
+//
+// For each program, lower the checker's own Program + CheckResult and lower the copy that went through
+// encode + decode, and compare the two MLIR modules byte for byte. In one process, no subprocess per program.
 //   bun scripts/checked-roundtrip.ts [--filter <substr>] [--limit N] [--diffs N] [--plant]
 // --plant empties one checker table (staticCalls) in the decoded copy: the run must then fail,
 // which is how tests/checkedDump.test.ts knows the comparison can.
