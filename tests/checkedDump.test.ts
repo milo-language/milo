@@ -1,9 +1,20 @@
 // The checked-program dump codec (src/checked-dump.ts): what must survive encode + decode for
 // the emitter to read a foreign checker's facts.
 import { expect, test } from "bun:test";
+import { join } from "path";
 import { decodeChecked, encodeChecked } from "../src/checked-dump";
 
 const trip = <T>(v: T): T => decodeChecked(encodeChecked(v)) as T;
+
+test("the round-trip gate passes on a real program and fails when a checker table is lost", () => {
+  const run = (...extra: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../scripts/checked-roundtrip.ts"), "--filter", "tests/fixtures/genericStaticInfer", "--limit", "1", ...extra], { stdout: "pipe", stderr: "pipe" });
+  const ok = run();
+  expect(ok.stdout.toString()).toContain("same 1 / 1");
+  expect(ok.exitCode).toBe(0);
+  const planted = run("--plant");
+  expect(planted.stdout.toString()).toContain("same 0 / 1");
+  expect(planted.exitCode).toBe(1);
+}, 180000);
 
 test("a node keying a Map is the same object as the one in the tree", () => {
   const node = { kind: "Ident", name: "x" };

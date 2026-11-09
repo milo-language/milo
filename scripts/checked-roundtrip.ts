@@ -1,7 +1,9 @@
 // Gate for the checked-program dump (src/checked-dump.ts): for each program, lower the checker's
 // own Program + CheckResult and lower the copy that went through encode + decode, and compare
 // the two MLIR modules byte for byte. In one process, no subprocess per program.
-//   bun scripts/checked-roundtrip.ts [--filter <substr>] [--limit N] [--diffs N]
+//   bun scripts/checked-roundtrip.ts [--filter <substr>] [--limit N] [--diffs N] [--plant]
+// --plant empties one checker table (staticCalls) in the decoded copy: the run must then fail,
+// which is how tests/checkedDump.test.ts knows the comparison can.
 // Programs: tests/fixtures/*.milo and examples/*.milo. One that does not type-check is skipped
 // (counted): there is nothing to lower.
 import { readdirSync, readFileSync } from "fs";
@@ -53,7 +55,9 @@ for (const rel of programs) {
   } catch { rejected++; continue; }
   bytes += dump.length;
   try {
-    const via = lower(decodeChecked(dump) as { program: any; result: any }, path);
+    const copy = decodeChecked(dump) as { program: any; result: any };
+    if (argv.includes("--plant")) copy.result.staticCalls.clear();
+    const via = lower(copy, path);
     if (via === direct) { same++; continue; }
     const a = direct.split("\n"), b = via.split("\n");
     const i = a.findIndex((l, k) => l !== b[k]);
