@@ -45,11 +45,6 @@ export function lazyMentions(node: unknown, lazy: ReadonlySet<string>, out: Set<
   return out;
 }
 
-/** The guards in front of statement `s`: what it mentions outside its nested lists. */
-export function stmtGuards(s: Stmt, lazy: ReadonlySet<string>): string[] {
-  return [...lazyMentions(s, lazy)];
-}
-
 /**
  * What a function evaluates outside its body (its requires/ensures clauses and their
  * `old(...)` snapshots, at entry) mentions: initialized there.
