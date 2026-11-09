@@ -1,7 +1,7 @@
 {
   "src/checker.ts": 15833,
-  "src/emit-mlir.ts": 5920,
-  "src/interp.ts": 1501,
+  "src/emit-mlir.ts": 5939,
+  "src/interp.ts": 1511,
   "src/lsp.ts": 2412,
   "src/main.ts": 2568,
   "src/parser.ts": 2357,
