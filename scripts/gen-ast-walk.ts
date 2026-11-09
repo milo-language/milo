@@ -29,6 +29,7 @@ const VISITORS: Visitor[] = [
   { file: "src/checker-pointer-mention.ts", cls: "MentionScan", out: "src/ast-walk-pointer-mention.ts" },
   { file: "src/checker-mut-bundle.ts", cls: "MutBundleScan", out: "src/ast-walk-mut-bundle.ts" },
   { file: "src/checker-task-scopes.ts", cls: "TaskScopeScan", out: "src/ast-walk-task-scopes.ts" },
+  { file: "src/checker-escaping-closures.ts", cls: "EscapingScan", out: "src/ast-walk-escaping-closures.ts" },
 ];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }

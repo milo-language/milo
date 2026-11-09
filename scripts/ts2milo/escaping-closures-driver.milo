@@ -1,0 +1,62 @@
+// Driver for scripts/ts2milo-escaping-closures-diff.ts: reads each JSON input named in a list file (the
+// escaping-closures pass input the TypeScript checker built for one program), decodes it with the
+// generated decoder, runs the generated pass, and prints its findings.
+//   escaping-closures-driver <list-file>   one `== path` block of finding lines per input, then `#pass-ns N`:
+//                                    the time spent in the pass itself, JSON load and decode excluded
+from "std/args" import { args }
+from "std/fs" import { readFile }
+from "std/json" import { Json }
+from "std/time" import { now, since }
+from "./ts2milo_runtime" import { jsToUtf8 }
+from "./ast" import { Span }
+from "./ast_decode" import { decodeEscapingClosuresInput }
+from "./checker-escaping-closures" import { Finding, EscapingClosuresInput, escapingClosuresFindings }
+
+fn spanText(s: &Option<Span>): string {
+    if let Option.Some(sp) = s {
+        var file = "undefined"
+        if let Option.Some(f) = sp.file {
+            file = jsToUtf8(f)
+        }
+        return file + ":" + sp.line.toString() + ":" + sp.col.toString()
+    }
+    return "undefined:undefined:undefined"
+}
+
+fn findingLine(f: &Finding): string {
+    return spanText(f.span) + "\t" + jsToUtf8(f.message) + "\t" + jsToUtf8(f.hint)
+}
+
+fn load(path: &string): Option<EscapingClosuresInput> {
+    let text = readFile(path)!
+    match Json.parse(text) {
+        Result.Ok(j) => { return Option.Some(decodeEscapingClosuresInput(j, j.curRoot())) }
+        Result.Err(e) => { return Option.None }
+    }
+}
+
+fn main() {
+    let argv = args()
+    var listPath = ""
+    for a in argv {
+        listPath = a
+    }
+    let list = readFile(listPath)!
+    var totalNs: i64 = 0
+    for p in list.lines() {
+        if p.len > 0 {
+            print("== " + p)
+            if let Option.Some(input) = load(p) {
+                let t0 = now()
+                let fs = escapingClosuresFindings(input)
+                totalNs += since(t0).toNanos()
+                for f in fs {
+                    print(findingLine(f))
+                }
+            } else {
+                print("DECODE-ERROR")
+            }
+        }
+    }
+    print($"#pass-ns {totalNs}")
+}
