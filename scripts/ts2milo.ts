@@ -702,6 +702,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return !later;
     };
     const needsClone = (e: ts.Expression) => isPlace(e) && !(multiErr && ts.isPropertyAccessExpression(e) && isCatchVar(e.expression)) && !isCopyT(tOf(e)) && !isLastUseLocal(e);
+    const anonFieldTypes = (t: ts.Type, d: ts.Node): ts.Type[] => checker.getPropertiesOfType(t).map((p) => checker.getTypeOfSymbolAtLocation(p, d));
     // A value of a recursive AST type: its clone is only safe where the copy is never mutated.
     const isRecursiveT = (t: ts.Type): boolean => {
       if (isCopyT(t)) return false;
@@ -710,6 +711,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.recursive.has(tu.name);
       const d = t.symbol?.declarations?.[0];
+      if (d && ts.isTypeLiteralNode(d) && anonStructs.has(d)) return anonFieldTypes(t, d).some(isRecursiveT);
       return !!d && ts.isInterfaceDeclaration(d) && astModel.recursive.has(d.name.text);
     };
     let roDest = false;
@@ -729,6 +731,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
+      // A generated struct for an object type literal derives Clone; it clones when every field does.
+      if (d && ts.isTypeLiteralNode(d) && anonStructs.has(d)) return anonFieldTypes(t, d).every(canClone);
       // Interfaces the runtime declares by hand (@derive(Clone) in runtime.milo).
       if (d && ts.isInterfaceDeclaration(d) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
@@ -2025,7 +2029,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const bd = checker.getSymbolAtLocation(e.left.name)?.declarations?.[0];
           if (bd && ts.isPropertySignature(bd) && astModel.boxed.has(bd)) {
             // A boxed field stores a Heap: Option<Heap<T>> for an optional one.
-            if (!isOptionT(lt)) fail(e, "assignment to a boxed non-optional field");
+            if (!isOptionT(lt)) {
+              // Written through the box (`*n.e = v`): the Heap stays, its contents are replaced.
+              hit("boxed field", "assigned through the Heap, *n.f = v");
+              line(`${ex(e.left)} = ${ownConv(e.right, lt)}`);
+              return;
+            }
             hit("boxed optional field", "assigned as Option.Some(Heap(v)) or Option.None");
             const rhs = unparen(e.right);
             line(`${ex(e.left)} = ${isUndefinedId(rhs) || rhs.kind === ts.SyntaxKind.NullKeyword ? "Option.None" : `Option.Some(Heap(${heapConv(e.right, checker.getNonNullableType(lt))}))`}`);

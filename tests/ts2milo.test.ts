@@ -231,6 +231,31 @@ describe("tagged unions", () => {
     expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
   });
 
+  test("assigning a fresh value to a boxed non-optional field stores a new Heap, compiled and run", () => {
+    const dir = holderSrc("import type { Neg } from \"./ast\";\nexport function reset(n: Neg): number {\n  n.e = { kind: \"Num\", n: 5 };\n  return val(n.e);\n}\n");
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
+    expect(r.files.get("use.milo")!).toContain("(*n.e) = ");
+    for (const [name, text] of r.files) writeFileSync(join(dir, name), text);
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./ast\" import { Expr, Neg, Num }",
+      "from \"./use\" import { reset }",
+      "fn main(): i32 {",
+      "    var n = Neg { e: Heap(Expr.Num(Num { n: 1 })) }",
+      "    if reset(&mut n) != 5 { return 1 }",
+      "    return 0",
+      "}",
+    ].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+
+  test("an object type literal copied out of a borrowed place is cloned through its generated struct", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export function pick(p: { a: number; b: string }[]): number {\n  const q = p[0];\n  return q.a + q.b.length;\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none") });
+    expect(r.files.get("a.milo")!).toContain(".clone()");
+  });
+
   test("a recursive AST value copied into a local that is mutated afterwards is still refused", () => {
     const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\nexport function drive(h: Holder, n: Num): number {\n  const r = pick(h, true);\n  poke(n);\n  return r;\n}\n");
     expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") })).toThrow("mutated afterwards");
