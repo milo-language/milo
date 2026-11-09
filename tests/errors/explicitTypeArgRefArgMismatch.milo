@@ -1,0 +1,18 @@
+// @error: expected &Option<Heap<Span>>, got Option<Span>
+@derive(Clone)
+struct Span { line: i64 }
+
+fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
+    if let Option.Some(h) = o {
+        return Option.Some((*h).clone())
+    }
+    return Option.None
+}
+
+fn main() {
+    let plain: Option<Span> = Option.Some(Span { line: 3 })
+    let b = optUnbox<Span>(plain)
+    if let Option.Some(s) = b {
+        print(s.line.toString())
+    }
+}

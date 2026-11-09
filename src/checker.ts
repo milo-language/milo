@@ -8263,6 +8263,12 @@ export class TypeChecker {
       this.inferTypeParamsFromHint({ ...retType, isPtr: false, ptrDepth: 0 }, inner, typeParams, typeMap);
       return;
     }
+    // `Heap<T>` is its own TypeKind, not a generic struct, so the struct arm below never
+    // sees it: `&Option<Heap<T>>` could not infer T through the box.
+    if (retType.typeArgs?.length === 1 && retType.name === "Heap" && hint.tag === "heap") {
+      this.inferTypeParamsFromHint(retType.typeArgs[0], hint.inner, typeParams, typeMap);
+      return;
+    }
     if (retType.typeArgs?.length === 2 && retType.name === "HashMap" && hint.tag === "hashmap") {
       this.inferTypeParamsFromHint(retType.typeArgs[0], hint.key, typeParams, typeMap);
       this.inferTypeParamsFromHint(retType.typeArgs[1], hint.value, typeParams, typeMap);
@@ -11449,11 +11455,15 @@ export class TypeChecker {
       const concreteSig = must(this.functions, mangled, "functions");
       for (let i = 0; i < expr.args.length; i++) {
         const sigParamTy = i < concreteSig.params.length ? concreteSig.params[i].type : undefined;
-        if (sigParamTy) this.enforceArgRange(expr.args[i], this.exprTypes.get(expr.args[i]) ?? { tag: "unknown" }, sigParamTy, expr.args[i].span);
-        if (sigParamTy?.tag === "ref") {
-          this.setAutoBorrowChecked(expr.args[i], sigParamTy.mutable, sp);
-          continue;
+        if (sigParamTy) {
+          // Arguments were typed before the signature was known, so nothing has compared
+          // them to it yet: with explicit type arguments (`f<T>(x)`) no inference step
+          // ever notices a mismatch, and codegen died on it ("by-ref arg of another type").
+          const argTy = this.exprTypes.get(expr.args[i]) ?? { tag: "unknown" as const };
+          this.matchCallArg(expr.args[i], argTy, sigParamTy, sp, argType =>
+            this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(sigParamTy)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(sigParamTy, argType)));
         }
+        if (sigParamTy?.tag === "ref") continue;
         // Same rule as the non-generic path: a literal for a `move` parameter (which a
         // bare `T` parameter instantiated with a closure type is) owns its captures.
         // Here only a capture mutated in place blocks the move; one merely read or
@@ -12290,7 +12300,13 @@ export class TypeChecker {
   private checkCallArg(arg: Expr, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
     this.coerceCopyCallback(arg, paramType);
     const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-    const argType = this.checkExpr(arg, hint);
+    return this.matchCallArg(arg, this.checkExpr(arg, hint), paramType, sp, mismatch);
+  }
+
+  // The argument-vs-parameter rules, for an argument whose type is already known.
+  // A generic call checks its arguments before the signature exists (inference needs
+  // every type first), so it applies these afterwards against the monomorphized one.
+  private matchCallArg(arg: Expr, argType: TypeKind, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
     if (paramType.tag === "ref") {
       this.enforceArgRange(arg, argType, paramType, arg.span);
       if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {

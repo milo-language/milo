@@ -1,0 +1,27 @@
+// @expect: 3
+// @expect: none
+// T is inferred through `&Option<Heap<T>>`, with no turbofish at the call.
+@derive(Clone)
+struct Span { line: i64 }
+
+fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
+    if let Option.Some(h) = o {
+        return Option.Some((*h).clone())
+    }
+    return Option.None
+}
+
+fn main() {
+    let a: Option<Heap<Span>> = Option.Some(Heap(Span { line: 3 }))
+    let b = optUnbox(a)
+    if let Option.Some(s) = b {
+        print(s.line.toString())
+    }
+    let n: Option<Heap<Span>> = Option.None
+    let c = optUnbox(n)
+    if let Option.Some(s) = c {
+        print(s.line.toString())
+    } else {
+        print("none")
+    }
+}
