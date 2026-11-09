@@ -1,0 +1,32 @@
+// @error: 'show' can park this task while it holds a reference to 'G'; another task may push to 'G' before it resumes
+// show() loops over its &Vec across a yield. Both tasks hand it the mutable global G, and
+// the other task's push reallocates G's buffer under the loop inside show (a
+// heap-use-after-free under ASan before this was rejected). show cannot see that its
+// parameter is shared; the caller is the only place that can.
+from "std/runtime" import { Task, schedulerYield }
+
+var G: Vec<string> = Vec.new()
+
+fn show(v: &Vec<string>): void {
+    for l in v {
+        schedulerYield()
+        print(l)
+    }
+}
+
+fn work(): void {
+    var i = 0
+    while i < 64 {
+        G.push("a string long enough to live on the heap".clone())
+        i = i + 1
+    }
+    show(G)
+}
+
+fn main(): void {
+    G.push("first".clone())
+    Task.scope((s) => {
+        s.spawn(() => work())
+        s.spawn(() => work())
+    })
+}

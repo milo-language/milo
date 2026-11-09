@@ -386,7 +386,7 @@ same route handler. Each was an unsafe-free program the checker accepted and ASa
 | # | Hole | Closed by |
 |---|---|---|
 | 21 | A closure writing its own captures was run twice at once: two tasks calling one Router handler (or one closure handed to two scoped tasks), or a body re-entering itself through a struct it was stored in. One run looped over `log` across a park or the re-entering call while the other pushed to it | the closure's written captures are globals scoped to that closure |
-| 22 | A written capture passed by reference to a callee that loops over it across a park (`show(log)`): only element views and slices were checked, not the container. **The same shape with a mutable global (`show(G)`) is still open**, see below | `paramViewsAcrossPark` summary (captures only) |
+| 22 | A written capture passed by reference to a callee that loops over it across a park (`show(log)`): only element views and slices were checked, not the container. the same shape with a mutable global (`show(G)`) was closed as #25 | `paramViewsAcrossPark` summary (captures only) |
 | 23 | `parallelMap` ran a `move` closure that writes its captures on every worker thread at once (the doc comment admitted the race) | `@concurrent` |
 
 Milo has no `Fn`/`FnMut` split, and a closure value whose environment is shared is what
@@ -419,6 +419,18 @@ holds no such view and passes either way.
 a capture, and a closure value whose body the call cannot see.
 `tests/errors/closureEnvSharedRouteHandler.milo`, `closureEnvReentrant`,
 `closureEnvRefArgAcrossPark`, `concurrentClosureWritesCapture`.
+
+## Finding #25 (closed): a mutable global handed to a callee that loops over it across a park
+
+`show(G)` from two tasks, where `show(v: &Vec<string>)` iterates `v` and yields inside the loop:
+the other task's push reallocates `G`'s buffer under the loop, a heap-use-after-free under ASan
+(tests/errors/globalRefArgAcrossPark.milo; no `unsafe`). #22 had closed this for written
+captures and left globals open, because the rule rejected milojs at 14 sites. Those 14 were false
+positives: the park summary counted an enum constructor (`JSValue.Number(st.x)`) as an unknown
+call that may park, which marked milojs's interpreter parameter everywhere. With enum
+constructors excluded milojs checks clean, and a mutable global is now treated like a written
+capture. The error names where the callee holds the view (`held at file:line: a for-in over it
+parks inside the loop`), so the hazard is found without reading the callee.
 
 ## What the compiler does not check, and what happens instead
 

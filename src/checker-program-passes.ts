@@ -1252,13 +1252,19 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
 // fn name -> indices into `params` (receiver included) held across a park, directly or by
 // handing the parameter on to a callee that does. Calls through a value that may park
 // count as holding every reference argument, since their params are unknowable here.
-function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: Set<string>): Map<string, Set<number>> {
+// fn -> reference parameter index -> where that fn (or a callee it passes the parameter on to)
+// holds a view into it across a park, so the caller's error can point at the hazard itself.
+function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: Set<string>): Map<string, Map<number, string>> {
   const { fns, rootOf, calleeOf } = view;
   const isRefParam = (t: { isRef: boolean; isRefMut: boolean } | null | undefined) => !!t && (t.isRef || t.isRefMut);
-  const held = new Map<string, Set<number>>();
+  const held = new Map<string, Map<number, string>>();
+  const at = (sp: unknown, what: string) => { const v = sp as Span | undefined; return v ? `${v.file ?? ""}:${v.line}:${v.col}: ${what}` : what; };
   const edges: { from: string; idx: number; to: string; toIdx: number }[] = [];
+  // Building an enum value (`JSValue.Number(x)`) never parks; a call in its payload is walked
+  // as its own node. Counting it as an indirect call marked milojs's interpreter parameter
+  // as held across a park at every `JSValue.Number(st.x)`.
   const mayPark = (n: Record<string, unknown> & { kind?: string }): boolean => {
-    if (n.kind !== "Call" && n.kind !== "MethodCall" && n.kind !== "EnumLit") return false;
+    if (n.kind !== "Call" && n.kind !== "MethodCall") return false;
     const t = calleeOf(n as unknown as Expr);
     if (t) return parks.has(t);
     return parks.has(INDIRECT);
@@ -1276,8 +1282,9 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
     const idxOf = new Map<string, number>();
     f.params.forEach((p, i) => { if (isRefParam(p.type)) idxOf.set(p.name, i); });
     if (idxOf.size === 0) continue;
-    const mark = new Set<number>();
+    const mark = new Map<number, string>();
     held.set(name, mark);
+    const hold = (p: number, sp: unknown, what: string) => { if (!mark.has(p)) mark.set(p, at(sp, what)); };
     const pIdx = (e: unknown) => { const r = rootOf(e); return r !== undefined ? idxOf.get(r) : undefined; };
     const walk = (node: unknown) => {
       if (!node || typeof node !== "object") return;
@@ -1289,7 +1296,7 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
           if ((d?.kind === "LetDecl" || d?.kind === "VarDecl") && d.value && host.exprTypes.get(d.value as Expr)?.tag === "ref") {
             const v = d.value as Expr;
             const p = pIdx(v.kind === "MethodCall" ? v.object : v);
-            if (p !== undefined && containsPark(node.slice(i + 1))) mark.add(p);
+            if (p !== undefined && containsPark(node.slice(i + 1))) hold(p, d.span, "a view bound here lives across a park");
           }
         });
         return;
@@ -1297,7 +1304,7 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
       const n = node as Record<string, unknown> & { kind?: string };
       if (n.kind === "ForInStmt") {
         const p = pIdx(n.iterable);
-        if (p !== undefined && containsPark(n.body)) mark.add(p);
+        if (p !== undefined && containsPark(n.body)) hold(p, n.span, "a for-in over it parks inside the loop");
       }
       if (n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") {
         const args = (n.args as Expr[] | undefined) ?? [];
@@ -1311,7 +1318,7 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
           if (p === undefined) continue;
           if (callee && off >= 0) {
             if (isRefParam(callee.params[j]?.type)) edges.push({ from: name, idx: p, to: t!, toIdx: j });
-          } else if (mayPark(n)) mark.add(p);
+          } else if (mayPark(n)) hold(p, n.span, "passed to a call that may park");
         }
       }
       for (const k of Object.keys(n)) if (k !== "span") walk(n[k]);
@@ -1321,9 +1328,10 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
   for (let changed = true; changed;) {
     changed = false;
     for (const e of edges) {
-      if (!held.get(e.to)?.has(e.toIdx)) continue;
+      const origin = held.get(e.to)?.get(e.toIdx);
+      if (origin === undefined) continue;
       const m = held.get(e.from)!;
-      if (!m.has(e.idx)) { m.add(e.idx); changed = true; }
+      if (!m.has(e.idx)) { m.set(e.idx, origin); changed = true; }
     }
   }
   return held;
@@ -1541,21 +1549,21 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             // A reference to a written capture itself is as bad as one into its buffer
             // when the callee loops over it (or keeps a view into it) across its park: it
             // cannot tell its `&Vec<T>` is shared (`show(log)` where show iterates and
-            // yields). The same holds for a global, but that is not rejected yet: milojs
-            // hands its global interpreter by `&mut` to every parking entry point, so the
-            // global half waits on a decision about that design (memory-safety doc, #22).
+            // yields). A mutable global is shared the same way: every task reaches it, so
+            // `show(G)` from two tasks is a heap-use-after-free (memory-safety doc, #24).
             if (!isViewArg) {
-              const shared = captureName.has(g);
+              const shared = captureName.has(g) || mutableGlobals.has(g);
               if (prm?.type) {
                 const intoBuffer = isSliceParam(prm.type) || (isElement && (prm.type.isRef || prm.type.isRefMut));
                 if (!intoBuffer && !(shared && heldAcrossPark.get(t)?.has(prmIdx))) continue;
               } else if (byValue(argIdx) || (!isElement && (!!callee || !shared))) continue;
             }
             const into = isViewArg || isElement || (prm?.type && isSliceParam(prm.type)) ? `a reference into '${nm(g)}'s buffer` : `a reference to '${nm(g)}'`;
+            const heldAt = t ? heldAcrossPark.get(t)?.get(prmIdx) : undefined;
             report(
               `${say(t)} can park this task while it holds ${into}; ${rival(g)} may push to '${nm(g)}' before it resumes`,
               (a.span as Span | undefined) ?? span,
-              parkHint(g),
+              heldAt ? `${parkHint(g)} (held at ${heldAt})` : parkHint(g),
             );
           }
         }

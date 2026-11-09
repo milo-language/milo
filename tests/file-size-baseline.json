@@ -28,7 +28,7 @@
   "src/checker-pointer-escape-host.ts": 60,
   "src/checker-pointer-escape.ts": 147,
   "src/checker-pointer-mention.ts": 30,
-  "src/checker-program-passes.ts": 1644,
+  "src/checker-program-passes.ts": 1652,
   "src/checker-purity-host.ts": 97,
   "src/checker-purity.ts": 271,
   "src/checker-sql.ts": 360,
