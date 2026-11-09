@@ -661,6 +661,22 @@ export interface CheckResult {
   viewLets: Set<Stmt>;
   // The type each for-in binding was declared with ([varName, varName2?]), for hover.
   forInBindingTypes: Map<Stmt, TypeKind[]>;
+  // The node the checker put in place of each expression it re-spelled (a prelude variant, a callback
+  // thunk). The tree itself is never written: every reader of a child expression goes through `rewritten`.
+  rewrites: Map<Expr, Expr>;
+}
+
+// The expression to read where the tree holds `e`: the checker's replacement for it when there is one. A
+// replacement can itself be replaced, hence the loop. Every other table of a CheckResult is keyed by the
+// node this returns, never by the node it stands in for.
+export function rewritten(rewrites: Map<Expr, Expr>, e: Expr): Expr {
+  let cur = e;
+  let more = true;
+  while (more) {
+    const next = rewrites.get(cur);
+    if (next !== undefined) { cur = next; } else { more = false; }
+  }
+  return cur;
 }
 
 interface GenericEnumInfo {
@@ -960,6 +976,7 @@ export class TypeChecker {
   // The fn being checked records its own extern calls (`@replayHooked`), so they stay direct.
   private currentFnReplayHooked = false;
   private rewrittenEnums = new Map<Expr, string>();
+  private rewrites = new Map<Expr, Expr>();
   private staticCalls = new Map<Expr, string>();
   private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
   private rewrittenStructLits = new Map<Expr, string>();
@@ -3971,6 +3988,7 @@ export class TypeChecker {
       consumingForIns: this.consumingForIns,
       viewLets: this.viewLets,
       forInBindingTypes: this.forInBindingTypes,
+      rewrites: this.rewrites,
     };
   }
 
@@ -12702,15 +12720,16 @@ export class TypeChecker {
     }
     // Infer the type arguments a bare `Pair.new(...)` did not spell, so the call below
     // sees the same shape the turbofish produces.
-    if ((!expr.typeArgs || expr.typeArgs.length === 0) && this.genericStructs.has(expr.enumName)
+    let spelled = expr.typeArgs;
+    if ((!spelled || spelled.length === 0) && this.genericStructs.has(expr.enumName)
         && !this.enums.has(expr.enumName) && !this.structs.has(expr.enumName)) {
       const inferred = this.inferGenericStaticTypeArgs(expr, expected);
       if (inferred === "argError") return this.setType(expr, { tag: "unknown" });
-      if (inferred) expr.typeArgs = inferred;
+      if (inferred) spelled = inferred;
     }
     // generic struct static call: Struct<T>.method(args) with explicit type args
-    if (expr.typeArgs && expr.typeArgs.length > 0 && this.genericStructs.has(expr.enumName)) {
-      const typeArgs = expr.typeArgs.map(ta => this.resolve(ta));
+    if (spelled && spelled.length > 0 && this.genericStructs.has(expr.enumName)) {
+      const typeArgs = spelled.map(ta => this.resolve(ta));
       const mangled = this.monomorphizeStruct(expr.enumName, typeArgs);
       // process pending impl methods that monomorphization may have generated
       this.flushStructBounds();

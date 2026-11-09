@@ -34,7 +34,9 @@ function phaseOfKey(k: string): number | undefined {
 
 type Writes = { decls: Set<ts.Declaration>; opaque: boolean };
 
-export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, files: string[]): (t: ts.Type, site: ts.Node, region?: ts.Node) => boolean {
+// `sites`, when given, receives every write the scan charges (the declaration written and where): scripts/ast-writes.ts lists them.
+export type WriteSite = { decl: ts.Declaration; at: ts.Node };
+export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, files: string[], sites?: WriteSite[]): (t: ts.Type, site: ts.Node, region?: ts.Node) => boolean {
   const writesOf = new Map<string, Writes>();
   let cur: Writes = { decls: new Set(), opaque: false }; // writes of the function being scanned; opaque = a write the scan cannot attribute to a property (a spread or method member on an assignment target)
   const fileSet = new Set(files.map((f) => program.getSourceFile(f)?.fileName).filter((f): f is string => !!f));
@@ -100,7 +102,7 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
     let named = false;
     const props = (ty: ts.Type): void => {
       if (ty.isUnion()) { ty.types.forEach(props); return; }
-      for (const p of checker.getPropertiesOfType(ty)) { named = true; for (const d of p.declarations ?? []) cur.decls.add(d); }
+      for (const p of checker.getPropertiesOfType(ty)) { named = true; for (const d of p.declarations ?? []) { cur.decls.add(d); sites?.push({ decl: d, at: e }); } }
     };
     props(checker.getTypeAtLocation(origin(e)));
     return named;
@@ -188,7 +190,7 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
     for (let x: ts.Expression = e; ; ) {
       if (ts.isParenthesizedExpression(x) || ts.isNonNullExpression(x) || ts.isAsExpression(x)) x = x.expression;
       else if (ts.isPropertyAccessExpression(x)) {
-        for (const d of checker.getSymbolAtLocation(x.name)?.declarations ?? []) cur.decls.add(d);
+        for (const d of checker.getSymbolAtLocation(x.name)?.declarations ?? []) { cur.decls.add(d); sites?.push({ decl: d, at: e }); }
         x = x.expression;
       } else if (ts.isElementAccessExpression(x)) {
         // A non-numeric index (a string key) can name any property of the base.

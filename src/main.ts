@@ -16,7 +16,8 @@ import { join } from "path";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { Program } from "./ast";
-import { TypeChecker } from "./checker";
+import { TypeChecker, type CheckResult } from "./checker";
+import { armAstOracle } from "./ast-oracle";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
 import { backendProgram } from "./backend-program";
 import { decodeChecked, encodeChecked } from "./checked-dump";
@@ -144,6 +145,14 @@ function failCompile(what: string): never {
 // Every source file the last frontend run read; `milo hot` watches these.
 let lastResolvedFiles: string[] = [];
 
+// Every check the CLI runs goes through here so MILO_AST_ORACLE (src/ast-oracle.ts) watches all of them.
+function typeCheck(program: Program, warningConfig: WarningConfig | undefined): CheckResult {
+  const checker = new TypeChecker(warningConfig);
+  const oracle = process.env.MILO_AST_ORACLE;
+  if (oracle) armAstOracle(oracle, program, checker);
+  return checker.check(program);
+}
+
 // `checkedOnly`: stop after the checker and hand back its result (the reference interpreter
 // runs the AST on the checker's facts).
 function frontendToProgram(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, checkedOnly?: (program: Program, result: import("./checker").CheckResult) => void) {
@@ -165,7 +174,7 @@ function frontendToProgram(source: string, target: TargetInfo, filePath?: string
     failCompile("parse failed");
   }
 
-  const result = phase("check", () => new TypeChecker(warningConfig).check(program!));
+  const result = phase("check", () => typeCheck(program!, warningConfig));
   const errors = result.diagnostics.filter(d => d.severity === "error");
   if (filePath) for (const message of requirementsDiagnostics(program!, filePath)) errors.push({ severity: "error", message });
   const warnings = result.diagnostics.filter(d => d.severity !== "error");
@@ -221,7 +230,7 @@ function runFix(filePath: string, target: TargetInfo, warningConfig: WarningConf
     let diagnostics: Diagnostic[] = [];
     try {
       const program = resolveImports(new Parser(new Lexer(source).tokenize(), source, filePath).parse(), sourceDir, target, filePath);
-      diagnostics = new TypeChecker(warningConfig).check(program).diagnostics;
+      diagnostics = typeCheck(program, warningConfig).diagnostics;
     } catch (e: any) {
       if (e instanceof ParseError) diagnostics = [e.diagnostic];
       else throw e;
@@ -259,7 +268,7 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
     const tokens = new Lexer(source).tokenize();
     let program = new Parser(tokens, source, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
-    diagnostics = new TypeChecker(warningConfig).check(program).diagnostics;
+    diagnostics = typeCheck(program, warningConfig).diagnostics;
     for (const message of requirementsDiagnostics(program, filePath)) diagnostics.push({ severity: "error", message });
   } catch (e: any) {
     // A parse error ends the run, but it is still a diagnostic — a consumer should not
@@ -507,7 +516,7 @@ function parseAndCheck(src: string, target: TargetInfo, filePath: string, warnin
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
-    const result = new TypeChecker(warningConfig).check(program);
+    const result = typeCheck(program, warningConfig);
     diagnosticsOut?.push(...result.diagnostics);
     return { program, check: result };
   } catch (e: any) {
