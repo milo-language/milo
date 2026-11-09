@@ -18,12 +18,15 @@ const ROOT = resolve(import.meta.dir, "..");
 // Fields the old reflective walk skipped: spans and types are not nodes and carry no children.
 const SKIP = new Set(["span", "type", "targetType", "retType", "methodSpan"]);
 const FAMILIES = ["Expr", "Stmt", "Pattern", "ChainClause"];
-const VISITOR = { file: "src/mutability-scan.ts", cls: "MutScan" };
+// One walker per pass, each calling only its own visitor class (static calls, no interface to
+// dispatch through, which keeps the generated Milo plain). Edges and ids are the same in all.
+interface Visitor { file: string; cls: string; out: string }
+const VISITORS: Visitor[] = [{ file: "src/mutability-scan.ts", cls: "MutScan", out: "src/ast-walk.ts" }];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }
 
 export function generate(): Map<string, string> {
-  const files = [join(ROOT, "src/ast.ts"), join(ROOT, VISITOR.file)];
+  const files = [join(ROOT, "src/ast.ts"), ...VISITORS.map((v) => join(ROOT, v.file))];
   const program = ts.createProgram(files, { target: ts.ScriptTarget.ES2022, strict: true, noEmit: true, moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext, allowImportingTsExtensions: true });
   const checker = program.getTypeChecker();
   const sf = program.getSourceFile(files[0])!;
@@ -100,11 +103,13 @@ export function generate(): Map<string, string> {
   addNode("Contract", "Contract", "Contract");
 
   // Visitor hooks, read from the class so the walker calls exactly what exists.
-  const vsf = program.getSourceFile(files[1])!;
-  const hooks = new Set<string>();
-  vsf.forEachChild((n) => {
-    if (ts.isClassDeclaration(n) && n.name?.text === VISITOR.cls) for (const m of n.members) if (ts.isMethodDeclaration(m)) hooks.add((m.name as ts.Identifier).text);
-  });
+  const hooksOf = (V: Visitor): Set<string> => {
+    const hooks = new Set<string>();
+    program.getSourceFile(join(ROOT, V.file))!.forEachChild((n) => {
+      if (ts.isClassDeclaration(n) && n.name?.text === V.cls) for (const m of n.members) if (ts.isMethodDeclaration(m)) hooks.add((m.name as ts.Identifier).text);
+    });
+    return hooks;
+  };
   void checker;
 
   const kinds = nodes.map((n) => n.kind);
@@ -120,80 +125,86 @@ export function generate(): Map<string, string> {
   const fn = (fam: string) => `walk${fam}`;
 
   // ---- walker ----
-  let uid = 0;
-  const w: string[] = [];
-  const emitEdge = (ind: string, path: string, e: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }, collectKids: boolean) => {
-    const body = (i2: string, p: string, indexExpr: string) => {
-      if (e.struct) {
-        for (const se of structEdges(e.struct)) emitEdge(i2, `${p}.${se.field}`, se, collectKids);
-        return;
-      }
-      keys.add(e.field);
-      if (collectKids) w.push(`${i2}kids.push(v.next);`);
-      w.push(`${i2}${fn(e.family!)}(v, ${p}, ${"p"}, "${e.field}", ${indexExpr});`);
+  const emitWalker = (V: Visitor): string => {
+    const hooks = hooksOf(V);
+    let uid = 0;
+    const w: string[] = [];
+    const emitEdge = (ind: string, path: string, e: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }, collectKids: boolean) => {
+      const body = (i2: string, p: string, indexExpr: string) => {
+        if (e.struct) {
+          for (const se of structEdges(e.struct)) emitEdge(i2, `${p}.${se.field}`, se, collectKids);
+          return;
+        }
+        keys.add(e.field);
+        if (collectKids) w.push(`${i2}kids.push(v.next);`);
+        w.push(`${i2}${fn(e.family!)}(v, ${p}, ${"p"}, "${e.field}", ${indexExpr});`);
+      };
+      const guard = (cond: string, ind2: string, inner: (i3: string) => void) => {
+        w.push(`${ind2}if (${cond}) {`);
+        inner(ind2 + "  ");
+        w.push(`${ind2}}`);
+      };
+      const single = (i1: string, p: string, idx: string, opt: string) => opt ? guard(`${p} !== ${opt}`, i1, (i2) => body(i2, p, idx)) : body(i1, p, idx);
+      if (!e.array) { single(ind, path, "-1", e.optional); return; }
+      const emitLoop = (i1: string) => {
+        const i = `i${uid++}`;
+        w.push(`${i1}let ${i} = 0;`);
+        const x = `x${uid++}`;
+        w.push(`${i1}for (const ${x} of ${path}) {`);
+        single(i1 + "  ", x, i, e.elemOptional);
+        w.push(`${i1}  ${i}++;`);
+        w.push(`${i1}}`);
+      };
+      if (e.optional) guard(`${path} !== ${e.optional}`, ind, emitLoop); else emitLoop(ind);
     };
-    const guard = (cond: string, ind2: string, inner: (i3: string) => void) => {
-      w.push(`${ind2}if (${cond}) {`);
-      inner(ind2 + "  ");
-      w.push(`${ind2}}`);
-    };
-    const single = (i1: string, p: string, idx: string, opt: string) => opt ? guard(`${p} !== ${opt}`, i1, (i2) => body(i2, p, idx)) : body(i1, p, idx);
-    if (!e.array) { single(ind, path, "-1", e.optional); return; }
-    const emitLoop = (i1: string) => {
-      const i = `i${uid++}`;
-      w.push(`${i1}let ${i} = 0;`);
-      const x = `x${uid++}`;
-      w.push(`${i1}for (const ${x} of ${path}) {`);
-      single(i1 + "  ", x, i, e.elemOptional);
-      w.push(`${i1}  ${i}++;`);
-      w.push(`${i1}}`);
-    };
-    if (e.optional) guard(`${path} !== ${e.optional}`, ind, emitLoop); else emitLoop(ind);
-  };
 
-  w.push(header("walker"));
-  w.push(`import type { ${[...FAMILIES, "Contract"].join(", ")} } from "./ast";`);
-  w.push(`import type { ${VISITOR.cls} } from "./${VISITOR.file.replace(/^src\//, "").replace(/\.ts$/, "")}";`);
-  w.push(`import type { Parent, EdgeKey } from "./ast-walk-types";`);
-  w.push("");
-  for (const fam of [...FAMILIES, "Contract"]) {
-    // A kind with no children and no hook needs no branch: only its id is spent.
-    const ns = nodes.filter((n) => n.family === fam && (n.edges.length > 0 || hooks.has(`visit${n.kind}`) || hooks.has(`after${n.kind}`)));
-    const varName = fam === "Expr" ? "e" : fam === "Stmt" ? "s" : fam === "Pattern" ? "p0" : fam === "ChainClause" ? "c" : "k";
-    // Only a visit hook reads where the node sits; without one the params are named unused.
-    const u = ns.some((n) => hooks.has(`visit${n.kind}`)) ? "" : "_";
-    w.push(`export function ${fn(fam)}(v: ${VISITOR.cls}, ${varName}: ${fam}, ${u}parent: Parent, ${u}key: EdgeKey, ${u}index: number): void {`);
-    w.push(`  const id = v.enter();`);
-    if (hooks.has("node")) w.push(`  v.node(id);`);
-    ns.forEach((n, ni) => {
-      const single = nodes.filter((x) => x.family === fam).length === 1;
-      const open = single ? "" : `  ${ni === 0 ? "" : "} else "}if (${varName}.kind === "${n.kind}") {`;
-      if (open) w.push(open);
-      const hasAfter = hooks.has(`after${n.kind}`);
-      if (hooks.has(`visit${n.kind}`)) w.push(`    v.visit${n.kind}(${varName}, id, parent, key, index);`);
-      if (n.edges.length > 0) {
-        w.push(`    const p: Parent = { kind: "${n.kind}", id: id, op: ${n.opField ? `${varName}.op` : '""'} };`);
-        if (hasAfter) w.push(`    const kids: number[] = [];`);
-        for (const e of n.edges) emitEdge("    ", `${varName}.${e.field}`, e, hasAfter);
-        if (hasAfter) w.push(`    v.after${n.kind}(${varName}, id, kids);`);
-      } else if (hasAfter) {
-        w.push(`    v.after${n.kind}(${varName}, id, []);`);
-      }
-      if (!single && ni === ns.length - 1) w.push("  }");
-    });
-    w.push("}");
+    w.push(header("walker"));
+    w.push(`import type { ${[...FAMILIES, "Contract"].join(", ")} } from "./ast";`);
+    w.push(`import type { ${V.cls} } from "./${V.file.replace(/^src\//, "").replace(/\.ts$/, "")}";`);
+    w.push(`import type { Parent, EdgeKey } from "./ast-walk-types";`);
     w.push("");
-  }
-  for (const fam of [...FAMILIES, "Contract"]) {
-    w.push(`export function ${fn(fam)}s(v: ${VISITOR.cls}, list: ${fam}[], parent: Parent, key: EdgeKey): void {`);
-    w.push(`  let i = 0;`);
-    w.push(`  for (const x of list) {`);
-    w.push(`    ${fn(fam)}(v, x, parent, key, i);`);
-    w.push(`    i++;`);
-    w.push(`  }`);
-    w.push(`}`);
-    w.push("");
-  }
+    for (const fam of [...FAMILIES, "Contract"]) {
+      // A kind with no children and no hook needs no branch: only its id is spent.
+      const ns = nodes.filter((n) => n.family === fam && (n.edges.length > 0 || hooks.has(`visit${n.kind}`) || hooks.has(`after${n.kind}`)));
+      const varName = fam === "Expr" ? "e" : fam === "Stmt" ? "s" : fam === "Pattern" ? "p0" : fam === "ChainClause" ? "c" : "k";
+      // Only a visit hook reads where the node sits; without one the params are named unused.
+      const u = ns.some((n) => hooks.has(`visit${n.kind}`)) ? "" : "_";
+      w.push(`export function ${fn(fam)}(v: ${V.cls}, ${varName}: ${fam}, ${u}parent: Parent, ${u}key: EdgeKey, ${u}index: number): void {`);
+      w.push(`  const id = v.enter();`);
+      if (hooks.has("node")) w.push(`  v.node(id);`);
+      ns.forEach((n, ni) => {
+        const single = nodes.filter((x) => x.family === fam).length === 1;
+        const open = single ? "" : `  ${ni === 0 ? "" : "} else "}if (${varName}.kind === "${n.kind}") {`;
+        if (open) w.push(open);
+        const hasAfter = hooks.has(`after${n.kind}`);
+        if (hooks.has(`visit${n.kind}`)) w.push(`    v.visit${n.kind}(${varName}, id, parent, key, index);`);
+        if (n.edges.length > 0) {
+          w.push(`    const p: Parent = { kind: "${n.kind}", id: id, op: ${n.opField ? `${varName}.op` : '""'} };`);
+          if (hasAfter) w.push(`    const kids: number[] = [];`);
+          for (const e of n.edges) emitEdge("    ", `${varName}.${e.field}`, e, hasAfter);
+          if (hasAfter) w.push(`    v.after${n.kind}(${varName}, id, kids);`);
+        } else if (hasAfter) {
+          w.push(`    v.after${n.kind}(${varName}, id, []);`);
+        }
+        if (!single && ni === ns.length - 1) w.push("  }");
+      });
+      w.push("}");
+      w.push("");
+    }
+    for (const fam of [...FAMILIES, "Contract"]) {
+      w.push(`export function ${fn(fam)}s(v: ${V.cls}, list: ${fam}[], parent: Parent, key: EdgeKey): void {`);
+      w.push(`  let i = 0;`);
+      w.push(`  for (const x of list) {`);
+      w.push(`    ${fn(fam)}(v, x, parent, key, i);`);
+      w.push(`    i++;`);
+      w.push(`  }`);
+      w.push(`}`);
+      w.push("");
+    }
+    return w.join("\n");
+  };
+  // Emitted before the types: emitting fills `keys`, which the EdgeKey type lists.
+  const walkers = VISITORS.map((V) => [V.out, emitWalker(V)] as [string, string]);
 
   // ---- types ----
   const types = [
@@ -246,7 +257,7 @@ export function generate(): Map<string, string> {
 
   return new Map([
     ["src/ast-walk-types.ts", types],
-    ["src/ast-walk.ts", w.join("\n")],
+    ...walkers,
     ["src/ast-nodes.ts", n.join("\n")],
   ]);
 }
