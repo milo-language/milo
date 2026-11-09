@@ -5135,7 +5135,7 @@ class FnEmitter {
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return this.lendAs(b.ref, `!milo.vec<${b.elem}>`, refTy, b.param);
     const p = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param }
-      : e.kind === "FieldAccess" || e.kind === "IndexAccess" || (e.kind === "HeapDeref" && this.heapDerefLent(e)) ? this.fieldPlace(e) ?? this.scalarElem(e) : null;
+      : e.kind === "FieldAccess" || e.kind === "IndexAccess" || (e.kind === "HeapDeref" && (this.heapDerefLent(e) || (mut && !isTempBox(this.f(e.operand))))) ? this.fieldPlace(e) ?? this.scalarElem(e) : null;
     if (p) return this.lendAs(p.ref, `!milo.ref<${p.ty}>`, refTy, p.param);
     if (!b && (e.kind === "IndexAccess" || e.kind === "PtrDeref" || e.kind === "FieldAccess") && valueType(this.cx, this.ty(e.node)) === null && placeType(this.cx, this.ty(e.node)) !== null) {
       // A 128+ byte element behind a raw pointer (`f(data[i])` with a `&T` param, as std's

@@ -3,6 +3,8 @@ import type { Token } from "./tokens";
 import { TokenKind } from "./tokens";
 import { Lexer, FSTRING_LBRACE, FSTRING_RBRACE } from "./lexer";
 import { ParseError } from "./diagnostics";
+import { StampScan } from "./parser-stamp";
+import { walkExpr } from "./ast-walk-stamp";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, ChainClause, Span, ImportDecl,
@@ -2245,21 +2247,6 @@ export class Parser {
   }
 
   // $"hello {name}, you are {age} years old" → format("hello ", name, ", you are ", age, " years old")
-  // Recursively overwrite every span in a parsed subtree. Generic over node
-  // shape so it can't miss a variant the way a hand-written per-kind walk would.
-  private stampSpan(node: unknown, span: Span): void {
-    if (Array.isArray(node)) {
-      for (const child of node) this.stampSpan(child, span);
-      return;
-    }
-    if (!node || typeof node !== "object") return;
-    const rec = node as Record<string, unknown>;
-    if (typeof rec.kind === "string") rec.span = span;
-    for (const key of Object.keys(rec)) {
-      if (key !== "span") this.stampSpan(rec[key], span);
-    }
-  }
-
   private parseFString(raw: string, span: Span): Expr {
     const args: Expr[] = [];
     // Resolve the lexer's escaped-brace sentinels only when a literal run is
@@ -2293,7 +2280,8 @@ export class Parser {
           exprStr += raw[i];
           i++;
         }
-        const tokens = new Lexer(exprStr).tokenize();
+        const fragLexer = new Lexer(exprStr);
+        const tokens = fragLexer.tokenize();
         // Same restamping problem as the spans below, one step earlier: a sub-parse that
         // THROWS carries the fragment's own 1:col, which points at the first line of the
         // file and a column past the end of it. That is a diagnostic the reader cannot
@@ -2306,7 +2294,8 @@ export class Parser {
         // within the fragment aren't recoverable here (the lexer already
         // resolved escapes, so offsets into `raw` don't map back to source
         // columns), but the line and the statement are now right.
-        this.stampSpan(expr, span);
+        const stamp = new StampScan(span);
+        walkExpr(stamp, expr,{ kind: "None", id: -1, op: "" }, "root", -1);
         args.push(expr);
       } else {
         lit += raw[i];

@@ -33,6 +33,7 @@ const VISITORS: Visitor[] = [
   { file: "src/checker-global-borrow.ts", cls: "GlobalBorrowScan", out: "src/ast-walk-global-borrow.ts" },
   { file: "src/checker-concurrent-args.ts", cls: "ConcurrentArgsScan", out: "src/ast-walk-concurrent-args.ts" },
   { file: "src/checker-thread-boundary.ts", cls: "ThreadScan", out: "src/ast-walk-thread-boundary.ts" },
+  { file: "src/parser-stamp.ts", cls: "StampScan", out: "src/ast-walk-stamp.ts" },
 ];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }
@@ -190,6 +191,8 @@ export function generate(): Map<string, string> {
       w.push(`export function ${fn(fam)}(v: ${V.cls}, ${varName}: ${fam}, ${u}parent: Parent, ${u}key: EdgeKey, ${u}index: number): void {`);
       w.push(`  const id = v.enter();`);
       if (hooks.has("node")) w.push(`  v.node(id);`);
+      // A per-family hook gets every node of the family, including kinds with no branch below.
+      if (hooks.has(`on${fam}`)) w.push(`  v.on${fam}(${varName});`);
       ns.forEach((n, ni) => {
         const single = nodes.filter((x) => x.family === fam).length === 1;
         const open = single ? "" : `  ${ni === 0 ? "" : "} else "}if (${varName}.kind === "${n.kind}") {`;
