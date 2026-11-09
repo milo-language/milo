@@ -1644,6 +1644,9 @@ export class TypeChecker {
   }
 
   private resourceKind(ty: TypeKind, seen: Set<string> = new Set()): { kind: string; via: TypeKind } | null {
+    // The concrete type is erased, so no structural copy can duplicate the block and
+    // its drop through the itable: a bitwise copy would be freed once per copy.
+    if (ty.tag === "interface") return { kind: "an interface value (its concrete type is erased, so it cannot be copied)", via: ty };
     switch (ty.tag) {
       case "struct": {
         if (this.dropImpls.has(ty.name)) return { kind: "Drop", via: ty };
