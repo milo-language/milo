@@ -379,5 +379,5 @@ describe("ts-portable", () => {
       else if (v.length > base[f]) over.push(`${f}: ${v.length} > ${base[f]}`);
     }
     expect(over).toEqual([]);
-  });
+  }, 60_000); // one TypeScript program over every frontend file: ~1.5s idle, 7s+ on a loaded machine
 });
