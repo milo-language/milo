@@ -5,10 +5,10 @@
 // the tooling side (hover, goto-def, api search).
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
 import { homedir } from "os";
 
-export const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { STDLIB_DIR } from "./stdlib-dir";
+export { STDLIB_DIR };
 
 // Loaded only when std/ isn't on disk (shipped binary). A dev checkout uses the
 // on-disk std/ exclusively, so a stale build-time bundle can't resurrect deleted

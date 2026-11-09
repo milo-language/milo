@@ -152,6 +152,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/specLock.ts` | Spec lock: agents may change code freely but may not silently weaken intent. |
 | `src/specPacket.ts` | Clean-room packet (`milo spec --packet <outdir> <entry>`): the interface a test author may see (requirements, declarations, signatures, contracts) and nothing about how the code works. |
 | `src/startup.ts` | What runs before and around `main`: which module globals are filled at startup or on first read (the init functions the build compiles like any other), and whether main runs on a green task of its ow… |
+| `src/stdlib-dir.ts` | The directory holding std/ (the repo root in a checkout). |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |
 | `src/suggest.ts` | "Did you mean ...?" hints for the checker. |

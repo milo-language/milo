@@ -6,8 +6,8 @@
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
-import { basename, dirname, join, resolve } from "path";
-import { fileURLToPath } from "url";
+import { basename, dirname, join } from "path";
+import { STDLIB_DIR } from "./stdlib-dir";
 import type { BackendProgram, FnDecl } from "./backend-program";
 import type { TargetInfo } from "./target";
 import { emitMlirFunction, typeAliasText, globalOps, itableOps, mlirModuleText, type MlirFunction } from "./emit-mlir";
@@ -33,13 +33,11 @@ function targetDataLayout(triple: string): string {
   return m[1];
 }
 
-// A compiled milo binary has no real path of its own; the test driver passes MILO_ROOT.
-const ROOT = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // A source checkout builds it at mlir/build/milo-opt; an installed compiler (install.sh,
 // the Homebrew formula, the deb/rpm) has it next to the milo binary.
 function findMiloOpt(): string {
   if (process.env.MILO_OPT) return process.env.MILO_OPT;
-  const built = join(ROOT, "mlir", "build", "milo-opt");
+  const built = join(STDLIB_DIR, "mlir", "build", "milo-opt");
   const beside = join(dirname(process.execPath), "milo-opt");
   return !existsSync(built) && existsSync(beside) ? beside : built;
 }

@@ -14,11 +14,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { planReplayWrappers, RR_WRAPPER_FILE, RR_IMPORTS } from "./replay-externs";
 import { collectModuleDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type DisplayNames, type PkgDeclNames } from "./mangle";
-
-// repo root: walk up from src/ to find the directory containing std/.
-// MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
-// (e.g. a `bun build --compile` binary, whose module URLs point into the bundle).
-const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.url).pathname), "..");
+import { STDLIB_DIR } from "./stdlib-dir";
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts).
 // Loaded ONLY when std/ isn't on disk (a shipped `bun build --compile` binary).
