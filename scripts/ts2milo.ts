@@ -6,6 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { buildImmutability } from "./ts2milo/written-props";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { RUNTIME_OWNED, buildAstModel, isPrimUnion, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
@@ -340,6 +341,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   // src/ast.ts: Milo types and a decoder from its interfaces and tagged unions; no functions.
   let astForeign: { file: string; name: string }[] = [];
   const astModel = buildAstModel(program, checker, astFile ? [astFile, ...files.filter((f) => f !== astFile)] : files);
+  // Types no translated code ever writes into: a clone of one cannot be told from the shared TS reference.
+  const neverWritten = buildImmutability(program, checker, files);
 
 
   // Emitted before any function: sizing the variant structs boxes fields, and reads of a boxed
@@ -705,7 +708,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const cloneFail = (n: ts.Node, t: ts.Type, ro = false): void => {
       if (!canClone(t)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: the type is a class, so it has no Clone; use the place itself`);
       if (!isRecursiveT(t)) return;
-      if (!ro) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: copy of a recursive value that is mutated afterwards, or whose destination is not known to be read-only`);
+      if (!ro && !neverWritten(t)) fail(n, `a value of type ${checker.typeToString(t)} copied out of a borrowed place: copy of a recursive value that is mutated afterwards, or whose destination is not known to be read-only`);
       report.recursiveClones++;
     };
     const canClone = (t: ts.Type): boolean => {
@@ -757,7 +760,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (!(own || force) || !needsClone(e)) return s;
         const taken = takeFromThis(e, s);
         if (taken) return taken;
-        cloneFail(e, tOf(e), ro);
+        // A local annotated with a union is that union in Milo even where TS has narrowed this read to one variant.
+        const sy = ts.isIdentifier(unparen(e)) ? symOf(unparen(e) as ts.Identifier) : undefined;
+        const declared = sy && sy.valueDeclaration && ts.isVariableDeclaration(sy.valueDeclaration) && sy.valueDeclaration.type ? checker.getTypeOfSymbol(sy) : undefined;
+        cloneFail(e, declared && unionOfType(checker, declared) ? declared : tOf(e), ro);
         return `${s}.clone()`;
       };
       // A boxed optional field is an Option<Heap<T>> in Milo; anywhere an Option<T> is wanted it
@@ -1566,6 +1572,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const tagOnly = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && d.getSourceFile().fileName === astFile && astModel.ifaces.has(d.name.text) && !!m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal);
           // A field the Milo AST dropped (a type with no mapping, e.g. a Map of a non-AST class) is not initialised.
           const dropped = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && !!report.ast?.dropped.some((x) => x.iface === d.name.text && x.field === (m.name as ts.Identifier).text);
+          // A literal member with no property signature behind it (an interface method such as `error(msg) {..}` supplied as a
+          // callback) has no struct field: dropping it silently would lose behavior.
+          const sigNames = new Set(d!.members.filter(ts.isPropertySignature).map((m) => (m.name as ts.Identifier).text));
+          for (const p of o.properties) if (!p.name || !sigNames.has((p.name as ts.Identifier).text)) fail(p, `object literal member ${p.name?.getText() ?? "(spread)"} has no field in ${name}: an interface method or callback member would be silently dropped`);
           const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).sort(moveOrder(o)).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
@@ -1593,6 +1603,25 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const st = tOf(a.elements[0].expression);
             const el = st.symbol && (st.symbol.name === "Set" || st.symbol.name === "ReadonlySet") ? checker.getTypeArguments(st as ts.TypeReference)[0] : null;
             if (el && isCopyT(el)) { hit("[...set]", "Set.toVec()"); return `${ex(a.elements[0].expression)}.toVec()`; }
+          }
+          // `[...xs, y, ...zs]` of scalar elements: each spread becomes a Vec (an array is cloned, a Set or Map.keys()/values() is
+          // read in slot order), joined by vecConcat. Non-scalar elements would need a per-element clone: refused.
+          if (a.elements.length > 1 && a.elements.some(ts.isSpreadElement)) {
+            const lt = checker.getTypeArguments(tOf(e) as ts.TypeReference)[0];
+            if (!checker.isArrayType(tOf(e)) || !isCopyT(lt)) fail(a, "array spread whose elements are not numbers, booleans or strings");
+            const spreadVec = (x: ts.Expression): string => {
+              const st = tOf(x);
+              const mk = mapValuesRecv(checker, x, "keys");
+              const mv = mapValuesRecv(checker, x) ?? mk;
+              if (mv) return `${ex(mv)}.${mk ? "keys" : "values"}()`;
+              if (st.symbol && (st.symbol.name === "Set" || st.symbol.name === "ReadonlySet")) return `${ex(x)}.toVec()`;
+              if (checker.isArrayType(st)) return `${ex(x)}.clone()`;
+              return fail(x, "spread of something other than an array, a Set or Map.keys()/values()");
+            };
+            hit("array spread", "scalar spreads joined by vecConcat");
+            const lty = ty(lt, e);
+            const parts = a.elements.map((x) => (ts.isSpreadElement(x) ? spreadVec(x.expression) : `${useRuntime("vec1", e)}<${lty}>(${ownConv(x, lt)})`));
+            return parts.slice(1).reduce((acc, p) => `${useRuntime("vecConcat", e)}(${acc}, ${p})`, parts[0]);
           }
           if (boxedFieldInit && et && a.elements.length === 1 && !ts.isSpreadElement(a.elements[0])) { boxedFieldInit = false; return `${useRuntime("vec1", e)}<${heapElem(et, "X") !== "X" ? `Heap<${ty(et, e)}>` : ty(et, e)}>(${heapElem(et, ownConv(a.elements[0], et))})`; }
           return `[${a.elements.map((x) => (et ? heapElem(et, ownConv(x, et)) : ownConv(x, et))).join(", ")}]`;
@@ -2081,9 +2110,32 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       errDeclFile = symDeclFile(checker.getSymbolAtLocation(id));
       return useDeclared(errType, errDeclFile, fn);
     };
+    // `@consumesThis` is a promise that the callee empties its receiver: refuse a caller that could observe that.
+    const checkConsumesCall = (fn: ts.FunctionLikeDeclaration, n: ts.CallExpression) => {
+      const d = declOf(n);
+      if (!d || !ts.getJSDocTags(d).some((tg) => tg.tagName.text === "consumesThis") || !ts.isPropertyAccessExpression(n.expression)) return;
+      let recv: ts.Expression = n.expression.expression;
+      while (ts.isParenthesizedExpression(recv) || ts.isNonNullExpression(recv)) recv = recv.expression;
+      // A fresh value (`new C(..).m()`, `f().m()`) has no other reader.
+      if (ts.isNewExpression(recv) || ts.isCallExpression(recv)) return;
+      const what = `@consumesThis method ${(d as ts.MethodDeclaration).name?.getText() ?? "?"} called on ${recv.getText()}`;
+      if (!ts.isIdentifier(recv)) return fail(n, `${what}: the receiver is not a local the function owns`);
+      const recvId = recv;
+      const sy = symOf(recvId);
+      const decl = sy?.valueDeclaration;
+      if (!sy || !decl ||!ts.isVariableDeclaration(decl) || decl.getSourceFile() !== fn.getSourceFile() || decl.pos < fn.pos || decl.end > fn.end) return fail(n, `${what}: the receiver is not a local variable of this function`);
+      // A loop that does not declare the receiver runs the call again on the emptied value.
+      for (let p: ts.Node | undefined = n.parent; p && p !== fn; p = p.parent) {
+        if ((ts.isForStatement(p) || ts.isWhileStatement(p) || ts.isDoStatement(p) || ts.isForOfStatement(p) || ts.isForInStatement(p)) && !(decl.pos >= p.pos && decl.end <= p.end)) fail(n, `${what}: inside a loop that outlives the receiver`);
+      }
+      walkBody(fn.body!, (m) => {
+        if (ts.isIdentifier(m) && m !== recvId && m.text === recvId.text && m.pos >= n.end && symOf(m) === sy) fail(m, `${what}: the receiver is read after the call`);
+      });
+    };
     const prepareMutated = (fn: ts.FunctionLikeDeclaration) => {
       mutated = new Set();
       walkBody(fn.body!, (n) => {
+        if (ts.isCallExpression(n)) checkConsumesCall(fn, n);
         const consider = (target: ts.Expression) => { const r = rootOf(target); if (ts.isIdentifier(r)) { const s = symOf(r); if (s) mutated.add(s); } };
         if (ts.isBinaryExpression(n) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken].includes(n.operatorToken.kind)) consider(n.left);
         if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) consider(n.operand);

@@ -3848,6 +3848,11 @@ export class TypeChecker {
     return null;
   }
 
+  private flushSqlErrors(): void {
+    for (const e of this.sql.errors) this.error(e.msg, e.span, e.hint);
+    this.sql.errors = [];
+  }
+
   /** @consumesThis */
   check(program: Program): CheckResult {
     // Not in the constructor: a constructor body is `this.f = e` only, so the generated Milo can build it.
@@ -3862,6 +3867,7 @@ export class TypeChecker {
       this.checkProgram(program);
       this.reportStrandedCFnReads();
       this.sql.run();
+      this.flushSqlErrors();
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
@@ -4951,7 +4957,7 @@ export class TypeChecker {
   private jsonUserMethods = new Set<string>();
 
   // The impl generators (src/checker-derive.ts). What they may reach is this list.
-  private sql = new SqlChecker({ error: (msg, span, hint) => this.error(msg, span, hint) });
+  private sql = new SqlChecker();
   private globalDeclsByName = new Map<string, import("./ast").GlobalDecl>();
   private globalConstCache = new Map<string, string | null>();
   private fnDeclsByName = new Map<string, Function>();
@@ -10877,6 +10883,7 @@ export class TypeChecker {
     // an empty `[]` there is not a count to check; one that runs the query has no later.
     const prepares = /\bStatement\b/.test(this.show(ret));
     this.sql.noteQuery(callee, q, args, value, row, prepares, sp);
+    this.flushSqlErrors();
   }
 
   // The enclosing fn's own `@sql` parameter, not a local that shadows it.

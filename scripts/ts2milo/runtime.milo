@@ -694,6 +694,15 @@ pub fn vec1<T>(a: T): Vec<T> {
     return v
 }
 
+// `[...a, ...b]` of scalar elements: b's elements are copied onto the end of a.
+pub fn vecConcat<T>(a: Vec<T>, b: &Vec<T>): Vec<T> {
+    var out = a
+    for x in b {
+        out.push(x)
+    }
+    return out
+}
+
 pub fn optBox<T>(o: Option<T>): Option<Heap<T>> {
     return match o {
         Option.Some(v) => Option.Some(Heap(v)),

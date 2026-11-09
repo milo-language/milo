@@ -45,8 +45,11 @@ export interface ConstResolver {
   call(fn: string, args: string[]): string | null;
 }
 
-interface SqlHost {
-  error(msg: string, span?: Span, hint?: string): void;
+// A diagnostic the SQL checker found; the type checker emits it (checker.flushSqlErrors) right after the call that produced it.
+export interface SqlError {
+  msg: string;
+  span?: Span;
+  hint?: string;
 }
 
 // The parameter indices an `@sql(sql[, args])` / `@sqlSchema(version, sql)` attribute
@@ -109,7 +112,11 @@ export class SqlChecker {
   readonly staticConst = (type: string, method: string): string | null =>
     method === "columns" ? this.tableColumns.get(type) ?? null : null;
 
-  constructor(private host: SqlHost) {}
+  // Buffered rather than reported through a callback into the checker: the order against the checker's own diagnostics is kept by flushing after each call.
+  errors: SqlError[] = [];
+  private report(msg: string, span?: Span, hint?: string): void {
+    this.errors.push({ msg, span, hint });
+  }
 
   // A constant-folded string, or null when `e` is not a compile-time constant. The
   // resolver supplies what only the checker knows: the constant a name holds, a derived
@@ -156,7 +163,7 @@ export class SqlChecker {
     if (!sqlArg) return;
     if (sqlValue === "unchecked" || sqlValue === "passthrough") return;
     if (sqlValue === null) {
-      this.host.error(`the SQL passed to '${callee}' must be a compile-time constant string`, sqlArg.span ?? sp,
+      this.report(`the SQL passed to '${callee}' must be a compile-time constant string`, sqlArg.span ?? sp,
         `checked SQL is prepared against the schema at compile time. Build it from literals, '+', $"..." and constants, or wrap SQL assembled at run time in 'uncheckedSql(...)'`);
       return;
     }
@@ -190,10 +197,10 @@ export class SqlChecker {
     let bad = false;
     for (const p of this.pieces) {
       if (p.version === null && !p.ddl) {
-        this.host.error(`the version passed to '${p.callee}' must be an integer literal or constant when the program uses checked SQL`, p.span);
+        this.report(`the version passed to '${p.callee}' must be an integer literal or constant when the program uses checked SQL`, p.span);
         bad = true;
       } else if (p.sql === null) {
-        this.host.error(`the SQL passed to '${p.callee}' must be a compile-time constant string when the program uses checked SQL`, p.span,
+        this.report(`the SQL passed to '${p.callee}' must be a compile-time constant string when the program uses checked SQL`, p.span,
           `the compiler applies the migrations to an empty database to learn the schema queries are checked against; a schema change built at run time belongs in a constant migration`);
         bad = true;
       }
@@ -202,7 +209,7 @@ export class SqlChecker {
     const versioned = this.pieces.filter(p => !p.ddl).sort((a, b) => (a.version! < b.version! ? -1 : a.version! > b.version! ? 1 : 0));
     for (let i = 1; i < versioned.length; i++) {
       if (versioned[i]!.version === versioned[i - 1]!.version) {
-        this.host.error(`two migrations claim version ${versioned[i]!.version}: checked SQL needs one migration list per program`, versioned[i]!.span,
+        this.report(`two migrations claim version ${versioned[i]!.version}: checked SQL needs one migration list per program`, versioned[i]!.span,
           `the other is at ${spanText(versioned[i - 1]!.span)}`);
         return null;
       }
@@ -226,7 +233,7 @@ export class SqlChecker {
     }
     if ("error" in entry) {
       const p = sorted[entry.at]!;
-      this.host.error(p.ddl ? `the DDL passed to '${p.callee}' does not apply after the migrations: ${entry.error}` : `migration ${p.version} does not apply: ${entry.error}`, p.span,
+      this.report(p.ddl ? `the DDL passed to '${p.callee}' does not apply after the migrations: ${entry.error}` : `migration ${p.version} does not apply: ${entry.error}`, p.span,
         `the compiler runs every SQL migration, in version order, on an empty database to learn the schema`);
       return null;
     }
@@ -260,11 +267,11 @@ export class SqlChecker {
       reported.add(at);
       const table = this.tableSites.get(at);
       const msg = table ? `@derive(Table) on '${table}': its generated SQL does not match the schema: ${r.error}` : `SQL error in the query passed to '${s.callee}': ${r.error}`;
-      this.host.error(msg, s.span, table ? `the statements are built from the fields (snake_case columns); add the column in a migration, or rename the field` : this.hintFor(db, r.error) ?? `the query is checked against the schema the program's migrations build`);
+      this.report(msg, s.span, table ? `the statements are built from the fields (snake_case columns); add the column in a migration, or rename the field` : this.hintFor(db, r.error) ?? `the query is checked against the schema the program's migrations build`);
       return;
     }
     if (s.argCount !== null && s.argCount !== r.params) {
-      this.host.error(`the query passed to '${s.callee}' has ${r.params} bound parameter${r.params === 1 ? "" : "s"} but ${s.argCount} argument${s.argCount === 1 ? " is" : "s are"} passed`, s.span,
+      this.report(`the query passed to '${s.callee}' has ${r.params} bound parameter${r.params === 1 ? "" : "s"} but ${s.argCount} argument${s.argCount === 1 ? " is" : "s are"} passed`, s.span,
         `one SqlArg per '?' (or per distinct '?N' / ':name'), in order`);
     }
     if (s.row) this.checkRow(s, r.columns, r.declTypes);
@@ -277,7 +284,7 @@ export class SqlChecker {
       if (i < 0) {
         const snake = f.field.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
         const near = columns.includes(snake) ? `alias it: '${snake} AS ${f.field}'` : `select a column named '${f.field}' (or alias one: 'expr AS ${f.field}')`;
-        this.host.error(`${row.name}.${f.field} has no column in the result of this query (columns: ${columns.join(", ") || "none"})`, s.span,
+        this.report(`${row.name}.${f.field} has no column in the result of this query (columns: ${columns.join(", ") || "none"})`, s.span,
           `${row.name}.fromRow reads each field from the result column of the same name; ${near}`);
         continue;
       }
@@ -289,7 +296,7 @@ export class SqlChecker {
         : aff === "INTEGER" || aff === "NUMERIC";
       if (!ok) {
         const t = { I64: "i64", I32: "i32", F64: "f64", Bool: "bool", Str: "string" }[f.kind];
-        this.host.error(`${row.name}.${f.field} is ${f.optional ? `Option<${t}>` : t} but column '${f.field}' is declared ${decl}`, s.span,
+        this.report(`${row.name}.${f.field} is ${f.optional ? `Option<${t}>` : t} but column '${f.field}' is declared ${decl}`, s.span,
           `change the field's type, or CAST the column in the query`);
       }
     }

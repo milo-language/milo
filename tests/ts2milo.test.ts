@@ -232,8 +232,46 @@ describe("tagged unions", () => {
   });
 
   test("a recursive AST value copied into a local that is mutated afterwards is still refused", () => {
-    const dir = holderSrc("export function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
+    const dir = holderSrc("import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\nexport function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
     expect(() => transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") })).toThrow("mutated afterwards");
+  });
+
+  test("a recursive value no code writes into is cloned even into a mutated local", () => {
+    const dir = holderSrc("export function pick(h: Holder, b: boolean): number {\n  let x = h.e;\n  if (b) { x = h.f; }\n  return val(x);\n}\n");
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts")], { astRoots: ["Expr"], overridesDir: join(dir, "none") });
+    expect(r.files.get("use.milo")!).toContain(".clone()");
+  });
+
+  test("an object literal member with no struct field (an interface method) is refused, not dropped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export interface Host { n: number; error(m: string): void }\nexport function mk(): Host {\n  return { n: 1, error: (m: string) => { } };\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.stubs.map((s) => s.reason).join("\n")).toContain("silently dropped");
+  });
+
+  test("a @consumesThis method called on a receiver read afterwards is refused", () => {
+    const src = (body: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+      writeFileSync(join(dir, "a.ts"), "export class C {\n  xs: number[] = [];\n  /** @consumesThis */\n  done(): number[] {\n    return this.xs;\n  }\n}\nexport function f(): number {\n" + body + "}\n");
+      return [join(dir, "a.ts")];
+    };
+    expect(() => transpile(src("  const c = new C();\n  const r = c.done();\n  return r.length + c.xs.length;\n"), {})).toThrow("read after the call");
+    expect(() => transpile(src("  const c = new C();\n  return c.done().length;\n"), {})).not.toThrow("read after the call");
+  });
+
+  test("delete and Object.assign are refused, so the proof may skip them as writes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export interface P { a: number; b: number }\nexport function d(p: P): void {\n  delete (p as any).b;\n}\nexport function o(p: P): void {\n  Object.assign(p, { a: 1 });\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.stubs.map((x) => x.name).sort()).toEqual(["d", "o"]);
+  });
+
+  test("an array spread of scalars joins with vecConcat and runs; a non-scalar spread is refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export function f(xs: string[], s: Set<string>): number {\n  const all = [...xs, \"z\", ...s];\n  return all.length;\n}\nexport function g(xs: { n: number }[]): number {\n  return [...xs, { n: 1 }].length;\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.files.get("a.milo")!).toContain("vecConcat(");
+    expect(r.stubs.map((x) => x.name)).toEqual(["g"]);
   });
 
   test("a kind read outside an if guard is refused", () => {
