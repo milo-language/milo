@@ -1037,3 +1037,30 @@ describe("narrowed variant passed on", () => {
     expect(run.status).toBe(0);
   });
 });
+
+describe("optional chain narrowing", () => {
+  test("x?.f === k && x.g narrows x, and ?. on a non-optional reads through: build and run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const src = join(dir, "tsm_cn.ts");
+    writeFileSync(src, [
+      "export interface T { k: number; v: number }",
+      "export function isSeven(t: T | undefined): boolean { return t?.k === 1 && t.v === 7; }",
+      "export function isFive(t: T): boolean { return t?.k === 5; }",
+    ].join("\n") + "\n");
+    const r = transpile([src], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_cn\" import { T, isSeven, isFive }",
+      "fn main(): i32 {",
+      "    if !isSeven(Option.Some(T { k: 1, v: 7 })) { return 1 }",
+      "    if isSeven(Option.Some(T { k: 1, v: 8 })) { return 2 }",
+      "    if isSeven(Option.Some(T { k: 2, v: 7 })) { return 3 }",
+      "    if isSeven(Option.None) { return 4 }",
+      "    if !isFive(T { k: 5, v: 0 }) { return 5 }",
+      "    return 0",
+      "}",
+    ].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.split("\n").filter((l) => /error/.test(l)).join("\n") }).toEqual({ status: 0, err: "" });
+  });
+});

@@ -715,8 +715,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         return r;
       };
       if (isChainMember(link)) return chainFold(link, none, () => access(), false);
-      // The root: an optional place, bound by reference.
+      // The root: an optional place, bound by reference. One that is not optional (`next?.kind` on a Token,
+      // redundant in TS) or already bound by an enclosing match is read through directly.
       const lkey = link.getText();
+      if (!isOptionT(tOf(link)) || narrow.has(lkey)) return access();
       const lsaved = narrow.get(lkey);
       const name = fresh(lkey);
       const scrut = ex(link);
@@ -1145,6 +1147,22 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
               return litsOf(t) && (dt === t || litsOf(dt)) ? t : undefined;
             };
             return `(${ex(b.left, wantEnum(b.right, rt))} ${sym} ${ex(b.right, wantEnum(b.left, lt))})`;
+          }
+          if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+            const l0 = unparen(b.left);
+            if (ts.isBinaryExpression(l0) && l0.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && isChainMember(unparen(l0.left))) {
+              let root: ts.Expression = unparen(l0.left);
+              while (isChainMember(root)) root = (root as ts.PropertyAccessExpression).expression;
+              if (ts.isIdentifier(root) && isOptionT(tOf(root)) && !narrow.has(root.getText())) {
+                hit("optional chain compare narrowing", "x?.f === k && rest: match x once, both sides read the payload");
+                const key = root.getText(), name = fresh(key), scrut = ex(root);
+                const saved = narrow.get(key);
+                narrow.set(key, { name, deref: boxedPlace(root) });
+                const inner = `(${ex(l0)} && ${cond(b.right)})`;
+                if (saved) narrow.set(key, saved); else narrow.delete(key);
+                return `(match ${scrut} { Option.Some(${name}) => ${inner}, Option.None => false })`;
+              }
+            }
           }
           if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
             // `a && b` as a value yields an operand, not a bool; only the boolean test has a Milo form.
