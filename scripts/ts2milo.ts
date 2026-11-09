@@ -723,6 +723,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${m!.name}(${owned(ex(e), true)})`;
         }
       }
+      // A value typed as one variant's interface (`const c: ClosureExpr = {...}; return c`) where its union is wanted: wrapped in that variant.
+      if (wu && !wu.members && !ts.isObjectLiteralExpression(unparen(e)) && !unionOfType(checker, tOf(e))) {
+        // The DECLARED type must be the variant: a narrowed union member (`x.kind === "BinOp"`) is still the union in Milo.
+        const ue = unparen(e);
+        const dsym = ts.isIdentifier(ue) ? symOf(ue) : undefined;
+        const dt = dsym && dsym.valueDeclaration ? checker.getTypeOfSymbol(dsym) : undefined;
+        const vd = dt && dt === tOf(e) ? dt.symbol?.declarations?.[0] : undefined;
+        const v = vd && ts.isInterfaceDeclaration(vd) ? wu.variants.find((x) => x.name === vd.name.text) : undefined;
+        if (v) { hit("variant as its union", "wrapped in the variant constructor"); return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${pascal(v.kind)}(${owned(ex(e), true)})`; }
+      }
       if (own && ts.isConditionalExpression(e)) ownBranches.add(e);
       return owned(ex(e, want));
     };
