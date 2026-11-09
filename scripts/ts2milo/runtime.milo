@@ -252,8 +252,8 @@ pub fn displayQualified(map: &Option<HashMap<string, string>>, text: &string, or
     }
 }
 
-// node:path basename (POSIX, no extension argument): the last component, trailing slashes ignored.
-pub fn basename(p: &string): string {
+// node:path basename (POSIX): the last component, trailing slashes ignored; `ext` is dropped when the name ends with it and is not it.
+pub fn basename(p: &string, ext: Option<string>): string {
     var end = jsLen(p)
     while end > 0 && jsCharCodeAt(p, end - 1) == 47 {
         end -= 1
@@ -262,7 +262,13 @@ pub fn basename(p: &string): string {
     while start > 0 && jsCharCodeAt(p, start - 1) != 47 {
         start -= 1
     }
-    return jsSlice(p, start, end)
+    let name = jsSlice(p, start, end)
+    if let Option.Some(e) = ext {
+        if jsLen(e) < jsLen(name) && jsEndsWith(name, e) {
+            return jsSlice(name, 0, jsLen(name) - jsLen(e))
+        }
+    }
+    return name
 }
 
 pub fn jsSliceFrom(s: &string, a: i64): string {
