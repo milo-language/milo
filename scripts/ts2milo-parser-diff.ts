@@ -35,7 +35,8 @@ const norm = (v: any): any => {
   if (v && typeof v === "object") {
     const o: Record<string, any> = {};
     for (const k of Object.keys(v).sort()) {
-      if (k === "span" || k === "methodSpan" || k === "id" || v[k] === null || v[k] === undefined) continue;
+      // The encoder skips every Span-typed field (ast-model.ts), so drop the same set here.
+      if (k === "span" || k.endsWith("Span") || k === "id" || v[k] === null || v[k] === undefined) continue;
       o[k] = norm(v[k]);
     }
     return o;

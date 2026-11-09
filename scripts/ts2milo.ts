@@ -1606,7 +1606,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const headSyms = new Set<ts.Symbol>();
           if (f.initializer && ts.isVariableDeclarationList(f.initializer)) {
             if (!(f.initializer.flags & ts.NodeFlags.Let)) fail(f, "for with a var or const head");
-            for (const d of f.initializer.declarations) { if (!ts.isIdentifier(d.name) || !d.initializer) fail(d, "for head declaration without a plain initializer"); headSyms.add(symOf(d.name)!); }
+            for (const d of f.initializer.declarations) { if (!ts.isIdentifier(d.name) || !d.initializer) fail(d, "for head declaration without a plain initializer"); else headSyms.add(symOf(d.name)!); }
           } else if (f.initializer && !(ts.isBinaryExpression(f.initializer) || ts.isPostfixUnaryExpression(f.initializer) || ts.isPrefixUnaryExpression(f.initializer) || ts.isCallExpression(f.initializer))) fail(f, "for head other than a let list or a statement expression");
           if (headSyms.size) {
             const walkCap = (n: ts.Node, nested: boolean) => {
