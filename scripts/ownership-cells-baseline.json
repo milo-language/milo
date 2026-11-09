@@ -1,6 +1,6 @@
 {
  "refused": 5,
- "wrong": 4,
+ "wrong": 0,
  "covered": [
   "array-repeat-in-struct-scalar",
   "array-repeat-in-struct-string",
@@ -612,9 +612,12 @@
   "fork-if-let-option-bigheap",
   "fork-if-let-option-bigmap",
   "fork-if-let-option-bigvec",
+  "fork-if-let-option-closure",
   "fork-if-let-option-drop",
+  "fork-if-let-option-dropvec",
   "fork-if-let-option-enum",
   "fork-if-let-option-heap",
+  "fork-if-let-option-iface",
   "fork-if-let-option-scalar",
   "fork-if-let-option-string",
   "fork-if-let-option-struct",
@@ -669,6 +672,7 @@
   "global-assign-bigheap",
   "global-assign-bigmap",
   "global-assign-bigvec",
+  "global-assign-closure",
   "global-assign-drop",
   "global-assign-dropvec",
   "global-assign-enum",
@@ -697,6 +701,7 @@
   "global-into-fn-bigheap",
   "global-into-fn-bigmap",
   "global-into-fn-bigvec",
+  "global-into-fn-closure",
   "global-into-fn-drop",
   "global-into-fn-dropvec",
   "global-into-fn-enum",
@@ -711,6 +716,7 @@
   "global-read-bigheap",
   "global-read-bigmap",
   "global-read-bigvec",
+  "global-read-closure",
   "global-read-drop",
   "global-read-dropvec",
   "global-read-enum",
@@ -1251,6 +1257,7 @@
   "store-hashmap-insert-bigvec",
   "store-hashmap-insert-enum",
   "store-hashmap-insert-heap",
+  "store-hashmap-insert-iface",
   "store-hashmap-insert-scalar",
   "store-hashmap-insert-string",
   "store-hashmap-insert-struct",
@@ -1453,10 +1460,11 @@
   "temporary-field-read-struct",
   "temporary-field-read-vecstr"
  ],
- "knownWrong": {
-  "fork-if-let-option-dropvec": "interpreter bug: drops the moved Option<Vec<D>> payload twice; compiled output is right",
-  "global-read-closure": "live blocks at exit: interp 1, mlir 2 for a global move closure; untriaged",
-  "global-assign-closure": "same as global-read-closure; untriaged",
-  "global-into-fn-closure": "same as global-read-closure; untriaged"
- }
+ "refusedCells": [
+  "array-repeat-in-struct-big",
+  "array-repeat-local-big",
+  "array-repeat-temp-big",
+  "capture-once-move-out-big",
+  "capture-param-ref-closure"
+ ]
 }
