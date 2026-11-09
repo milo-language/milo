@@ -20,7 +20,6 @@ import { must } from "./must";
 import { ATOMIC_INTRINSICS, atomicFn, vecGrowFn } from "./runtime-ir";
 import { RETAINING_LIBC, noaliasGrants } from "./noalias";
 import type { StartupPlan } from "./startup";
-import { PUBLIC_BUILTIN_FNS } from "./builtin-names";
 
 export interface BuildOptions {
   filePath?: string;
@@ -40,7 +39,7 @@ export interface ExternAbi {
   ret: RetClass;
 }
 
-export const BUILTINS = new Set([...PUBLIC_BUILTIN_FNS, "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet", "_panicHookSet"]);
+export const BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet", "_panicHookSet"]);
 
 const PROCESS_GLOBALS = { argc: "_milo_argc_global", argv: "_milo_argv_global", scheduler: "_milo_scheduler", panicHook: "_milo_panic_hook" } as const;
 export const processGlobalNames = PROCESS_GLOBALS;

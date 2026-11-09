@@ -8,7 +8,6 @@ import { NOT_NATIVE, isStr, strip, wrapInt, type CallE, type Interp, type Method
 import { taskNativeFor } from "./interp-co-natives";
 import { netNativeFor } from "./interp-net";
 import { ExitProgram, MOVED, enc, fmtFloat, strText, type MapV, type BoxV, type ClosureV, type EnumV, type Ref, type Str, type Value, type VecV } from "./interp-values";
-import { PUBLIC_BUILTIN_FNS } from "./builtin-names";
 
 export type Native = ((it: Interp, args: Value[], e?: Expr) => Value) & { co?: true; maybeCo?: true };
 
@@ -376,7 +375,7 @@ export function nativeFor(name: string): Native | undefined {
 }
 
 // ── builtin functions (print, format, exit, assert, ...) ──
-export const BUILTIN_FNS = new Set([...PUBLIC_BUILTIN_FNS, "isNull"]);
+export const BUILTIN_FNS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "isNull"]);
 // Unless the parts are one format(), a string part ends a chunk: the chunk is written as soon as
 // that part is evaluated, so output from evaluating a later part comes after it (print-order).
 // E-INTERP: each part's text appended in order (a string its bytes, anything else its display).
