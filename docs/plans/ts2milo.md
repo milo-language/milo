@@ -272,6 +272,9 @@ its findings are identical to the TypeScript over the corpus.
 **Stop if any of these holds after the pilot** (then the refactors and compiler fixes stay, `src/`
 remains the compiler, and this plan records why):
 1. Effort per 1,000 violations removed, extrapolated over the remaining count, exceeds 8 weeks.
+   Counted NET over the pass, its host adapter and the file it left: moving a walk into the
+   adapter lowers the pilot file but ports nothing (the first checkPurity attempt did exactly
+   that, -109 and +109). An adapter may hold only object-identity facts, never an analysis.
 2. Less than 90% of the pilot's functions are generated automatically (no override).
 3. The refactors make `src/` worse: the pilot file grows by more than 10%, or the owner rejects the
    diff on reading it.
