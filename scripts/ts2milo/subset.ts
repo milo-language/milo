@@ -56,6 +56,51 @@ function isStringLike(t: ts.Type): boolean {
   return (t.flags & ts.TypeFlags.StringLike) !== 0;
 }
 
+// Truthiness of a non-boolean value in a condition, for the types whose JS semantics Milo matches
+// exactly. Numbers are i64, so there is no NaN case. TypeScript also narrows the tested value, which
+// the emitted code reproduces only as an if-guard binding, so the optional kinds are accepted only
+// there (the same restriction as `x !== undefined`).
+export type Truthy = "str" | "num" | "opt" | "optBool" | "optStr" | "optNum";
+export function truthyKind(t: ts.Type): Truthy | null {
+  const F = ts.TypeFlags;
+  if (!t.isUnion()) return t.flags & F.String ? "str" : t.flags & F.Number ? "num" : null;
+  const rest = t.types.filter((x) => !(x.flags & (F.Undefined | F.Null)));
+  if (rest.length === t.types.length || rest.length === 0) return null;
+  if (rest.every((x) => x.flags & F.BooleanLiteral)) return "optBool";
+  if (rest.length === 1 && rest[0].flags & F.String) return "optStr";
+  if (rest.length === 1 && rest[0].flags & F.Number) return "optNum";
+  return rest.every((x) => x.flags & F.Object) ? "opt" : null;
+}
+const outerParens = (n: ts.Node): ts.Node => { while (n.parent && ts.isParenthesizedExpression(n.parent)) n = n.parent; return n; };
+// The expression is the condition of an if, while or ternary, an operand of `!`, or an operand of
+// an &&/|| that is itself in condition position. A value-position `a || b` is not: it yields an
+// operand, not a boolean, so it has no boolean rewrite.
+export function inCondPos(e: ts.Node): boolean {
+  const c = outerParens(e), p = c.parent;
+  if (!p) return false;
+  if (ts.isIfStatement(p) || ts.isWhileStatement(p)) return p.expression === c;
+  if (ts.isConditionalExpression(p)) return p.condition === c;
+  if (ts.isPrefixUnaryExpression(p)) return p.operator === K.ExclamationToken;
+  if (ts.isBinaryExpression(p) && (p.operatorToken.kind === K.AmpersandAmpersandToken || p.operatorToken.kind === K.BarBarToken)) return inCondPos(p);
+  return false;
+}
+// The expression is the condition of an if statement, or a conjunct of it (through parens and &&).
+export function inIfGuard(e: ts.Node): boolean {
+  let c: ts.Node = e;
+  while (c.parent && (ts.isParenthesizedExpression(c.parent) || (ts.isBinaryExpression(c.parent) && c.parent.operatorToken.kind === K.AmpersandAmpersandToken))) c = c.parent;
+  return !!c.parent && ts.isIfStatement(c.parent) && c.parent.expression === c;
+}
+// The one predicate both the subset gate and the emitter use.
+export function truthyHandled(checker: ts.TypeChecker, e: ts.Expression): Truthy | null {
+  // `n || m` on numbers has type number, but in condition position it is a boolean test of its operands.
+  let u = e;
+  while (ts.isParenthesizedExpression(u)) u = u.expression;
+  if (ts.isBinaryExpression(u) && (u.operatorToken.kind === K.AmpersandAmpersandToken || u.operatorToken.kind === K.BarBarToken)) return null;
+  const k = truthyKind(checker.getTypeAtLocation(e));
+  if (!k) return null;
+  return (k === "str" || k === "num" ? inCondPos(e) : inIfGuard(e)) ? k : null;
+}
+
 // "Owner.member" for a library member, or null when the symbol is project code.
 export function calleeKey(program: ts.Program, checker: ts.TypeChecker, call: ts.CallExpression): string | null {
   const callee = call.expression;
@@ -84,7 +129,12 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     out.push({ file: sf.fileName, line: p.line + 1, col: p.character + 1, construct });
   };
   const needBool = (e: ts.Expression, what: string) => {
-    if (!isBool(checker.getTypeAtLocation(e))) bad(e, `non-boolean ${what}`);
+    // An &&/|| as a condition has its operands checked on their own; its TS type is the union of
+    // them, not a boolean.
+    let u = e;
+    while (ts.isParenthesizedExpression(u)) u = u.expression;
+    if (ts.isBinaryExpression(u) && (u.operatorToken.kind === K.AmpersandAmpersandToken || u.operatorToken.kind === K.BarBarToken)) return;
+    if (!isBool(checker.getTypeAtLocation(e)) &&!truthyHandled(checker, e)) bad(e, `non-boolean ${what}`);
   };
 
   const isProjectSymbolType = (t: ts.Type, pred: (d: ts.Declaration) => boolean): boolean => {
@@ -93,12 +143,6 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
   };
   const isArr = (t: ts.Type) => checker.isArrayType(t);
   const isNullishExpr = (e: ts.Expression) => (ts.isIdentifier(e) && e.text === "undefined") || e.kind === K.NullKeyword;
-  // The expression is the condition of an if statement, or a conjunct of it (through parens and &&).
-  const inIfGuard = (e: ts.Node): boolean => {
-    let c: ts.Node = e;
-    while (c.parent && (ts.isParenthesizedExpression(c.parent) || (ts.isBinaryExpression(c.parent) && c.parent.operatorToken.kind === K.AmpersandAmpersandToken))) c = c.parent;
-    return !!c.parent && ts.isIfStatement(c.parent) && c.parent.expression === c;
-  };
   // `x.kind` is only read as `x.kind === "K"` in a guard.
   const isKindGuard = (access: ts.Node): boolean => {
     const b = access.parent;

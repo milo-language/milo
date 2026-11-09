@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { spawnSync } from "child_process";
 import { Unsupported, summary, transpile } from "../scripts/ts2milo";
 import { countViolations, frontendFiles } from "../scripts/ts-portable";
 
@@ -93,6 +94,109 @@ describe("generated ast walk", () => {
   test("the committed walker is what the generator writes from src/ast.ts", async () => {
     const { generate } = await import("../scripts/gen-ast-walk");
     for (const [f, text] of generate()) expect(readFileSync(join(import.meta.dir, "..", f), "utf8")).toBe(text);
+  });
+});
+
+describe("truthiness in condition position", () => {
+  const gen = (name: string, body: string): { out: string; dir: string } => {
+    const { file, dir } = tmpTs(`${name}.ts`, body);
+    const r = transpile([file], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    return { out: r.files.get(`${name}.milo`)!, dir };
+  };
+  const rejects = (body: string) => {
+    const { file } = tmpTs("tsm_rej.ts", body);
+    expect(() => transpile([file], { overridesDir: "/nonexistent" })).toThrow();
+  };
+
+  test("string and number truthiness compile and follow JS", () => {
+    const { out, dir } = gen("tsm_truthy", [
+      "export function str(n: number): number {",
+      "  let s = \"\";",
+      "  if (n !== 0) { s = \"x\"; }",
+      "  if (s) { return 1; }",
+      "  return 0;",
+      "}",
+      "export function notStr(n: number): number {",
+      "  let s = \"\";",
+      "  if (n !== 0) { s = \"x\"; }",
+      "  return !s ? 1 : 0;",
+      "}",
+      "export function num(n: number): number {",
+      "  if (n) { return 1; }",
+      "  return 0;",
+      "}",
+      "export function both(n: number, m: number): number {",
+      "  if (n && m) { return 1; }",
+      "  if (n || m) { return 2; }",
+      "  return 0;",
+      "}",
+      "export function loop(n: number): number {",
+      "  let c = 0;",
+      "  let i = n;",
+      "  while (i) { i -= 1; c += 1; }",
+      "  return c;",
+      "}",
+    ].join("\n"));
+    expect(out).toContain("(jsLen(s) != 0)");
+    expect(out).toContain("(n != 0)");
+    expect(out).toContain("!(jsLen(s) != 0)");
+    expect(out).toContain("while (i != 0) {");
+    expect(out).toContain("if (n != 0) && (m != 0) {");
+    expect(out).toContain("if ((n != 0) || (m != 0)) {");
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_truthy\" import { str, notStr, num, both, loop }",
+      "fn main(): i32 {",
+      "    if str(0) != 0 || str(1) != 1 { return 1 }",
+      "    if notStr(0) != 1 || notStr(1) != 0 { return 2 }",
+      "    if num(0) != 0 || num(-3) != 1 || num(7) != 1 { return 3 }",
+      "    if both(1, 1) != 1 || both(0, 5) != 2 || both(0, 0) != 0 { return 4 }",
+      "    if loop(4) != 4 { return 5 }",
+      "    return 0",
+      "}",
+      "",
+    ].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.slice(0, 400) }).toEqual({ status: 0, err: "" });
+  });
+
+  test("optional object, string, number and boolean bind in an if guard", () => {
+    const { out } = gen("tsm_opt", [
+      "export interface Box { v: number }",
+      "export function obj(b: Box | undefined): number {",
+      "  if (b) { return b.v; }",
+      "  return 0;",
+      "}",
+      "export function both(b: Box | undefined, n: number): number {",
+      "  if (n && b) { return b.v; }",
+      "  return 0;",
+      "}",
+      "export function s(x: string | undefined): number {",
+      "  if (x) { return 1; }",
+      "  return 0;",
+      "}",
+      "export function n(x: number | undefined): number {",
+      "  if (x) { return x; }",
+      "  return 0;",
+      "}",
+      "export function t(x: boolean | undefined): number {",
+      "  if (x) { return 1; }",
+      "  return 0;",
+      "}",
+    ].join("\n"));
+    expect(out).toMatch(/if let Option\.Some\(\w+\) = b \{/);
+    expect(out).toMatch(/if \(n != 0\) \{\n\s+if let Option\.Some/);
+    expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \(jsLen\(\1\) != 0\) \{/);
+    expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \(\1 != 0\) \{/);
+    expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \1 \{/);
+  });
+
+  test("what stays outside the subset is still rejected", () => {
+    rejects("export function f(a: number, b: number): number {\n  const c = a || b;\n  return c;\n}\n");
+    rejects("export function f(a: string): number {\n  const c = a && \"y\";\n  return c.length;\n}\n");
+    rejects("export function f(x: string | undefined): number {\n  return x ? 1 : 0;\n}\n");
+    rejects("export interface B { v: number }\nexport function f(x: B | undefined): number {\n  if (!x) { return 0; }\n  return x.v;\n}\n");
+    rejects("export function f(x: bigint): number {\n  if (x) { return 1; }\n  return 0;\n}\n");
   });
 });
 

@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { calleeKey, isLibDecl, makeProgram, violationsOf } from "./ts2milo/subset";
+import { calleeKey, isLibDecl, makeProgram, truthyHandled, violationsOf } from "./ts2milo/subset";
 import { buildAstModel, emitAst, guardUnion, registerUnions, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -319,6 +319,15 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const isStr = (e: ts.Node) => !!(tOf(e).flags & ts.TypeFlags.StringLike) && !litsOf(tOf(e)) && !enumDeclOf(tOf(e));
     const isNum = (e: ts.Node) => !!(tOf(e).flags & ts.TypeFlags.NumberLike);
     const isUndefinedId = (e: ts.Expression) => ts.isIdentifier(e) && e.text === "undefined";
+    // JS truthiness of a non-boolean (subset.ts truthyHandled). The value is evaluated once.
+    const truthText = (k: "str" | "num" | "optBool", code: string) =>
+      k === "str" ? `(${useRuntime("jsLen", sf)}(${code}) != 0)` : k === "num" ? `(${code} != 0)` : code;
+    const cond = (e: ts.Expression): string => {
+      const k = truthyHandled(checker, e);
+      if (!k) return ex(e);
+      if (k === "str" || k === "num") { hit("truthiness", "string: jsLen != 0, number: != 0"); return truthText(k, ex(e)); }
+      return fail(e, "optional truthiness outside an if guard");
+    };
 
     // Narrowing. Inside `if (x.kind === "K")` the guarded expression reads as the variant's struct,
     // and inside `if (p !== undefined)` as the Option's payload; both are bound by an `if let`.
@@ -530,16 +539,17 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             const lt = tOf(b.left), rt = tOf(b.right);
             return `(${ex(b.left, litsOf(rt) ? rt : undefined)} ${sym} ${ex(b.right, litsOf(lt) ? lt : undefined)})`;
           }
+          if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return `(${cond(b.left)} ${text} ${cond(b.right)})`;
           return `(${ex(b.left)} ${text} ${ex(b.right)})`;
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
           const u = e as ts.PrefixUnaryExpression;
-          return u.operator === ts.SyntaxKind.ExclamationToken ? `!${ex(u.operand)}` : `(-${ex(u.operand)})`;
+          return u.operator === ts.SyntaxKind.ExclamationToken ? `!${cond(u.operand)}` : `(-${ex(u.operand)})`;
         }
         case ts.SyntaxKind.ConditionalExpression: {
           const c = e as ts.ConditionalExpression;
           hit("ternary", "if-expression");
-          return `(if ${ex(c.condition)} { ${conv(c.whenTrue, want)} } else { ${conv(c.whenFalse, want)} })`;
+          return `(if ${cond(c.condition)} { ${conv(c.whenTrue, want)} } else { ${conv(c.whenFalse, want)} })`;
         }
         case ts.SyntaxKind.AsExpression: {
           const a = e as ts.AsExpression;
@@ -628,7 +638,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
         case ts.SyntaxKind.WhileStatement: {
           const w = s as ts.WhileStatement;
-          line(`while ${ex(w.expression)} {`);
+          line(`while ${cond(w.expression)} {`);
           ind++; body(w.statement); ind--;
           line("}");
           return;
@@ -659,13 +669,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       e = unparen(e);
       return ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ? [...conjuncts(e.left), ...conjuncts(e.right)] : [e];
     };
-    const ifHead = (cond: ts.Expression): { heads: string[]; undo: () => void } => {
+    const ifHead = (test: ts.Expression): { heads: string[]; undo: () => void } => {
       const heads: string[] = [];
       const saved: [string, { name: string; deref: boolean } | undefined][] = [];
       let plain: string[] = [];
       const flush = () => { if (plain.length) { heads.push(`if ${plain.join(" && ")} {`); plain = []; } };
-      for (const c of conjuncts(cond)) {
-        let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string } | null = null;
+      for (const c of conjuncts(test)) {
+        let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string; then?: (code: string) => string } | null = null;
+        const tk = truthyHandled(checker, c);
         if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isPropertyAccessExpression(c.left) && c.left.name.text === "kind" && ts.isStringLiteral(c.right)) {
           const tu = guardUnion(checker, c.left.expression);
           if (tu) {
@@ -677,7 +688,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const d = ts.isPropertyAccessExpression(c.left) ? checker.getSymbolAtLocation(c.left.name)?.declarations?.[0] : undefined;
           bind = { scrut: c.left, pat: (n) => `Option.Some(${n})`, deref: !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(c.left) || (ts.isIdentifier(c.left) && elemBoxed.has(symOf(c.left)!)), what: "undefined guard" };
         }
-        if (!bind) { plain.push(ex(c)); continue; }
+        else if (tk && tk !== "str" && tk !== "num") {
+          // `if (x)` on an optional narrows x to its payload, so it binds like `x !== undefined`;
+          // the payload's own truthiness (non-empty, non-zero, true) is tested right after.
+          const d = ts.isPropertyAccessExpression(c) ? checker.getSymbolAtLocation(c.name)?.declarations?.[0] : undefined;
+          const then = tk === "optStr" ? (code: string) => truthText("str", code) : tk === "optNum" ? (code: string) => truthText("num", code) : tk === "optBool" ? (code: string) => code : undefined;
+          bind = { scrut: c, pat: (n) => `Option.Some(${n})`, deref: !!(d && ts.isPropertySignature(d) && astModel.boxed.has(d)) || boxedElem(c) || (ts.isIdentifier(c) && elemBoxed.has(symOf(c)!)), what: "truthiness guard", then };
+        }
+        if (!bind) { plain.push(cond(c)); continue; }
         flush();
         hit(bind.what, "if let binding the payload, which replaces the guarded expression inside");
         const key = bind.scrut.getText();
@@ -685,6 +703,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         heads.push(`if let ${bind.pat(name)} = ${ex(bind.scrut)} {`);
         saved.push([key, narrow.get(key)]);
         narrow.set(key, { name, deref: bind.deref });
+        if (bind.then) plain.push(bind.then(ex(bind.scrut)));
       }
       flush();
       return { heads, undo: () => { for (const [k, v] of saved.reverse()) { if (v) narrow.set(k, v); else narrow.delete(k); } } };
