@@ -485,3 +485,11 @@ pub fn jsReduce<T, A>(v: &Vec<T>, f: (A, &T) => A, init: A): A {
     }
     return acc
 }
+
+// A stubbed function never writes through its `&mut` parameters, which the checker reports as an error;
+// passing one on as `&mut` counts as an escape, so a stub hands each to this. It is never reached.
+pub fn stubKeep<T>(x: &mut T) {
+    if false {
+        stubKeep(&mut x)
+    }
+}

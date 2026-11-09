@@ -48,6 +48,7 @@ const perFile = new Map<string, number>();
 for (const k of seen.keys()) { const f = k.split(":")[0]; perFile.set(f, (perFile.get(f) ?? 0) + 1); }
 for (const [f, n] of [...perFile].sort((a, b) => b[1] - a[1])) console.log(`${String(n).padStart(5)}  ${f}   first: ${firstOf.get(f) ?? ""}`);
 console.log(`translated ${translated} of ${r.functions.length} functions, ${r.stubs.length} stubs`);
+if (process.env.DUMP_ERRORS) await Bun.write(process.env.DUMP_ERRORS, [...seen.keys()].sort().join("\n"));
 console.log(`COMPILE ERRORS: ${seen.size}`);
 if (top) {
   const byMsg = new Map<string, number>();

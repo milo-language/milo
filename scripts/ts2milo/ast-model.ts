@@ -157,6 +157,8 @@ export function guardUnion(checker: ts.TypeChecker, e: ts.Expression): TaggedUni
 export interface AstModel {
   unions: Map<string, TaggedUnion>;
   ifaces: Map<string, ts.InterfaceDeclaration>;
+  // Members of inline (object-literal) union variants: structs of their own, outside `ifaces`.
+  inline: Map<string, readonly ts.TypeElement[]>;
   // The file each interface or union is declared in.
   fileOf: Map<string, string>;
   // Fields whose Milo type is `Heap<...>` (the field closes a by-value cycle).
@@ -202,7 +204,8 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   // Inline variants are structs of their own, outside `ifaces`; walked the same way.
   const members = new Map<string, readonly ts.TypeElement[]>();
   for (const i of ifaces.values()) members.set(i.name.text, i.members);
-  for (const u of unions.values()) for (const v of u.variants) if (ts.isTypeLiteralNode(v.decl)) members.set(v.name, v.members);
+  const inline = new Map<string, readonly ts.TypeElement[]>();
+  for (const u of unions.values()) for (const v of u.variants) if (ts.isTypeLiteralNode(v.decl)) { members.set(v.name, v.members); inline.set(v.name, v.members); if (!fileOf.has(v.name)) fileOf.set(v.name, fileOf.get(u.name)!); }
   for (const [iname, mems] of members) {
     for (const m of mems) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
@@ -250,7 +253,7 @@ export function buildAstModel(program: ts.Program, checker: ts.TypeChecker, file
   const cloneable = new Set<string>(all.keys());
   const recursive = new Set<string>();
   for (const n of all.keys()) if (cyclic.has(n) || [...closure(n)].some((x) => cyclic.has(x))) recursive.add(n);
-  return { unions, ifaces, fileOf, boxed, dropped, cloneable, recursive, cyclic, identity: collectIdentity(program, checker, files) };
+  return { unions, ifaces, inline, fileOf, boxed, dropped, cloneable, recursive, cyclic, identity: collectIdentity(program, checker, files) };
 }
 
 // ---- Milo AST types and the JSON decoder, from the types ----
@@ -267,6 +270,7 @@ export interface LitName { name: string; lits: string[]; file: string }
 // declared. `litName` names a string-literal union the way the function emitter does, so both
 // sides agree on the enum; `modOf` gives the Milo module a file's declarations live in.
 export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: string, roots: string[], litName: (t: ts.TypeNode) => LitName | null, modOf: (file: string) => string, used: Set<ts.Node>, kindEnum: (u: TaggedUnion) => LitName): AstEmit {
+  const membersOf = (n: string) => model.ifaces.get(n)?.members ?? model.inline.get(n);
   const enums = new Map<string, LitName>();
   const order: string[] = [];
   const seen = new Set<string>();
@@ -278,9 +282,9 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     order.push(name);
     const u = model.unions.get(name);
     if (u) { for (const v of u.variants) visit(v.name); return; }
-    const i = model.ifaces.get(name);
-    if (!i) return;
-    for (const m of i.members) {
+    const mems = membersOf(name);
+    if (!mems) return;
+    for (const m of mems) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       if (variantOf.has(name) && (m.name as ts.Identifier).text === model.unions.get(variantOf.get(name)!)!.field) continue;
       if (model.fileOf.get(name) === astFile && !used.has(m)) continue;
@@ -299,6 +303,17 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     if (l.file === astFile) { enums.set(l.name, l); kindOf.set(u.name, l); }
   }
 
+  // Types declared outside astFile whose Milo struct has fields the decoder cannot build (a Map, a
+  // closure): their decoder would leave fields out of the literal, so they have none and nothing
+  // that holds one is decoded either.
+  const incomplete = new Set<string>();
+  const decoderFieldsDropped = (name: string): boolean => {
+    const u = model.unions.get(name);
+    if (u) return u.variants.some((v) => incomplete.has(v.name));
+    const unionField = variantOf.has(name) ? model.unions.get(variantOf.get(name)!)!.field : "";
+    return (membersOf(name) ?? []).some((m) => ts.isPropertySignature(m) && !!m.type && (m.name as ts.Identifier).text !== unionField && typeOf(m) === null);
+  };
+
   // Milo type of a field, or null when it has none (an untagged union of primitives).
   const typeOf = (m: ts.PropertySignature): string | null => {
     const wrap = (s: string, node: ts.TypeNode, question: boolean) => (question || stripOptional(node) !== node ? `Option<${s}>` : s);
@@ -316,7 +331,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
       if (n.kind === ts.SyntaxKind.BooleanKeyword || (ts.isLiteralTypeNode(n) && n.literal.kind === ts.SyntaxKind.TrueKeyword)) return "bool";
       if (ts.isTypeReferenceNode(n)) {
         const name = n.typeName.getText();
-        if (model.ifaces.has(name) || model.unions.has(name)) return name;
+        if (membersOf(name) || model.unions.has(name)) return incomplete.has(name) ? null : name;
       }
       const l = litName(n) ?? (ts.isTypeReferenceNode(n) ? (() => { const d = checker.getSymbolAtLocation(n.typeName)?.declarations?.[0]; return d && ts.isTypeAliasDeclaration(d) ? litName(d.type) : null; })() : null);
       if (l) { enums.set(l.name, l); return l.name; }
@@ -327,13 +342,21 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     return full === null ? null : wrap(full, m.type!, !!m.questionToken);
   };
 
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const n of [...model.ifaces.keys(), ...model.inline.keys(), ...model.unions.keys()]) {
+      if (model.fileOf.get(n) === astFile || incomplete.has(n) || !decoderFieldsDropped(n)) continue;
+      incomplete.add(n);
+      changed = true;
+    }
+  }
+
   const structFields = new Map<string, { name: string; ty: string; node: ts.PropertySignature }[]>();
   const dropped: AstModel["dropped"] = [];
   const fieldsOf = (name: string, report: boolean) => {
-    const i = model.ifaces.get(name)!;
     const fs: { name: string; ty: string; node: ts.PropertySignature }[] = [];
     if (model.identity.has(name)) fs.push({ name: ID_FIELD, ty: "i64", node: undefined as unknown as ts.PropertySignature });
-    for (const m of i.members) {
+    for (const m of membersOf(name)!) {
       if (!ts.isPropertySignature(m) || !m.type) continue;
       const fname = (m.name as ts.Identifier).text;
       if (variantOf.has(name) && fname === model.unions.get(variantOf.get(name)!)!.field) continue;
@@ -345,7 +368,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     }
     structFields.set(name, fs);
   };
-  for (const name of order) if (model.ifaces.has(name)) fieldsOf(name, true);
+  for (const name of order) if (membersOf(name)) fieldsOf(name, true);
 
   // The Milo backend only passes a value of 128 bytes or more by reference when it is a literal or a
   // call result, so a Heap<Expr> read as a `&Expr` argument fails once the enum is that big. An enum
@@ -398,7 +421,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
 
   // A struct held in a Heap (an array element on a cycle) is read as a value too: same limit.
   for (const name of order) {
-    if (variantOf.has(name) || !model.ifaces.has(name) || !model.cyclic.has(name)) continue;
+    if (variantOf.has(name) || !membersOf(name) || !model.cyclic.has(name)) continue;
     for (const allowVec of [false, true]) {
       for (;;) {
         if (sizeOf(name) + 8 <= LIMIT) break;
@@ -415,7 +438,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   for (let changed = true; changed;) {
     changed = false;
     for (const n of [...model.cloneable]) {
-      const bad = (structFields.get(n) ?? []).some((f) => (f.ty.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).some((w) => (model.ifaces.has(w) || model.unions.has(w)) && !model.cloneable.has(w)));
+      const bad = (structFields.get(n) ?? []).some((f) => (f.ty.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).some((w) => (membersOf(w) || model.unions.has(w)) && !model.cloneable.has(w)));
       if (bad) { model.cloneable.delete(n); changed = true; }
     }
   }
@@ -497,16 +520,16 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
     d.push(...lines);
     return name;
   };
-  const rootFns = roots.map(dec);
+  const rootFns = roots.map((r) => (incomplete.has(r) ? "" : dec(r)));
   const mods = new Map<string, Set<string>>();
   const importFrom = (file: string, name: string) => { const m = modOf(file); if (!mods.has(m)) mods.set(m, new Set()); mods.get(m)!.add(name); };
-  for (const name of order) if (!variantOf.has(name) || true) { const f = model.fileOf.get(name); if (f && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
+  for (const name of order) if (!incomplete.has(name)) { const f = model.fileOf.get(name); if (f && (model.unions.has(name) || structFields.has(name))) importFrom(f, name); }
   for (const l of enums.values()) importFrom(l.file, l.name);
   const out: string[] = ["// GENERATED by scripts/ts2milo.ts from the TypeScript types. Do not edit; change the TypeScript.", `from "std/json" import { Json }`, `from "./ts2milo_runtime" import { jsFromUtf8${model.identity.size ? ", ts2miloNextId" : ""} }`];
   for (const [m, names] of [...mods.entries()].sort(([a], [b]) => a.localeCompare(b))) out.push(`from "${m}" import { ${[...names].sort().join(", ")} }`);
   out.push("");
   out.push(`fn rawStr(j: &Json, c: i64): string {`, `    match j.curStr(c) {`, `        Option.Some(s) => { return s }`, `        Option.None => { return "" }`, `    }`, `}`, "");
   out.push(...d);
-  roots.forEach((r, i) => out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
+  roots.forEach((r, i) => !incomplete.has(r) && out.push(`pub fn decode${r}(j: &Json, c: i64): ${r} {`, `    return ${rootFns[i]}(j, c)`, `}`));
   return { types: t.join("\n") + "\n", decoder: out.join("\n") + "\n", typeNames, dropped, sizeBoxed };
 }

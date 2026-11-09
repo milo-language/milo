@@ -810,8 +810,99 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
 
     let guardScrut: ts.Expression | null = null;
-    const ex = (e: ts.Expression, want?: ts.Type): string => {
-      if (narrow.size > 0 && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression || e.kind === ts.SyntaxKind.ElementAccessExpression)) {
+    // `x.tag === "k" && x.f` / `x.tag !== "k" || x.f` as an expression: the operands after the guard
+    // read the variant, so they sit inside a `match` on the union (the else arm is the short-circuit
+    // result). Without it `x.f` would read a field of the whole enum.
+    // The pattern naming variant `kind` of a tagged union; a leaf of a union of unions is reached through its member first.
+    const kindPattern = (tu: NonNullable<ReturnType<typeof discriminantRead>>, kind: string, at: ts.Node) => {
+      const useName = useDeclared(tu.name, tu.decl.getSourceFile().fileName, at);
+      let pat = (n: string) => `${useName}.${pascal(kind)}(${n})`;
+      let outer: ((n: string) => string) | undefined;
+      const via = tu.members?.find((m) => m.name === tu.variants.find((v) => v.kind === kind)?.via);
+      if (via?.union) {
+        const inner = useDeclared(via.union.name, via.union.decl.getSourceFile().fileName, at);
+        outer = (o) => `${useName}.${via.name}(${o})`;
+        pat = (n) => `${inner}.${pascal(kind)}(${n})`;
+      } else if (via) pat = (n) => `${useName}.${via.name}(${n})`;
+      return { pat, outer };
+    };
+    // A condition that, when it evaluates to `positive`, proves a place is a variant or present: the place
+    // and the pattern that binds its payload. Operands after it (or a branch) read the payload instead.
+    type Guard = { scrut: ts.Expression; pat: (n: string) => string; outer?: (n: string) => string; deref: boolean; at: ts.Node };
+    const guardOf = (c: ts.Expression, positive: boolean): Guard | null => {
+      c = unparen(c);
+      if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) return guardOf(c.operand, !positive);
+      const okPlace = (x: ts.Expression) => { x = unparen(x); return (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x)) && !isChainMember(x); };
+      if (ts.isBinaryExpression(c)) {
+        const k = c.operatorToken.kind;
+        const eq = k === ts.SyntaxKind.EqualsEqualsEqualsToken || k === ts.SyntaxKind.EqualsEqualsToken;
+        const ne = k === ts.SyntaxKind.ExclamationEqualsEqualsToken || k === ts.SyntaxKind.ExclamationEqualsToken;
+        if ((k === ts.SyntaxKind.EqualsEqualsEqualsToken || k === ts.SyntaxKind.ExclamationEqualsEqualsToken) && ts.isStringLiteral(c.right) && ts.isPropertyAccessExpression(c.left)) {
+          const tu = discriminantRead(checker, c.left);
+          const sc = unparen(c.left.expression);
+          if (!tu || (eq !== positive) || !okPlace(sc)) return null;
+          return { scrut: sc, ...kindPattern(tu, c.right.text, c), deref: false, at: c };
+        }
+        if ((eq || ne) && (isUndefinedId(unparen(c.right)) || unparen(c.right).kind === ts.SyntaxKind.NullKeyword)) {
+          const x = unparen(c.left);
+          if (!okPlace(x) || !isOptionT(tOf(x)) || (ne !== positive)) return null;
+          return { scrut: x, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(x), at: c };
+        }
+        return null;
+      }
+      // Truthiness of an optional struct, array or union: present. (A string, number or boolean also tests its payload.)
+      if (positive && okPlace(c) && isOptionT(tOf(c))) {
+        const nn = checker.getNonNullableType(tOf(c));
+        if (nn.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike) || litsOf(nn)) return null;
+        return { scrut: c, pat: (n) => `Option.Some(${n})`, deref: boxedPlace(c), at: c };
+      }
+      return null;
+    };
+    // `match scrut { pat => then, _ => other }` with the guarded place bound to the payload inside `then`.
+    const matchGuard = (g: Guard, then: () => string, other: string): string => {
+      hit("expression guard", "match binding the payload, which replaces the guarded expression inside");
+      const key = g.scrut.getText();
+      const name = fresh(key);
+      guardScrut = g.scrut;
+      const scrutCode = ex(g.scrut);
+      guardScrut = null;
+      const saved = narrow.get(key);
+      narrow.set(key, { name, deref: g.deref });
+      const body = then();
+      if (saved) narrow.set(key, saved); else narrow.delete(key);
+      if (g.outer) { const o = fresh(key); return `match ${scrutCode} { ${g.outer(o)} => match ${o} { ${g.pat(name)} => ${body}, _ => ${other} }, _ => ${other} }`; }
+      return `match ${scrutCode} { ${g.pat(name)} => ${body}, _ => ${other} }`;
+    };
+    // `g(x) && x.f` / `!g(x) || x.f`: the operands after the guard read the narrowed place, so they sit
+    // inside a `match` whose other arm is the short-circuit result.
+    const foldKindGuards = (b: ts.BinaryExpression): string | null => {
+      const op = b.operatorToken.kind;
+      const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
+      const flat = (e: ts.Expression): ts.Expression[] => {
+        e = unparen(e);
+        return ts.isBinaryExpression(e) && e.operatorToken.kind === op ? [...flat(e.left), ...flat(e.right)] : [e];
+      };
+      const fold = (parts: ts.Expression[]): string => {
+        const i = parts.findIndex((p, k) => k < parts.length - 1 && guardOf(p, isAnd));
+        if (i < 0) return parts.map((p) => cond(p)).join(isAnd ? " && " : " || ");
+        const before = parts.slice(0, i).map((p) => cond(p));
+        const m = matchGuard(guardOf(parts[i], isAnd)!, () => fold(parts.slice(i + 1)), isAnd ? "false" : "true");
+        return `(${[...before, m].join(isAnd ? " && " : " || ")})`;
+      };
+      const parts = flat(b);
+      if (!parts.some((p, k) => k < parts.length - 1 && guardOf(p, isAnd))) return null;
+      return fold(parts);
+    };
+    // `g(x) ? a : b`: a reads the narrowed place (or b does, when the condition is the negative form).
+    const foldCondGuard = (c: ts.ConditionalExpression, want?: ts.Type): string | null => {
+      const pos = guardOf(c.condition, true);
+      if (pos) return `(${matchGuard(pos, () => conv(c.whenTrue, want), conv(c.whenFalse, want))})`;
+      const neg = guardOf(c.condition, false);
+      if (neg) return `(${matchGuard(neg, () => conv(c.whenFalse, want), conv(c.whenTrue, want))})`;
+      return null;
+    };
+    const ex =(e: ts.Expression, want?: ts.Type): string => {
+      if (narrow.size > 0 && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression || e.kind === ts.SyntaxKind.ElementAccessExpression || e.kind === ts.SyntaxKind.CallExpression)) {
         const nb = narrow.get(e.getText());
         if (nb) return nb.deref ? `(*${nb.name})` : nb.name;
       }
@@ -821,7 +912,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const sym = checker.getSymbolAtLocation(e.kind === ts.SyntaxKind.Identifier ? e : (e as ts.PropertyAccessExpression).name);
         const declT = sym && sym.declarations?.[0] && !ts.isTypeAliasDeclaration(sym.declarations[0]) ? checker.getNonNullableType(checker.getTypeOfSymbol(sym)) : undefined;
         const du = declT?.aliasSymbol ? unionOfType(checker, declT) : null;
-        if (du?.members && unionOfType(checker, checker.getNonNullableType(tOf(e)))?.name !== du.name) fail(e, `${e.getText()} is a ${du.name} narrowed to a member by an early exit or an else (narrow with an if guard)`);
+        if (du && unionOfType(checker, checker.getNonNullableType(tOf(e)))?.name !== du.name) fail(e, `${e.getText()} is a ${du.name} narrowed to a member by an early exit or an else (narrow with an if guard)`);
       }
       switch (e.kind) {
         case ts.SyntaxKind.ParenthesizedExpression: return `(${ex((e as ts.ParenthesizedExpression).expression, want)})`;
@@ -850,7 +941,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           const parts: string[] = [];
           if (t.head.text) parts.push(jsLit(t.head.text));
           for (const sp of t.templateSpans) {
-            parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : ex(sp.expression));
+            // `${x}` of a number | undefined prints "undefined" for the absent case, as JS does.
+            const st = tOf(sp.expression);
+            const inner = isOptionT(st) ? checker.getNonNullableType(st) : null;
+            if (inner && (inner.flags & ts.TypeFlags.NumberLike || inner.flags & ts.TypeFlags.StringLike) && !litsOf(inner)) {
+              const v = fresh("v");
+              const some = inner.flags & ts.TypeFlags.NumberLike ? `${useRuntime("jsNum", e)}(${v})` : v;
+              parts.push(`(match ${ex(sp.expression)} { Option.Some(${v}) => ${some}, Option.None => ${jsLit("undefined")} })`);
+            } else parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : ex(sp.expression));
             if (sp.literal.text) parts.push(jsLit(sp.literal.text));
           }
           return `(${parts.join(" + ")})`;
@@ -898,9 +996,22 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
             const sym = op === ts.SyntaxKind.EqualsEqualsEqualsToken ? "==" : "!=";
             const lt = tOf(b.left), rt = tOf(b.right);
+            // An optional primitive against a plain value (`x === false`, x: boolean | undefined): Option has no
+            // `==` with payload, so compare the payload; absent is unequal to any value.
+            const nullish = (x: ts.Expression) => isUndefinedId(unparen(x)) || unparen(x).kind === ts.SyntaxKind.NullKeyword;
+            for (const [o, ot, p, pt] of [[b.left, lt, b.right, rt], [b.right, rt, b.left, lt]] as const) {
+              if (!isOptionT(ot) || isOptionT(pt) || nullish(p) || nullish(o) || !(pt.flags & (ts.TypeFlags.BooleanLike | ts.TypeFlags.NumberLike | ts.TypeFlags.StringLike))) continue;
+              const v = fresh("v");
+              const nn = checker.getNonNullableType(ot);
+              return `(match ${ex(o, litsOf(pt) ? pt : undefined)} { Option.Some(${v}) => (${v} ${sym} ${ex(p, litsOf(nn) ? nn : undefined)}), Option.None => ${sym === "==" ? "false" : "true"} })`;
+            }
             return `(${ex(b.left, litsOf(rt) ? rt : undefined)} ${sym} ${ex(b.right, litsOf(lt) ? lt : undefined)})`;
           }
-          if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return `(${cond(b.left)} ${text} ${cond(b.right)})`;
+          if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
+            const g = foldKindGuards(b);
+            if (g) return g;
+            return `(${cond(b.left)} ${text} ${cond(b.right)})`;
+          }
           return `(${ex(b.left)} ${text} ${ex(b.right)})`;
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
@@ -910,6 +1021,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         case ts.SyntaxKind.ConditionalExpression: {
           const c = e as ts.ConditionalExpression;
           hit("ternary", "if-expression");
+          const fg = foldCondGuard(c, want);
+          if (fg) return fg;
           return `(if ${cond(c.condition)} { ${conv(c.whenTrue, want)} } else { ${conv(c.whenFalse, want)} })`;
         }
         case ts.SyntaxKind.AsExpression: {
@@ -1176,7 +1289,55 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return { heads, undo: () => { for (const [k, v] of saved.reverse()) { if (v) narrow.set(k, v); else narrow.delete(k); } } };
     };
     const body = (s: ts.Statement) => { push(); if (ts.isBlock(s)) block(s); else stmt(s); pop(); };
-    const block = (b: ts.Block) => { for (const s of b.statements) stmt(s); };
+    // `if (!x) return` / `if (x === undefined) throw ...` on an optional place: the rest of the block
+    // reads x as its payload, so the exit becomes `let Option.Some(x_2) = x else { exit }`.
+    const earlyExitNarrow = (s: ts.Statement): { x: ts.Expression; kind?: { tu: NonNullable<ReturnType<typeof discriminantRead>>; k: string } } | null => {
+      if (!ts.isIfStatement(s) || s.elseStatement) return null;
+      const last = ts.isBlock(s.thenStatement) ? s.thenStatement.statements[s.thenStatement.statements.length - 1] : s.thenStatement;
+      if (!last || !(ts.isReturnStatement(last) || ts.isThrowStatement(last) || ts.isContinueStatement(last) || ts.isBreakStatement(last))) return null;
+      let c = unparen(s.expression);
+      let x: ts.Expression | null = null;
+      if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && ts.isStringLiteral(c.right) && ts.isPropertyAccessExpression(c.left)) {
+        const tu = discriminantRead(checker, c.left);
+        const sc = tu ? unparen(c.left.expression) : null;
+        return tu && sc && (ts.isIdentifier(sc) || ts.isPropertyAccessExpression(sc)) ? { x: sc, kind: { tu, k: c.right.text } } : null;
+      }
+      if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) {
+        x = unparen(c.operand);
+        const nn = isOptionT(tOf(x)) ? checker.getNonNullableType(tOf(x)) : null;
+        if (!nn || nn.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike) || litsOf(nn)) return null;
+      } else if (ts.isBinaryExpression(c) && (c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken || c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken) && (isUndefinedId(c.right) || c.right.kind === ts.SyntaxKind.NullKeyword)) {
+        x = unparen(c.left);
+        if (!isOptionT(tOf(x))) return null;
+      }
+      return x && (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x)) && !isChainMember(x) ? { x } : null;
+    };
+    const block = (b: ts.Block) => {
+      const saved: [string, { name: string; deref: boolean } | undefined][] = [];
+      for (const s of b.statements) {
+        const en = earlyExitNarrow(s);
+        if (!en) { stmt(s); continue; }
+        const x = en.x;
+        const key = x.getText();
+        const name = fresh(key);
+        hit("early-exit guard", "let Variant(x) = x else { exit }; the rest of the block reads the payload");
+        guardScrut = x;
+        let scrut = ex(x);
+        guardScrut = null;
+        let pat = `Option.Some(${name})`;
+        if (en.kind) {
+          const kp = kindPattern(en.kind.tu, en.kind.k, s);
+          if (kp.outer) { const o = fresh(key); line(`let ${kp.outer(o)} = ${scrut} else {`); ind++; body((s as ts.IfStatement).thenStatement); ind--; line("}"); scrut = o; }
+          pat = kp.pat(name);
+        }
+        line(`let ${pat} = ${scrut} else {`);
+        ind++; body((s as ts.IfStatement).thenStatement); ind--;
+        line("}");
+        saved.push([key, narrow.get(key)]);
+        narrow.set(key, { name, deref: en.kind ? false : boxedPlace(x) });
+      }
+      for (const [k, v] of saved.reverse()) { if (v) narrow.set(k, v); else narrow.delete(k); }
+    };
     const exprStmt = (e: ts.Expression) => {
       if (ts.isBinaryExpression(e)) {
         const op = e.operatorToken.kind;
@@ -1290,6 +1451,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
           // exit never returns; the empty loop only satisfies the checker's "every path returns".
           line(`    eprint(${JSON.stringify("ts2milo stub: " + e.message)})`);
+          for (const m of hdr.matchAll(/([A-Za-z_][A-Za-z0-9_]*): &mut /g)) line(`    ${useRuntime("stubKeep", fn)}(&mut ${m[1]})`);
           line("    exit(70)");
           line("    while true {");
           line("    }");
