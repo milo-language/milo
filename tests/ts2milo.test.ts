@@ -262,6 +262,41 @@ describe("tagged unions", () => {
     expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
   });
 
+  const inferredRun = (src: string, mainBody: string, imports: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), src);
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none") });
+    for (const [name, text] of r.files) writeFileSync(join(dir, name), text);
+    writeFileSync(join(dir, "main.milo"), `from "./a" import { ${imports} }\nfn main(): i32 {\n${mainBody}\n    return 0\n}\n`);
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    return { r, dir, res: { status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) } };
+  };
+
+  test("an inferred object literal local is read back by field, compiled and run", () => {
+    const { r, res } = inferredRun("export function f(n: number, m: number): number {\n  const x = { n, m, ok: true };\n  return x.ok ? x.n + x.m : 0;\n}\n", "    if f(2, 3) != 5 { return 1 }", "f");
+    expect(r.files.get("a.milo")!).toContain("pub struct F_x {");
+    expect(res).toEqual({ status: 0, err: "" });
+  });
+
+  test("an array of inferred object literals is pushed and iterated, compiled and run", () => {
+    const { res } = inferredRun("export function f(): number {\n  const xs = [{ a: 1, b: 10 }];\n  xs.push({ a: 2, b: 20 });\n  let t = 0;\n  for (const x of xs) t += x.a + x.b;\n  return t;\n}\n", "    if f() != 33 { return 1 }", "f");
+    expect(res).toEqual({ status: 0, err: "" });
+  });
+
+  test("the same inferred shape at two sites shares one struct", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export function f(): number {\n  const p = { a: 1, b: \"x\" };\n  return p.a;\n}\nexport function g(): number {\n  const q = { b: \"yy\", a: 2 };\n  return q.a;\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none") });
+    expect(r.files.get("a.milo")!.match(/pub struct /g)?.length).toBe(1);
+  });
+
+  test("an inferred object literal with an unmappable field is refused naming the field", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "a.ts"), "export function f(): number {\n  const x = { n: 1, w: new WeakRef({}) };\n  return x.n;\n}\n");
+    const r = transpile([join(dir, "a.ts")], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.stubs.filter((st) => st.name === "f").map((st) => st.reason).join("")).toContain("field 'w'");
+  });
+
   test("an object type literal copied out of a borrowed place is cloned through its generated struct", () => {
     const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
     writeFileSync(join(dir, "a.ts"), "export function pick(p: { a: number; b: string }[]): number {\n  const q = p[0];\n  return q.a + q.b.length;\n}\n");

@@ -41,13 +41,20 @@ export class Unsupported extends Error {}
 
 // `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
 // A declaration that turns into a stub can be named by code emitted before it, and the importer then fails to
-// compile. A second pass knows which declarations are dead, so their users stub too (the reason names the dead one).
+// compile. Later passes know which declarations are dead, so their users stub too (the reason names the dead one).
 // `stubNames` (--lenient): functions to emit as stubs by "<ts file>::<name>", with the reason (the
 // self-host meter's --stub-errors feeds back the Milo compile errors of the previous round).
 export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> } = {}): Report {
-  const first = transpileOnce(inputs, opts, new Set());
-  if (!opts.lenient || first.deadDecls.size === 0) return first;
-  return transpileOnce(inputs, opts, first.deadDecls);
+  let r = transpileOnce(inputs, opts, new Set());
+  if (!opts.lenient) return r;
+  // A stub can make the declaration that reads it a stub too, which only the next pass sees: run to a fixed point.
+  for (let pass = 0; pass < 6 && r.deadDecls.size > 0; pass++) {
+    const next = transpileOnce(inputs, opts, r.deadDecls);
+    const grew = next.deadDecls.size !== r.deadDecls.size;
+    r = next;
+    if (!grew) break;
+  }
+  return r;
 }
 
 function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean; stubNames?: Map<string, string> }, dead: Set<string>): Report {
@@ -105,6 +112,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   const typeNames = new Set<string>();
   const anonStructs = new Map<ts.Node, { name: string; file: string; emitted: boolean; dup?: boolean }>();
   const anonShapes = new Map<string, { name: string; file: string; emitted: boolean }>();
+  // Structs for object types TS infers from a literal (`const x = { name, type }`), keyed by shape so two sites with the same
+  // fields share one struct. `fields` is absent when the shape matched a written type literal that is emitted already.
+  type InferredStruct = { name: string; file: string; emitted: boolean; fields?: { name: string; t: ts.Type }[]; at: ts.Node };
+  const inferredStructs = new Map<string, InferredStruct>();
   const genUnions = new Set<{ name: string; lits: string[]; file: string }>();
   const fnLabel = (n: ts.Node): string => {
     for (let c: ts.Node | undefined = n; c; c = c.parent) {
@@ -514,7 +525,45 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (d && (ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d))) return useDeclared(d.name!.text, d.getSourceFile().fileName, at);
       const anon = d && ts.isTypeLiteralNode(d) ? anonStructs.get(d) : undefined;
       if (anon) { hit("inline object type", "generated struct named from where it is written"); return useDeclared(anon.name, anon.file, at); }
+      if (d && ts.isObjectLiteralExpression(d)) { const inf = inferredStructOf(t); return useDeclared(inf.name, inf.file, at); }
       return fail(at, `type ${checker.typeToString(t)}`);
+    };
+    // Properties of an inferred object type with their Milo field types. A field with no mapping names itself in the refusal.
+    const inferredFields = (t: ts.Type, d: ts.Node) => checker.getPropertiesOfType(t).map((p) => {
+      const ft = checker.getTypeOfSymbolAtLocation(p, d);
+      try { return { name: p.name, t: ft, milo: ty(ft, d) }; }
+      catch (err) {
+        if (err instanceof Unsupported) throw new Unsupported(`inferred object literal type: field '${p.name}' has no mapping (${err.message})`);
+        throw err;
+      }
+    }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    // Mapping a field type for the key must not leave imports behind: this file may only reference the struct, not its fields' types.
+    const shapeOf = (t: ts.Type, d: ts.Node) => {
+      const saved = [...imports].map(([m, names]) => [m, new Set(names)] as const);
+      try {
+        const fields = inferredFields(t, d);
+        return { fields, key: fields.map((f) => `${f.name}:${f.milo}`).join(",") };
+      } finally {
+        imports.clear();
+        for (const [m, names] of saved) imports.set(m, names);
+      }
+    };
+    const inferredStructOf = (t: ts.Type): InferredStruct => {
+      const decl = t.symbol.declarations![0];
+      const { fields, key } = shapeOf(t, decl);
+      const known = inferredStructs.get(key);
+      if (known) return known;
+      // A written type literal of the same shape is the same TS type, so a value of one must be accepted where the other is expected.
+      for (const [node, a] of anonStructs) {
+        if (a.dup) continue;
+        let k: string;
+        try { k = shapeOf(checker.getTypeFromTypeNode(node as ts.TypeNode), node).key; } catch (err) { if (err instanceof Unsupported) continue; throw err; }
+        if (k === key) { const rec = { ...a, at: decl }; inferredStructs.set(key, rec); return rec; }
+      }
+      hit("inferred object literal type", "generated struct keyed by its field names and types");
+      const rec: InferredStruct = { name: freshName(nameFrom(decl)), file, emitted: false, fields: fields.map((f) => ({ name: f.name, t: f.t })), at: decl };
+      inferredStructs.set(key, rec);
+      return rec;
     };
     const defaultOf = (t: ts.Type, at: ts.Node): string => {
       if (t.flags & ts.TypeFlags.NumberLike) return "0";
@@ -711,7 +760,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.recursive.has(tu.name);
       const d = t.symbol?.declarations?.[0];
-      if (d && ts.isTypeLiteralNode(d) && anonStructs.has(d)) return anonFieldTypes(t, d).some(isRecursiveT);
+      if (d && ((ts.isTypeLiteralNode(d) && anonStructs.has(d)) || ts.isObjectLiteralExpression(d))) return anonFieldTypes(t, d).some(isRecursiveT);
       return !!d && ts.isInterfaceDeclaration(d) && astModel.recursive.has(d.name.text);
     };
     let roDest = false;
@@ -732,7 +781,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
       // A generated struct for an object type literal derives Clone; it clones when every field does.
-      if (d && ts.isTypeLiteralNode(d) && anonStructs.has(d)) return anonFieldTypes(t, d).every(canClone);
+      if (d && ((ts.isTypeLiteralNode(d) && anonStructs.has(d)) || ts.isObjectLiteralExpression(d))) return anonFieldTypes(t, d).every(canClone);
       // Interfaces the runtime declares by hand (@derive(Clone) in runtime.milo).
       if (d && ts.isInterfaceDeclaration(d) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
@@ -1556,6 +1605,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             return fail(init, "primitive-union value (bigint | number | string | boolean) whose variant is not known from its expression");
           };
           const ctxT = checker.getContextualType(o);
+          // No annotation to take the type from: the literal's own inferred type is a synthesized struct.
+          const ownT = checker.getNonNullableType(ctxT ?? tOf(o));
+          if (ownT.symbol?.declarations?.[0] && ts.isObjectLiteralExpression(ownT.symbol.declarations[0])) {
+            // A module-level value would be a global initializer, which the backend cannot lower for a struct yet.
+            if (!ts.findAncestor(o, ts.isFunctionLike)) fail(o, "inferred object literal outside a function");
+            const sname = ty(ownT, e);
+            const keyOf = (q: ts.ObjectLiteralElementLike) => (q.name ? q.name.getText() : "");
+            for (const p of o.properties) if (!(ts.isShorthandPropertyAssignment(p) || ts.isPropertyAssignment(p)) || ts.isComputedPropertyName(p.name)) fail(p, `object literal member ${p.getText().slice(0, 30)}: only plain name: value and shorthand members are supported`);
+            const vals = checker.getPropertiesOfType(ownT).map((p) => {
+              const prop = o.properties.find((q) => keyOf(q) === p.name) as ts.ShorthandPropertyAssignment | ts.PropertyAssignment | undefined;
+              const pt = checker.getTypeOfSymbolAtLocation(p, e);
+              if (!prop) { if (p.flags & ts.SymbolFlags.Optional) return { name: p.name, v: "Option.None" }; return fail(o, `object literal without property '${p.name}'`); }
+              return { name: p.name, v: ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv(prop.initializer, pt) };
+            });
+            hit("object literal", "struct literal, missing optionals are Option.None");
+            return `${sname} { ${vals.map((x) => `${safeId(x.name)}: ${x.v}`).join(", ")} }`;
+          }
           if (!ctxT) fail(o, "object literal without a contextual type");
           const t = checker.getNonNullableType(ctxT!);
           if (!o.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p))) fail(o, "object literal with spread or method members");
@@ -2497,6 +2563,27 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         report.stubs.push({ file: rel(file), name: a.name, reason: err.message });
         report.deadDecls.add(`${file}::${a.name}`);
         line(`// ts2milo stub: ${err.message.replace(/\n/g, " ")}`);
+      }
+    }
+    // Emitting a struct can register more inferred structs (its field types), so run to a fixed point.
+    for (let again = true; again;) {
+      again = false;
+      for (const a of [...inferredStructs.values()]) if (a.file === file && a.fields && !a.emitted) {
+        a.emitted = again = true;
+        const tmark = out.length;
+        try {
+          const fields = a.fields.map((f) => `${safeId(f.name)}: ${ty(f.t, a.at)},`);
+          line("@derive(Clone)");
+          line(`pub struct ${a.name} {`);
+          ind++; for (const f of fields) line(f); ind--;
+          line("}");
+        } catch (err) {
+          if (!(err instanceof Unsupported) || !opts.lenient) throw err;
+          out.length = tmark;
+          report.stubs.push({ file: rel(file), name: a.name, reason: err.message });
+          report.deadDecls.add(`${file}::${a.name}`);
+          line(`// ts2milo stub: ${err.message.replace(/\n/g, " ")}`);
+        }
       }
     }
     for (const u of genUnions) if (u.file === file) emitUnion(u);

@@ -592,10 +592,11 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.ObjectLiteralExpression: {
         const o = n as ts.ObjectLiteralExpression;
         const ctx = checker.getContextualType(o);
-        const t = ctx && checker.getNonNullableType(ctx);
+        // With no annotation the literal's own inferred type is what gets a synthesized struct.
+        const t = checker.getNonNullableType(ctx ?? checker.getTypeAtLocation(o));
         // A tagged union's variant is picked by a literal discriminant property.
         const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(stripConst(p.initializer)) && p.name.getText() === unionOfType(checker, t)!.field);
-        if (!t || !(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d) || (ts.isTypeLiteralNode(d) && anonStructHandled(checker, d))))) bad(n, "object literal without an interface type");
+        if (!(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d) || ts.isObjectLiteralExpression(d) || (ts.isTypeLiteralNode(d) && anonStructHandled(checker, d))))) bad(n, "object literal without an interface type");
         for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p)) bad(p, "object literal member");
         return;
       }
