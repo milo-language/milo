@@ -49,6 +49,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |
 | `scripts/edit-loop.ts` | Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios over a fixed set of real programs, with the MILO_TIMING phase breakdown per build. |
+| `scripts/emit-seam.ts` | Seam measurement for src/emit-mlir.ts (docs/plans/emit-mlir-split.md, plan A). |
 | `scripts/explicit-mut.ts` | Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter. |
 | `scripts/fetch-assets.sh` | Regenerates the game assets that are deliberately NOT in git: the FLYBY city files (82 MB of terrain, footprints and aerial drape) and the APSIS planet maps. |
 | `scripts/file-size-ratchet.ts` | File-size ratchet for src/*.ts: no file over LIMIT lines may grow past its recorded line count. |

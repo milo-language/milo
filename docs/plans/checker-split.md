@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: checker
+purpose: Measured plan to split src/checker.ts: cluster costs from scripts/checker-seam.ts, the first 8 extractions as briefs, and what blocks going further
+key-files: src/checker.ts, scripts/checker-seam.ts, scripts/checker-clusters.json, scripts/checker-diag-snapshot.ts, scripts/ts-portable-baseline.json
+update-when: an extraction below lands, or checker.ts line spans drift
+last-verified: 2026-11-09 (commit bb702f49, src/checker.ts 15833 lines; plan only, no source moved)
+-->
+
 # Splitting src/checker.ts: measured seams and the first 8 extractions
 
 Status: plan only, nothing moved yet. Measured 2026-11-09 at commit bb702f49,
