@@ -961,3 +961,21 @@ describe("frontend generation bugs", () => {
     expect(r.status).toBe(0);
   });
 });
+
+describe("narrowed variant passed on", () => {
+  test("a guard-narrowed union member handed to a union parameter is wrapped back into the enum", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, "tsm_wrap.ts"), [
+      "export type T = { kind: \"a\"; n: number } | { kind: \"b\" };",
+      "export function size(t: T): number { return t.kind === \"a\" ? t.n : 0; }",
+      "export function twice(t: T): number { if (t.kind === \"a\") { return size(t) * 2; } return 0; }",
+      "export function mk(n: number): T { return { kind: \"a\", n: n }; }",
+    ].join("\n"));
+    const r = transpile([join(dir, "tsm_wrap.ts")], { overridesDir: join(dir, "none"), lenient: true });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    writeFileSync(join(dir, "main.milo"), ["from \"./tsm_wrap\" import { twice, mk }", "fn main(): i32 {", "    if twice(mk(21)) != 42 { return 1 }", "    return 0", "}", ""].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect(run.stderr).not.toContain("error");
+    expect(run.status).toBe(0);
+  });
+});

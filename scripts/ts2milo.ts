@@ -948,7 +948,15 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const ex =(e: ts.Expression, want?: ts.Type): string => {
       if (narrow.size > 0 && (e.kind === ts.SyntaxKind.Identifier || e.kind === ts.SyntaxKind.PropertyAccessExpression || e.kind === ts.SyntaxKind.ElementAccessExpression || e.kind === ts.SyntaxKind.CallExpression)) {
         const nb = narrow.get(e.getText());
-        if (nb) return nb.deref ? `(*${nb.name})` : nb.name;
+        if (nb) {
+          const bound = nb.deref ? `(*${nb.name})` : nb.name;
+          // A guard-narrowed place handed to a parameter of the whole union: put the variant back in its enum.
+          const wu = want ? unionOfType(checker, checker.getNonNullableType(want)) : null;
+          const vt = tOf(e).symbol?.declarations?.[0];
+          const v = wu && vt ? wu.variants.find((x) => x.decl === vt) : undefined;
+          if (wu && v && !unionOfType(checker, checker.getNonNullableType(tOf(e)))) return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${pascal(v.kind)}(${bound}.clone())`;
+          return bound;
+        }
       }
       // TS narrows a union of unions by an early exit or an else, but the Milo value is still the whole union.
       // (A guard's own scrutinee is exempt: it is the whole union that gets matched.)
