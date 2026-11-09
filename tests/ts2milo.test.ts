@@ -61,10 +61,10 @@ describe("ts2milo", () => {
   });
 
   test("an unsupported construct fails with file:line and its name", () => {
-    const { file } = tmpTs("tsm_bad.ts", "export function f(xs: number[]): number {\n  let n = 0;\n  for (let i = 0; i < xs.length; i++) { n += xs[i]; }\n  return n;\n}\n");
+    const { file } = tmpTs("tsm_bad.ts", "export function f(xs: number[]): number {\n  let n = 0;\n  do { n += xs[0]; } while (n < 3);\n  return n;\n}\n");
     let msg = "";
     try { transpile([file]); } catch (e) { expect(e).toBeInstanceOf(Unsupported); msg = (e as Error).message; }
-    expect(msg).toContain("tsm_bad.ts:3: ForStatement");
+    expect(msg).toContain("tsm_bad.ts:3: DoStatement");
   });
 
   test("an override replaces one function and is counted as not automatic", () => {
@@ -1062,5 +1062,57 @@ describe("optional chain narrowing", () => {
     ].join("\n") + "\n");
     const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
     expect({ status: run.status, err: run.stderr.split("\n").filter((l) => /error/.test(l)).join("\n") }).toEqual({ status: 0, err: "" });
+  });
+
+  test("C-style for, as const, empty Vec decls and dead code after exits run correctly", () => {
+    const { file, dir } = tmpTs("tsm_fl.ts", [
+      "export type Tag = { tag: \"a\"; n: number } | { tag: \"b\"; n: number };",
+      "export function evens(limit: number): number {",
+      "  let sum = 0;",
+      "  for (let i = 0; i < limit; i++) {",
+      "    if (i % 2 === 1) continue;",
+      "    sum += i;",
+      "  }",
+      "  for (let i = 0; i < 3; i++) { sum += 100; }",
+      "  return sum;",
+      "}",
+      "export function pick(c: boolean): number {",
+      "  let xs: number[];",
+      "  if (c) { xs = [1, 2, 3]; } else { xs = [4]; }",
+      "  const t: Tag = c ? { tag: \"a\" as const, n: 1 } : { tag: \"b\" as const, n: 2 };",
+      "  return xs.length + t.n;",
+      "}",
+      "",
+    ].join("\n"));
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.stubs.map((s) => `${s.name}: ${s.reason}`)).toEqual([]);
+    const out = r.files.get("tsm_fl.milo")!;
+    writeFileSync(join(dir, "tsm_fl.milo"), out);
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_fl\" import { evens, pick }",
+      "fn main(): i32 {",
+      "    if evens(7) != 312 { return 1 }",
+      "    if pick(true) != 4 { return 2 }",
+      "    if pick(false) != 3 { return 3 }",
+      "    return 0",
+      "}",
+    ].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.split("\n").filter((l) => /error/.test(l)).join("\n") }).toEqual({ status: 0, err: "" });
+  });
+
+  test("x++ whose value is read, a for var captured by a closure, and a narrowing cast are refused with a reason", () => {
+    const { file, dir } = tmpTs("tsm_rf.ts", [
+      "export type U = { kind: \"a\"; v: number } | { kind: \"b\" };",
+      "export function f(n: number): number { let i = 0; const j = i++; return j + n; }",
+      "export function g(n: number): number { let s = 0; for (let i = 0; i < n; i++) { const h = () => i; s += h(); } return s; }",
+      "export function h(u: U): number { return (u as { kind: \"a\"; v: number }).v; }",
+      "",
+    ].join("\n"));
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const reasons = r.stubs.map((s) => `${s.name}: ${s.reason}`);
+    expect(reasons.some((x) => x.startsWith("f:") && x.includes("used as a value"))).toBe(true);
+    expect(reasons.some((x) => x.startsWith("g:") && x.includes("captured by a closure"))).toBe(true);
+    expect(reasons.some((x) => x.startsWith("h:") && x.includes("'as' from"))).toBe(true);
   });
 });
