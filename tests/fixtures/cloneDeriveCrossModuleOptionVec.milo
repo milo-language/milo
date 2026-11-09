@@ -1,0 +1,28 @@
+// @expect: 2
+// @expect: 0
+// @expect: 1
+// @expect: 1
+// The derived Clone's synthesized closure return type must name module-qualified types
+// (Option<Heap<Vec<Option<Heap<Node>>>>> from another module), or its None arm cannot infer T.
+// The clone is mutated (id, args) and the original must not change.
+from "lib/cloneNodes" import { Node, PatNode }
+from "lib/cloneOther" import { Node as OtherNode }
+
+fn main() {
+    var xs: Vec<Option<Heap<Node>>> = []
+    xs.push(Option.Some(Heap(Node.Leaf(5))))
+    let a = PatNode { id: 1, args: Option.Some(Heap(xs)) }
+    var b = a.clone()
+    b.id = 2
+    b.args = Option.None
+    print(b.id)
+    match b.args {
+        Option.Some(v) => print((*v).len())
+        Option.None => print(0)
+    }
+    print(a.id)
+    match a.args {
+        Option.Some(v) => print((*v).len())
+        Option.None => print(0)
+    }
+}

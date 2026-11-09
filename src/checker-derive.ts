@@ -188,7 +188,7 @@ export class DeriveSynth {
         return a ? mk("Option", [a]) : null;
       }
     }
-    if (t.tag === "struct" || t.tag === "enum") return t.name.includes("<") || t.name.includes("$") ? null : mk(t.name);
+    if (t.tag === "struct" || t.tag === "enum") return t.name.includes("<") ? null : mk(t.name);
     return null;
   }
 

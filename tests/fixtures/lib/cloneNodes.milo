@@ -1,0 +1,12 @@
+// Helper for cloneDeriveCrossModuleOptionVec: types whose names are module-qualified.
+@derive(Clone)
+pub enum Node {
+    Pat(PatNode),
+    Leaf(i64),
+}
+
+@derive(Clone)
+pub struct PatNode {
+    id: i64,
+    args: Option<Heap<Vec<Option<Heap<Node>>>>>,
+}

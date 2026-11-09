@@ -1,0 +1,4 @@
+// Defines a second `Node` so both modules' Node types get module-qualified names.
+pub struct Node {
+    v: i64,
+}
