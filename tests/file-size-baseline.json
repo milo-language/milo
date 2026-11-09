@@ -104,7 +104,7 @@
   "src/object-checks.ts": 225,
   "src/object-trace.ts": 299,
   "src/owned-temp.ts": 350,
-  "src/parser.ts": 2282,
+  "src/parser.ts": 2286,
   "src/pinned-build.ts": 125,
   "src/pkg.ts": 831,
   "src/pkgcli.ts": 1148,

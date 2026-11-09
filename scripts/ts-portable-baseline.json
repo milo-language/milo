@@ -50,7 +50,7 @@
   "src/mlir-glue.ts": 235,
   "src/mlir-llvm.ts": 93,
   "src/mutability-scan.ts": 0,
-  "src/parser.ts": 179,
+  "src/parser.ts": 137,
   "src/resolver.ts": 315,
   "src/scaffold.ts": 107,
   "src/tokens.ts": 0,
