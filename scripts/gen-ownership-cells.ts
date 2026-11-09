@@ -9,7 +9,7 @@
 //
 // Programs go to out/gen-own/ (untracked); checker-rejected ones to out/gen-own/rejected/.
 // Output: a markdown table on stdout, out/ownership-cells.json, and a summary line.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -45,8 +45,6 @@ type Tmpl = { op: string; repr: string; when?: (t: TC) => boolean; extra?: (t: T
 const T_: Tmpl[] = [];
 const add = (t: Tmpl) => T_.push(t);
 const movedRej = (t: TC) => (t.copy || t.str ? undefined : "moved");
-const owned = (t: TC) => !t.copy;
-const anyT = () => true;
 
 // -- read Copy / read owned (move)
 add({ op: "read", repr: "ssa-let", body: t => `let a = mk(1)\n    let b = a\n    sh(b)\n    ${t.copy ? "sh(a)" : ""}` });
@@ -69,7 +67,7 @@ add({ op: "assign", repr: "vec-index", body: t => `var v: Vec<${t.T}> = Vec.new(
 add({ op: "scope-end", repr: "two-locals", body: () => `if argc() == 0 {\n        let a = mk(1)\n        let b = mk(2)\n        sh(a)\n        sh(b)\n    }\n    print("end")` });
 add({ op: "scope-end", repr: "cond-move-flag", extra: t => `fn take(x: ${t.T}) { sh(x) }\n`, body: () => `let a = mk(1)\n    let c = argc() > 0\n    if c { take(a) } else { sh(a) }\n    print("end")` });
 add({ op: "scope-end", repr: "loop-body", body: () => `for i in 0..3 {\n        let a = mk(i)\n        sh(a)\n    }` });
-add({ op: "scope-end", repr: "early-return", extra: t => `fn f(c: bool): i64 {\n    let a = mk(1)\n    let b = mk(2)\n    if c { return 1 }\n    sh(a)\n    sh(b)\n    return 0\n}\n`, body: () => `print(f(argc() == 0))\n    print(f(argc() > 0))` });
+add({ op: "scope-end", repr: "early-return", extra: _t => `fn f(c: bool): i64 {\n    let a = mk(1)\n    let b = mk(2)\n    if c { return 1 }\n    sh(a)\n    sh(b)\n    return 0\n}\n`, body: () => `print(f(argc() == 0))\n    print(f(argc() > 0))` });
 add({ op: "scope-end", repr: "break-in-loop", body: () => `var i = 0\n    while true {\n        let a = mk(i)\n        sh(a)\n        i = i + 1\n        if i > 1 { break }\n    }` });
 // -- temporary
 add({ op: "temporary", repr: "arg-ref", body: () => `sh(mk(1))` });
@@ -101,7 +99,7 @@ add({ op: "store", repr: "heap-box", body: t => `let h: Heap<${t.T}> = Heap(mk(1
 add({ op: "store", repr: "heap-deref-move", when: t => !t.copy, body: t => `let h: Heap<${t.T}> = Heap(mk(1))\n    let a = *h\n    sh(a)` });
 add({ op: "store", repr: "option-some", body: t => `let o: Option<${t.T}> = Some(mk(1))\n    match o {\n        Some(x) => { sh(x) }\n        None => { print("none") }\n    }` });
 add({ op: "store", repr: "hashmap-insert", body: t => `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    m.insert(1, mk(2))\n    m.insert(2, mk(3))\n    print(m.len.toString())\n    match m.get(1) {\n        Some(x) => { sh(x) }\n        None => { print("none") }\n    }` });
-add({ op: "store", repr: "array-literal", body: t => `let a = mk(1)\n    let arr = [a, mk(2)]\n    sh(arr[1])` });
+add({ op: "store", repr: "array-literal", body: _t => `let a = mk(1)\n    let arr = [a, mk(2)]\n    sh(arr[1])` });
 add({ op: "store", repr: "nested-vec", body: t => `var v: Vec<Vec<${t.T}>> = Vec.new()\n    var w: Vec<${t.T}> = Vec.new()\n    w.push(mk(1))\n    v.push(w)\n    sh(v[0][0])` });
 // -- fork
 add({ op: "fork", repr: "if-temps", body: () => `let c = argc() > 0\n    let a = if c { mk(1) } else { mk(2) }\n    sh(a)` });
@@ -120,14 +118,14 @@ add({ op: "match-binding", repr: "enum-payload-escapes", when: t => t.kind === "
 add({ op: "match-binding", repr: "enum-on-mutref", when: t => t.kind === "enum", extra: () => `fn g(e: &mut E) {\n    match e {\n        E.A(s) => { s = s + "!" }\n        _ => {}\n    }\n}\n`, body: () => `var e = mk(1)\n    g(&mut e)\n    sh(e)` });
 add({ op: "match-binding", repr: "struct-destructure", when: t => t.kind === "struct", body: () => `let s = mk(1)\n    let { name, n, tags } = s\n    print(name)\n    print(n)\n    print(tags.len.toString())` });
 // -- closure capture
-add({ op: "capture", repr: "by-ref-lent", extra: t => `fn call(f: () => i64): i64 { return f() }\n`, body: () => `let a = mk(1)\n    let r = call((): i64 => {\n        sh(a)\n        return 1\n    })\n    print(r)\n    sh(a)` });
+add({ op: "capture", repr: "by-ref-lent", extra: _t => `fn call(f: () => i64): i64 { return f() }\n`, body: () => `let a = mk(1)\n    let r = call((): i64 => {\n        sh(a)\n        return 1\n    })\n    print(r)\n    sh(a)` });
 add({ op: "capture", repr: "by-ref-var", extra: () => `fn call(f: () => i64): i64 { return f() }\n`, body: () => `var a = mk(1)\n    let r = call((): i64 => {\n        sh(a)\n        return 1\n    })\n    print(r)\n    a = mk(2)\n    sh(a)` });
 add({ op: "capture", repr: "move-local", body: () => `let a = mk(1)\n    let f = move (): i64 => {\n        sh(a)\n        return 1\n    }\n    print(f())\n    print(f())` });
 add({ op: "capture", repr: "move-then-use", body: () => `let a = mk(1)\n    let f = move (): i64 => {\n        sh(a)\n        return 1\n    }\n    print(f())\n    sh(a)`, exp: movedRej });
-add({ op: "capture", repr: "move-returned", extra: t => `fn mkf(): move () => i64 {\n    let a = mk(1)\n    return move (): i64 => {\n        sh(a)\n        return 1\n    }\n}\n`, body: () => `let f = mkf()\n    print(f())\n    print(f())` });
-add({ op: "capture", repr: "loop-variable", extra: t => `fn call(f: () => i64): i64 { return f() }\n`, body: t => `var v: Vec<${t.T}> = Vec.new()\n    v.push(mk(1))\n    v.push(mk(2))\n    for x in v {\n        call((): i64 => {\n            sh(x)\n            return 1\n        })\n    }` });
+add({ op: "capture", repr: "move-returned", extra: _t => `fn mkf(): move () => i64 {\n    let a = mk(1)\n    return move (): i64 => {\n        sh(a)\n        return 1\n    }\n}\n`, body: () => `let f = mkf()\n    print(f())\n    print(f())` });
+add({ op: "capture", repr: "loop-variable", extra: _t => `fn call(f: () => i64): i64 { return f() }\n`, body: t => `var v: Vec<${t.T}> = Vec.new()\n    v.push(mk(1))\n    v.push(mk(2))\n    for x in v {\n        call((): i64 => {\n            sh(x)\n            return 1\n        })\n    }` });
 add({ op: "capture", repr: "move-in-loop", body: () => `for i in 0..2 {\n        let a = mk(i)\n        let f = move (): i64 => {\n            sh(a)\n            return i\n        }\n        print(f())\n    }` });
-add({ op: "capture", repr: "closure-in-struct", extra: t => `struct H { f: move () => i64 }\n`, body: () => `let a = mk(1)\n    let h = H { f: move (): i64 => {\n        sh(a)\n        return 1\n    } }\n    print(h.f())` });
+add({ op: "capture", repr: "closure-in-struct", extra: _t => `struct H { f: move () => i64 }\n`, body: () => `let a = mk(1)\n    let h = H { f: move (): i64 => {\n        sh(a)\n        return 1\n    } }\n    print(h.f())` });
 add({ op: "capture", repr: "closure-passed-owned", extra: () => `fn run(f: move () => i64): i64 { return f() }\n`, body: () => `let a = mk(1)\n    print(run(move (): i64 => {\n        sh(a)\n        return 1\n    }))` });
 add({ op: "capture", repr: "param-ref", extra: t => `fn call(f: () => i64): i64 { return f() }\nfn h(x: &${t.T}): i64 {\n    return call((): i64 => {\n        sh(x)\n        return 1\n    })\n}\n`, body: () => `let a = mk(1)\n    print(h(a))` });
 add({ op: "capture", repr: "once-move-out", when: t => !t.copy, body: () => `let a = mk(1)\n    let f = move (): i64 => {\n        let b = a\n        sh(b)\n        return 1\n    }\n    print(f())` });
@@ -144,7 +142,7 @@ add({ op: "struct-update", repr: "override-owned", when: t => t.kind === "struct
 add({ op: "struct-update", repr: "base-local-big", when: t => t.kind === "big", body: () => `let base = mk(1)\n    let s = Big { a0: 5, ..base }\n    sh(s)` });
 add({ op: "struct-update", repr: "base-temp-big", when: t => t.kind === "big", body: () => `let s = Big { a0: 5, ..mk(1) }\n    sh(s)` });
 // -- propagate
-add({ op: "propagate", repr: "result-ok-err", extra: t => `fn f(ok: bool): Result<${t.T}, string> {\n    if !ok { return Result.Err("bad") }\n    return Result.Ok(mk(1))\n}\nfn g(ok: bool): Result<${t.T}, string> {\n    let v = f(ok)?\n    return Result.Ok(v)\n}\n`, body: t => `match g(argc() == 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { print(e) }\n    }\n    match g(argc() > 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { print(e) }\n    }` });
+add({ op: "propagate", repr: "result-ok-err", extra: t => `fn f(ok: bool): Result<${t.T}, string> {\n    if !ok { return Result.Err("bad") }\n    return Result.Ok(mk(1))\n}\nfn g(ok: bool): Result<${t.T}, string> {\n    let v = f(ok)?\n    return Result.Ok(v)\n}\n`, body: _t => `match g(argc() == 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { print(e) }\n    }\n    match g(argc() > 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { print(e) }\n    }` });
 add({ op: "propagate", repr: "with-live-local", extra: t => `fn f(ok: bool): Result<${t.T}, string> {\n    if !ok { return Result.Err("bad") }\n    return Result.Ok(mk(1))\n}\nfn g(ok: bool): Result<i64, string> {\n    let keep = mk(9)\n    let v = f(ok)?\n    sh(keep)\n    sh(v)\n    return Result.Ok(1)\n}\n`, body: () => `print(g(argc() == 0).isOk())\n    print(g(argc() > 0).isOk())` });
 add({ op: "propagate", repr: "option", extra: t => `fn f(ok: bool): Option<${t.T}> {\n    if !ok { return None }\n    return Some(mk(1))\n}\nfn g(ok: bool): Option<${t.T}> {\n    let v = f(ok)?\n    return Some(v)\n}\n`, body: () => `match g(argc() == 0) {\n        Some(v) => { sh(v) }\n        None => { print("none") }\n    }\n    match g(argc() > 0) {\n        Some(v) => { sh(v) }\n        None => { print("none") }\n    }` });
 add({ op: "propagate", repr: "combinator-map", extra: t => `fn f(ok: bool): Option<${t.T}> {\n    if !ok { return None }\n    return Some(mk(1))\n}\n`, body: () => `let n = f(argc() == 0).map((x: &%T%): i64 => 1).unwrapOr(0)\n    print(n)` });
