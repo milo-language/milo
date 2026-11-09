@@ -7,7 +7,7 @@
 // character, so every extent (`v[i]`, a `match` block, `.clone()`) is found by walking the
 // token stream from that start and confirming the exact shape. A shape that is not exactly
 // the expected tokens, or that would drop a comment, gets no candidate.
-import type { Program, Expr, Span, Function } from "./ast";
+import type { Program, Expr, Span, Function, Stmt } from "./ast";
 import { patternLeafNames } from "./ast";
 import { Lexer } from "./lexer";
 import type { Token } from "./tokens";
@@ -211,7 +211,7 @@ export function findSites(program: Program, host: ProgramPassHost, view: Program
           const ct = deref(typeOf(end.object));
           if (!ct || (ct.tag !== "vec" && ct.tag !== "array")) return null;
           if (globalNames.has(path[0]!)) return null;
-          if (writtenNames(host, view, n.body, null).written.has(path[0]!)) return null;
+          if (writtenNames(host, view, n.body as Stmt[], null).written.has(path[0]!)) return null;
           const I = n.varName as string;
           let uses = 0;
           let fine = true;
@@ -319,7 +319,7 @@ export function findSites(program: Program, host: ProgramPassHost, view: Program
           }
         });
         if (!fine || unwraps.length === 0) return;
-        if (writtenNames(host, view, then, null).written.has(path[0]!)) return;
+        if (writtenNames(host, view, then as Stmt[], null).written.has(path[0]!)) return;
         if (globalNames.has(path[0]!)) return;
         // The payload is a `&T` in the `if let` body: scalars and read-through uses only.
         const parentOf = new Map<Node, { p: Node | null; k: string }>();

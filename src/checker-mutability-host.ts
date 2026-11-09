@@ -5,7 +5,7 @@
 // hold an object, so this file is the one place that still does: it numbers every node of every
 // function body in the walker's pre-order and restates each fact as a list of ids. The pass
 // sees only plain data.
-import type { Program, Function, Expr } from "./ast";
+import type { Program, Function, Stmt, Expr } from "./ast";
 import type { ProgramPassHost, ProgramView } from "./checker-program-passes";
 import { collectStmts, EXPR_KINDS, type AnyNode } from "./ast-nodes";
 import { mutabilityFindings, newScan, scanBody, type FnEntry, type MutInput } from "./checker-mutability";
@@ -76,8 +76,7 @@ export function checkMutability(host: ProgramPassHost, program: Program, view: P
 }
 
 // The names `body` writes (used by the harden rewrites, which ask about one statement list).
-// body is unknown: harden-rewrites hands in bodies from its untyped node walk.
-export function writtenNames(host: ProgramPassHost, view: ProgramView, body: unknown, _watch: null): { written: Set<string> } {
+export function writtenNames(host: ProgramPassHost, view: ProgramView, body: Stmt[], _watch: null): { written: Set<string> } {
   const fn = { kind: "Function", name: "", typeParams: [], params: [], contracts: [], body, isExtern: false, isVariadic: false } as unknown as Function;
   const { facts } = factsFor(host, view, [fn]);
   const scan = newScan(facts);
