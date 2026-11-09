@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { RUNTIME_OWNED, buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
@@ -490,7 +490,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (t.flags & ts.TypeFlags.BooleanLike) return "false";
       // `let x: T | undefined;` starts undefined in TS: a typed None (a bare Option.None has no inferable payload).
       if (isOptionT(t)) return `${useRuntime("optNone", at)}<${ty(checker.getNonNullableType(t), at)}>()`;
+      // A non-optional array: TS definite assignment (strict) rejects any read before every path has assigned it, so the
+      // empty Vec is never observed. A closure could read it before the assignment runs, and TS does not check that.
+      if (checker.isArrayType(t) && ts.isVariableDeclaration(at) && ts.isIdentifier(at.name) && !readInNestedFn(at)) { hit("declaration without initializer", "empty Vec: TS definite assignment guarantees it is overwritten before any read"); return "Vec.new()"; }
       return fail(at, `declaration without initializer of type ${checker.typeToString(t)}`);
+    };
+    const readInNestedFn = (d: ts.VariableDeclaration): boolean => {
+      const sym = checker.getSymbolAtLocation(d.name as ts.Identifier);
+      let fn: ts.Node = d;
+      while (fn && !ts.isFunctionLike(fn)) fn = fn.parent;
+      let found = false;
+      const walk = (n: ts.Node, nested: boolean) => {
+        if (found) return;
+        if (nested && ts.isIdentifier(n) && checker.getSymbolAtLocation(n) === sym) { found = true; return; }
+        ts.forEachChild(n, (c) => walk(c, nested || (ts.isFunctionLike(c) && c !== fn)));
+      };
+      if (fn) walk(fn, false);
+      return found;
     };
 
     // ---- expressions ----
@@ -710,6 +726,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${m!.name}(${owned(ex(e), true)})`;
         }
       }
+      // A value typed as one variant's interface (`const c: ClosureExpr = {...}; return c`) where its union is wanted: wrapped in that variant.
+      if (wu && !wu.members && !ts.isObjectLiteralExpression(unparen(e)) && !unionOfType(checker, tOf(e))) {
+        // The DECLARED type must be the variant: a narrowed union member (`x.kind === "BinOp"`) is still the union in Milo.
+        const ue = unparen(e);
+        const dsym = ts.isIdentifier(ue) ? symOf(ue) : undefined;
+        const dt = dsym && dsym.valueDeclaration ? checker.getTypeOfSymbol(dsym) : undefined;
+        const vd = dt && dt === tOf(e) ? dt.symbol?.declarations?.[0] : undefined;
+        const v = vd && ts.isInterfaceDeclaration(vd) ? wu.variants.find((x) => x.name === vd.name.text) : undefined;
+        if (v) { hit("variant as its union", "wrapped in the variant constructor"); return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${pascal(v.kind)}(${owned(ex(e), true)})`; }
+      }
       if (own && ts.isConditionalExpression(e)) ownBranches.add(e);
       return owned(ex(e, want));
     };
@@ -767,6 +793,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       // A field every variant of a tagged union has (`span`) is read through a generated accessor.
       const tu = unionOfType(checker, tOf(e.expression));
       if (tu) {
+        // Only a field every variant declares has an accessor; a TS-narrowed subset of the union may read one the others lack.
+        if (!tu.variants.every((v) => v.members.some((m) => m.name?.getText() === e.name.text))) fail(e, `field ${e.name.text} is not on every variant of ${tu.name}`);
         hit("tagged union common field", "generated accessor Union_field(&u)");
         return `${useDeclared(`${tu.name}_${e.name.text}`, tu.decl.getSourceFile().fileName, e)}(${ex(e.expression)})`;
       }
@@ -1259,6 +1287,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const b = e as ts.BinaryExpression;
           const op = b.operatorToken.kind;
           const text = b.operatorToken.getText();
+          if (op === ts.SyntaxKind.CommaToken) fail(b, "comma operator");
           if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) fail(b, `assignment ${text} used as a value`);
           if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
           if (op === ts.SyntaxKind.InstanceOfKeyword && isCatchVar(b.left)) {
@@ -1344,8 +1373,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
           const u = e as ts.PrefixUnaryExpression;
+          if (u.operator !== ts.SyntaxKind.ExclamationToken && u.operator !== ts.SyntaxKind.MinusToken) fail(u, `${ts.tokenToString(u.operator)}x used as a value (its result is read)`);
           return u.operator === ts.SyntaxKind.ExclamationToken ? `!${cond(u.operand)}` : `(-${ex(u.operand)})`;
         }
+        case ts.SyntaxKind.PostfixUnaryExpression: return fail(e, `x${ts.tokenToString((e as ts.PostfixUnaryExpression).operator)} used as a value (its result is read)`);
         case ts.SyntaxKind.ConditionalExpression: {
           const c = e as ts.ConditionalExpression;
           hit("ternary", "if-expression");
@@ -1370,8 +1401,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.AsExpression: {
           const a = e as ts.AsExpression;
+          if (assertionIsNoop(checker, a)) { hit("type assertion", "dropped: the Milo value is the same"); return ex(a.expression); }
           const en = enumDeclOf(checker.getTypeFromTypeNode(a.type));
-          if (!en) fail(a, "'as' to a type that is not a string enum");
+          if (!en) fail(a, assertionReason(checker, a));
           hit("string as StringEnum", "generated Enum_fromValue");
           return `${useDeclared(en!.name.text + "_fromValue", en!.getSourceFile().fileName, e)}(${ex(a.expression)})`;
         }
@@ -1386,7 +1418,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           if (lu) {
             // The variant is picked by the literal discriminant property (`{ tag: "ptr", inner }`).
             const dp = o.properties.find((p) => ts.isPropertyAssignment(p) && (p.name as ts.Identifier).text === lu.field) as ts.PropertyAssignment | undefined;
-            const lit = dp && ts.isStringLiteral(dp.initializer) ? dp.initializer.text : fail(e, `object literal of ${lu.name} without a literal ${lu.field}`);
+            const lit = dp && ts.isStringLiteral(stripConst(dp.initializer)) ? (stripConst(dp.initializer) as ts.StringLiteral).text : fail(e, `object literal of ${lu.name} without a literal ${lu.field}`);
             const v = lu.variants.find((x) => x.kind === lit) ?? fail(e, `${lu.name} has no variant ${lit}`);
             hit("tagged union literal", "Union.Variant(Struct { fields })");
             const uname = useDeclared(lu.name, lu.decl.getSourceFile().fileName, e);
@@ -1450,12 +1482,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
 
     // ---- statements ----
     const retWrap = (fn: ts.FunctionLikeDeclaration) => throwing.has(fn) && !isThrower(fn);
-    const stmt = (s: ts.Statement) => {
-      switch (s.kind) {
-        case ts.SyntaxKind.EmptyStatement: return;
-        case ts.SyntaxKind.Block: { line("{"); ind++; block(s as ts.Block); ind--; line("}"); return; }
-        case ts.SyntaxKind.VariableStatement: {
-          for (const d of (s as ts.VariableStatement).declarationList.declarations) {
+    const varDecls = (list: ts.VariableDeclarationList) => {
+          for (const d of list.declarations) {
             const sym = symOf(d.name as ts.Identifier)!;
             const t = checker.getTypeAtLocation(d.name);
             const hoist = hoistedClosure(checker, d);
@@ -1476,8 +1504,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             const name = declareLocal(sym, (d.name as ts.Identifier).text);
             line(`${isVar ? "var" : "let"} ${name}: ${ty(t, d)} = ${init}`);
           }
-          return;
-        }
+    };
+    const stmt = (s: ts.Statement) => {
+      switch (s.kind) {
+        case ts.SyntaxKind.EmptyStatement: return;
+        case ts.SyntaxKind.Block: { line("{"); ind++; block(s as ts.Block); ind--; line("}"); return; }
+        case ts.SyntaxKind.VariableStatement: varDecls((s as ts.VariableStatement).declarationList); return;
         case ts.SyntaxKind.IfStatement: {
           let n: ts.Statement | undefined = s;
           let first = true;
@@ -1568,6 +1600,34 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           afterLoop();
           return;
         }
+        case ts.SyntaxKind.ForStatement: {
+          const f = s as ts.ForStatement;
+          // A `let` in the head is a fresh binding per iteration in TS; a closure capturing it would see that, a while loop's variable would not.
+          const headSyms = new Set<ts.Symbol>();
+          if (f.initializer && ts.isVariableDeclarationList(f.initializer)) {
+            if (!(f.initializer.flags & ts.NodeFlags.Let)) fail(f, "for with a var or const head");
+            for (const d of f.initializer.declarations) { if (!ts.isIdentifier(d.name) || !d.initializer) fail(d, "for head declaration without a plain initializer"); headSyms.add(symOf(d.name)!); }
+          } else if (f.initializer && !(ts.isBinaryExpression(f.initializer) || ts.isPostfixUnaryExpression(f.initializer) || ts.isPrefixUnaryExpression(f.initializer) || ts.isCallExpression(f.initializer))) fail(f, "for head other than a let list or a statement expression");
+          if (headSyms.size) {
+            const walkCap = (n: ts.Node, nested: boolean) => {
+              if (nested && ts.isIdentifier(n)) { const sy = checker.getSymbolAtLocation(n); if (sy && headSyms.has(sy)) fail(n, "for loop variable captured by a closure (per-iteration binding)"); }
+              ts.forEachChild(n, (c) => walkCap(c, nested || ts.isFunctionLike(c)));
+            };
+            walkCap(f, false);
+          }
+          hit("C-style for", "init; while cond { body; step }, with the step also run before each continue of this loop");
+          if (f.initializer) { if (ts.isVariableDeclarationList(f.initializer)) varDecls(f.initializer); else exprStmt(f.initializer); }
+          line(`while ${f.condition ? cond(f.condition) : "true"} {`);
+          ind++;
+          body(f.statement);
+          // After a body that ends in an exit the step is dead code.
+          const lastS = ts.isBlock(f.statement) ? f.statement.statements[f.statement.statements.length - 1] : f.statement;
+          if (f.incrementor && !(lastS && endsBlock(lastS))) exprStmt(f.incrementor);
+          ind--;
+          line("}");
+          afterLoop();
+          return;
+        }
         case ts.SyntaxKind.WhileStatement: {
           const w = s as ts.WhileStatement;
           line(`while ${cond(w.expression)} {`);
@@ -1581,6 +1641,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           for (let p: ts.Node | undefined = s.parent; p && !ts.isFunctionLike(p); p = p.parent) {
             if (ts.isIterationStatement(p, false) || ts.isSwitchStatement(p)) break;
             if (ts.isTryStatement(p)) fail(s, "break or continue out of a try block");
+          }
+          if ((s as ts.BreakOrContinueStatement).label) fail(s, "labeled break or continue");
+          if (s.kind === ts.SyntaxKind.ContinueStatement) {
+            let lp: ts.Node | undefined = s.parent;
+            while (lp && !ts.isIterationStatement(lp, false)) lp = lp.parent;
+            if (lp && ts.isForStatement(lp) && lp.incrementor) exprStmt(lp.incrementor);
           }
           line(s.kind === ts.SyntaxKind.BreakStatement ? "break" : "continue");
           return;
@@ -1601,7 +1667,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           tryFlags.push(flag);
           tryErr.push(errVar);
           try { body(t.tryBlock); } finally { tryFlags.pop(); tryErr.pop(); }
-          line("break");
+          const tl = t.tryBlock.statements[t.tryBlock.statements.length - 1];
+          if (!tl || !endsBlock(tl)) line("break");
           ind--;
           line("}");
           line(`if ${flag} {`);
@@ -1609,7 +1676,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           if (bound) {
             scopes.push(new Map()); usedNames.push(new Set());
             const en = declareLocal(symOf(bound.name as ts.Identifier)!, (bound.name as ts.Identifier).text);
-            line(`let ${en} = match ${errVar} { Option.Some(v) => v, Option.None => panic("catch without an error") }`);
+            // `failed` is only set together with the recorded error, so the unwrap never traps.
+            line(`let ${en} = ${errVar}!`);
             body(t.catchClause!.block);
             scopes.pop(); usedNames.pop();
           } else body(t.catchClause!.block);
@@ -1725,11 +1793,21 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
       return x && (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x)) && !isChainMember(x) ? { x } : null;
     };
+    const endsBlock = (s: ts.Statement): boolean => {
+      if (ts.isReturnStatement(s) || ts.isThrowStatement(s) || ts.isBreakStatement(s) || ts.isContinueStatement(s)) return true;
+      if (!ts.isExpressionStatement(s)) return false;
+      const e = unparen(s.expression);
+      if (!ts.isCallExpression(e)) return false;
+      const d = declOf(e);
+      return !!d && isThrower(d);
+    };
     const block = (b: ts.Block) => {
       const saved: [string, { name: string; deref: boolean } | undefined][] = [];
       for (const s of b.statements) {
         const en = earlyExitNarrow(s);
-        if (!en) { stmt(s); continue; }
+        // What follows an exit is dead code in TS; Milo rejects it ("unreachable code"). A call of a never-returning
+        // function is emitted as a return (or a break out of the try), so it ends the block like return/throw.
+        if (!en) { stmt(s); if (endsBlock(s)) break; continue; }
         const x = en.x;
         const key = x.getText();
         const name = fresh(key);
@@ -1791,7 +1869,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (d && isThrower(d)) {
           if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws");
           if (tryFlags.length) { if (tryErr[tryErr.length - 1]) line(recordErr(callEx(e)).trim().replace(/;$/, "")); line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
-          line(`return Result.Err(${callEx(e)})`);
+          // A never-returning function's own return value is the error, so passing one on is a plain return.
+          line(curFn && isThrower(curFn) ? `return ${callEx(e)}` : `return Result.Err(${callEx(e)})`);
           return;
         }
         line(callEx(e));

@@ -763,7 +763,7 @@ export class Parser {
         for (let depth = 0; p < this.tokens.length; p++) {
           const k = this.tokens[p]!.kind;
           if (k === TokenKind.LParen) depth++;
-          else if (k === TokenKind.RParen && --depth === 0) { p++; break; }
+          else if (k === TokenKind.RParen) { depth--; if (depth === 0) { p++; break; } }
           else if (k === TokenKind.Eof) return false;
         }
       }
@@ -1054,14 +1054,12 @@ export class Parser {
     this.expect(TokenKind.Eq);
     const value = this.parseExpr();
     const out: Stmt[] = [];
-    let source: Expr;
-    if (value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess") {
-      source = value;
-    } else {
-      const tmp = `_destructure${this.destructureCount++}`;
-      out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
-      source = { kind: "Ident", name: tmp, span: s };
-    }
+    const isPlace = value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess";
+    const tmpId = this.destructureCount;
+    if (!isPlace) this.destructureCount += 1;
+    const tmp = isPlace ? "" : `_destructure${tmpId}`;
+    if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
+    const source: Expr = isPlace ? value : { kind: "Ident", name: tmp, span: s };
     for (const f of fields) {
       const read: Expr = { kind: "FieldAccess", object: source, field: f.field, span: f.span };
       out.push(mutable
@@ -1216,17 +1214,11 @@ export class Parser {
     // `if ready && let Some(x) = y`: a chain whose `let` is not the first clause. The
     // ordinary condition parse stops at that `let` (it is not an expression), so retry
     // as a chain from the same token. Any other parse error is the real one.
-    const saved = this.pos;
-    const savedDepth = this.exprDepth;
-    let cond: Expr;
-    try {
-      cond = this.parseExpr();
-    } catch (e) {
-      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
-      this.pos = saved;
-      this.exprDepth = savedDepth;
+    const parsedCond = this.parseCondOrNull();
+    if (parsedCond === null) {
       return this.finishIfChain(s);
     }
+    const cond: Expr = parsedCond;
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
@@ -1241,6 +1233,37 @@ export class Parser {
       }
     }
     return { kind: "IfStmt", cond, thenBody, elseBody, span: s };
+  }
+
+  // The condition of an `if`, or null (position restored) when a `let` clause follows and the caller should retry as a chain.
+  private parseCondOrNull(): Expr | null {
+    const saved = this.pos;
+    const savedDepth = this.exprDepth;
+    let cond: Expr | null = null;
+    try {
+      cond = this.parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
+      this.pos = saved;
+      this.exprDepth = savedDepth;
+    }
+    return cond;
+  }
+
+  // `: T` when a colon follows, else null.
+  private parseColonType(): MiloType | null {
+    if (this.match(TokenKind.Colon)) return this.parseType();
+    return null;
+  }
+
+  // Parses one f-string interpolation; a failure is re-anchored to the f-string's span (see the call site).
+  private parseFragment(tokens: Token[], span: Span): Expr {
+    try {
+      return new Parser(tokens).parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError)) throw e;
+      throw new ParseError({ ...e.diagnostic, span }, this.source, this.filePath);
+    }
   }
 
   private parseIfExpr(s: Span): Expr {
@@ -1377,17 +1400,9 @@ export class Parser {
     };
     if (this.at(TokenKind.Let)) return desugar(this.parseChainClauses());
     // `while more && let Some(x) = next()`: same retry as parseIf.
-    const saved = this.pos;
-    const savedDepth = this.exprDepth;
-    let cond: Expr;
-    try {
-      cond = this.parseExpr();
-    } catch (e) {
-      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
-      this.pos = saved;
-      this.exprDepth = savedDepth;
-      return desugar(this.parseChainClauses());
-    }
+    const parsedCond = this.parseCondOrNull();
+    if (parsedCond === null) return desugar(this.parseChainClauses());
+    const cond: Expr = parsedCond;
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
@@ -1412,13 +1427,8 @@ export class Parser {
       mutRef = true;
       iterableOrStart = iterableOrStart.operand;
     }
-    let iterable: Expr;
-    if (this.match(TokenKind.DotDot)) {
-      const end = this.parseExpr();
-      iterable = { kind: "RangeExpr", start: iterableOrStart, end, span: iterableOrStart.span };
-    } else {
-      iterable = iterableOrStart;
-    }
+    const rangeEnd = this.match(TokenKind.DotDot) ? this.parseExpr() : null;
+    const iterable: Expr = rangeEnd !== null ? { kind: "RangeExpr", start: iterableOrStart, end: rangeEnd, span: iterableOrStart.span } : iterableOrStart;
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
@@ -1449,7 +1459,8 @@ export class Parser {
     const id = (name: string): Expr => ({ kind: "Ident", name, span: s });
     // Unique-ish names: a nested codePoints loop must not shadow the outer
     // cursor, and neither may collide with a user binding.
-    const uid = this.codePointLoopCounter++;
+    const uid = this.codePointLoopCounter;
+    this.codePointLoopCounter += 1;
     const cursor = `__cpAt${uid}`;
     const decoded = `__cp${uid}`;
 
@@ -1646,7 +1657,8 @@ export class Parser {
   // call stack` into a clean diagnostic. 2000 is far past any human-written nesting.
 
   private parseExpr(): Expr {
-    if (++this.exprDepth > MAX_EXPR_DEPTH) {
+    this.exprDepth += 1;
+    if (this.exprDepth > MAX_EXPR_DEPTH) {
       this.error(`expression nesting too deep (>${MAX_EXPR_DEPTH})`, this.peek(), undefined,
         `deeply nested expressions exceed the parser's depth limit — flatten the expression`);
     }
@@ -2207,12 +2219,12 @@ export class Parser {
     while (!this.at(TokenKind.RParen)) {
       const nameTok = this.expect(TokenKind.Ident);
       const name = nameTok.value;
-      const type = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+      const type = this.parseColonType();
       params.push({ name, type, span: this.span(nameTok) });
       if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
     }
     this.expect(TokenKind.RParen);
-    const retType = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+    const retType = this.parseColonType();
     this.expect(TokenKind.FatArrow);
     let body: Stmt[];
     if (this.match(TokenKind.LBrace)) {
@@ -2261,12 +2273,14 @@ export class Parser {
           // skip a nested string or char literal whole (the lexer kept it verbatim)
           if (raw[i] === '"' || raw[i] === "'") {
             const q = raw[i];
-            exprStr += raw[i++];
+            exprStr += raw[i];
+            i++;
             while (i < raw.length && raw[i] !== q) {
-              if (raw[i] === "\\") exprStr += raw[i++];
-              exprStr += raw[i++];
+              if (raw[i] === "\\") { exprStr += raw[i]; i++; }
+              exprStr += raw[i];
+              i++;
             }
-            if (i < raw.length) exprStr += raw[i++];
+            if (i < raw.length) { exprStr += raw[i]; i++; }
             continue;
           }
           if (raw[i] === "{") depth++;
@@ -2280,13 +2294,7 @@ export class Parser {
         // file and a column past the end of it. That is a diagnostic the reader cannot
         // act on and what the frontend fuzzer's bad-span check reports. Re-anchor to the
         // f-string before it leaves this frame.
-        let expr: Expr;
-        try {
-          expr = new Parser(tokens).parseExpr();
-        } catch (e) {
-          if (!(e instanceof ParseError)) throw e;
-          throw new ParseError({ ...e.diagnostic, span }, this.source, this.filePath);
-        }
+        const expr: Expr = this.parseFragment(tokens, span);
         // The sub-parser lexes a bare fragment, so every span in it starts over
         // at 1:1 — any later error on an interpolated expression pointed at the
         // first line of the FILE. Restamp to the f-string's own span. Columns
