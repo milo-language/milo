@@ -32,6 +32,7 @@ const VISITORS: Visitor[] = [
   { file: "src/checker-escaping-closures.ts", cls: "EscapingScan", out: "src/ast-walk-escaping-closures.ts" },
   { file: "src/checker-global-borrow.ts", cls: "GlobalBorrowScan", out: "src/ast-walk-global-borrow.ts" },
   { file: "src/checker-concurrent-args.ts", cls: "ConcurrentArgsScan", out: "src/ast-walk-concurrent-args.ts" },
+  { file: "src/checker-thread-boundary.ts", cls: "ThreadScan", out: "src/ast-walk-thread-boundary.ts" },
 ];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }
