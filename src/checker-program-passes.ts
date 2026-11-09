@@ -437,7 +437,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
 // returns, spawns, captures in a `move` closure) has to say so: `f: move (A) => R`.
 // Checked here, in the callee, so the signature alone tells a caller what happens to
 // its closure.
-function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
+export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
   return t?.tag === "fn" && !t.owning;
 }
 
@@ -640,104 +640,6 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
   for (const fn of [...program.functions, ...host.monomorphizedFns]) {
     if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
     visit(fn.body, []);
-  }
-}
-
-export function checkNonEscapingParams(host: ProgramPassHost, program: Program, view: ProgramView): void {
-  const seen = new Set<string>();
-  // The callee parameter an argument lands in, or null when it cannot be resolved (a
-  // builtin free function, an enum variant constructor, a call through a fn value).
-  // Unresolved means "may keep it", the same fail-closed rule as `retainsParam`.
-  const targetParam = (call: Record<string, unknown> & { kind?: string }, i: number): TypeKind | null | "builtin-member" => {
-    const callee = view.calleeOf(call as unknown as Expr);
-    const sig = callee ? host.functions.get(callee) : undefined;
-    if (!sig) {
-      if (call.kind === "MethodCall") return RETAINING_MEMBERS.has(call.method as string) ? null : "builtin-member";
-      return null;
-    }
-    // A method's signature carries `self` first; the call's argument list does not.
-    const off = call.kind !== "Call" && sig.params[0]?.name === "self" ? 1 : 0;
-    return sig.params[i + off]?.type ?? null;
-  };
-  const checkBody = (body: unknown, params: Set<string>, who: string): void => {
-    const report = (name: string, span: Span | undefined, what: string) => {
-      const key = `${span?.file ?? ""}:${span?.line ?? 0}:${span?.col ?? 0}:${name}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      host.error(`non-escaping closure parameter '${name}' ${what}`, span,
-        `a plain closure parameter can only be called or passed on to another plain closure parameter; if ${who} stores, returns or spawns it, declare it '${name}: move (…) => …'`);
-    };
-    const visit = (node: unknown, ctx: string): void => {
-      if (!node || typeof node !== "object") return;
-      if (Array.isArray(node)) { for (const x of node) visit(x, ctx); return; }
-      const n = node as Record<string, unknown> & { kind?: string; span?: Span };
-      if (n.kind === "Ident" && params.has(n.name as string)) { report(n.name as string, n.span, ctx); return; }
-      // The direct spellings get their own words; anything else is a use as a value.
-      const direct = (v: unknown, what: string) => {
-        const e = v as Expr | undefined;
-        if (e?.kind === "Ident" && params.has(e.name)) report(e.name, e.span, what);
-        else visit(v, ctx);
-      };
-      if (n.kind === "Return") { direct(n.value, "is returned"); return; }
-      if (n.kind === "StructLit") {
-        for (const f of n.fields as { value: Expr }[]) direct(f.value, "is stored in a struct");
-        if (n.base) direct(n.base, "is stored in a struct");
-        return;
-      }
-      if (n.kind === "Assign") { visit(n.target, ctx); direct(n.value, "is stored"); return; }
-      if (n.kind === "Closure") {
-        const caps = host.closureCaptures.get(n as unknown as Expr) ?? [];
-        if ((n as { isMove?: boolean }).isMove) {
-          for (const c of caps) if (params.has(c.name)) report(c.name, n.span, "is captured by a 'move' closure");
-        }
-        // A by-reference capture is fine here: checkEscapingClosures keeps that closure
-        // inside this frame, the same as one that borrows a local.
-      }
-      if ((n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") && Array.isArray(n.args)) {
-        if (n.kind === "MethodCall") visit(n.object, ctx);
-        const args = n.args as Expr[];
-        for (let i = 0; i < args.length; i++) {
-          const a = args[i]!;
-          if (a.kind === "Ident" && params.has(a.name)) {
-            const t = targetParam(n, i);
-            if (t === "builtin-member" || isNonEscapingFnParam(t ?? undefined)) continue;
-            const callee = n.kind === "Call" ? n.func as string
-              : n.kind === "EnumLit" ? `${n.enumName}.${n.variant}` : n.method as string;
-            report(a.name, a.span ?? n.span, `is passed to '${callee}', which may keep it`);
-          } else visit(a, ctx);
-        }
-        return;
-      }
-      for (const k of Object.keys(n)) {
-        if (k !== "span" && k !== "type") visit(n[k], ctx);
-      }
-    };
-    visit(body, "is used as a value here, which may keep it past the call");
-  };
-  // A closure literal's plain closure parameter is held to the same rule: a call through
-  // a fn value lends an owning closure exactly as a direct call does (checker
-  // `lendsOwningClosure`), and the literal is one of the targets that call can reach.
-  const checkClosureLiterals = (node: unknown): void => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) { for (const x of node) checkClosureLiterals(x); return; }
-    const n = node as Record<string, unknown> & { kind?: string };
-    if (n.kind === "Closure") {
-      const ty = host.exprTypes.get(n as unknown as Expr);
-      const ps = n.params as { name: string }[];
-      const params = new Set(ty?.tag === "fn" ? ps.filter((_, i) => isNonEscapingFnParam(ty.params[i])).map(p => p.name) : []);
-      if (params.size > 0) checkBody(n.body, params, "the closure");
-    }
-    for (const k of Object.keys(n)) if (k !== "span" && k !== "type") checkClosureLiterals(n[k]);
-  };
-  for (const fn of [...program.functions, ...host.monomorphizedFns]) {
-    if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
-    checkClosureLiterals(fn.body);
-    // The one callee that keeps a plain closure param: checkTaskScopes holds its callers.
-    if (fn.name === SCOPED_SPAWN_FN) continue;
-    const sig = host.functions.get(fn.name);
-    if (!sig) continue;
-    const params = new Set(sig.params.filter(p => isNonEscapingFnParam(p.type)).map(p => p.name));
-    if (params.size > 0) checkBody(fn.body, params, `'${view.pretty(fn.name)}'`);
   }
 }
 

@@ -21,7 +21,10 @@ const FAMILIES = ["Expr", "Stmt", "Pattern", "ChainClause"];
 // One walker per pass, each calling only its own visitor class (static calls, no interface to
 // dispatch through, which keeps the generated Milo plain). Edges and ids are the same in all.
 interface Visitor { file: string; cls: string; out: string }
-const VISITORS: Visitor[] = [{ file: "src/mutability-scan.ts", cls: "MutScan", out: "src/ast-walk.ts" }];
+const VISITORS: Visitor[] = [
+  { file: "src/mutability-scan.ts", cls: "MutScan", out: "src/ast-walk.ts" },
+  { file: "src/checker-nonescaping.ts", cls: "NonEscapingScan", out: "src/ast-walk-nonescaping.ts" },
+];
 
 interface NodeInfo { iface: string; kind: string; family: string; edges: { field: string; array: boolean; optional: "" | "null" | "undefined"; elemOptional: "" | "null" | "undefined"; family?: string; struct?: string }[]; opField: boolean }
 
