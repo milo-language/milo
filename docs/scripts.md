@@ -41,6 +41,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
+| `scripts/checked-roundtrip.ts` | Gate for the checked-program dump (src/checked-dump.ts): for each program, lower the checker's own Program + CheckResult and lower the copy that went through encode + decode, and compare the two MLIR… |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
 | `scripts/dialect-hygiene.ts` | Hygiene gate for the milo MLIR dialect (mlir/Milo.td): docs on every op, type and attribute, and no hygiene count below its baseline. |
 | `scripts/differential.ts` | Differential gate: builds every runtime fixture and `// @run:` example twice (A and B flags or checkouts) and compares stdout and exit code; any difference is a finding. |

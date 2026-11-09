@@ -90,7 +90,10 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   },
   {
     name: "emit-mlir", usage: "emit-mlir <file>", summary: "emit the milo dialect module before milo-opt (the source-faithful top layer)",
-    flags: [{ flag: "--all", help: "the whole module: imported functions, glue, scaffold" }],
+    flags: [{ flag: "--all", help: "the whole module: imported functions, glue, scaffold" }, { flag: "--from-checked <json>", help: "skip the frontend, lower that emit-checked dump" }],
+  },
+  {
+    name: "emit-checked", usage: "emit-checked <file>", summary: "emit the checked program (AST plus the checker's facts) as JSON",
   },
   {
     name: "interp", usage: "interp <file>", summary: "run the program in the reference interpreter (no codegen); exit 3 = unsupported, 4 = stuck",

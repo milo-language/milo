@@ -45,6 +45,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
+| `src/checked-dump.ts` | Graph codec for the checker's output (Program + CheckResult): the seam where a checker that is not this process's (the generated Milo one) hands its facts to the emitter. |
 | `src/checker-closure-env.ts` | A `move` closure that captures anything owns a heap environment. |
 | `src/checker-concurrent-args-host.ts` | The boundary between the checker and the portable `@concurrent` closure-argument pass (src/checker-concurrent-args.ts). |
 | `src/checker-concurrent-args.ts` | The `@concurrent` closure-argument check, in the portable subset: plain data in, findings out. |

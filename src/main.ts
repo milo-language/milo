@@ -19,6 +19,7 @@ import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
 import { backendProgram } from "./backend-program";
+import { decodeChecked, encodeChecked } from "./checked-dump";
 import { runInterp, interpOptions } from "./interp-run";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -758,9 +759,15 @@ function emitAst(sourcePath: string, outputPath: string | null, target: TargetIn
 // (milo.for_in, milo.try, milo.interp, ...) before any pass runs. Runs the full frontend,
 // so a type error stops it exactly as a real build would. Default: only the functions
 // defined in the entry file; --all prints the whole module (scaffold, glue, globals).
-function emitMlir(sourcePath: string, outputPath: string | null, target: TargetInfo, all: boolean, warningConfig?: WarningConfig) {
+// `fromChecked`: skip the frontend and lower the Program + CheckResult of that dump (emit-checked's
+// format), which is how a checker outside this process drives the emitter.
+function emitMlir(sourcePath: string, outputPath: string | null, target: TargetInfo, all: boolean, warningConfig?: WarningConfig, fromChecked?: string) {
   const source = readFileSync(sourcePath, "utf-8");
-  const prog = frontendToProgram(source, target, sourcePath, warningConfig);
+  let prog;
+  if (fromChecked) {
+    const c = decodeChecked(readFileSync(fromChecked, "utf-8")) as { program: Program; result: import("./checker").CheckResult };
+    prog = backendProgram(c.program, c.result, dirname(resolve(sourcePath)), target.os, target.arch);
+  } else prog = frontendToProgram(source, target, sourcePath, warningConfig);
   const plan = new MlirPlan(prog, target, { filePath: sourcePath, trapOnOverflow: false, emitDebug: false, contractChecks: false, stripPanicLocations: false, sanitize: false });
   if (all) { emitText(plan.moduleText(), outputPath); return; }
   // Entry-file functions are stamped with the entry path by the resolver; injected libc
@@ -768,6 +775,11 @@ function emitMlir(sourcePath: string, outputPath: string | null, target: TargetI
   const entry = resolve(sourcePath);
   const mine = new Set(prog.functions.filter(f => f.sourceFile && resolve(f.sourceFile) === entry).map(f => f.name));
   emitText(plan.functionTexts(mine).join("\n") + "\n", outputPath);
+}
+
+// Dump the checked program (Program + CheckResult, src/checked-dump.ts) and stop before lowering.
+function emitChecked(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig) {
+  frontendToProgram(readFileSync(sourcePath, "utf-8"), target, sourcePath, warningConfig, (program, result) => emitText(encodeChecked({ program, result }), outputPath));
 }
 
 // The clang that compiles every build is the one of milo-opt's LLVM (mlirClang).
@@ -1950,7 +1962,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean; hot: boolean; replayEnv: Record<string, string> } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; fromChecked: string | undefined; stripPanicLocations: boolean; hot: boolean; replayEnv: Record<string, string> } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -1976,6 +1988,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // unrecognized `--flag` would otherwise be swallowed as the source-file positional below.
   let emitAll = false;
   let emitSpans = false;
+  let fromChecked: string | undefined;
   let hot = false;
   // `run --record/--replay <file>` is sugar for the env vars std/replay reads at process
   // start, so a binary built any other way is recorded the same way.
@@ -2017,6 +2030,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--emit-header") { emitHeader = true; }
     else if (args[i] === "--all") { emitAll = true; }        // emit-ast/emit-mlir: include imported modules
     else if (args[i] === "--spans") { emitSpans = true; }    // emit-ast: keep source spans in the dump
+    else if (args[i] === "--from-checked" && i + 1 < args.length) { fromChecked = args[++i]; } // emit-mlir: lower this emit-checked dump
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -2075,7 +2089,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // A hot host is -O0 and one unit: patches are compiled at -O0 against it, and the hot
   // transform runs on the whole module before any split could see it.
   if (hot) { optFlag = "-O0"; cguOverride = 1; }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, warned, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, warned, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, fromChecked, stripPanicLocations, hot, replayEnv };
 }
 
 // "compiled <src> -> <out> in <t>" with color on a TTY, plain when piped/redirected.
@@ -2286,7 +2300,7 @@ async function main() {
   }
 
   const traceFlags = takeTraceFlags(args.slice(1));
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel: safetyFlag, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(cmd === "build" ? traceFlags.args : args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel: safetyFlag, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, fromChecked, stripPanicLocations, hot, replayEnv } = parseArgs(cmd === "build" ? traceFlags.args : args.slice(1));
   // `--safety` wins; without it `milo build` reads the project's milo.json "profile". A preset
   // ("app", "hardened") is not a SafetyLevel: it never pins the toolchain or checks the object.
   const named = safetyFlag ?? (cmd === "build" && source ? projectProfile(dirname(resolve(source))) : null);
@@ -2532,7 +2546,9 @@ async function main() {
   } else if (cmd === "emit-ast") {
     emitAst(source!, output, target, emitAll, emitSpans);
   } else if (cmd === "emit-mlir") {
-    emitMlir(source!, output, target, emitAll, warningConfig);
+    emitMlir(source!, output, target, emitAll, warningConfig, fromChecked);
+  } else if (cmd === "emit-checked") {
+    emitChecked(source!, output, target, warningConfig);
   } else if (cmd === "interp") {
     // --explore / --schedule: R-EXPLORE-* in docs/semantics/milo.md section 5
     // The reference interpreter (src/interp.ts): runs the checked AST, no codegen. Exit 3 means
