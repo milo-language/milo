@@ -5,7 +5,16 @@
 // Measurement only: it classifies every cell as covered, refused (MlirUnsupported), WRONG
 // (differs from the interpreter: a miscompile), no oracle, or rejected by the checker.
 //
-//   bun scripts/gen-ownership-cells.ts [--filter regex] [--jobs 6] [--no-run]
+//   bun scripts/gen-ownership-cells.ts [--filter regex] [--jobs 6] [--no-run] [--reuse]
+//   bun scripts/gen-ownership-cells.ts --check [--reuse]   # ratchet: exit 1 if a baseline-covered cell
+//                                      # is no longer covered, or any cell is WRONG
+//   bun scripts/gen-ownership-cells.ts --update-baseline    # after a full run: rewrite the baseline
+//   bun scripts/gen-ownership-cells.ts --sites              # map ownership-shaped MlirUnsupported
+//                                      # sites to the cells of the last run that hit them
+//
+// The ratchet baseline is scripts/ownership-cells-baseline.json (refused and WRONG counts, covered
+// cell names, knownWrong triage notes). `--check` with a --filter checks only the cells it ran. The closure class has no
+// helper: a closure cannot be passed by reference, so `sh(path)` is rewritten to `print(path())`.
 //
 // Programs go to out/gen-own/ (untracked); checker-rejected ones to out/gen-own/rejected/.
 // Output: a markdown table on stdout, out/ownership-cells.json, and a summary line.
@@ -20,9 +29,34 @@ const opt = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i +
 const JOBS = Number(opt("--jobs") ?? 6);
 const filterArg = opt("--filter");
 const filter = filterArg?.startsWith("@") ? readFileSync(filterArg.slice(1), "utf-8").trim() : filterArg; // @file: regex from a file
+const BASELINE = join(import.meta.dir, "ownership-cells-baseline.json");
+
+if (argv.includes("--sites")) { // no cells are generated: read the last run's rows
+  const rows = JSON.parse(readFileSync(join(OUT, "ownership-cells.json"), "utf-8")) as { name: string; status: string; message: string }[];
+  const refused = rows.filter(r => r.status === "refused" || r.status === "WRONG");
+  const OWNERSHIP = /own|move|drop|heap|128|enum|payload|slice|global|for |break|continue|\?|interface|repeat|array|hashmap|temporar|replaced|pending|clone|borrow|by-ref|closure|capture|view|box|copy|place|unwrap|match|struct update|iterator/i;
+  const sites: { where: string; msg: string; re: RegExp; hit: string[] }[] = [];
+  for (const file of ["src/emit-mlir.ts", "src/mlir-glue.ts"]) {
+    const lines = readFileSync(join(ROOT, file), "utf-8").split("\n");
+    lines.forEach((line, i) => {
+      for (const m of line.matchAll(/new MlirUnsupported\((`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*")/g)) {
+        const msg = m[1]!.slice(1, -1);
+        if (!OWNERSHIP.test(msg)) continue;
+        const re = new RegExp(msg.split(/\$\{[^}]*\}/).map(p => p.replace(/[.*+?^$()|[\]\\{}]/g, "\\$&")).join(".*"));
+        sites.push({ where: `${file}:${i + 1}`, msg, re, hit: refused.filter(r => re.test(r.message)).map(r => r.name) });
+      }
+    });
+  }
+  for (const s of sites) if (s.hit.length) console.log(`${String(s.hit.length).padStart(3)}  ${s.where}  ${s.msg.slice(0, 80)}  [${s.hit.slice(0, 3).join(", ")}]`);
+  console.log("\nunreached:");
+  for (const s of sites) if (!s.hit.length) console.log(`  ${s.where}  ${s.msg.slice(0, 100)}`);
+  const unmatched = [...new Set(refused.filter(r => !sites.some(s => s.re.test(r.message))).map(r => r.message))];
+  console.log(`\n${sites.filter(s => s.hit.length).length}/${sites.length} ownership-shaped sites hit; refusals matching no listed site: ${unmatched.join(" | ")}`);
+  process.exit(0);
+}
 
 // ---- type classes (Axis 2's "type class"). Each supplies T, mk(n): T (fresh owned value), sh(x: &T).
-type TC = { id: string; copy: boolean; str?: boolean; decl: string; T: string; kind: "scalar" | "str" | "vec" | "struct" | "enum" | "heap" | "closure" | "big" };
+type TC = { id: string; copy: boolean; str?: boolean; decl: string; T: string; kind: "scalar" | "str" | "vec" | "struct" | "enum" | "heap" | "closure" | "big" | "bigenum" | "bigvec" | "bigmap" | "bigheap" | "drop" | "dropvec" | "iface" };
 const BIGF = Array.from({ length: 16 }, (_, i) => `a${i}: i64`).join(", ");
 const BIGI = Array.from({ length: 16 }, (_, i) => `a${i}: n + ${i}`).join(", ");
 const TCS: TC[] = [
@@ -32,9 +66,23 @@ const TCS: TC[] = [
   { id: "struct", copy: false, kind: "struct", T: "S", decl: `@derive(Clone)\nstruct S { name: string, n: i64, tags: Vec<string> }\nfn mk(n: i64): S {\n    var t: Vec<string> = Vec.new()\n    t.push("t".repeat(2) + n.toString())\n    return S { name: "n".repeat(2) + n.toString(), n: n, tags: t }\n}\nfn sh(x: &S) {\n    print(x.name)\n    print(x.n)\n    print(x.tags[0])\n}\n` },
   { id: "enum", copy: false, kind: "enum", T: "E", decl: `@derive(Clone)\nenum E { A(string), B(i64), C }\nfn mk(n: i64): E { return E.A("e".repeat(2) + n.toString()) }\nfn sh(x: &E) {\n    match x {\n        E.A(s) => { print(s) }\n        E.B(k) => { print(k) }\n        E.C => { print("c") }\n    }\n}\n` },
   { id: "heap", copy: false, kind: "heap", T: "Heap<S>", decl: `struct S { name: string, n: i64, tags: Vec<string> }\nfn mk(n: i64): Heap<S> {\n    var t: Vec<string> = Vec.new()\n    t.push("t".repeat(2) + n.toString())\n    return Heap(S { name: "h".repeat(2) + n.toString(), n: n, tags: t })\n}\nfn sh(x: &Heap<S>) {\n    print((*x).name)\n    print((*x).tags[0])\n}\n` },
-  { id: "closure", copy: false, kind: "closure", T: "move () => string", decl: `fn mk(n: i64): move () => string {\n    let s = "c".repeat(3) + n.toString()\n    return move (): string => s\n}\nfn sh(x: &move () => string) { print(x()) }\n` },
+  { id: "closure", copy: false, kind: "closure", T: "move () => string", decl: `fn mk(n: i64): move () => string {\n    let s = "c".repeat(3) + n.toString()\n    return move (): string => s\n}\n` },
   { id: "big", copy: false, kind: "big", T: "Big", decl: `@derive(Clone)\nstruct Big { ${BIGF}, name: string }\nfn mk(n: i64): Big { return Big { ${BIGI}, name: "g".repeat(2) + n.toString() } }\nfn sh(x: &Big) {\n    print(x.name)\n    print(x.a15)\n}\n` },
 ];
+const BIGDECL = `@derive(Clone)\nstruct Big { ${BIGF}, name: string }\nfn mkbig(n: i64): Big { return Big { ${BIGI}, name: "g".repeat(2) + n.toString() } }\n`;
+const DROPDECL = `struct D { id: i64 }\nimpl Drop for D {\n    fn drop(self: &mut Self): void { print("drop " + self.id.toString()) }\n}\n`;
+TCS.push(
+  // 128+ byte payloads: in an enum, in a Vec / HashMap, behind a Heap.
+  { id: "bigenum", copy: false, kind: "bigenum", T: "BE", decl: `${BIGDECL}@derive(Clone)\nenum BE { P(Big), Q }\nfn mk(n: i64): BE { return BE.P(mkbig(n)) }\nfn sh(x: &BE) {\n    match x {\n        BE.P(b) => { print(b.name)\n            print(b.a15) }\n        BE.Q => { print("q") }\n    }\n}\n` },
+  { id: "bigvec", copy: false, kind: "bigvec", T: "Vec<Big>", decl: `${BIGDECL}fn mk(n: i64): Vec<Big> {\n    var v: Vec<Big> = Vec.new()\n    v.push(mkbig(n))\n    v.push(mkbig(n + 1))\n    return v\n}\nfn sh(x: &Vec<Big>) {\n    print(x.len.toString())\n    print(x[0].name)\n    print(x[1].a15)\n}\n` },
+  { id: "bigmap", copy: false, kind: "bigmap", T: "HashMap<i64, Big>", decl: `${BIGDECL}fn mk(n: i64): HashMap<i64, Big> {\n    var m: HashMap<i64, Big> = HashMap.new()\n    m.insert(1, mkbig(n))\n    m.insert(2, mkbig(n + 1))\n    return m\n}\nfn sh(x: &HashMap<i64, Big>) {\n    print(x.len.toString())\n    match x.get(2) {\n        Some(b) => { print(b.name) }\n        None => { print("none") }\n    }\n}\n` },
+  { id: "bigheap", copy: false, kind: "bigheap", T: "Heap<Big>", decl: `${BIGDECL}fn mk(n: i64): Heap<Big> { return Heap(mkbig(n)) }\nfn sh(x: &Heap<Big>) {\n    print((*x).name)\n    print((*x).a15)\n}\n` },
+  // A user Drop type: the drop lines in stdout show order and count.
+  { id: "drop", copy: false, kind: "drop", T: "D", decl: `${DROPDECL}fn mk(n: i64): D { return D { id: n } }\nfn sh(x: &D) { print(x.id) }\n` },
+  { id: "dropvec", copy: false, kind: "dropvec", T: "Vec<D>", decl: `${DROPDECL}fn mk(n: i64): Vec<D> {\n    var v: Vec<D> = Vec.new()\n    v.push(D { id: n })\n    v.push(D { id: n + 100 })\n    return v\n}\nfn sh(x: &Vec<D>) {\n    print(x.len.toString())\n    print(x[1].id)\n}\n` },
+  // A trait object: Heap<interface>, with a Drop on the concrete type.
+  { id: "iface", copy: false, kind: "iface", T: "Heap<Sh>", decl: `interface Sh {\n    fn show(self: &Self): string\n}\nstruct Impl { name: string }\nimpl Impl {\n    fn show(self: &Self): string { return self.name }\n}\nimpl Drop for Impl {\n    fn drop(self: &mut Self): void { print("drop " + self.name) }\n}\nfn mk(n: i64): Heap<Sh> {\n    let h: Heap<Sh> = Heap(Impl { name: "i".repeat(2) + n.toString() })\n    return h\n}\nfn sh(x: &Heap<Sh>) { print(x.show()) }\n` },
+);
 const cloneable = (t: TC) => ["struct", "enum", "big", "scalar", "str", "vec"].includes(t.kind);
 
 // ---- cells. `body` is the text of main; `extra` extra top-level decls. `exp` = expected checker verdict
@@ -167,11 +215,76 @@ add({ op: "big-place", repr: "field-of-big-in-vec", when: t => t.kind === "big",
 add({ op: "big-place", repr: "big-in-enum", when: t => t.kind === "big", extra: () => `enum Q { Has(Big), Not }\n`, body: () => `let q = Q.Has(mk(1))\n    match q {\n        Q.Has(b) => { sh(b) }\n        Q.Not => { print("not") }\n    }` });
 add({ op: "big-place", repr: "big-by-value-chain", when: t => t.kind === "big", extra: () => `fn a(x: Big): Big { return x }\nfn b(x: Big): Big { return a(x) }\n`, body: () => `sh(b(mk(1)))` });
 
+// The parser only accepts a call on a name or field path, and the checker treats a closure passed
+// to a helper as a transfer, so for the closure class every `sh(path)` becomes `print(path())`.
+// A cell whose `sh` argument is not a path (v[0], *h, a call) cannot be expressed: it is skipped.
+function callInPlace(tc: TC, s: string): string | null {
+  if (tc.kind !== "closure") return s;
+  let out = "";
+  for (let i = 0; i < s.length;) {
+    if (s.startsWith("sh(", i) && !/\w/.test(s[i - 1] ?? " ")) {
+      let d = 1, j = i + 3;
+      while (d > 0) { if (s[j] === "(") d++; else if (s[j] === ")") d--; j++; }
+      const arg = s.slice(i + 3, j - 1);
+      if (!/^[A-Za-z_]\w*(\.\w+)*$/.test(arg)) return null;
+      out += `print(${arg}())`;
+      i = j;
+    } else out += s[i++];
+  }
+  return out;
+}
+
+// -- drop-order probes (a user Drop type prints on drop)
+add({ op: "drop-order", repr: "locals-reverse", when: t => t.kind === "drop", body: () => `let a = mk(1)\n    let b = mk(2)\n    print("end")` });
+add({ op: "drop-order", repr: "reassign", when: t => t.kind === "drop", body: () => `var a = mk(1)\n    a = mk(2)\n    print("end")` });
+add({ op: "drop-order", repr: "temp-discard", when: t => t.kind === "drop", body: () => `mk(1)\n    print("end")` });
+add({ op: "drop-order", repr: "struct-fields", when: t => t.kind === "drop", extra: () => `struct P { a: D, b: D }\n`, body: () => `let p = P { a: mk(1), b: mk(2) }\n    print("end")` });
+add({ op: "drop-order", repr: "vec-truncate-pop", when: t => t.kind === "drop", body: () => `var v: Vec<D> = Vec.new()\n    v.push(mk(1))\n    v.push(mk(2))\n    v.push(mk(3))\n    let p = v.pop()\n    print("popped")\n    v[0] = mk(4)\n    print("end")` });
+add({ op: "drop-order", repr: "heap-box", when: t => t.kind === "drop", body: () => `let h = Heap(mk(1))\n    print("end")` });
+add({ op: "drop-order", repr: "replace-old", when: t => t.kind === "drop", body: () => `var a = mk(1)\n    let old = replace(a, mk(2))\n    print("replaced")` });
+add({ op: "drop-order", repr: "early-return-loop", when: t => t.kind === "drop", extra: () => `fn f(): i64 {\n    for i in 0..3 {\n        let a = mk(i)\n        if i == 1 { return i }\n    }\n    return 9\n}\n`, body: () => `print(f())` });
+// -- globals
+add({ op: "global", repr: "read", extra: t => `var G: ${t.T} = mk(1)\n`, body: () => `sh(G)` });
+add({ op: "global", repr: "assign", extra: t => `var G: ${t.T} = mk(1)\n`, body: () => `G = mk(2)\n    sh(G)` });
+add({ op: "global", repr: "field-assign", extra: t => `struct W { p: ${t.T}, q: i64 }\nvar G: W = W { p: mk(1), q: 0 }\n`, body: () => `G.p = mk(2)\n    sh(G.p)` });
+add({ op: "global", repr: "vec-push", extra: t => `var G: Vec<${t.T}> = []\n`, body: () => `G.push(mk(1))\n    G.push(mk(2))\n    sh(G[1])` });
+add({ op: "global", repr: "into-fn", extra: t => `var G: ${t.T} = mk(1)\nfn rd() { sh(G) }\n`, body: () => `rd()\n    rd()` });
+// -- more for-in forms
+add({ op: "for-in", repr: "array-literal-consumed", body: () => `for x in [mk(1), mk(2)] {\n        sh(x)\n    }` });
+add({ op: "for-in", repr: "array-local-consumed", body: () => `let arr = [mk(1), mk(2)]\n    for x in arr {\n        sh(x)\n    }` });
+add({ op: "for-in", repr: "array-indexed", body: () => `let arr = [mk(1), mk(2)]\n    for i, x in arr {\n        print(i)\n        sh(x)\n    }` });
+add({ op: "for-in", repr: "slice-borrowed", extra: t => `fn mkv(): Vec<${t.T}> {\n    var v: Vec<${t.T}> = Vec.new()\n    v.push(mk(1))\n    v.push(mk(2))\n    v.push(mk(3))\n    return v\n}\n`, body: () => `let v = mkv()\n    let s = v[0..2]\n    for x in s {\n        sh(x)\n    }\n    print(v.len.toString())` });
+add({ op: "for-in", repr: "hashmap-borrowed", body: t => `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    for k, x in m {\n        print(k)\n        sh(x)\n    }\n    print(m.len.toString())` });
+add({ op: "for-in", repr: "hashmap-consumed", body: t => `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    for k, x in m {\n        print(k)\n        sh(x)\n    }` });
+add({ op: "for-in", repr: "hashmap-consumed-break", body: t => `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    for k, x in m {\n        sh(x)\n        break\n    }\n    print("end")` });
+add({ op: "for-in", repr: "continue-consumed", extra: t => `fn mkv(): Vec<${t.T}> {\n    var v: Vec<${t.T}> = Vec.new()\n    v.push(mk(1))\n    v.push(mk(2))\n    v.push(mk(3))\n    return v\n}\n`, body: () => `for x in mkv() {\n        if argc() == 0 { continue }\n        sh(x)\n    }\n    print("end")` });
+// -- array repeat, slice of a temporary (only a string slices a temporary: the checker rejects the rest)
+// HashMap iteration order is randomized per binary, so every HashMap loop here has one entry.
+add({ op: "array-repeat", repr: "local", when: cloneable, body: () => `let a = mk(1)\n    let arr = [a; 3]\n    sh(arr[2])` });
+add({ op: "array-repeat", repr: "temp", when: cloneable, body: () => `let arr = [mk(1); 3]\n    sh(arr[0])\n    sh(arr[2])` });
+add({ op: "array-repeat", repr: "in-struct", when: cloneable, extra: t => `struct W { xs: [${t.T}; 2] }\n`, body: () => `let w = W { xs: [mk(1); 2] }\n    sh(w.xs[1])` });
+add({ op: "array-repeat", repr: "user-drop", when: t => t.kind === "drop", body: () => `let arr = [mk(1); 1]\n    print("end")` });
+add({ op: "slice-temp", repr: "string-call", when: t => t.kind === "str", body: () => `print(mk(1)[1..3])` });
+// -- ? / ?? on enums with owned payloads in both arms
+add({ op: "propagate", repr: "result-both-owned", extra: t => `fn f(ok: bool): Result<${t.T}, ${t.T}> {\n    if !ok { return Result.Err(mk(2)) }\n    return Result.Ok(mk(1))\n}\nfn g(ok: bool): Result<${t.T}, ${t.T}> {\n    let v = f(ok)?\n    return Result.Ok(v)\n}\n`, body: () => `match g(argc() == 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { sh(e) }\n    }\n    match g(argc() > 0) {\n        Ok(v) => { sh(v) }\n        Err(e) => { sh(e) }\n    }` });
+add({ op: "propagate", repr: "default-result", extra: t => `fn f(ok: bool): Result<${t.T}, string> {\n    if !ok { return Result.Err("bad") }\n    return Result.Ok(mk(1))\n}\n`, body: () => `let a = f(argc() == 0) ?? mk(5)\n    sh(a)\n    let b = f(argc() > 0) ?? mk(6)\n    sh(b)` });
+add({ op: "propagate", repr: "default-option", extra: t => `fn f(ok: bool): Option<${t.T}> {\n    if !ok { return None }\n    return Some(mk(1))\n}\n`, body: () => `let a = f(argc() == 0) ?? mk(5)\n    sh(a)\n    let b = f(argc() > 0) ?? mk(6)\n    sh(b)` });
+add({ op: "propagate", repr: "try-in-loop", extra: t => `fn f(i: i64): Result<${t.T}, string> {\n    if i == 1 { return Result.Err("bad") }\n    return Result.Ok(mk(i))\n}\nfn g(): Result<i64, string> {\n    for i in 0..3 {\n        let keep = mk(9)\n        let v = f(i)?\n        sh(v)\n        sh(keep)\n    }\n    return Result.Ok(1)\n}\n`, body: () => `print(g().isOk())` });
+// -- break / continue / return out of an expression with a half-built value pending
+const BIGJ = (jump: string) => `Big { name: "z".repeat(2), ${BIGI.replace("a3: n + 3", `a3: if n == 2 { ${jump} } else { 3 }`)} }`;
+add({ op: "pending-jump", repr: "break-in-struct-lit", when: t => t.kind === "big", body: () => `var n = 0\n    while n < 3 {\n        n = n + 1\n        let b = ${BIGJ("break")}\n        print(b.name)\n    }\n    print(n)` });
+add({ op: "pending-jump", repr: "continue-in-struct-lit", when: t => t.kind === "big", body: () => `var n = 0\n    while n < 3 {\n        n = n + 1\n        let b = ${BIGJ("continue")}\n        print(b.name)\n    }\n    print(n)` });
+add({ op: "pending-jump", repr: "return-in-struct-lit", when: t => t.kind === "big", extra: () => `fn f(n: i64): i64 {\n    let b = ${BIGJ("return 7")}\n    print(b.name)\n    return 0\n}\n`, body: () => `print(f(1))\n    print(f(2))` });
+add({ op: "pending-jump", repr: "break-in-call-args", extra: t => `fn two(x: ${t.T}, y: ${t.T}) { sh(x)\n    sh(y) }\n`, body: () => `var n = 0\n    while n < 3 {\n        n = n + 1\n        two(mk(n), if n == 2 { break } else { mk(9) })\n    }\n    print(n)` });
+add({ op: "pending-jump", repr: "continue-in-vec-literal", body: t => `var n = 0\n    while n < 3 {\n        n = n + 1\n        let v: Vec<${t.T}> = [mk(n), if n == 2 { continue } else { mk(9) }]\n        sh(v[1])\n    }\n    print(n)` });
+
 for (const tm of T_) {
   for (const tc of TCS) {
     if (tm.when && !tm.when(tc)) continue;
-    const sub = (s: string) => s.replace(/%T%/g, tc.T);
-    cells.push({ op: tm.op, repr: tm.repr, tc, extra: sub(tm.extra?.(tc) ?? ""), body: sub(tm.body(tc)), exp: tm.exp?.(tc) });
+    const sub = (s: string) => callInPlace(tc, s.replace(/%T%/g, tc.T));
+    const extra = sub(tm.extra?.(tc) ?? ""), body = sub(tm.body(tc));
+    if (extra === null || body === null) continue;
+    cells.push({ op: tm.op, repr: tm.repr, tc, extra, body, exp: tm.exp?.(tc) });
   }
 }
 
@@ -265,3 +378,22 @@ console.log("| op | repr | type | status | message |\n|---|---|---|---|---|");
 for (const r of list) console.log(`| ${r.op} | ${r.repr} | ${r.type} | ${r.status}${r.expected ? ` (expected reject: ${r.expected})` : ""} | ${r.message.replace(/\|/g, "\\|")} |`);
 const n = (s: Status) => list.filter(r => r.status === s).length;
 console.log(`\ncells: ${n("covered")} covered, ${n("refused")} refused, ${n("WRONG")} WRONG, ${n("no oracle")} no oracle, ${n("rejected")} rejected`);
+
+if (argv.includes("--update-baseline")) {
+  if (filter) { console.error("--update-baseline needs a full run (no --filter)"); process.exit(2); }
+  const base = { refused: n("refused"), wrong: n("WRONG"), covered: list.filter(r => r.status === "covered").map(r => r.name) };
+  writeFileSync(BASELINE, JSON.stringify(base, null, 1) + "\n");
+  console.log(`baseline written: ${base.covered.length} covered, ${base.refused} refused`);
+}
+if (argv.includes("--check")) {
+  const base = JSON.parse(readFileSync(BASELINE, "utf-8")) as { refused: number; wrong: number; covered: string[]; knownWrong?: Record<string, string> };
+  const status = new Map(list.map(r => [r.name, r.status]));
+  // A filtered run only judges the cells it ran; a full run also fails on a cell that vanished.
+  const lost = base.covered.filter(c => (filter ? new RegExp(filter).test(c) : true) && status.get(c) !== "covered");
+  // knownWrong: WRONG cells already triaged (name -> why); only a NEW WRONG fails the check.
+  const wrong = list.filter(r => r.status === "WRONG" && !(r.name in (base.knownWrong ?? {})));
+  for (const c of lost) console.error(`REGRESSED: ${c} (${status.get(c) ?? "missing"})`);
+  for (const r of wrong) console.error(`WRONG: ${r.name}: ${r.message}`);
+  if (n("refused") > base.refused) console.error(`note: refused ${n("refused")} > baseline ${base.refused} (not fatal)`);
+  process.exit(lost.length || wrong.length ? 1 : 0);
+}
