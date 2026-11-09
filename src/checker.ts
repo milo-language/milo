@@ -792,6 +792,22 @@ function applyWarningDefaults(config: WarningConfig): void {
 }
 
 
+// The name an identifier expression spells, else null. A function that rewrites its argument calls this
+// instead of narrowing the argument, so the argument stays the whole Expr for `replaceNode`.
+function identNameOf(e: Expr): string | null {
+  // ident-ok: reads the NAME of a bare identifier, the rewrite emits a call by name
+  return e.kind === "Ident" ? e.name : null;
+}
+
+// Whole-value replacement of an AST node through the place that owns it (identity, and so every map keyed by
+// the node, is kept). ts2milo emits `*target = next` plus the node's hidden id; this body is not translated.
+// An absent optional field stays absent (`typeArgs: undefined` is dropped), as the old spread did.
+export function replaceNode(target: Expr, next: Expr): void {
+  const t = target as unknown as Record<string, unknown>;
+  for (const k of Object.keys(t)) delete t[k];
+  for (const [k, v] of Object.entries(next)) if (v !== undefined) t[k] = v;
+}
+
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
@@ -6160,23 +6176,15 @@ export class TypeChecker {
   // callback; coerceCopyCallback covers literals and named fns, not locals.
   private thunkByValueFnValue(arg: Expr, element: TypeKind, arity: number): void {
     // ident-ok: the rewrite emits a call by NAME (`f(p0)`), so only a fn value bound to a name qualifies
-    if (arg.kind !== "Ident") return;
-    const t = this.lookup(arg.name)?.type;
+    const fnName = identNameOf(arg);
+    if (fnName === null) return;
+    const t = this.lookup(fnName)?.type;
     if (t?.tag !== "fn" || t.params.length !== arity || !this.isCopyType(element)) return;
     if (!t.params.every(p => typeEq(p, element))) return;
-    const span = arg.span;
-    const names = t.params.map((_, i) => `__cb${i}`);
-    const call: Expr = { kind: "Call", func: arg.name, args: names.map(name => ({ kind: "Ident", name, span })), span };
     const elemRef: TypeKind = { tag: "ref", inner: element, mutable: false };
-    const thunk: Expr = {
-      kind: "Closure",
-      params: names.map(name => ({ name, type: this.typeKindToMiloType(elemRef), span })),
-      retType: t.ret.tag === "void" ? null : this.typeKindToMiloType(t.ret),
-      body: [t.ret.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
-      span,
-    };
-    for (const k of Object.keys(arg)) delete (arg as unknown as Record<string, unknown>)[k];
-    Object.assign(arg, thunk);
+    const paramTypes: TypeKind[] = [];
+    for (const _p of t.params) paramTypes.push(elemRef);
+    replaceNode(arg, this.callbackThunk(fnName, paramTypes, t.ret, arg.span));
   }
 
   // After the adaptations above, a callback std/vec would call with `&T` that still takes
@@ -7792,30 +7800,35 @@ export class TypeChecker {
 
   // Substitute resolved placeholders through `t`; returns `t` itself when nothing changed.
   private resolveInfer(t: TypeKind): TypeKind {
-    switch (t.tag) {
-      case "unknown": {
-        if (t.inferId === undefined) return t;
-        const r = this.inferred[t.inferId];
-        return r === undefined ? t : this.resolveInfer(r);
-      }
-      case "ptr": case "ref": case "heap": {
-        const inner = this.resolveInfer(t.inner);
-        return inner === t.inner ? t : { ...t, inner };
-      }
-      case "vec": case "array": {
-        const element = this.resolveInfer(t.element);
-        return element === t.element ? t : { ...t, element };
-      }
-      case "hashmap": {
-        const key = this.resolveInfer(t.key), value = this.resolveInfer(t.value);
-        return key === t.key && value === t.value ? t : { ...t, key, value };
-      }
-      case "fn": case "cfn": {
-        const params = t.params.map(p => this.resolveInfer(p)), ret = this.resolveInfer(t.ret);
-        return ret === t.ret && params.every((p, i) => p === t.params[i]) ? t : { ...t, params, ret };
-      }
-      default: return t;
+    if (t.tag === "unknown") {
+      if (t.inferId === undefined) return t;
+      const r = this.inferred[t.inferId];
+      return r === undefined ? t : this.resolveInfer(r);
     }
+    if (t.tag === "ptr" || t.tag === "ref" || t.tag === "heap") {
+      const inner = this.resolveInfer(t.inner);
+      return inner === t.inner ? t : { ...t, inner };
+    }
+    if (t.tag === "vec" || t.tag === "array") {
+      const element = this.resolveInfer(t.element);
+      return element === t.element ? t : { ...t, element };
+    }
+    if (t.tag === "hashmap") {
+      const key = this.resolveInfer(t.key), value = this.resolveInfer(t.value);
+      return key === t.key && value === t.value ? t : { ...t, key, value };
+    }
+    if (t.tag === "fn" || t.tag === "cfn") {
+      const params: TypeKind[] = [];
+      let changed = false;
+      for (const p of t.params) {
+        const q = this.resolveInfer(p);
+        if (q !== p) changed = true;
+        params.push(q);
+      }
+      const ret = this.resolveInfer(t.ret);
+      return !changed && ret === t.ret ? t : { ...t, params, ret };
+    }
+    return t;
   }
 
   // Every holder of a type that contained the placeholder sees the resolution: bindings,
@@ -10260,16 +10273,24 @@ export class TypeChecker {
   private static readonly PRELUDE_VARIANTS = new Map<string, string>([["Some", "Option"], ["None", "Option"], ["Ok", "Result"], ["Err", "Result"]]);
 
   private canonicalizePreludeVariant(expr: Expr): void {
-    if (expr.kind !== "Call" && expr.kind !== "Ident") return;
-    if (expr.kind === "Call" && expr.sigil) return;
-    const variant = expr.kind === "Call" ? expr.func : expr.name;
+    const next = this.preludeVariantNode(expr);
+    if (next) replaceNode(expr, next);
+  }
+
+  // The EnumLit `expr` canonicalizes to, or null. Separate from the replacement so that `expr` is
+  // never narrowed where it is replaced.
+  private preludeVariantNode(expr: Expr): Expr | null {
+    let variant = "";
+    let args: Expr[] = [];
+    let typeArgs: ExprOf<"Call">["typeArgs"] = undefined;
+    let aliasable = false;
+    if (expr.kind === "Call") { aliasable = !expr.sigil; variant = expr.func; args = expr.args; typeArgs = expr.typeArgs; }
+    if (expr.kind === "Ident") { aliasable = true; variant = expr.name; }
     const enumName = TypeChecker.PRELUDE_VARIANTS.get(variant);
-    if (!enumName || this.nameIsDefined(variant)) return;
-    const args = expr.kind === "Call" ? expr.args : [];
-    const typeArgs = expr.kind === "Call" ? expr.typeArgs : undefined;
-    const node = expr as unknown as Record<string, unknown>;
-    for (const k of Object.keys(node)) if (k !== "span") delete node[k];
-    Object.assign(node, { kind: "EnumLit", enumName, variant, args, ...(typeArgs && { typeArgs }) });
+    if (aliasable && enumName !== undefined && !this.nameIsDefined(variant)) {
+      return { kind: "EnumLit", enumName, variant, args, typeArgs, span: expr.span };
+    }
+    return null;
   }
 
   private nameIsDefined(name: string): boolean {
@@ -12366,42 +12387,56 @@ export class TypeChecker {
   // and refused as before: taking it by value would move it out of the container.
   private coerceCopyCallback(arg: Expr, paramType: TypeKind): void {
     const want = paramType.tag === "ref" ? paramType.inner : paramType;
-    if (want.tag !== "fn") return;
-    const copyRef = (t: TypeKind | undefined): TypeKind | null =>
-      t?.tag === "ref" && !t.mutable && this.isCopyType(t.inner) ? t.inner : null;
+    if (want.tag === "fn") this.coerceCopyCallbackTo(arg, want.params);
+  }
+
+  private copyRefInner(t: TypeKind): TypeKind | null {
+    if (t.tag === "ref" && !t.mutable && this.isCopyType(t.inner)) return t.inner;
+    return null;
+  }
+
+  private coerceCopyCallbackTo(arg: Expr, wantParams: TypeKind[]): void {
     if (arg.kind === "Closure") {
-      if (arg.params.length !== want.params.length) return;
-      arg.params.forEach((p, i) => {
-        const inner = copyRef(want.params[i]);
-        if (!inner || !p.type || p.type.isRef || p.type.isRefMut || p.type.isPtr) return;
-        if (typeEq(this.resolve(p.type), inner)) p.type = { ...p.type, isRef: true };
-      });
+      if (arg.params.length === wantParams.length) {
+        for (let i = 0; i < arg.params.length; i++) {
+          const p = arg.params[i]!;
+          const inner = this.copyRefInner(wantParams[i]!);
+          if (inner !== null && p.type && !p.type.isRef && !p.type.isRefMut && !p.type.isPtr && typeEq(this.resolve(p.type), inner)) p.type = { ...p.type, isRef: true };
+        }
+      }
       return;
     }
     // ident-ok: asks whether the NAME is a top-level fn (not shadowed by a local), not a place
-    if (arg.kind !== "Ident" || this.lookup(arg.name)) return;
-    const sig = this.functions.get(arg.name);
-    if (!sig || sig.params.length !== want.params.length) return;
+    const fnName = identNameOf(arg);
+    if (fnName === null || this.lookup(fnName)) return;
+    const sig = this.functions.get(fnName);
+    if (!sig || sig.params.length !== wantParams.length) return;
     let adapted = false;
-    const params = sig.params.map((p, i) => {
-      const inner = copyRef(want.params[i]);
-      if (inner && typeEq(p.type, inner)) { adapted = true; return want.params[i]!; }
-      return p.type;
-    });
+    const paramTypes: TypeKind[] = [];
+    for (let i = 0; i < sig.params.length; i++) {
+      const inner = this.copyRefInner(wantParams[i]!);
+      if (inner !== null && typeEq(sig.params[i]!.type, inner)) { adapted = true; paramTypes.push(wantParams[i]!); }
+      else paramTypes.push(sig.params[i]!.type);
+    }
     if (!adapted) return;
-    const span = arg.span;
-    const names = params.map((_, i) => `__cb${i}`);
-    const call: Expr = { kind: "Call", func: arg.name, args: names.map(name => ({ kind: "Ident", name, span })), span };
-    const thunk: Expr = {
-      kind: "Closure",
-      params: names.map((name, i) => ({ name, type: this.typeKindToMiloType(params[i]!), span })),
-      retType: sig.ret.tag === "void" ? null : this.typeKindToMiloType(sig.ret),
-      body: [sig.ret.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
-      span,
-    };
     // In place: the parent's args array holds this node, and lowering reads the AST.
-    for (const k of Object.keys(arg)) delete (arg as unknown as Record<string, unknown>)[k];
-    Object.assign(arg, thunk);
+    replaceNode(arg, this.callbackThunk(fnName, paramTypes, sig.ret, arg.span));
+  }
+
+  // `(__cb0: T0, ...) => f(__cb0, ...)`.
+  private callbackThunk(fnName: string, paramTypes: TypeKind[], ret: TypeKind, span: Span | undefined): Expr {
+    const args: Expr[] = [];
+    const params: ExprOf<"Closure">["params"] = [];
+    for (let i = 0; i < paramTypes.length; i++) {
+      const name = `__cb${i}`;
+      args.push({ kind: "Ident", name, span });
+      params.push({ name, type: this.typeKindToMiloType(paramTypes[i]!), span });
+    }
+    const call: Expr = { kind: "Call", func: fnName, args, span };
+    const stmt: Stmt = ret.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span };
+    let retType: MiloType | null = null;
+    if (ret.tag !== "void") retType = this.typeKindToMiloType(ret);
+    return { kind: "Closure", params, retType, body: [stmt], span };
   }
 
   private checkCallArg(arg: Expr, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {

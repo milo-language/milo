@@ -210,6 +210,13 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
 
   const declOf = (call: ts.CallExpression | ts.NewExpression): ts.SignatureDeclaration | undefined => checker.getResolvedSignature(call)?.declaration as ts.SignatureDeclaration | undefined;
   const isThrower = (d: ts.Node) => (ts.isFunctionDeclaration(d) || ts.isMethodDeclaration(d)) && d.type?.kind === ts.SyntaxKind.NeverKeyword;
+  // `replaceNode(target, next)` (src/checker.ts): a whole-value replacement of an AST node through the place that owns it,
+  // translated as an assignment through the `&mut` place that keeps the node's hidden id. Its own body is not translated.
+  const isReplaceNode = (n: ts.Node): n is ts.CallExpression => {
+    if (!ts.isCallExpression(n) || !ts.isIdentifier(n.expression) || n.expression.text !== "replaceNode" || n.arguments.length !== 2) return false;
+    const d = declOf(n);
+    return !!d && ts.isFunctionDeclaration(d) && inputSet.has(d.getSourceFile().fileName);
+  };
   const throwing = new Set<ts.Node>();
   // --lenient: functions a whole-program pass could not handle; emitFn stubs them with the reason.
   const forceStub = new Map<ts.Node, string>();
@@ -262,6 +269,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) {
       return ts.isIdentifier(n.operand) ? null : rootOf(n.operand);
     }
+    if (isReplaceNode(n)) return rootOf(n.arguments[0]);
     if (ts.isCallExpression(n)) {
       const k = calleeKey(program, checker, n);
       if (k === "Array.push" || k === "Array.pop" || k === "Set.add" || k === "Map.set") return rootOf((n.expression as ts.PropertyAccessExpression).expression);
@@ -2041,6 +2049,21 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         line(`${ex(e.operand)} ${e.operator === ts.SyntaxKind.PlusPlusToken ? "+=" : "-="} 1`);
         return;
       }
+      if (isReplaceNode(e)) {
+        const target = e.arguments[0];
+        const declared = checker.getTypeAtLocation(declOf(e)!.parameters[0]);
+        const tu = unionOfType(checker, declared);
+        if (!tu) return fail(e, "replaceNode of a value that is not a tagged union");
+        if (narrow.has(target.getText()) || !ts.isIdentifier(unparen(target))) return fail(e, "replaceNode through a guard-narrowed or non-parameter place");
+        hit("node replacement", "assigned through the `&mut` place, keeping the node's hidden id");
+        const file = tu.decl.getSourceFile().fileName;
+        const place = ex(target);
+        const keep = astModel.identity.has(tu.name) ? fresh("id") : "";
+        if (keep) line(`let ${keep} = ${useDeclared(`${tu.name}_${ID_FIELD}`, file, e)}(${place})`);
+        line(`${place} = ${ownConv(e.arguments[1], declared)}`);
+        if (keep) line(`${useDeclared(`${tu.name}_set_${ID_FIELD}`, file, e)}(&mut ${place}, ${keep})`);
+        return;
+      }
       if (ts.isCallExpression(e)) {
         const d = declOf(e);
         if (d && isThrower(d)) {
@@ -2154,6 +2177,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const emitFn = (fn: ts.FunctionLikeDeclaration, name: string, isMethod: boolean, exported: boolean) => {
       // An overload signature has no body; only the implementation is emitted.
       if (!fn.body) return;
+      if (name === "replaceNode" && ts.isFunctionDeclaration(fn) && !isMethod) return; // the intrinsic isReplaceNode translates at its call sites
       const ovPath = join(overridesDir, `${fileBase}.${name}.milo`);
       if (existsSync(ovPath)) {
         hit("override", "whole function replaced by hand");
