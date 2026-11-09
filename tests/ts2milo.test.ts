@@ -26,6 +26,23 @@ describe("ts2milo", () => {
     expect(out.match(/fn f\(/g)?.length).toBe(1);
   });
 
+  test("a constructor of this.f = e statements initializes the fields; any other statement stubs it", () => {
+    const ok = tmpTs("tsm_ctor.ts", "export class C {\n  private n: number;\n  constructor(a: number) {\n    this.n = a + 1;\n  }\n}\n");
+    const r = transpile([ok.file], { overridesDir: join(ok.dir, "none"), lenient: true });
+    expect(r.files.get("tsm_ctor.milo")!).toContain("n: (a + 1)");
+    const bad = tmpTs("tsm_ctor2.ts", "export class D {\n  private n = 0;\n  constructor(a: number) {\n    if (a > 0) { this.n = a; }\n  }\n}\n");
+    const r2 = transpile([bad.file], { overridesDir: join(bad.dir, "none"), lenient: true });
+    expect(r2.stubs.some((s) => s.name === "D.new" && /constructor body statement/.test(s.reason))).toBe(true);
+  });
+
+  test("for-of over map.keys() and new Set(map.keys()) map", () => {
+    const { file, dir } = tmpTs("tsm_keys.ts", "export function f(m: Map<string, number>): number {\n  let n = 0;\n  for (const k of m.keys()) { n += k.length; }\n  return new Set(m.keys()).size + n;\n}\n");
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const out = r.files.get("tsm_keys.milo")!;
+    expect(out).toContain(".keys() {");
+    expect(out).toContain("HashSet.fromVec(");
+  });
+
   test("a plain function maps and is counted automatic", () => {
     const { file, dir } = tmpTs("tsm_add.ts", "export function add(a: number, b: number): number {\n  return a + b;\n}\n");
     const r = transpile([file], { overridesDir: join(dir, "none") });
@@ -1027,11 +1044,14 @@ describe("narrowing inside expressions and after early exits", () => {
 });
 
 describe("class fields set in the constructor body", () => {
-  test("are refused by name instead of emitted as a literal null", () => {
-    const { file } = tmpTs("tsm_ctor.ts", `export class Box { private n: number; constructor() { this.n = 1; } get(): number { return this.n; } }\n`);
+  test("a plain this.f = e is the field's initializer, never a literal null; logic in the body is refused by name", () => {
+    const { file } = tmpTs("tsm_ctor3.ts", `export class Box { private n: number; constructor() { this.n = 1; } get(): number { return this.n; } }\n`);
     const r = transpile([file], { overridesDir: join(tmpdir(), "none-ctor"), lenient: true });
-    expect(r.files.get("tsm_ctor.milo")!).not.toContain("n: null");
-    expect(r.stubs.some((s) => s.name === "Box.new" && s.reason.includes("constructor body"))).toBe(true);
+    expect(r.files.get("tsm_ctor3.milo")!).not.toContain("n: null");
+    expect(r.files.get("tsm_ctor3.milo")!).toContain("n: 1");
+    const { file: f2 } = tmpTs("tsm_ctor4.ts", `export class Box2 { private n: number = 0; constructor(a: number) { if (a > 0) { this.n = a; } } }\n`);
+    const r2 = transpile([f2], { overridesDir: join(tmpdir(), "none-ctor"), lenient: true });
+    expect(r2.stubs.some((s) => s.name === "Box2.new" && s.reason.includes("constructor body"))).toBe(true);
   });
 });
 
