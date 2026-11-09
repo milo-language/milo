@@ -6,6 +6,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
+import { ID_FIELD, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -395,8 +396,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (ed) return useDeclared(ed.name.text, ed.getSourceFile().fileName, at);
       const tu = unionOfType(checker, t);
       if (tu) { hit("tagged union", "enum with one struct-carrying variant per kind"); return useDeclared(tu.name, tu.decl.getSourceFile().fileName, at); }
-      if (t.symbol?.name === "Map") {
+      if (t.symbol?.name === "Map" || t.symbol?.name === "ReadonlyMap" || t.symbol?.name === "WeakMap") {
         const [k, v] = checker.getTypeArguments(t as ts.TypeReference);
+        if (nodeKeyOf(checker, k)) { hit("Map keyed by a node", "HashMap<i64, V> keyed by the node id"); return `HashMap<i64, ${ty(v, at)}>`; }
         hit("Map<K, V>", "HashMap<K, V>");
         return `HashMap<${ty(k, at)}, ${ty(v, at)}>`;
       }
@@ -413,7 +415,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const inner = onCycle(core) ? `Heap<${ty(core, at)}>` : ty(core, at);
         return `Vec<${isOptionT(el) ? `Option<${inner}>` : inner}>`;
       }
-      if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet") return `${std("HashSet")}<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
+      if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet" || t.symbol?.name === "WeakSet") {
+        const k = checker.getTypeArguments(t as ts.TypeReference)[0];
+        if (nodeKeyOf(checker, k)) { hit("Set keyed by a node", "HashSet<i64> of node ids"); return `${std("HashSet")}<i64>`; }
+        return `${std("HashSet")}<${ty(k, at)}>`;
+      }
       const d = t.symbol?.declarations?.[0];
       if (d && (ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d))) return useDeclared(d.name!.text, d.getSourceFile().fileName, at);
       const anon = d && ts.isTypeLiteralNode(d) ? anonStructs.get(d) : undefined;
@@ -445,6 +451,20 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     // Narrowing. Inside `if (x.kind === "K")` the guarded expression reads as the variant's struct,
     // and inside `if (p !== undefined)` as the Option's payload; both are bound by an `if let`.
     // Keyed by source text, so a path like `e.args[i]` narrows as a whole.
+    // The id of a node value: a union reads it through `U_id(&u)`, a struct has the field.
+    const idEx = (x: ts.Expression, k0: NodeKey): string => {
+      // A guard-narrowed place is bound to the variant's payload struct; any other place holds the declared union.
+      const gu = narrow.has(x.getText()) ? null : guardUnion(checker, x);
+      const k: NodeKey = gu ? { name: gu.name, union: gu } : nodeKeyOf(checker, tOf(x)) ?? k0;
+      return idOf(x, k);
+    };
+    const idOf = (x: ts.Expression, k: NodeKey): string => k.union ? `${useDeclared(`${k.name}_${ID_FIELD}`, k.union.decl.getSourceFile().fileName, x)}(${ex(x)})` : `${ex(x)}.${ID_FIELD}`;
+    // The key argument of a Map/Set call: the node id when the container is keyed by nodes.
+    const keyEx = (recv: ts.Expression, arg: ts.Expression, own = false): string => {
+      const rt = tOf(recv);
+      const k = nodeKeyOfContainer(checker, rt);
+      return k ? idEx(arg, k) : own ? ownConv(arg, checker.getTypeArguments(rt as ts.TypeReference)[0]) : ex(arg);
+    };
     const narrow = new Map<string, { name: string; deref: boolean }>();
     // Locals bound by `for (const x of array)` over boxed elements: each reads as `*x`.
     const elemBoxed = new Set<ts.Symbol>();
@@ -745,11 +765,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           case "StringConstructor.fromCodePoint": return `${useRuntime("jsFromCodePoint", c)}(${ex(a[0])})`;
           case "Number.toString": return a.length ? `${useRuntime("jsNumRadix", c)}(${ex(recv!)}, ${ex(a[0])})` : `${useRuntime("jsNum", c)}(${ex(recv!)})`;
           case "Array.push": return `${ex(recv!)}.push(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
-          case "Set.has": case "ReadonlySet.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
-          case "Set.add": return `${ex(recv!)}.add(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
-          case "Map.get": return `${ex(recv!)}.get(${ex(a[0])})`;
-          case "Map.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
-          case "Map.set": { const [kt, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${ownConv(a[0], kt)}, ${ownConv(a[1], vt)})`; }
+          case "Set.has": case "ReadonlySet.has": case "WeakSet.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
+          case "Set.add": case "WeakSet.add": return `${ex(recv!)}.add(${keyEx(recv!, a[0], true)})`;
+          case "Set.delete": case "WeakSet.delete": case "Map.delete": case "WeakMap.delete": return `${ex(recv!)}.remove(${keyEx(recv!, a[0])})`;
+          case "Map.get": case "ReadonlyMap.get": case "WeakMap.get": return `${ex(recv!)}.get(${keyEx(recv!, a[0])})`;
+          case "Map.has": case "ReadonlyMap.has": case "WeakMap.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
+          case "Map.set": case "WeakMap.set": { const [, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${keyEx(recv!, a[0], true)}, ${ownConv(a[1], vt)})`; }
           case "parseInt": if (!a[1]) fail(c, "parseInt without a radix"); return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
           // Only the single-argument forms the runtime helpers implement exactly; anything else (a position, a regex, a limit) stays refused.
@@ -846,11 +867,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         case ts.SyntaxKind.NewExpression: {
           const n = e as ts.NewExpression;
           const t = tOf(n);
-          if (t.symbol?.name === "Set") {
+          if (t.symbol?.name === "Set" || t.symbol?.name === "WeakSet") {
+            if (nodeKeyOfContainer(checker, t) && n.arguments?.length) fail(n, "iteration over node-identity keys (new Set from a collection)");
             hit("new Set([...])", "HashSet.fromVec");
             return n.arguments?.length ? `${std("HashSet")}.fromVec(${ownConv(n.arguments[0])})` : `${std("HashSet")}.new()`;
           }
-          if (t.symbol?.name === "Map") { hit("new Map()", "HashMap.new()"); return "HashMap.new()"; }
+          if (t.symbol?.name === "Map" || t.symbol?.name === "WeakMap") { hit("new Map()", "HashMap.new()"); return "HashMap.new()"; }
           hit("new Class(...)", "Class.new(...), defaults filled");
           const d = t.symbol.declarations![0] as ts.ClassDeclaration;
           return `${useDeclared(d.name!.text, d.getSourceFile().fileName, e)}.new(${args(n, true)})`;
@@ -867,6 +889,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             const l = unparen(b.left);
             const lt = checker.getNonNullableType(tOf(l));
             return chainFold(l, eq ? "false" : "true", (v) => `(${v} ${eq ? "==" : "!="} ${ex(b.right, litsOf(lt) ? lt : undefined)})`, false);
+          }
+          const nc = nodeCompare(checker, b);
+          if (nc) {
+            hit("=== on nodes", "compare node ids");
+            return `(${idEx(b.left, nc[0])} ${op === ts.SyntaxKind.EqualsEqualsEqualsToken ? "==" : "!="} ${idEx(b.right, nc[1])})`;
           }
           if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
             const sym = op === ts.SyntaxKind.EqualsEqualsEqualsToken ? "==" : "!=";
@@ -919,6 +946,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
               }
               return `${safeId(fname)}: ${val}`;
             });
+            if (astModel.identity.has(v.name)) vfields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
             return `${uname}.${pascal(v.kind)}(${sname} { ${vfields.join(", ")} })`;
           }
           const d = t.symbol?.declarations?.[0] as ts.InterfaceDeclaration | ts.TypeLiteralNode | undefined;
@@ -932,6 +960,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
             return `${safeId(fname)}: ${v}`;
           });
+          if (ts.isInterfaceDeclaration(d!) && astModel.identity.has(d.name.text) && inputSet.has(d.getSourceFile().fileName)) fields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
           return `${name} { ${fields.join(", ")} }`;
         }
         case ts.SyntaxKind.ArrayLiteralExpression: {
@@ -1047,11 +1076,12 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
           if (!ts.isVariableDeclarationList(f.initializer) || !ts.isIdentifier(f.initializer.declarations[0].name)) fail(f, "for-of with a destructuring or non-declaration head");
-          if (!checker.isArrayType(tOf(f.expression))) fail(f, "for-of over something other than an array");
+          const mv = mapValuesRecv(checker, f.expression);
+          if (!mv && !checker.isArrayType(tOf(f.expression))) fail(f, "for-of over something other than an array");
           const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
           const sym = symOf(d.name as ts.Identifier)!;
-          const arr = ex(f.expression);
-          const el = checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
+          const arr = mv ? `${ex(mv)}.values()` : ex(f.expression);
+          const el = mv ? checker.getTypeArguments(tOf(mv) as ts.TypeReference)[1] : checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
           hit("for-of over an array", "for x in array (borrowed elements)");
           push();
           const name = declareLocal(sym, (d.name as ts.Identifier).text);
@@ -1309,12 +1339,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const tu = taggedUnionOf(checker, n);
         if (tu && file !== astFile && tu.variants.every((v) => ts.isTypeLiteralNode(v.decl))) {
           hit("tagged union of inline types", "enum + one struct per variant + common-field accessors");
-          const fieldsOfV = (v: (typeof tu.variants)[number]) => v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== tu.field).map((m) => {
+          const idF = astModel.identity.has(tu.name) ? [{ name: ID_FIELD, ty: "i64" }] : [];
+          const fieldsOfV = (v: (typeof tu.variants)[number]) => idF.concat(v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== tu.field).map((m) => {
             const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : checker.getTypeAtLocation(m);
             let t = ty(pt, m);
             if (astModel.boxed.has(m)) t = isOptionT(pt) ? `Option<Heap<${ty(checker.getNonNullableType(pt), m)}>>` : `Heap<${t}>`;
             return { name: mname(m.name), ty: t };
-          });
+          }));
           const per = tu.variants.map(fieldsOfV);
           tu.variants.forEach((v, i) => {
             line(`${pub}struct ${v.name} {`);
@@ -1381,6 +1412,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             ind--; line("}"); ind--;
             line("}");
           }
+          if (astModel.identity.has(nu.name)) {
+            line(`${pub}fn ${nu.name}_${ID_FIELD}(e: &${nu.name}): i64 {`);
+            ind++; line("return match e {"); ind++;
+            for (const m of nu.members!) line(`${nu.name}.${m.name}(p) => ${m.union ? `${useDeclared(`${m.name}_${ID_FIELD}`, memberFile(m), n)}(p)` : `p.${ID_FIELD}`},`);
+            ind--; line("}"); ind--;
+            line("}");
+          }
         }
       } else if (ts.isInterfaceDeclaration(n)) {
         hit("interface", "struct");
@@ -1392,6 +1430,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         if (astModel.cloneable.has(n.name.text)) line("@derive(Clone)");
         line(`${pub}struct ${n.name.text} {`);
         ind++;
+        if (astModel.identity.has(n.name.text)) line(`${ID_FIELD}: i64,`);
         for (const m of n.members.filter(ts.isPropertySignature)) {
           const t = checker.getTypeAtLocation(m);
           const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : t;

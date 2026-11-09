@@ -772,3 +772,58 @@ describe("ts-portable", () => {
     expect(over).toEqual([]);
   }, 60_000); // one TypeScript program over every frontend file: ~1.5s idle, 7s+ on a loaded machine
 });
+
+describe("node identity", () => {
+  const body = [
+    "export type N = { kind: \"a\"; v: number } | { kind: \"b\"; w: number };",
+    "export interface Leaf { n: number }",
+    "export function run(): number {",
+    "  const a: N = { kind: \"a\", v: 1 };",
+    "  const b: N = { kind: \"b\", w: 2 };",
+    "  const l1: Leaf = { n: 5 };",
+    "  const l2: Leaf = { n: 5 };",
+    "  const m = new Map<N, number>();",
+    "  m.set(a, 10);",
+    "  m.set(b, 20);",
+    "  const s = new Set<Leaf>();",
+    "  s.add(l1);",
+    "  let r = 0;",
+    "  if (m.has(a) && (m.get(b) ?? 0) === 20) { r += 1; }",
+    "  if (s.has(l1) && !s.has(l2)) { r += 2; }",
+    "  if (a === a && a !== b) { r += 4; }",
+    "  if (l1 !== l2) { r += 8; }",
+    "  for (const v of m.values()) { r += v; }",
+    "  m.delete(a);",
+    "  if (!m.has(a)) { r += 100; }",
+    "  return r;",
+    "}",
+  ].join("\n") + "\n";
+
+  test("a Map and Set keyed by nodes, === on nodes and value iteration build and run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const ts = join(dir, "tsm_id.ts");
+    writeFileSync(ts, body);
+    const r = transpile([ts], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    const out = r.files.get("tsm_id.milo")!;
+    expect(out).toContain("HashMap<i64, i64>");
+    expect(out).toContain("ts2miloNextId()");
+    writeFileSync(join(dir, "main.milo"), ["from \"./tsm_id\" import { run }", "fn main(): i32 {", "    if run() != 145 { return 1 }", "    return 0", "}"].join("\n") + "\n");
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+
+  test("iterating the keys of a node-keyed Map or Set is refused with its reason", () => {
+    for (const use of ["for (const k of m.keys()) { n += 1; }", "for (const k of s) { n += 1; }", "m.forEach(() => { n += 1; });"]) {
+      const { file } = tmpTs("tsm_idk.ts", [
+        "export interface Leaf { n: number }",
+        "export function f(m: Map<Leaf, number>, s: Set<Leaf>): number {",
+        "  let n = 0;",
+        `  ${use}`,
+        "  return n;",
+        "}",
+      ].join("\n") + "\n");
+      expect(() => transpile([file], { overridesDir: "/nonexistent" })).toThrow("iteration over node-identity keys");
+    }
+  });
+});

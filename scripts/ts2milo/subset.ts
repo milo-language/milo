@@ -14,10 +14,13 @@ export interface Violation {
 // Library members the transpiler maps to runtime calls, keyed "<Owner>.<member>".
 export const BUILTIN_CALLS = new Set([
   "String.charCodeAt", "String.slice", "StringConstructor.fromCharCode", "StringConstructor.fromCodePoint",
-  "Number.toString", "Array.push", "Set.has", "ReadonlySet.has", "Set.add", "Map.get", "Map.set", "Map.has", "parseInt", "String()",
+  "Number.toString", "Array.push", "Set.has", "ReadonlySet.has", "Set.add", "Map.get", "Map.set", "Map.has",
+  "Map.values", "ReadonlyMap.values", "Set.delete", "Map.delete", "ReadonlyMap.get", "ReadonlyMap.has", "WeakMap.get", "WeakMap.set", "WeakMap.has", "WeakMap.delete", "WeakSet.has", "WeakSet.add", "WeakSet.delete", "parseInt", "String()",
   "String.startsWith", "String.endsWith", "String.includes", "String.indexOf", "String.lastIndexOf", "String.split", "String.trim",
   "String.charAt", "String.replace", "String.replaceAll", "Array.join",
 ]);
+
+import { mapValuesRecv, nodeKeyOfContainer } from "./node-identity";
 
 const K = ts.SyntaxKind;
 
@@ -362,7 +365,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     if (ts.isTypeReferenceNode(n)) {
       const t = checker.getTypeFromTypeNode(n);
       const name = n.typeName.getText();
-      if (name === "Array" || name === "Set" || name === "ReadonlySet" || name === "Map") { return; }
+      if (name === "Array" || name === "Set" || name === "ReadonlySet" || name === "Map" || name === "ReadonlyMap" || name === "WeakMap" || name === "WeakSet") { return; }
       if (n.typeArguments) bad(n, `generic type ${name}`);
       else if (!isProjectSymbolType(t, (d) => ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d) || ts.isEnumDeclaration(d) || ts.isTypeAliasDeclaration(d))) {
         bad(n, `type ${name}`);
@@ -485,16 +488,17 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         if (c.typeArguments) bad(n, "explicit type arguments");
         if (c.arguments.some(ts.isSpreadElement)) bad(n, "spread argument");
         const key = calleeKey(program, checker, c);
+        const recvT = ts.isPropertyAccessExpression(c.expression) ? checker.getTypeAtLocation(c.expression.expression) : null;
         const cl = arrayClosureCall(program, checker, c);
         if (cl !== null) { if (typeof cl === "string") bad(n, cl); }
-        else if (key !== null && !BUILTIN_CALLS.has(key)) bad(n, `library call ${key}`);
+        else if (key !== null && !BUILTIN_CALLS.has(key)) bad(n, recvT && /\.(keys|entries|forEach)$/.test(key) && nodeKeyOfContainer(checker, recvT) ? `iteration over node-identity keys (${key})` : `library call ${key}`);
         else if (key === null && !ts.isIdentifier(c.expression) && !(ts.isPropertyAccessExpression(c.expression))) bad(n, "call of a computed callee");
         return;
       }
       case K.NewExpression: {
         const e = n as ts.NewExpression;
         const t = checker.getTypeAtLocation(e);
-        const isSet = (t.symbol?.name === "Set" || t.symbol?.name === "Map");
+        const isSet = (t.symbol?.name === "Set" || t.symbol?.name === "Map" || t.symbol?.name === "WeakMap" || t.symbol?.name === "WeakSet");
         if (!isSet && !isProjectSymbolType(t, (d) => ts.isClassDeclaration(d))) bad(n, "new of a non-project class");
         return;
       }
@@ -561,8 +565,10 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.ForOfStatement: {
         // `for (const x of array)` borrows each element in turn: the way to walk a Vec of boxed nodes.
         const f = n as ts.ForOfStatement;
+        const src = ts.isCallExpression(f.expression) && ts.isPropertyAccessExpression(f.expression.expression) && f.expression.expression.name.text !== "values" ? f.expression.expression.expression : f.expression;
+        if (nodeKeyOfContainer(checker, checker.getTypeAtLocation(src))) { bad(n, "iteration over node-identity keys (for-of)"); return; }
         const one = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 && ts.isIdentifier(f.initializer.declarations[0].name);
-        if (!one || !isArr(checker.getTypeAtLocation(f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
+        if (!one || !(isArr(checker.getTypeAtLocation(f.expression)) || mapValuesRecv(checker, f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
         return;
       }
       case K.ArrowFunction: {

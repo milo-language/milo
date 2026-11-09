@@ -9,6 +9,15 @@
 // (src/diagnostics.ts, src/ast.ts) also live here, mirroring those interfaces.
 from "std/unicode" import { decodeCodepoint }
 
+// Node identity: every struct that TypeScript uses as a Map/Set key or compares with `===` carries a
+// fresh id (scripts/ts2milo/node-identity.ts). A copy keeps the id, as a reference does in TypeScript.
+var ts2miloIdCounter: i64 = 0
+
+pub fn ts2miloNextId(): i64 {
+    ts2miloIdCounter += 1
+    return ts2miloIdCounter
+}
+
 pub fn jsLen(s: &string): i64 {
     return s.len / 2
 }
