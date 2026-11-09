@@ -3860,8 +3860,10 @@ export class TypeChecker {
       // The file a renamed symbol came from, when exactly one file declared it.
       const origins = new Map<string, string>();
       for (const sym of this._displayNames.keys()) {
-        const files = this.declOrigins?.types.get(sym)?.files ?? this.declOrigins?.values.get(sym)?.files;
-        if (files?.size === 1) origins.set(sym, basename([...files][0]));
+        const declaredType = this.declOrigins?.types.get(sym);
+        const declaredValue = this.declOrigins?.values.get(sym);
+        const files = declaredType !== undefined ? declaredType.files : declaredValue?.files;
+        if (files !== undefined && files.size === 1) origins.set(sym, basename([...files][0]));
       }
       for (const d of this.diagnostics) {
         d.message = displayQualified(this._displayNames, d.message, origins);

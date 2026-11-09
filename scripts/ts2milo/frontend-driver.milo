@@ -50,7 +50,7 @@ fn main() {
                         match resolveImports(&mut parsed, dir, target, entry) {
                             Result.Ok(resolved) => {
                                 var rp = resolved
-                                var tc = TypeChecker.new()
+                                var tc = TypeChecker.new(Option.None)
                                 match tc.check(&mut rp) {
                                     Result.Ok(res) => {
                                         var out: string = "{\"diagnostics\":["

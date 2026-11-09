@@ -880,6 +880,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const t = checker.getNonNullableType(tOf(n));
       return chainFold(n, `${useRuntime("optNone", n)}<${ty(t, n)}>()`, (v) => `Option.Some(${v})`, true);
     };
+    // The left side of a `place ?? []` loop head whose body never writes the loop variable: iterating a clone is unobservable.
+    let roNullishLeft: ts.Expression | null = null;
     const nullish = (b: ts.BinaryExpression): string => {
       const mode = nullishHandled(checker, b) ?? fail(b, "?? outside the subset");
       hit("nullish coalescing", mode === "value" ? "Milo ?? (the default runs only when absent)" : "if isSome, else the default");
@@ -887,6 +889,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const l = unparen(b.left);
       const dflt = ownConv(b.right, rt);
       if (isChainMember(l)) return mode === "value" ? chainFold(l, dflt, (v) => v, true) : chainFold(l, dflt, (v) => `Option.Some(${v})`, true);
+      if (l === roNullishLeft) roDest = true;
       if (mode === "value") return `(${conv(l, tOf(l), true)} ?? ${dflt})`;
       return `(if ${ex(l)}.isSome() { ${conv(l, tOf(l), true)} } else { ${dflt} })`;
     };
@@ -1617,12 +1620,17 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         case ts.SyntaxKind.ForOfStatement: {
           const f = s as ts.ForOfStatement;
           if (!ts.isVariableDeclarationList(f.initializer) || !ts.isIdentifier(f.initializer.declarations[0].name)) fail(f, "for-of with a destructuring or non-declaration head");
-          const mv = mapValuesRecv(checker, f.expression);
+          // Map.values() / Map.keys(): a Vec copy in slot order, not insertion order (a body that depends on the order is wrong).
+          const mk = mapValuesRecv(checker, f.expression, "keys");
+          const mv = mapValuesRecv(checker, f.expression) ?? mk;
           if (!mv && !checker.isArrayType(tOf(f.expression))) fail(f, "for-of over something other than an array");
           const d = (f.initializer as ts.VariableDeclarationList).declarations[0];
           const sym = symOf(d.name as ts.Identifier)!;
-          const arr = mv ? `${ex(mv)}.values()` : ex(f.expression);
-          const el = mv ? checker.getTypeArguments(tOf(mv) as ts.TypeReference)[1] : checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
+          const he = unparen(f.expression);
+          if (!mv && ts.isBinaryExpression(he) && he.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken && !forOfMutates(f)) roNullishLeft = unparen(he.left);
+          const arr = mv ? `${ex(mv)}.${mk ? "keys" : "values"}()` : ex(f.expression);
+          roNullishLeft = null;
+          const el = mv ? checker.getTypeArguments(tOf(mv) as ts.TypeReference)[mk ? 0 : 1] : checker.getTypeArguments(tOf(f.expression) as ts.TypeReference)[0];
           hit("for-of over an array", "for x in array (borrowed elements)");
           push();
           const name = declareLocal(sym, (d.name as ts.Identifier).text);
