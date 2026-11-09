@@ -525,7 +525,8 @@ class GlueFn {
         const tag = this.def(`milo.enum.tag ${this.def(`milo.ptr.load ${p} : ${ety}`)} : ${ety}`);
         for (const v of owning) {
           this.emit(`milo.if ${this.def(`milo.cmp eq, ${tag}, ${this.def(`milo.const ${v.tag} : si32`)} : si32`)} {`);
-          v.fields.forEach((f, j) => this.dropAt(f, this.at(p, v.offsets[j]), structural));
+          // Payloads drop last-first, like struct fields; the interpreter does the same.
+          for (let j = v.fields.length - 1; j >= 0; j--) this.dropAt(v.fields[j], this.at(p, v.offsets[j]), structural);
           this.emit("milo.yield");
           this.emit("}");
         }
