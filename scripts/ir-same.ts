@@ -70,9 +70,19 @@ if (!rev.ok) {
 const sha = rev.out;
 const short = sha.slice(0, 12);
 const baseTree = join(tmpdir(), `milo-ir-same-${short}`);
+// Both trees run this checkout's milo-opt: a fresh base worktree has no mlir/build, and
+// every base emit would fail. So the gate compares src/ at two commits through one
+// milo-opt; a change to mlir/*.cpp is outside what it checks.
+const MILO_OPT = process.env.MILO_OPT ?? join(ROOT, "mlir", "build", "milo-opt");
+if (!existsSync(MILO_OPT)) {
+  console.error(`ir-same: no milo-opt at ${MILO_OPT}; build it with \`sh mlir/build.sh\``);
+  process.exit(2);
+}
 // Keyed by flags too: the same commit emits different IR under -g or another target.
-// The ledger env vars change the IR the same way (emit-ir inherits this env).
-const keyParts = [...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`)];
+// The ledger env vars change the IR the same way (emit-ir inherits this env), and so does
+// a rebuilt milo-opt (its mtime and size stand in for its identity).
+const optStat = statSync(MILO_OPT);
+const keyParts = [...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
 const flagKey = keyParts.length ? "-" + Bun.hash(keyParts.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
 
@@ -134,7 +144,7 @@ type Emit = { ok: true; ir: string } | { ok: false; err: string };
 
 async function emit(tree: string, rel: string): Promise<Emit> {
   // Each tree must resolve std from itself, so an inherited MILO_ROOT is dropped.
-  const env = { ...process.env };
+  const env = { ...process.env, MILO_OPT };
   delete env.MILO_ROOT;
   let r;
   for (let attempt = 1; ; attempt++) {
