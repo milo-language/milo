@@ -248,3 +248,36 @@ backend change so that recursive struct types print by name. Either is a decisio
 before stage 2 (the parser), not a mechanical step. The gate builds
 and deletes everything it generates (`bun scripts/ts2milo-mut-diff.ts`, about 25 minutes over the
 whole corpus, mostly the Milo process over multi-MB dumps).
+
+## Stage 4: pilot at checker scale, rule fixed 2026-11-08 before the result
+
+The full AST builds in Milo since 2026-11-08 (`TS2MILO_AST_ALL_FIELDS=1`: 100/100 same over the
+first 100 corpus programs), so the stage 3 blocker is gone. What is left is scale: 15,812
+non-portable constructs in 26 files, 6,723 of them in `src/checker.ts`. Whether that is weeks or
+months is measured on one file before the rest is started.
+
+**Pilot:** `src/checker-program-passes.ts` (2.3k lines, 1,875 violations, 22 node-keyed
+collections, 30 closures past the codemod tiers). Done when it has 0 violations, is generated, and
+its findings are identical to the TypeScript over the corpus.
+
+**Where each kind of fix goes** (decided, so the TypeScript does not get worse to please the tool):
+- Type-directed spellings with one obvious meaning in Milo go into `ts2milo` as rules: truthiness of
+  a non-boolean (`if (x)` on an optional, a string, a number), `?.`, `??`, `switch`. These are about
+  half the count, and rewriting them by hand into `x !== undefined && x !== ""` would make `src/`
+  worse.
+- Shapes Milo cannot express change in the TypeScript: object identity (node-keyed collections
+  become `id`-indexed tables), closures that write captured state (`bun scripts/ts-closure-tiers.ts`:
+  19 hard, 103 more to check, out of 1,426), field assignments on AST nodes.
+
+**Stop if any of these holds after the pilot** (then the refactors and compiler fixes stay, `src/`
+remains the compiler, and this plan records why):
+1. Effort per 1,000 violations removed, extrapolated over the remaining count, exceeds 8 weeks.
+2. Less than 90% of the pilot's functions are generated automatically (no override).
+3. The refactors make `src/` worse: the pilot file grows by more than 10%, or the owner rejects the
+   diff on reading it.
+4. The generated pass is more than 3x slower than the TypeScript, or runs out of memory (6 GB guard)
+   on the largest corpus program.
+
+Gates for every step: `bun scripts/ir-same.ts --emit mlir` (byte-identical milo dialect; the base is
+cached, so a rerun only re-emits the working tree) on the fixtures a change can reach, the
+portability ratchet in `tests/ts2milo.test.ts`, and the differential gate for generated files.
