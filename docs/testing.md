@@ -157,7 +157,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->1088<!-- /stat --> fixtures, <!-- stat:error-fixtures -->768<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->52<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->1091<!-- /stat --> fixtures, <!-- stat:error-fixtures -->768<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->52<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -212,7 +212,7 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `skillText.test.ts` | every ```` ```milo ```` fence in `milo skill` output type-checks; its std module list covers `std/` |
 | `header.test.ts` | generated C header correctness |
 | `embedded.test.ts` | embedded/no-runtime target |
-| `fileSizeRatchet.test.ts` | no `src/*.ts` over 1500 lines grows past `file-size-baseline.json` (smaller files have no entry and cap at 1500); rebaseline with `bun scripts/file-size-ratchet.ts --update` |
+| `fileSizeRatchet.test.ts` | no `src/*.ts` grows past `file-size-baseline.json`; new files cap at 1500 lines; rebaseline with `bun scripts/file-size-ratchet.ts --update` |
 | `browser.test.ts` | std/browser against a real headless Chrome (viewport, color scheme, evaluate, PNG size); skipped, with the reason printed, when no Chrome is installed |
 
 Keep this table current — it's the map reviewers and the sweep skill use to reason about coverage.

@@ -1,0 +1,33 @@
+// @expect: 2
+// @expect: 101
+// @expect: drop 1
+// @expect: drop 101
+// A match arm that yields its own binding moves the payload into the match's value: the
+// arm end must not drop it (the vec is still read afterwards and dropped once, at scope end).
+struct D { id: i64 }
+
+impl Drop for D {
+    fn drop(self: &mut Self): void { print("drop " + self.id.toString()) }
+}
+
+fn mk(n: i64): Vec<D> {
+    var v: Vec<D> = Vec.new()
+    v.push(D { id: n })
+    v.push(D { id: n + 100 })
+    return v
+}
+
+fn sh(x: &Vec<D>) {
+    print(x.len.toString())
+    print(x[1].id)
+}
+
+pub fn main(): i32 {
+    let o: Option<Vec<D>> = Some(mk(1))
+    let a = match o {
+        Some(x) => x,
+        None => mk(2),
+    }
+    sh(a)
+    return 0
+}

@@ -267,7 +267,7 @@ parks, yields or ends: nothing preempts it, so no operation needs a lock.
 | R-TASK-SCOPE | `Task.scope` runs its body, then parks the caller until every task spawned on the scope has ended. |
 | R-TASK-DRAIN | `schedulerRunToCompletion` parks the caller until it is the only task left. |
 | R-TASK-PANIC | A panic in a task that is not main and is inside no `Task.scope` retires that task (its message goes to stderr, its frames are abandoned) and the program goes on; any other panic aborts the program. |
-| R-TASK-BLOCKING | A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread. |
+| R-TASK-BLOCKING | A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread. The first blocking-pool job allocates the pool, one heap block that stays live until the program exits. |
 | R-TIME | Time is a virtual clock in milliseconds. `sleepMs` parks the task until the clock reaches now + ms; the clock moves only when no task is ready, to the earliest wake time. `sleepMs(0)` yields. |
 | S-DEADLOCK | If no task is ready and none sleeps, the run stops with a stuck error naming each parked task and what it waits for. |
 | R-CHAN | A Channel is a queue of at most `capacity` values. `send` on a full channel parks the sender, `recv` on an empty one parks the receiver. A task that parks joins the head of its wait list and a wake takes the head (the library's lists are stacks), so the latest waiter wakes first. A wake only readies the waiter, which rechecks its condition when it runs; `send` does not switch tasks. `close` wakes every waiter; queued values are still delivered, then `recv` returns Err. The last owner to drop destroys the queued values. |

@@ -230,7 +230,12 @@ export class Interp {
         for (const e of v.m.values()) { this.dropValue(e.key.v); this.dropValue(e.val.v); }
         if (v.buf !== null) this.free(v.buf);
         return;
-      case "closure": if (v.owning) for (const c of v.env) if (!isRef(c.slot.v)) this.dropValue(c.slot.v); return;
+      case "closure":
+        if (v.owning) {
+          for (const c of v.env) if (!isRef(c.slot.v)) this.dropValue(c.slot.v);
+          if (v.envId !== undefined) this.free(v.envId);
+        }
+        return;
       case "handle": v.o.release(this); return;
       default: return;
     }
@@ -447,6 +452,7 @@ export class Interp {
       case "box": return { ...v, ghost: true };
       case "map": return { ...v, view: true };
       case "handle": return { ...v, ghost: true };
+      case "iface": return { ...v, inner: this.viewOf(v.inner) };
       default: return v;
     }
   }
@@ -479,6 +485,7 @@ export class Interp {
       case "struct": { const f: Record<string, Value> = {}; for (const n of Object.keys(v.f)) f[n] = this.deepClone(v.f[n]!); return { k: "struct", name: v.name, f }; }
       case "enum": return { ...v, a: v.a.map(x => this.deepClone(x)) };
       case "arr": return { k: "arr", e: v.e.map(x => this.deepClone(x)) };
+      case "iface": return { ...v, inner: this.deepClone(v.inner) };
       case "box": return { k: "box", id: this.alloc(), cell: { v: this.deepClone(v.cell.v) } };
       case "map": {
         const c: MapV = { k: "map", buf: null, m: new Map() };
@@ -694,7 +701,7 @@ export class Interp {
       case "Closure": return this.closure(e);
       case "IsExpr": return this.patternMatches(e.pattern, this.peek(e.operand));
       case "IfExpr": return this.ifExpr(e);
-      case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return this.matchCore(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue(a.body, owns) }))); }
+      case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return this.matchCore(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue(a.body, owns, true) }))); }
       case "RangeExpr": return this.unsupported("range outside a for-in");
     }
     const _exhaustive: never = e; return _exhaustive;
@@ -1014,7 +1021,8 @@ export class Interp {
     });
   }
   // the value of a block: its last expression, moved out before the block's variables drop
-  blockValue(stmts: Stmt[], owns = false): Value {
+  blockValue(stmts: Stmt[], owns = false, armBody = false): Value {
+    const armScope = armBody ? this.frame.scopes[this.frame.scopes.length - 1] : undefined;
     const scope: Scope = [];
     this.frame.scopes.push(scope);
     try {
@@ -1030,6 +1038,8 @@ export class Interp {
           if (v && typeof v === "object" && v !== MOVED && !isStr(v) && !this.copyable(v) && v.k !== "ref" && v.k !== "mut") {
             if (!owns) return this.viewOf(v);
             // E-FORK-OWN: a Drop type's place arm is consumed by the fork, any other type's is cloned
+            // a match arm's own binding (payload moved out of the subject) moves into the fork: cloning it would drop the original at arm end
+            if (armScope && pl.path.length === 0 && !pl.viaRef && !pl.ro && armScope.some(b => b.slot === pl.slot)) { this.setPlace(pl, MOVED); return v; }
             const drops = (v.k === "struct" && this.dropImpls.has(v.name)) || (v.k === "enum" && this.dropImpls.has(v.en));
             if (drops && !pl.viaRef && !pl.ro) { this.setPlace(pl, MOVED); return v; }
             return this.deepClone(v);
@@ -1116,7 +1126,7 @@ export class Interp {
     });
     const ft = this.rawT(e);
     const ret = ft?.tag === "fn" ? ft.ret : { tag: "void" as const };
-    return { k: "closure", params: e.params.map(p => p.name), paramRefs: e.params.map((_, i) => ft?.tag === "fn" && ft.params[i]?.tag === "ref"), body: e.body, env, owning, ret };
+    return { k: "closure", params: e.params.map(p => p.name), paramRefs: e.params.map((_, i) => ft?.tag === "fn" && ft.params[i]?.tag === "ref"), body: e.body, env, owning, ret, ...(owning && env.length ? { envId: this.alloc() } : {}) };
   }
 
   // ── calls from source ──

@@ -247,7 +247,7 @@ export class InterpGen extends Interp {
       case "Closure": return this.closure(e);
       case "IsExpr": return this.patternMatches(e.pattern, (yield* this.peek$g(e.operand)));
       case "IfExpr": return (yield* this.ifExpr$g(e));
-      case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return (yield* this.matchCore$g(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue$g(a.body, owns) })))); }
+      case "MatchExpr": { const owns = this.forkOwns(e.arms.map(a => a.body)); return (yield* this.matchCore$g(e.subject, e.arms.map(a => ({ pattern: a.pattern, run: () => this.blockValue$g(a.body, owns, true) })))); }
       case "RangeExpr": return this.unsupported("range outside a for-in");
     }
     const _exhaustive: never = e; return _exhaustive;
@@ -424,7 +424,8 @@ export class InterpGen extends Interp {
     this.dropTemps(mark);
     return (yield* this.blockValue$g(c ? e.thenBody : e.elseBody, this.forkOwns([e.thenBody, e.elseBody])));
   }
-  *blockValue$g(stmts: Stmt[], owns = false): Gen {
+  *blockValue$g(stmts: Stmt[], owns = false, armBody = false): Gen {
+    const armScope = armBody ? this.frame.scopes[this.frame.scopes.length - 1] : undefined;
     const scope: Scope = [];
     this.frame.scopes.push(scope);
     try {
@@ -440,6 +441,8 @@ export class InterpGen extends Interp {
           if (v && typeof v === "object" && v !== MOVED && !isStr(v) && !this.copyable(v) && v.k !== "ref" && v.k !== "mut") {
             if (!owns) return this.viewOf(v);
             // E-FORK-OWN: a Drop type's place arm is consumed by the fork, any other type's is cloned
+            // a match arm's own binding (payload moved out of the subject) moves into the fork: cloning it would drop the original at arm end
+            if (armScope && pl.path.length === 0 && !pl.viaRef && !pl.ro && armScope.some(b => b.slot === pl.slot)) { this.setPlace(pl, MOVED); return v; }
             const drops = (v.k === "struct" && this.dropImpls.has(v.name)) || (v.k === "enum" && this.dropImpls.has(v.en));
             if (drops && !pl.viaRef && !pl.ro) { this.setPlace(pl, MOVED); return v; }
             return this.deepClone(v);

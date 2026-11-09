@@ -12,6 +12,7 @@
 //                                                        on one program (needs 0 errors)
 import { readdirSync } from "fs";
 import { join } from "path";
+import ts from "typescript";
 import { frontendFiles } from "./ts-portable";
 import { transpile } from "./ts2milo";
 
@@ -97,6 +98,33 @@ const perFile = new Map<string, number>();
 for (const k of seen.keys()) { const f = k.split(":")[0]; perFile.set(f, (perFile.get(f) ?? 0) + 1); }
 for (const [f, n] of [...perFile].sort((a, b) => b[1] - a[1])) console.log(`${String(n).padStart(5)}  ${f}   first: ${firstOf.get(f) ?? ""}`);
 console.log(`translated ${translated} of ${r.functions.length} functions, ${r.stubs.length} stubs${stubNames.size ? ` (${stubNames.size} of them compile-error stubs)` : ""}`);
+// Line-weighted meter: a function count hides that the few big checker/emit functions hold most of the
+// code, so size each function by its TS line count. Keys match the transpiler's names: `file::name`,
+// `file::Class.name`, `file::Class.new` for a constructor. Only top-level functions and class members
+// are sized (a nested function's lines already count in its parent).
+const sizes = new Map<string, number>();
+for (const f of files) {
+  const sf = ts.createSourceFile(f, await Bun.file(join(ROOT, f)).text(), ts.ScriptTarget.Latest, true);
+  const size = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.end).line - sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.body && st.name) sizes.set(`${f}::${st.name.text}`, size(st));
+    else if (ts.isClassDeclaration(st) && st.name) {
+      for (const m of st.members) {
+        if (ts.isMethodDeclaration(m) && m.body) sizes.set(`${f}::${st.name.text}.${m.name.getText(sf)}`, size(m));
+        else if (ts.isConstructorDeclaration(m) && m.body) sizes.set(`${f}::${st.name.text}.new`, size(m));
+      }
+    }
+  }
+}
+const stageOf = (f: string) => (/checker/.test(f) ? "checker" : /resolver/.test(f) ? "resolver" : /emit-|mlir-|backend-program|scaffold/.test(f) ? "emit" : "lexparse");
+const stubKeys = r.stubs.map((s) => `${s.file}::${s.name}`);
+const stubbedSizes = new Set<string>();
+for (const k of sizes.keys()) if (stubKeys.some((s) => s === k || (!sizes.has(s) && k.startsWith(s.split("::")[0] + "::") && k.endsWith("." + s.split("::")[1])))) stubbedSizes.add(k);
+for (const stage of ["lexparse", "checker", "resolver", "emit"]) {
+  let total = 0, stubbedLines = 0;
+  for (const [k, n] of sizes) if (stageOf(k.split("::")[0]) === stage) { total += n; if (stubbedSizes.has(k)) stubbedLines += n; }
+  console.log(`${stage}: stubbed lines ${stubbedLines} of ${total} (${total ? ((100 * stubbedLines) / total).toFixed(1) : "0.0"}%)`);
+}
 if (process.env.DUMP_ERRORS) await Bun.write(process.env.DUMP_ERRORS, [...seen.keys()].sort().join("\n"));
 console.log(`COMPILE ERRORS: ${seen.size}`);
 if (top) {

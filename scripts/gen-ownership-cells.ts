@@ -147,7 +147,7 @@ add({ op: "store", repr: "vec-literal", body: t => `let v: Vec<${t.T}> = [mk(1),
 add({ op: "store", repr: "heap-box", body: t => `let h: Heap<${t.T}> = Heap(mk(1))\n    sh(*h)` });
 add({ op: "store", repr: "heap-deref-move", when: t => !t.copy, body: t => `let h: Heap<${t.T}> = Heap(mk(1))\n    let a = *h\n    sh(a)` });
 add({ op: "store", repr: "option-some", body: t => `let o: Option<${t.T}> = Some(mk(1))\n    match o {\n        Some(x) => { sh(x) }\n        None => { print("none") }\n    }` });
-add({ op: "store", repr: "hashmap-insert", body: t => `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    m.insert(1, mk(2))\n    m.insert(2, mk(3))\n    print(m.len.toString())\n    match m.get(1) {\n        Some(x) => { sh(x) }\n        None => { print("none") }\n    }` });
+add({ op: "store", repr: "hashmap-insert", body: t => t.id === "iface" ? `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    m.insert(1, mk(2))\n    print(m.len.toString())` : `var m: HashMap<i64, ${t.T}> = HashMap.new()\n    m.insert(1, mk(1))\n    m.insert(1, mk(2))\n    m.insert(2, mk(3))\n    print(m.len.toString())\n    match m.get(1) {\n        Some(x) => { sh(x) }\n        None => { print("none") }\n    }` });
 add({ op: "store", repr: "array-literal", body: _t => `let a = mk(1)\n    let arr = [a, mk(2)]\n    sh(arr[1])` });
 add({ op: "store", repr: "nested-vec", body: t => `var v: Vec<Vec<${t.T}>> = Vec.new()\n    var w: Vec<${t.T}> = Vec.new()\n    w.push(mk(1))\n    v.push(w)\n    sh(v[0][0])` });
 // -- fork

@@ -370,7 +370,7 @@
     },
     {
       "id": "R-TASK-BLOCKING",
-      "text": "A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread.",
+      "text": "A blocking-pool job or OS thread (`Promise.blocking`) runs as one more task: the interpreter has no second thread. The first blocking-pool job allocates the pool, one heap block that stays live until the program exits.",
       "parent": "SEM-11",
       "source": "docs/semantics/milo.md §Tasks, channels and atomics"
     },
