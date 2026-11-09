@@ -1060,14 +1060,18 @@ export class Parser {
     const tmpId = this.destructureCount;
     if (!isPlace) this.destructureCount += 1;
     const tmp = isPlace ? "" : `_destructure${tmpId}`;
-    if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
-    const source: Expr = isPlace ? value : { kind: "Ident", name: tmp, span: s };
+    // Each read gets its own source node: the checker keys its per-expression maps by node identity.
+    // A place is copied per field; a temporary is bound once (first) and each read names it afresh.
+    const reads: Stmt[] = [];
     for (const f of fields) {
+      const source: Expr = isPlace ? this.cloneExpr(value) : { kind: "Ident", name: tmp, span: s };
       const read: Expr = { kind: "FieldAccess", object: source, field: f.field, span: f.span };
-      out.push(mutable
+      reads.push(mutable
         ? { kind: "VarDecl", name: f.name, type: null, value: read, span: f.span }
         : { kind: "LetDecl", name: f.name, type: null, value: read, span: f.span });
     }
+    if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
+    out.push(...reads);
     return out;
   }
 
@@ -1300,16 +1304,20 @@ export class Parser {
     const last = body.pop();
     if (last === undefined) return;
     if (last.kind === "IfStmt" && last.elseBody) {
-      this.valueTailToExpr(last.thenBody);
-      this.valueTailToExpr(last.elseBody);
-      const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: last.thenBody, elseBody: last.elseBody, span: last.span };
+      // The branches are taken out of the narrowed statement into locals, which the recursion then mutates.
+      const thenB = last.thenBody;
+      const elseB = last.elseBody;
+      this.valueTailToExpr(thenB);
+      this.valueTailToExpr(elseB);
+      const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: thenB, elseBody: elseB, span: last.span };
       body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
       return;
     }
     if (last.kind === "MatchStmt") {
       // Same for a tail `match`; its arms become value arms in turn.
-      for (const arm of last.arms) this.valueTailToExpr(arm.body);
-      const asExpr: Expr = { kind: "MatchExpr", subject: last.subject, arms: last.arms, span: last.span };
+      const arms = last.arms;
+      for (const arm of arms) this.valueTailToExpr(arm.body);
+      const asExpr: Expr = { kind: "MatchExpr", subject: last.subject, arms, span: last.span };
       body.push({ kind: "ExprStmt", expr: asExpr, span: last.span });
       return;
     }
@@ -1411,10 +1419,25 @@ export class Parser {
     this.expect(TokenKind.RBrace);
     const elseBody: Stmt[] = [{ kind: "BreakStmt", span: s }];
     const only = clauses[0];
-    const inner: Stmt = clauses.length === 1 && only?.kind === "LetClause"
-      ? { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody: body, elseBody, span: s }
-      : { kind: "IfChainStmt", clauses, thenBody: body, elseBody, span: s };
-    return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [inner], span: s };
+    if (clauses.length === 1 && only?.kind === "LetClause") {
+      // Copies, not moves: the clause list is still borrowed here. Same shape and spans as the originals.
+      const inner: Stmt = { kind: "IfLetStmt", pattern: structuredClone(only.pattern), subject: this.cloneExpr(only.subject), thenBody: body, elseBody, span: s };
+      return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [inner], span: s };
+    }
+    const chain: Stmt = { kind: "IfChainStmt", clauses: structuredClone(clauses), thenBody: body, elseBody, span: s };
+    return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [chain], span: s };
+  }
+
+  // The operand of a `&mut x` marker (a copy), or null for any other expression.
+  private mutRefOperand(e: Expr): Expr | null {
+    if (e.kind === "UnaryOp" && e.op === "&mut") return this.cloneExpr(e.operand);
+    return null;
+  }
+
+  // The receiver of `.codePoints()` (a copy), or null for any other expression.
+  private codePointsSubject(e: Expr): Expr | null {
+    if (e.kind === "MethodCall" && e.method === "codePoints" && e.args.length === 0) return this.cloneExpr(e.object);
+    return null;
   }
 
   private parseFor(): Stmt {
@@ -1426,23 +1449,23 @@ export class Parser {
       varName2 = this.expect(TokenKind.Ident).value;
     }
     this.expectSoftKw("in");
-    let iterableOrStart = this.parseExpr();
+    const firstExpr = this.parseExpr();
     // `for x in &mut v`: the `&mut` arrives as the call-argument marker; here it means
     // "bind each element mutably" and is lifted onto the statement.
-    let mutRef = false;
-    if (iterableOrStart.kind === "UnaryOp" && iterableOrStart.op === "&mut") {
-      mutRef = true;
-      iterableOrStart = iterableOrStart.operand;
-    }
+    const unwrapped = this.mutRefOperand(firstExpr);
+    const mutRef = unwrapped !== null;
+    const iterableOrStart: Expr = unwrapped !== null ? unwrapped : firstExpr;
     const rangeEnd = this.match(TokenKind.DotDot) ? this.parseExpr() : null;
-    const iterable: Expr = rangeEnd !== null ? { kind: "RangeExpr", start: iterableOrStart, end: rangeEnd, span: iterableOrStart.span } : iterableOrStart;
+    const startSpan = iterableOrStart.span;
+    const iterable: Expr = rangeEnd !== null ? { kind: "RangeExpr", start: iterableOrStart, end: rangeEnd, span: startSpan } : iterableOrStart;
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    if (iterable.kind === "MethodCall" && iterable.method === "codePoints" && iterable.args.length === 0) {
+    const cpSubject = this.codePointsSubject(iterable);
+    if (cpSubject !== null) {
       if (mutRef) this.error(`'for ${varName} in &mut' iterates a Vec, array or slice; code points are computed values with nothing to write back to`, this.tokens[this.pos - 1]);
-      return this.desugarCodePointsLoop(varName, varName2, iterable.object, body, s, invariants);
+      return this.desugarCodePointsLoop(varName, varName2, cpSubject, body, s, invariants);
     }
     return { kind: "ForInStmt", varName, varName2, iterable, invariants, body, mutRef: mutRef ? mutRef : undefined, span: s };
   }
@@ -1475,23 +1498,23 @@ export class Parser {
     // A place expression is read in situ; anything else is a temporary that must
     // be bound once, or `.len` and each decode would re-evaluate it. Binding a
     // place would MOVE it — and a borrow can't be bound to a local at all.
-    let src = subject;
-    if (subject.kind !== "Ident" && subject.kind !== "FieldAccess" && subject.kind !== "IndexAccess") {
-      const tmp = `__cpSrc${uid}`;
-      pre.push({ kind: "LetDecl", name: tmp, type: null, value: subject, span: s });
-      src = id(tmp);
-    }
+    // Each use below gets its own node (a place is copied, a temporary is named afresh).
+    const isPlace = subject.kind === "Ident" || subject.kind === "FieldAccess" || subject.kind === "IndexAccess";
+    const tmp = `__cpSrc${uid}`;
+    const decodeSrc: Expr = isPlace ? this.cloneExpr(subject) : id(tmp);
+    const lenSrc: Expr = isPlace ? this.cloneExpr(subject) : id(tmp);
+    if (!isPlace) pre.push({ kind: "LetDecl", name: tmp, type: null, value: this.cloneExpr(subject), span: s });
     pre.push({ kind: "VarDecl", name: cursor, type: i64Type, value: int(0), span: s });
 
     const loopBody: Stmt[] = [
       { kind: "LetDecl", name: decoded, type: null,
         // cloned: the checker keys its per-expression maps (types, moves,
         // auto-borrows) by node identity, so one node cannot sit in two places
-        value: { kind: "Call", func: "decodeCodepoint", args: [this.cloneExpr(src), id(cursor)], span: s }, span: s },
+        value: { kind: "Call", func: "decodeCodepoint", args: [decodeSrc, id(cursor)], span: s }, span: s },
     ];
     // The index binding is the offset of the codepoint just decoded, so it must
     // be taken BEFORE the cursor advances.
-    if (varName2) {
+    if (varName2 !== null) {
       loopBody.push({ kind: "LetDecl", name: varName, type: null, value: id(cursor), span: s });
       loopBody.push({ kind: "LetDecl", name: varName2, type: null,
         value: { kind: "FieldAccess", object: id(decoded), field: "value", span: s }, span: s });
@@ -1507,12 +1530,13 @@ export class Parser {
                right: { kind: "FieldAccess", object: id(decoded), field: "size", span: s }, span: s },
       span: s,
     });
-    loopBody.push(...body);
+    // A copy: `body` is borrowed here, and the caller's list is dropped after the call.
+    loopBody.push(...structuredClone(body));
 
     pre.push({
       kind: "WhileStmt",
-      cond: { kind: "BinOp", op: "<", left: id(cursor), right: { kind: "FieldAccess", object: this.cloneExpr(src), field: "len", span: s }, span: s },
-      invariants, body: loopBody, span: s,
+      cond: { kind: "BinOp", op: "<", left: id(cursor), right: { kind: "FieldAccess", object: lenSrc, field: "len", span: s }, span: s },
+      invariants: structuredClone(invariants), body: loopBody, span: s,
     });
     // `if true` is just a scope: it keeps the cursor and any subject temporary
     // from leaking into the enclosing block. There is no bare-block statement.

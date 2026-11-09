@@ -656,6 +656,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const inOtherBranch = (n: ts.Node) => {
         for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p); p = p.parent) {
           if (ts.isIfStatement(p) && p.elseStatement && id.pos >= p.thenStatement.pos && id.end <= p.thenStatement.end && n.pos >= p.elseStatement.pos && n.end <= p.elseStatement.end) return true;
+          // Likewise the two arms of a ternary: only one is evaluated.
+          if (ts.isConditionalExpression(p) && id.pos >= p.whenTrue.pos && id.end <= p.whenTrue.end && n.pos >= p.whenFalse.pos && n.end <= p.whenFalse.end) return true;
         }
         return false;
       };
@@ -1044,6 +1046,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           // The generated AST holds every `number` as i64, so a float literal keeps its integer part only (a known parser-diff gap until the AST has an f64).
           // TS numbers are i64 in the generated code: a float would silently lose its fraction, so refuse until f64 exists.
           // parseFloat yields an f64, which only an `f64`-typed destination (ast.ts's alias) can hold; the lexer's number text is plain decimal/exponent, so strtod agrees with JS.
+          // A deep copy sharing nothing, which is what a derived Clone is (heap fields cloned). The copy is
+          // a fresh owned value, so unlike a place copied out of a borrow it needs no read-only destination.
+          case "structuredClone": if (a.length !== 1 || !canClone(tOf(a[0]))) return fail(c, "structuredClone of a value with no derived Clone"); return `${ex(a[0])}.clone()`;
           case "parseFloat": if (a.length !== 1 || !isStr(a[0])) return fail(c, "parseFloat of other than one string"); return `${useRuntime("jsParseFloat", c)}(${ex(a[0])})`;
           case "Number": return fail(c, "Number/parseFloat on a value that may not be an integer (no f64 numbers in the generated code yet)");
           case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
