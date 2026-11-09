@@ -97,12 +97,12 @@ export class MutScan {
     if (this.mode === 0 && this.mutated.has(id)) { this.mark(id); }
   }
 
-  visitIdent(n: Ident, id: number, parent: Parent, key: EdgeKey, index: number): void {
+  visitIdent(n: Ident, _id: number, parent: Parent, key: EdgeKey, index: number): void {
     if (this.mode === 2) { this.values.add(n.name); }
     if (this.mode === 3 && n.name === this.watch && !this.readsOnly(parent, key, index)) { this.escapes = true; }
   }
 
-  visitClosure(n: ClosureExpr, id: number, parent: Parent, key: EdgeKey, index: number): void {
+  visitClosure(_n: ClosureExpr, id: number, _parent: Parent, _key: EdgeKey, _index: number): void {
     if (this.mode !== 0) { return; }
     const at = this.capIdx.get(id);
     if (at !== undefined) {
@@ -114,7 +114,7 @@ export class MutScan {
     }
   }
 
-  visitVarDecl(n: VarDecl, id: number, parent: Parent, key: EdgeKey, index: number): void {
+  visitVarDecl(n: VarDecl, _id: number, _parent: Parent, _key: EdgeKey, _index: number): void {
     if (this.mode === 1 && n.span !== undefined) {
       const k = spanKey(n.span);
       const at = this.varIndex.get(k);
@@ -129,7 +129,7 @@ export class MutScan {
 
   // Every argument of a resolved call is a call site; the same span seen again (a generic
   // body checked once per instance) replaces the earlier entry but keeps its position.
-  visitCall(n: Call, id: number, parent: Parent, key: EdgeKey, index: number): void {
+  visitCall(n: Call, id: number, _parent: Parent, _key: EdgeKey, _index: number): void {
     const at = this.callIdx.get(id);
     if (this.mode === 2 && at !== undefined && this.facts.calls[at].callee !== "") {
       let k = 0;
@@ -151,30 +151,30 @@ export class MutScan {
     }
   }
 
-  afterAssign(n: Assign, id: number, kids: number[]): void {
+  afterAssign(_n: Assign, _id: number, kids: number[]): void {
     if (this.mode === 0) { this.mark(kids[0]); }
   }
 
   // A struct iterated by value is an iterator: the loop calls its mutating next().
-  afterForInStmt(n: ForInStmt, id: number, kids: number[]): void {
+  afterForInStmt(n: ForInStmt, _id: number, kids: number[]): void {
     if (this.mode === 0 && (isTrue(n.mutRef) || this.aggregate.has(kids[0]))) { this.mark(kids[0]); }
   }
 
-  afterUnaryOp(n: UnaryOp, id: number, kids: number[]): void {
+  afterUnaryOp(n: UnaryOp, _id: number, kids: number[]): void {
     if (this.mode === 0 && n.op === "&mut") { this.mark(kids[0]); }
   }
 
   // A raw address can be written through anywhere.
-  afterMethodCall(n: MethodCall, id: number, kids: number[]): void {
+  afterMethodCall(n: MethodCall, _id: number, kids: number[]): void {
     if (this.mode === 0 && (n.method === "addrOf" || n.method === "ptr")) { this.mark(kids[0]); }
   }
 
   // `arr as *T` hands out the array's own storage: C or a raw store may write it.
-  afterCastExpr(n: CastExpr, id: number, kids: number[]): void {
+  afterCastExpr(n: CastExpr, _id: number, kids: number[]): void {
     if (this.mode === 0 && this.arrays.has(kids[0]) && n.targetType.isPtr) { this.mark(kids[0]); }
   }
 
-  afterCall(n: Call, id: number, kids: number[]): void {
+  afterCall(n: Call, _id: number, kids: number[]): void {
     if (this.mode === 0 && (n.func === "swap" || n.func === "replace" || n.func === "take")) {
       let k = 0;
       while (k < kids.length) {

@@ -160,7 +160,9 @@ export function generate(): Map<string, string> {
     // A kind with no children and no hook needs no branch: only its id is spent.
     const ns = nodes.filter((n) => n.family === fam && (n.edges.length > 0 || hooks.has(`visit${n.kind}`) || hooks.has(`after${n.kind}`)));
     const varName = fam === "Expr" ? "e" : fam === "Stmt" ? "s" : fam === "Pattern" ? "p0" : fam === "ChainClause" ? "c" : "k";
-    w.push(`export function ${fn(fam)}(v: ${VISITOR.cls}, ${varName}: ${fam}, parent: Parent, key: EdgeKey, index: number): void {`);
+    // Only a visit hook reads where the node sits; without one the params are named unused.
+    const u = ns.some((n) => hooks.has(`visit${n.kind}`)) ? "" : "_";
+    w.push(`export function ${fn(fam)}(v: ${VISITOR.cls}, ${varName}: ${fam}, ${u}parent: Parent, ${u}key: EdgeKey, ${u}index: number): void {`);
     w.push(`  const id = v.enter();`);
     if (hooks.has("node")) w.push(`  v.node(id);`);
     ns.forEach((n, ni) => {

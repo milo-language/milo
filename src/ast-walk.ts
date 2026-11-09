@@ -276,7 +276,7 @@ export function walkStmt(v: MutScan, s: Stmt, parent: Parent, key: EdgeKey, inde
   }
 }
 
-export function walkPattern(v: MutScan, p0: Pattern, parent: Parent, key: EdgeKey, index: number): void {
+export function walkPattern(v: MutScan, p0: Pattern, _parent: Parent, _key: EdgeKey, _index: number): void {
   const id = v.enter();
   v.node(id);
   if (p0.kind === "EnumPattern") {
@@ -293,7 +293,7 @@ export function walkPattern(v: MutScan, p0: Pattern, parent: Parent, key: EdgeKe
   }
 }
 
-export function walkChainClause(v: MutScan, c: ChainClause, parent: Parent, key: EdgeKey, index: number): void {
+export function walkChainClause(v: MutScan, c: ChainClause, _parent: Parent, _key: EdgeKey, _index: number): void {
   const id = v.enter();
   v.node(id);
   if (c.kind === "LetClause") {
@@ -306,7 +306,7 @@ export function walkChainClause(v: MutScan, c: ChainClause, parent: Parent, key:
   }
 }
 
-export function walkContract(v: MutScan, k: Contract, parent: Parent, key: EdgeKey, index: number): void {
+export function walkContract(v: MutScan, k: Contract, _parent: Parent, _key: EdgeKey, _index: number): void {
   const id = v.enter();
   v.node(id);
     const p: Parent = { kind: "Contract", id: id, op: "" };
