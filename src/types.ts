@@ -1,4 +1,5 @@
 // Internal type representations: the TypeKind tagged union every later stage speaks.
+import type { MiloType } from "./ast";
 export type TypeKind =
   | { tag: "int"; bits: number; signed: boolean; min?: number; max?: number }
   | { tag: "float"; bits: number }
@@ -43,11 +44,11 @@ export const PRIMITIVE_TYPE_NAMES = [
   "bool", "void", "string",
 ] as const;
 
-export function typeFromAst(ty: { name: string; isPtr: boolean; ptrDepth?: number; isRef: boolean; isRefMut: boolean; isNullableRef?: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; isCFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
+export function typeFromAst(ty: MiloType): TypeKind {
   if (ty.isFn && ty.fnParams && ty.fnRet) {
     const tag = ty.isCFn ? "cfn" as const : "fn" as const;
     const base = { tag, params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
-    return (ty as { isMoveFn?: boolean }).isMoveFn ? { ...base, owning: true } : base;
+    return ty.isMoveFn ? { ...base, owning: true } : base;
   }
   let base: TypeKind;
   switch (ty.name) {
