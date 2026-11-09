@@ -7784,7 +7784,7 @@ export class TypeChecker {
 
   // The placeholder element is an identity-keyed object resolved in place by the first push, which the
   // generated Milo cannot express; kept apart so that only a program with an unannotated Vec.new() reaches it.
-  private makeDeferredVec(value: Expr): TypeKind {
+  private makeDeferredVec(value: import("./ast").EnumLit): TypeKind {
     const elem: TypeKind = { tag: "unknown" };
     const vecTy: TypeKind = { tag: "vec", element: elem };
     this.inferVecElems.add(elem);
