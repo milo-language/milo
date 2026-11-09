@@ -31,7 +31,7 @@ export interface ProgramView {
 }
 
 // The name of the synthetic fn standing for a lazy global's initializer.
-const LAZY_INIT_FN_PREFIX = "<init of ";
+export const LAZY_INIT_FN_PREFIX = "<init of ";
 export const lazyInitFnName = (global: string) => `${LAZY_INIT_FN_PREFIX}${global}>`;
 
 // The slice of the checker these passes read. Every member is a per-body result that is
@@ -474,7 +474,7 @@ export function mutatesReceiver(host: ProgramPassHost, call: Expr): boolean {
 // internals are never modelled here.
 // `seed` gives a closure node writes it makes on every call whatever its body says: the
 // closure's own written captures, which checkGlobalBorrowInvalidation models as globals.
-function globalWriteSummary(host: ProgramPassHost, program: Program, view: ProgramView, mutableGlobals: Set<string>, seed?: Map<string, Set<string>>): { writes: Map<string, Set<string>>; parks: Set<string> } {
+export function globalWriteSummary(host: ProgramPassHost, program: Program, view: ProgramView, mutableGlobals: Set<string>, seed?: Map<string, Set<string>>): { writes: Map<string, Set<string>>; parks: Set<string> } {
   const { fns, rootOf, calleeOf: target } = view;
   const implicit = implicitCalls(host, program, view);
 
@@ -588,10 +588,10 @@ function globalWriteSummary(host: ProgramPassHost, program: Program, view: Progr
 const INDIRECT = "<indirect>";
 // Foreign code may call back into any `@externalLinkage` fn while it runs.
 export const FOREIGN = "<foreign>";
-const isDropFn = (t: string) => t.endsWith("$Drop$drop");
-type ClosureLit = Extract<Expr, { kind: "Closure" }>;
+export const isDropFn = (t: string) => t.endsWith("$Drop$drop");
+export type ClosureLit = Extract<Expr, { kind: "Closure" }>;
 // A callee as a diagnostic names it, pseudo-callees included.
-function sayCallee(view: ProgramView, t: string, implicit: ImplicitCalls): string {
+export function sayCallee(view: ProgramView, t: string, implicit: ImplicitCalls): string {
   if (t === INDIRECT) return "a call through a function value";
   if (t.startsWith(LAZY_INIT_FN_PREFIX)) return `the first read of '${view.pretty(t.slice(LAZY_INIT_FN_PREFIX.length, -1))}' (it runs that global's initializer)`;
   if (t === FOREIGN) return "a call into foreign code";
@@ -610,7 +610,7 @@ type Values = Set<string> | null;
 // earlier resolves to unknown, the fail-closed direction).
 export interface Scope { fn?: string; env?: Map<string, Values>; shadow: Set<string> }
 
-interface ImplicitCalls {
+export interface ImplicitCalls {
   // The callees `n` runs that `calleeOf` does not report: what a call through a value
   // may run (INDIRECT when unbounded), an interface method's possible impls, and the
   // Drop fns of what `n` may destroy.
@@ -640,7 +640,7 @@ interface ImplicitCalls {
 }
 
 const implicitCache = new WeakMap<ProgramView, ImplicitCalls>();
-function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramView): ImplicitCalls {
+export function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramView): ImplicitCalls {
   const cached = implicitCache.get(view);
   if (cached) return cached;
   const { fns, calleeOf } = view;
@@ -933,7 +933,7 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
 // count as holding every reference argument, since their params are unknowable here.
 // fn -> reference parameter index -> where that fn (or a callee it passes the parameter on to)
 // holds a view into it across a park, so the caller's error can point at the hazard itself.
-function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: Set<string>): Map<string, Map<number, string>> {
+export function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: Set<string>): Map<string, Map<number, string>> {
   const { fns, rootOf, calleeOf } = view;
   const isRefParam = (t: { isRef: boolean; isRefMut: boolean } | null | undefined) => !!t && (t.isRef || t.isRefMut);
   const held = new Map<string, Map<number, string>>();
@@ -1016,316 +1016,6 @@ function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: S
   return held;
 }
 
-export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Program, view: ProgramView): void {
-  const mutableGlobals = new Set<string>();
-  for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
-  const { fns, rootOf, calleeOf: target } = view;
-  const implicit = implicitCalls(host, program, view);
-  // A closure's environment is shared by every run of that closure value: two tasks can
-  // call one closure (a route handler in a Router behind `&`, a closure parameter handed
-  // to two scoped tasks) and a body can re-enter itself through a call by value. So a
-  // capture the body writes in place is, inside that body, a global scoped to the
-  // closure: no loop or view over it may live across a park or a call that may run the
-  // closure again. Captures only read stay ordinary; nobody can change them.
-  const sharedCaps = new Map<ClosureLit, Map<string, string>>();
-  const seed = new Map<string, Set<string>>();
-  const captureName = new Map<string, string>();
-  for (const [lit, id] of implicit.closureIds) {
-    // Only captures written in place. One moved out is not tracked: the second run of
-    // such a closure aborts at the move-out (see "runs once" in the language reference),
-    // and Promise.blocking/Task.spawn bodies, which run once, move captures out routinely.
-    const caps = (host.closureCaptures.get(lit as unknown as Expr) ?? []).filter(c => c.mutatedInClosure);
-    if (caps.length === 0) continue;
-    const m = new Map(caps.map(c => [c.name, `${id}::${c.name}`]));
-    sharedCaps.set(lit, m);
-    seed.set(id, new Set(m.values()));
-    for (const [nm, key] of m) captureName.set(key, nm);
-  }
-  if (mutableGlobals.size === 0 && sharedCaps.size === 0) return;
-  // Literals handed straight to a std entry point that runs them exactly once. Nothing
-  // can run them a second time, and scoped tasks sharing a binding are checkTaskScopes'
-  // business, so their written captures are plain locals here.
-  const RUNS_ONCE = /^(Task\$scope|TaskScope\$spawn|Task\$spawn|Task\$spawnWithStack|spawnOsThreadDetached|blockingPoolSubmit|dbpool\$dbPoolSubmit|dbPoolRun(_\w+)?|Promise\b.*\$(run|blocking))$/;
-  const runsOnce = new Set<unknown>();
-  const { writes, parks } = globalWriteSummary(host, program, view, mutableGlobals, seed);
-  const heldAcrossPark = paramViewsAcrossPark(host, view, parks);
-  // Diagnostics name a capture by its source name, and the other party is another run of
-  // the closure rather than some other task.
-  const nm = (g: string) => captureName.get(g) ?? g;
-  const theG = (g: string) => captureName.has(g) ? `the capture '${nm(g)}'` : `the global '${g}'`;
-  const rival = (g: string) => captureName.has(g) ? "another run of this closure" : "another task";
-  const say = (t: string) => sayCallee(view, t, implicit);
-  const reported = new Set<string>();
-  const report = (msg: string, span: Span | undefined, hint: string) => {
-    const key = `${span?.line ?? 0}:${span?.col ?? 0}:${msg}`;
-    if (reported.has(key)) return;
-    reported.add(key);
-    host.error(msg, span, hint);
-  };
-
-  // A `&[T]` parameter is a fat pointer into the argument's buffer, so even the bare
-  // global is an element view there; only `&Vec<T>`/`&mut Vec<T>` name the header.
-  const isSliceParam = (t: { isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null } | undefined) =>
-    !!t && (t.isRef || t.isRefMut) && t.isArray && t.arraySize === null;
-  const parkHint = (g: string) => captureName.has(g)
-    ? `iterate by index ('while i < ${nm(g)}.len'), or snapshot first ('${nm(g)}.clone()'); state that every run of the closure shares is safest in a Channel or a std/sync atomic`
-    : `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or take it with 'replace(${g}, ...)' so the task owns it`;
-
-  for (const f of fns.values()) {
-    if (!f.body) continue;
-    const bound = new Set<string>(f.params.map(p => p.name));
-    const scope: Scope = { fn: f.name, shadow: new Set() };
-    // Closure bodies being walked, innermost last: each one's shared captures and the
-    // names its own params and locals rebind.
-    const frames: { caps: Map<string, string>; shadow: Set<string> }[] = [];
-    // The summary key a root name refers to here: a shared capture of an enclosing
-    // closure body, an unshadowed mutable global, or nothing the walk models.
-    const keyOf = (name: string | undefined): string | undefined => {
-      if (!name) return undefined;
-      for (let i = frames.length - 1; i >= 0; i--) {
-        if (frames[i].shadow.has(name)) return undefined;
-        const k = frames[i].caps.get(name);
-        if (k) return k;
-      }
-      return mutableGlobals.has(name) && !bound.has(name) ? name : undefined;
-    };
-    // Globals whose storage is borrowed by an enclosing for-in. A loop iterand is a
-    // reference into the container's buffer, so anything that reallocs or replaces the
-    // container leaves it dangling for the rest of the iteration.
-    //
-    // `views` are element views into a global held by a binding that stays live to the
-    // end of its block: a reference binding (`let s = g[a..b]`, or a method returning
-    // `&[T]` from a receiver rooted at g) or a raw pointer binding (`let p = g.ptr()`,
-    // `let c = Cfg { buf: g.cstr() }`; `pointerViewsIn` is the same recognizer the
-    // freeze machinery uses, so this walk and `bindPointerViews` agree on what a pointer
-    // view is). A statement list is walked in order and each such binding extends the
-    // context for the statements after it. Decided by the binding's checked type, not
-    // its spelling, so every way of producing a view counts (`g[a..b]` itself parses as
-    // `g.slice(a, b)`). `via` names the pointer call for the diagnostic; a ref view has none.
-    type View = { name: string; global: string; via?: string };
-    const viewsOf = (n: Record<string, unknown> & { kind?: string; name?: unknown }): View[] => {
-      if ((n.kind !== "LetDecl" && n.kind !== "VarDecl") || typeof n.name !== "string") return [];
-      const v = n.value as Expr | undefined;
-      if (!v) return [];
-      const name = n.name;
-      if (host.exprTypes.get(v)?.tag === "ref") {
-        const g = keyOf(rootOf(v.kind === "MethodCall" ? v.object : v));
-        return g ? [{ name, global: g }] : [];
-      }
-      const out: View[] = [];
-      for (const pv of host.pointerViewsIn(v)) {
-        const g = keyOf(rootOf(pv.source));
-        if (g) out.push({ name, global: g, via: `${pv.call}' on line ${pv.line}` });
-      }
-      return out;
-    };
-    const describeView = (v: View) => v.via
-      ? `'${v.name}' still points into '${nm(v.global)}'s buffer (from '${v.via})`
-      : `'${v.name}' borrows from '${nm(v.global)}'s buffer`;
-    const walk = (node: unknown, iterated: string[], views: View[]) => {
-      if (!node || typeof node !== "object") return;
-      if (Array.isArray(node)) {
-        let live = views;
-        for (const n of node) {
-          walk(n, iterated, live);
-          const vs = viewsOf(n as Record<string, unknown> & { kind?: string; name?: unknown });
-          if (vs.length > 0) live = [...live, ...vs];
-        }
-        return;
-      }
-      const n = node as Record<string, unknown> & { kind?: string; name?: unknown; span?: unknown };
-      const span = n.span as Span | undefined;
-      if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") {
-        bound.add(n.name);
-        frames[frames.length - 1]?.shadow.add(n.name);
-      }
-      implicit.enter(n, scope);
-
-      if ((n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") && RUNS_ONCE.test(target(n as unknown as Expr) ?? "")) {
-        for (const a of (n.args as Expr[] | undefined) ?? []) if (a.kind === "Closure") runsOnce.add(a);
-      }
-      if (n.kind === "Closure") {
-        const caps = runsOnce.has(n) ? new Map<string, string>() : sharedCaps.get(n as unknown as ClosureLit) ?? new Map<string, string>();
-        frames.push({ caps, shadow: new Set((n.params as { name: string }[]).map(p => p.name)) });
-        for (const k of Object.keys(n)) if (k !== "span") walk(n[k], iterated, views);
-        frames.pop();
-        return;
-      }
-
-      if (n.kind === "ForInStmt") {
-        const g = keyOf(rootOf(n.iterable));
-        const next = g ? [...iterated, g] : iterated;
-        walk(n.iterable, iterated, views);
-        walk(n.body, next, views);
-        return;
-      }
-
-      const spelled = n.kind === "Call" || n.kind === "EnumLit" || n.kind === "MethodCall";
-      const direct = spelled && !implicit.isIndirect(n) ? target(n as unknown as Expr) : undefined;
-      for (const t of [...(direct ? [direct] : []), ...implicit.implicitTargets(n, scope)]) {
-        // An implicit drop is handed only the dying value; INDIRECT and an interface
-        // impl receive the call's own arguments.
-        const callArgs = spelled && !(t !== direct && isDropFn(t)) ? (n.args as Expr[] | undefined) ?? [] : [];
-        const callee = t ? fns.get(t) : undefined;
-        // A method call carries its receiver as params[0]; anything that does not
-        // line up leaves paramOffset -1 and the check stays fail-closed.
-        const paramOffset = !callee ? -1
-          : callee.params.length === callArgs.length ? 0
-          : callee.params.length === callArgs.length + 1 ? 1
-          : -1;
-        // With no fn to read parameters from, a call through a value still has the
-        // value's own fn type, and a by-value parameter materialises its argument
-        // before anything runs, as for a named callee.
-        const valueTy = !callee && spelled ? host.closureCalls.get(n as unknown as Expr) ?? host.cfnCalls.get(n as unknown as Expr) : undefined;
-        const byValue = (i: number) => (valueTy?.tag === "fn" || valueTy?.tag === "cfn") && !!valueTy.params[i] && valueTy.params[i].tag !== "ref";
-        if (t && parks.has(t)) {
-          // A lazy global parks only at its first read, but which read is first is a run
-          // time fact; reading a local copy inside the loop takes the read out of it.
-          const lazyRead = t.startsWith(LAZY_INIT_FN_PREFIX) ? view.pretty(t.slice(LAZY_INIT_FN_PREFIX.length, -1)) : undefined;
-          const hintFor = (g: string) => lazyRead
-            ? `take what the loop needs from '${lazyRead}' before it starts (a local copy, 'let v = ${lazyRead}.clone()'), so no read inside it can run the initializer; or ${parkHint(g)}`
-            : parkHint(g);
-          for (const g of iterated) {
-            report(
-              `${say(t)} can park this task while the loop variable is a reference into '${nm(g)}'s buffer; ${rival(g)} may push to '${nm(g)}' before it resumes`,
-              span,
-              hintFor(g),
-            );
-          }
-          for (const v of views) {
-            if (iterated.includes(v.global)) continue;
-            report(
-              `${say(t)} can park this task while ${describeView(v)}; ${rival(v.global)} may push to '${nm(v.global)}' before it resumes`,
-              span,
-              hintFor(v.global),
-            );
-          }
-          // `use(g[0])` / `sum(g)` into a `&[T]`: the argument is a view into g's buffer
-          // for as long as the callee runs, and the callee parks. A method's receiver is
-          // its params[0] and borrows the same way: `g[0].show()` is `show(g[0])`.
-          const viewArgs: [number, Expr][] = callArgs.map((a, i) => [i + paramOffset, a]);
-          if (n.kind === "MethodCall" && paramOffset === 1 && t === direct) viewArgs.unshift([0, n.object as Expr]);
-          for (const [prmIdx, a] of viewArgs) {
-            const argIdx = prmIdx - paramOffset;
-            // A slice expression is already a reference whatever the parameter says;
-            // it roots at its receiver (`g[a..b]` parses as `g.slice(a, b)`). An inline
-            // `g.ptr()` is a view for the duration of the call in the same way.
-            const ptrView = host.pointerViewsIn(a)[0];
-            const isViewArg = host.exprTypes.get(a)?.tag === "ref" || ptrView !== undefined;
-            const g = keyOf(ptrView ? rootOf(ptrView.source) : rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a));
-            if (!g) continue;
-            if (iterated.includes(g) || views.some(v => v.global === g)) continue;
-            const prm = paramOffset >= 0 ? callee!.params[prmIdx] : undefined;
-            const isElement = ((): boolean => {
-              let cur = a as unknown as Record<string, unknown> & { kind?: string };
-              while (cur && typeof cur === "object") {
-                if (cur.kind === "IndexAccess") return true;
-                if (cur.kind === "FieldAccess") { cur = cur.object as typeof cur; continue; }
-                return false;
-              }
-              return false;
-            })();
-            // A reference to a written capture itself is as bad as one into its buffer
-            // when the callee loops over it (or keeps a view into it) across its park: it
-            // cannot tell its `&Vec<T>` is shared (`show(log)` where show iterates and
-            // yields). A mutable global is shared the same way: every task reaches it, so
-            // `show(G)` from two tasks is a heap-use-after-free (memory-safety doc, #24).
-            if (!isViewArg) {
-              const shared = captureName.has(g) || mutableGlobals.has(g);
-              if (prm?.type) {
-                const intoBuffer = isSliceParam(prm.type) || (isElement && (prm.type.isRef || prm.type.isRefMut));
-                if (!intoBuffer && !(shared && heldAcrossPark.get(t)?.has(prmIdx))) continue;
-              } else if (byValue(argIdx) || (!isElement && (!!callee || !shared))) continue;
-            }
-            const into = isViewArg || isElement || (prm?.type && isSliceParam(prm.type)) ? `a reference into '${nm(g)}'s buffer` : `a reference to '${nm(g)}'`;
-            const heldAt = t ? heldAcrossPark.get(t)?.get(prmIdx) : undefined;
-            report(
-              `${say(t)} can park this task while it holds ${into}; ${rival(g)} may push to '${nm(g)}' before it resumes`,
-              (a.span as Span | undefined) ?? span,
-              heldAt ? `${parkHint(g)} (held at ${heldAt})` : parkHint(g),
-            );
-          }
-        }
-        const w = t ? writes.get(t) : undefined;
-        if (t && w) {
-          for (const g of iterated) {
-            if (!w.has(g)) continue;
-            report(
-              `${say(t)} ${captureName.has(g) ? "may run this closure again, which writes" : "writes"} ${theG(g)}, which is being iterated here`,
-              span,
-              `the loop variable is a reference into '${nm(g)}'s buffer — pushing to it, clearing it, or ` +
-              `reassigning it from inside the loop frees that buffer and leaves the reference dangling. ` +
-              `Iterate a copy ('for x in ${nm(g)}.clone()'), or collect the changes and apply them after the loop`,
-            );
-          }
-          // `let p = g.ptr(); writer()` (or a slice binding) where `writer` pushes to g:
-          // the callee frees the buffer the binding points into (h4-global-callee-push).
-          // The main pass cannot see a write made inside another function, and this
-          // walk is the one place that knows both the live views and the write summary.
-          for (const v of views) {
-            if (!w.has(v.global) || iterated.includes(v.global)) continue;
-            report(
-              `${say(t)} ${captureName.has(v.global) ? "may run this closure again, which writes" : "writes"} ${theG(v.global)} while ${describeView(v)}`,
-              span,
-              `pushing to, clearing or reassigning '${nm(v.global)}' frees the buffer '${v.name}' points into: ` +
-              `take '${v.name}' after the call, or end its block before it`,
-            );
-          }
-          for (const a of callArgs) {
-            for (const pv of host.pointerViewsIn(a)) {
-              const g = keyOf(rootOf(pv.source));
-              if (!g || !w.has(g)) continue;
-              if (iterated.includes(g) || views.some(v => v.global === g)) continue;
-              report(
-                `${say(t)} writes ${theG(g)}, and is passed '${pv.call}' here`,
-                (a.span as Span | undefined) ?? span,
-                `the pointer is into '${nm(g)}'s buffer, and ${say(t)} can realloc or replace '${nm(g)}' while it holds it: take the pointer inside ${say(t)}, or have it not write '${nm(g)}'`,
-              );
-            }
-          }
-          // `use(G[0])` — the argument is a reference into G's storage and the callee
-          // reallocs G, so the reference dies before the callee is done with it.
-          //
-          // Two things have to be true for that to dangle, and checking only that the
-          // argument MENTIONS the global rejected two safe shapes that a real program
-          // (milojs) is built out of:
-          //
-          //   - the path has to reach the global's HEAP interior. `G` and `G.field`
-          //     name storage at the global's own fixed address, which no realloc moves
-          //     and which reassigning G overwrites in place; only an index step reaches
-          //     a buffer that can be freed under the reference.
-          //   - the PARAMETER has to be a reference. A by-value parameter materialises
-          //     its argument before the callee runs, so nothing of the global's is
-          //     still borrowed while the callee writes.
-          const reachesHeapInterior = (e: unknown): boolean => {
-            let cur = e as Record<string, unknown> & { kind?: string };
-            while (cur && typeof cur === "object") {
-              if (cur.kind === "IndexAccess") return true;
-              if (cur.kind === "FieldAccess") { cur = cur.object as typeof cur; continue; }
-              return false;
-            }
-            return false;
-          };
-          for (const [argIdx, a] of callArgs.entries()) {
-            const g = keyOf(rootOf(a));
-            if (!g || !w.has(g)) continue;
-            if (iterated.includes(g)) continue;
-            if (!reachesHeapInterior(a)) continue;
-            if (paramOffset >= 0) {
-              const prm = callee!.params[argIdx + paramOffset];
-              if (prm && prm.type && !prm.type.isRef && !prm.type.isRefMut) continue;
-            } else if (byValue(argIdx)) continue;
-            report(
-              `${say(t)} writes ${theG(g)}, and is passed a reference into '${nm(g)}' here`,
-              (a.span as Span | undefined) ?? span,
-              `the argument borrows '${nm(g)}'s storage, and ${say(t)} can realloc or replace '${nm(g)}' ` +
-              `while that borrow is live — pass a copy, or have ${say(t)} take '${nm(g)}' by value`,
-            );
-          }
-        }
-      }
-      for (const k of Object.keys(n)) if (k !== "span") walk(n[k], iterated, views);
-    };
-    walk(f.body, [], []);
-  }
-}
+// The global borrow invalidation check lives in src/checker-global-borrow-host.ts; re-exported so
+// the checker keeps importing it from here.
+export { checkGlobalBorrowInvalidation } from "./checker-global-borrow-host";
