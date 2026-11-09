@@ -3857,7 +3857,7 @@ export class TypeChecker {
       if (!(e instanceof CheckAbort)) throw e;
     }
     if (this.reportStringClones) this.printStringClones();
-    if (this._displayNames?.size) {
+    if (this._displayNames !== undefined && this._displayNames.size > 0) {
       // The file a renamed symbol came from, when exactly one file declared it.
       const origins = new Map<string, string>();
       for (const sym of this._displayNames.keys()) {

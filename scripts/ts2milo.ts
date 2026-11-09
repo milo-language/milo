@@ -842,6 +842,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         hit("array .length", "Vec .len");
         return `${ex(e.expression)}.len`;
       }
+      if (e.name.text === "size" && d && isLibDecl(program, d) && ["Map", "ReadonlyMap", "Set", "ReadonlySet"].includes(checker.getNonNullableType(tOf(e.expression)).symbol?.name ?? "")) {
+        hit("Map/Set .size", "HashMap/HashSet .len()");
+        return `${ex(e.expression)}.len()`;
+      }
       // A field every variant of a tagged union has (`span`) is read through a generated accessor.
       const tu = unionOfType(checker, tOf(e.expression));
       if (tu) {
