@@ -1006,6 +1006,23 @@ class FnEmitter {
       return;
     }
     if (e.kind === "Unwrap") { this.unwrapInto(e, dst, ty); return; }
+    if (e.kind === "HeapDeref" && valueType(this.cx, this.ty(e.node)) === null && (isTempBox(this.f(e.operand)) || (this.mv(e) && this.hasDrop(ty)))) {
+      // The payload moves out of the box into `dst`; the box is freed with nothing dropped.
+      const hty = `!milo.heap<${ty}>`;
+      const { h, after } = this.takeBox(this.f(e.operand), hty);
+      const p = this.def(`milo.heap.place ${h} : ${hty} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+      this.emit(`milo.copy ${p}, ${dst} : !milo.ref<${ty}>, !milo.ref<${ty}> of ${ty}`);
+      this.emit(`milo.heap.free ${h} : ${hty}`);
+      after();
+      return;
+    }
+    if (e.kind === "MapCopyOut" && valueType(this.cx, this.ty(e.node)) === null) {
+      // The deep copy of a big value is written by its clone glue straight into `dst`.
+      const src = this.place(e.value, refOf(ty), false).ref;
+      const fn = this.glue.cloneFromPlace(stripRefs(this.ty(e.node)), refOf(ty), ty);
+      this.rtCall(fn, [{ ref: src, ty: refOf(ty) }, { ref: dst, ty: `!milo.ref<${ty}>` }], null);
+      return;
+    }
     if (e.kind !== "StructLit") throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(this.ty(e.node), "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
@@ -3204,21 +3221,7 @@ class FnEmitter {
           // The payload out, the box freed with nothing dropped,
           // and a box held by a place left empty (an owned local's slot emptied, a field
           // set to null), so no drop of it ever runs on the leftover.
-          let h: string, after = () => {};
-          if (temp) {
-            const v = this.expr(op);
-            if (v.ty !== hty || v.own !== "owned") throw new MlirUnsupported("deref of a temporary box");
-            h = v.ref;
-          } else if (op.kind === "Ident") {
-            const b = this.lookup(op.name);
-            if (b.kind !== "var" || !b.owned || b.ty !== hty) throw new MlirUnsupported("move out of a box that is not an owned local");
-            h = this.def(`milo.move ${b.ref} : !milo.ref<${hty}>`, hty).ref;
-          } else if (op.kind === "FieldAccess" && this.fieldOfOwnedLocal(op)) {
-            const p = this.fieldPlace(op)!;
-            if (p.ty !== hty) throw new MlirUnsupported("move out of a box field of another type");
-            h = this.def(`milo.load ${p.ref} : !milo.ref<${hty}>`, hty).ref;
-            after = () => this.emit(`milo.store ${this.def(`milo.zero : ${hty}`, hty).ref}, ${p.ref} init : !milo.ref<${hty}>`);
-          } else throw new MlirUnsupported("move out of a box that is not a local's");
+          const { h, after } = this.takeBox(op, hty);
           const v = payload(h);
           this.emit(`milo.heap.free ${h} : ${hty}`);
           after();
@@ -4039,6 +4042,30 @@ class FnEmitter {
   private heapDerefLent(e: FormOf<"HeapDeref">): boolean {
     const pt = placeType(this.cx, this.ty(e.node));
     return pt !== null && valueType(this.cx, this.ty(e.node)) === null && this.hasDrop(pt);
+  }
+
+  /**
+   * The box `op` (of type `hty`) is given up for a move of its payload: its pointer, and
+   * `after` to run once the payload is out (a box held by a place is left empty, so no
+   * drop of it ever runs on the leftover).
+   */
+  private takeBox(op: Form, hty: string): { h: string; after: () => void } {
+    let h: string, after = () => {};
+    if (isTempBox(op)) {
+      const v = this.expr(op);
+      if (v.ty !== hty || v.own !== "owned") throw new MlirUnsupported("deref of a temporary box");
+      h = v.ref;
+    } else if (op.kind === "Ident") {
+      const b = this.lookup(op.name);
+      if (b.kind !== "var" || !b.owned || b.ty !== hty) throw new MlirUnsupported("move out of a box that is not an owned local");
+      h = this.def(`milo.move ${b.ref} : !milo.ref<${hty}>`, hty).ref;
+    } else if (op.kind === "FieldAccess" && this.fieldOfOwnedLocal(op)) {
+      const p = this.fieldPlace(op)!;
+      if (p.ty !== hty) throw new MlirUnsupported("move out of a box field of another type");
+      h = this.def(`milo.load ${p.ref} : !milo.ref<${hty}>`, hty).ref;
+      after = () => this.emit(`milo.store ${this.def(`milo.zero : ${hty}`, hty).ref}, ${p.ref} init : !milo.ref<${hty}>`);
+    } else throw new MlirUnsupported("move out of a box that is not a local's");
+    return { h, after };
   }
 
   /**

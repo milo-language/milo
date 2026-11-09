@@ -42,7 +42,7 @@
   "src/checker-thread-boundary.ts": 0,
   "src/checker.ts": 4513,
   "src/emit-forms.ts": 588,
-  "src/emit-mlir.ts": 2165,
+  "src/emit-mlir.ts": 2176,
   "src/lexer.ts": 0,
   "src/mlir-backend.ts": 87,
   "src/mlir-ctx.ts": 144,

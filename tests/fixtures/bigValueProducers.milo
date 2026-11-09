@@ -1,0 +1,56 @@
+// A 128+ byte owning value produced by something other than a literal or an sret call is
+// written into a place, never an SSA value: HashMap.get (MapCopyOut), `*h` on a Heap.
+// @expect: 1
+// @expect: 100
+// @expect: x
+// @expect: 1
+// @expect: 100
+// @expect: x
+// @expect: y
+// @expect: 7
+// @expect: 8
+@derive(Clone)
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    s: string,
+    v: Vec<i64>,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: i64, r: i64,
+}
+
+fn mk(x: i64, s: string): Big {
+    var v: Vec<i64> = []
+    v.push(x)
+    return Big { a: x, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, s: s, v: v, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 100 }
+}
+
+fn take(b: Big): i64 {
+    return b.v[0]
+}
+
+fn main() {
+    var m: HashMap<string, Big> = HashMap.new()
+    m.insert("k", mk(1, "x"))
+    match m.get("k") {
+        Option.Some(b) => {
+            var c = b
+            print(c.a)
+            print(c.r)
+            print(c.s)
+            c.s = "y"
+            c.v.push(5)
+        }
+        Option.None => print(0)
+    }
+    let h = Heap(mk(1, "x"))
+    var x = *h
+    print(x.a)
+    print(x.r)
+    print(x.s)
+    x.s = "y"
+    print(x.s)
+    let h2 = Heap(mk(7, "z"))
+    print(take(*h2))
+    let h3 = Heap(mk(8, "z"))
+    let y = *h3
+    print(y.v[0])
+}

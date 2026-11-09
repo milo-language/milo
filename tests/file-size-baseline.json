@@ -60,7 +60,7 @@
   "src/derive-template.ts": 211,
   "src/diagnostics.ts": 119,
   "src/emit-forms.ts": 870,
-  "src/emit-mlir.ts": 5911,
+  "src/emit-mlir.ts": 5938,
   "src/evidence.ts": 244,
   "src/extern-effects.ts": 540,
   "src/fixes.ts": 241,
