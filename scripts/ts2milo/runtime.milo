@@ -73,6 +73,197 @@ pub fn jsSlice(s: &string, a: i64, b: i64): string {
     return out
 }
 
+// src/mangle.ts display / displayQualified, written without regexes. The TypeScript matcher is
+// /(?<![A-Za-z0-9])(?:key1|key2|...)/g with the keys longest first; these scan the same way.
+fn isAlnumUnit(u: i64): bool {
+    return (u >= 48 && u <= 57) || (u >= 65 && u <= 90) || (u >= 97 && u <= 122)
+}
+
+fn matchesAt(text: &string, i: i64, key: &string): bool {
+    let n = jsLen(key)
+    if i + n > jsLen(text) {
+        return false
+    }
+    var k = 0
+    while k < n {
+        if unitAt(text, i + k) != unitAt(key, k) {
+            return false
+        }
+        k += 1
+    }
+    return true
+}
+
+// The longest key matching `text` at unit i (keys are sorted longest first), unless a letter or digit precedes i.
+fn longestKeyAt(text: &string, i: i64, keys: &Vec<string>): Option<string> {
+    if i > 0 && isAlnumUnit(unitAt(text, i - 1)) {
+        return Option.None
+    }
+    for k in keys {
+        if jsLen(k) > 0 && matchesAt(text, i, k) {
+            return Option.Some(k.clone())
+        }
+    }
+    return Option.None
+}
+
+fn keysLongestFirst(map: &HashMap<string, string>): Vec<string> {
+    var keys = map.keys()
+    var i = 1
+    while i < keys.len {
+        var j = i
+        while j > 0 && jsLen(keys[j - 1]) < jsLen(keys[j]) {
+            let a = keys[j - 1].clone()
+            keys[j - 1] = keys[j].clone()
+            keys[j] = a
+            j -= 1
+        }
+        i += 1
+    }
+    return keys
+}
+
+pub fn display(map: &Option<HashMap<string, string>>, text: &string): string {
+    match map {
+        Option.None => { return text.clone() }
+        Option.Some(m) => {
+            if m.len == 0 {
+                return text.clone()
+            }
+            let keys = keysLongestFirst(m)
+            var out: string = ""
+            var i = 0
+            let n = jsLen(text)
+            while i < n {
+                match longestKeyAt(text, i, keys) {
+                    Option.Some(k) => {
+                        out = out + (m.get(k) ?? k.clone())
+                        i += jsLen(k)
+                    }
+                    Option.None => {
+                        out.push(text[2 * i])
+                        out.push(text[2 * i + 1])
+                        i += 1
+                    }
+                }
+            }
+            return out
+        }
+    }
+}
+
+// `w` as a whole word: not preceded or followed by [A-Za-z0-9_$].
+fn bareWordIn(text: &string, w: &string): bool {
+    let n = jsLen(text)
+    let wl = jsLen(w)
+    var i = 0
+    while i + wl <= n {
+        if matchesAt(text, i, w) {
+            let before = if i > 0 { unitAt(text, i - 1) } else { 0 }
+            let after = if i + wl < n { unitAt(text, i + wl) } else { 0 }
+            let bw = isAlnumUnit(before) || before == 95 || before == 36
+            let aw = isAlnumUnit(after) || after == 95 || after == 36
+            if !bw && !aw {
+                return true
+            }
+        }
+        i += 1
+    }
+    return false
+}
+
+pub fn displayQualified(map: &Option<HashMap<string, string>>, text: &string, origins: &HashMap<string, string>): string {
+    match map {
+        Option.None => { return text.clone() }
+        Option.Some(m) => {
+            if m.len == 0 {
+                return text.clone()
+            }
+            let keys = keysLongestFirst(m)
+            // Every match in order: the matched symbol, the name it is written as, and where it starts.
+            var matched: Vec<string> = []
+            var writtenOf: Vec<string> = []
+            var at: Vec<i64> = []
+            var i = 0
+            let n = jsLen(text)
+            while i < n {
+                match longestKeyAt(text, i, keys) {
+                    Option.Some(k) => {
+                        matched.push(k.clone())
+                        writtenOf.push(m.get(k) ?? k.clone())
+                        at.push(i)
+                        i += jsLen(k)
+                    }
+                    Option.None => { i += 1 }
+                }
+            }
+            // A written name is ambiguous when two different symbols read as it, or a bare use sits beside a renamed one.
+            var ambiguous: Vec<string> = []
+            var a = 0
+            while a < matched.len {
+                let w = writtenOf[a].clone()
+                var known = false
+                for x in ambiguous {
+                    if x == w {
+                        known = true
+                    }
+                }
+                if !known {
+                    var differs = false
+                    var b = 0
+                    while b < matched.len {
+                        if writtenOf[b] == w && matched[b] != matched[a] {
+                            differs = true
+                        }
+                        b += 1
+                    }
+                    if differs || bareWordIn(text, w) {
+                        ambiguous.push(w)
+                    }
+                }
+                a += 1
+            }
+            var out: string = ""
+            var pos = 0
+            var q = 0
+            while q < matched.len {
+                out = out + jsSlice(text, pos, at[q])
+                let w = writtenOf[q].clone()
+                var isAmb = false
+                for x in ambiguous {
+                    if x == w {
+                        isAmb = true
+                    }
+                }
+                if !isAmb {
+                    out = out + w
+                } else {
+                    match origins.get(matched[q]) {
+                        Option.Some(o) => { out = out + w + jsFromUtf8(" (") + o + jsFromUtf8(")") }
+                        Option.None => { out = out + w }
+                    }
+                }
+                pos = at[q] + jsLen(matched[q])
+                q += 1
+            }
+            return out + jsSliceFrom(text, pos)
+        }
+    }
+}
+
+// node:path basename (POSIX, no extension argument): the last component, trailing slashes ignored.
+pub fn basename(p: &string): string {
+    var end = jsLen(p)
+    while end > 0 && jsCharCodeAt(p, end - 1) == 47 {
+        end -= 1
+    }
+    var start = end
+    while start > 0 && jsCharCodeAt(p, start - 1) != 47 {
+        start -= 1
+    }
+    return jsSlice(p, start, end)
+}
+
 pub fn jsSliceFrom(s: &string, a: i64): string {
     return jsSlice(s, a, jsLen(s))
 }
@@ -403,12 +594,14 @@ pub struct Span {
     file: Option<string>,
 }
 
+@derive(Clone)
 pub struct DiagnosticNote {
     message: string,
     span: Option<Span>,
     len: Option<i64>,
 }
 
+@derive(Clone)
 pub struct Diagnostic {
     severity: Severity,
     span: Option<Span>,

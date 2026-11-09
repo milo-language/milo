@@ -17,6 +17,7 @@ const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
 const THROWN_ENUM = "Thrown";
 const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
 const safeId = (n: string): string => { const m = n.replace(/\$/g, "_d"); return RESERVED.has(m) ? m + "_" : m; };
+const RUNTIME_CLONEABLE = new Set(["Diagnostic", "DiagnosticNote", "ReplayPlan", "TargetInfo"]);
 const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub clone drop".split(" "));
 
 export interface Report {
@@ -587,7 +588,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const idOf = (x: ts.Expression, k: NodeKey): string => k.union ? `${useDeclared(`${k.name}_${ID_FIELD}`, k.union.decl.getSourceFile().fileName, x)}(${ex(x)})` : `${ex(x)}.${ID_FIELD}`;
     // The key argument of a Map/Set call: the node id when the container is keyed by nodes.
     const keyEx = (recv: ts.Expression, arg: ts.Expression, own = false): string => {
-      const rt = tOf(recv);
+      const rt = checker.getNonNullableType(tOf(recv)); // `a?.map.get(k)`: the receiver is `Map | undefined`
       const k = nodeKeyOfContainer(checker, rt);
       if (!k) { const ed = enumDeclOf(checker.getTypeArguments(rt as ts.TypeReference)[0]); if (ed) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, arg)}(${ex(arg)})`; }
       return k ? idEx(arg, k) : own ? ownConv(arg, checker.getTypeArguments(rt as ts.TypeReference)[0]) : ex(arg);
@@ -696,6 +697,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const tu = unionOfType(checker, t);
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
+      // Interfaces the runtime declares by hand (@derive(Clone) in runtime.milo).
+      if (d && ts.isInterfaceDeclaration(d) && !inputSet.has(d.getSourceFile().fileName) && RUNTIME_CLONEABLE.has(d.name.text)) return true;
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
     // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
@@ -1510,6 +1513,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const a = e as ts.ArrayLiteralExpression;
           if (a.elements.length === 0) return want && checker.isArrayType(want) && boxedFieldInit ? `${ty(want, e)}.new()` : "Vec.new()";
           const et = want && checker.isArrayType(want) ? checker.getTypeArguments(want as ts.TypeReference)[0] : undefined;
+          // `[...set]` of a scalar-element Set: its elements as a Vec, in slot order, not insertion order.
+          if (a.elements.length === 1 && ts.isSpreadElement(a.elements[0])) {
+            const st = tOf(a.elements[0].expression);
+            const el = st.symbol && (st.symbol.name === "Set" || st.symbol.name === "ReadonlySet") ? checker.getTypeArguments(st as ts.TypeReference)[0] : null;
+            if (el && isCopyT(el)) { hit("[...set]", "Set.toVec()"); return `${ex(a.elements[0].expression)}.toVec()`; }
+          }
           if (boxedFieldInit && et && a.elements.length === 1 && !ts.isSpreadElement(a.elements[0])) { boxedFieldInit = false; return `${useRuntime("vec1", e)}<${heapElem(et, "X") !== "X" ? `Heap<${ty(et, e)}>` : ty(et, e)}>(${heapElem(et, ownConv(a.elements[0], et))})`; }
           return `[${a.elements.map((x) => (et ? heapElem(et, ownConv(x, et)) : ownConv(x, et))).join(", ")}]`;
         }
@@ -1998,7 +2007,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       } catch (err) {
         let e = err as Error;
         if (!opts.lenient) throw e;
-        if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
+        if (!(e instanceof Unsupported) && process.env.TS2MILO_STACK) console.error((e as Error).stack); if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
         out.length = mark; ind = markInd;
         report.stubs.push({ file: rel(file), name, reason: e.message });
         let hdr: string | null = null;
