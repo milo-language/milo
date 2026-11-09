@@ -1,0 +1,25 @@
+// @error: 'get' would copy 'Heap<Sh>' out of the HashMap: it carries an interface value
+// A Heap<interface> has no structural copy (the concrete type is erased), so `get` would
+// hand back a bitwise duplicate of the owning block and both would be freed.
+interface Sh {
+    fn show(self: &Self): string
+}
+
+struct Impl { name: string }
+
+impl Impl {
+    fn show(self: &Self): string { return self.name }
+}
+
+impl Drop for Impl {
+    fn drop(self: &mut Self): void { print("drop " + self.name) }
+}
+
+pub fn main(): i32 {
+    var m: HashMap<i64, Heap<Sh>> = HashMap.new()
+    let h: Heap<Sh> = Heap(Impl { name: "x".repeat(2) })
+    m.insert(1, h)
+    let a = m.get(1)
+    print("got")
+    return 0
+}
