@@ -35,6 +35,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
 | `scripts/api-sweep.ts` | API sweep before deploy: build a web app with an old and a new compiler, run both on copies of the same data, request every GET route and byte-diff status + body. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
+| `scripts/ast-oracle.ts` | Sweeps fixtures with a src/ast-oracle.ts oracle armed and prints every site it noted, most hit first. |
 | `scripts/ast-writes.ts` | Census of writes to AST nodes after the parser: every assignment or mutating call in the frontend whose target is a property declared in src/ast.ts, as scripts/ts2milo/written-props.ts sees it (the s… |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
