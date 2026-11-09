@@ -1011,8 +1011,8 @@ export class TypeChecker {
   // same body is still refused. See the FieldAccess branch of tryMove.
   private extractorKeyReads = new Set<Expr>();
   private isExtractorKey(e: Expr): boolean { return this.extractorKeyReads.has(e); }
-  // sortByKey's extractor arguments, so codegen can tell the ownership ledger that the
-  // closure returns a view (codegen-own.ts keyExtractor).
+  // sortByKey's extractor arguments: emit-mlir lets such a closure return a view of its
+  // borrowed element (emit-mlir.ts, e.keyExtractor).
   private keyExtractorClosures = new Set<Expr>();
   private currentFnRetType: TypeKind = { tag: "void" };
   // Origin file of the fn body being checked; see checkFieldPrivacy.

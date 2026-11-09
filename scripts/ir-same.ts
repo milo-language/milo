@@ -87,10 +87,9 @@ if (!existsSync(MILO_OPT)) {
   process.exit(2);
 }
 // Keyed by flags too: the same commit emits different IR under -g or another target.
-// The ledger env vars change the IR the same way (emit-ir inherits this env), and so does
-// a rebuilt milo-opt (its mtime and size stand in for its identity).
+// So does a rebuilt milo-opt (its mtime and size stand in for its identity).
 const optStat = statSync(MILO_OPT);
-const keyParts = [...(emitKind !== "ir" ? [`emit=${emitKind}`] : []), ...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
+const keyParts = [...(emitKind !== "ir" ? [`emit=${emitKind}`] : []), ...flags, `opt=${optStat.mtimeMs}:${optStat.size}`];
 const flagKey = keyParts.length ? "-" + Bun.hash(keyParts.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
 

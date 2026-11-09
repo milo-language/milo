@@ -9,7 +9,7 @@
 // A struct that owns no heap and never runs its destructor leaks nothing, so the leak
 // ratchet and the ASan sweep both report clean while a user destructor is silently
 // skipped. Three such bugs were found the day this was written. Every case is also
-// built under ASan and the ownership ledger, and this is the only place the fuzzer
+// built under ASan, and this is the only place the fuzzer
 // runs on Linux (CI's macOS job runs it with a varying seed as `fuzz:drops`).
 //
 // Deliberately small (each case is ~5 CPU-s). The real hunt is

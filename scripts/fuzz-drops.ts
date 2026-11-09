@@ -5,18 +5,16 @@
 // program builds heap-owning `Res` values (a counted constructor, a counted Clone, a
 // counting Drop, and a string field so a double free or a stale read is a heap event),
 // moves them through nested forms with early exits, and asks itself whether the books
-// balance. Four oracles, every one of which has caught a bug the others missed:
+// balance. Three oracles, every one of which has caught a bug the others missed:
 //
 //   balance   the program prints `made` then `gone`; they must agree. The only oracle
 //             that sees a destructor which never runs on a value owning no stray heap
 //             (ASan and `leaks` are both silent), or a spurious drop of a zeroed slot.
 //   ASan      the build is `--sanitize`; any AddressSanitizer report is a finding
 //             (double free, use after free). Leak detection is off: macOS has no LSan.
-//   ledger    the same build runs with MILO_OWN_LEDGER=1 (docs/testing.md): any
-//             `own-ledger:` finding is a failure, as is a ledger-mode compiler throw
-//             (an owned copy with no declared intent). This is the only oracle for a
-//             leaked clone or a leaked temporary string, which no Drop count can see:
-//             `[v; N]`'s original, `match v[i]`'s clone, an extern `*u8` temp.
+//   (The ownership ledger, a fourth oracle for leaked clones and temporary strings,
+//   was deleted with its codegen markers (eb2292d5). Those leaks are now only seen by
+//   the leak ratchet over the fixtures, scripts/leak-check.ts, not by this fuzzer.)
 //   integrity every read goes through `chk`, which prints CORRUPT when a Res's name
 //             does not match its id: a box emptied by a read (`print(*h)`) or a slot
 //             read after its bytes were reused.
@@ -653,7 +651,7 @@ const FORMS: Form[] = [
   {
     // `[v; N]` moves v into the last slot and fills the other N-1 through Res's Clone,
     // so the balance oracle sees every copy. The string spellings have no Drop count;
-    // the ledger and ASan are their oracles (d2c64764 was the temp's original leaking).
+    // only a use-after-free shows up here, under ASan; a leak of them needs leak-check.ts.
     name: "array-repeat",
     apply(g) {
       const a = g.fresh("a"), n = between(1, 3);
@@ -833,11 +831,10 @@ fn main(): void {
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 const ASAN = /ERROR: AddressSanitizer: ([a-zA-Z-]+)/;
-const LEDGER = /^own-ledger: (.+?): \d+ (\S+) \(made at IR line \d+ by (\S+?)(?:, milo line (\d+))?;/;
 const INTERNAL = /TypeError|ReferenceError|RangeError|Cannot read propert|is not a function|undefined is not/;
 
 interface Verdict {
-  kind: "clean" | "rejected" | "ledger" | "ledger-crash" | "compiler-crash" | "asan" | "unbalanced" | "corrupt" | "aborted";
+  kind: "clean" | "rejected" | "compiler-crash" | "asan" | "unbalanced" | "corrupt" | "aborted";
   sig: string;      // what the reducer must preserve
   detail: string;
 }
@@ -850,13 +847,10 @@ const SPARSE_VM_MB = 64 * 1024 * 1024;
 
 async function judge(file: string, bin: string): Promise<Verdict> {
   const build = await guardedRun("bun", [MILO, "build", "--sanitize", file, "-o", bin], {
-    memMb: 2048, virtualMemMb: SPARSE_VM_MB, timeoutMs: 120_000, cwd: ROOT, env: { ...process.env, MILO_OWN_LEDGER: "1" },
+    memMb: 2048, virtualMemMb: SPARSE_VM_MB, timeoutMs: 120_000, cwd: ROOT,
   });
   const out = (build.stdout + "\n" + build.stderr).replace(ANSI, "");
-  const ledger = out.split("\n").map(l => LEDGER.exec(l)).filter(Boolean) as RegExpExecArray[];
   if (build.code !== 0) {
-    const throwLine = out.split("\n").find(l => l.includes("own-ledger:") && !LEDGER.test(l));
-    if (throwLine) return { kind: "ledger-crash", sig: "ledger-crash", detail: throwLine.trim() };
     const err = out.split("\n").map(l => l.trim()).find(l => /^error(\[[^\]]*\])?: /.test(l));
     if (err && !INTERNAL.test(out)) {
       const msg = err.replace(/^error(\[[^\]]*\])?: /, "");
@@ -864,10 +858,6 @@ async function judge(file: string, bin: string): Promise<Verdict> {
     }
     const first = out.split("\n").find(l => INTERNAL.test(l)) ?? out.split("\n").find(l => l.trim()) ?? "build failed";
     return { kind: "compiler-crash", sig: first.trim().slice(0, 80), detail: first.trim() };
-  }
-  if (ledger.length > 0) {
-    const kinds = [...new Set(ledger.map(m => `${m[2]} by ${m[3]}`))].sort();
-    return { kind: "ledger", sig: kinds.join(","), detail: ledger.map(m => m[0]).join("\n") };
   }
   const run = await guardedRun(bin, [], {
     memMb: 1024, virtualMemMb: SPARSE_VM_MB, timeoutMs: 30_000, cwd: ROOT, env: { ...process.env, ASAN_OPTIONS: "detect_leaks=0" },
@@ -987,4 +977,4 @@ if (ran.length < cases.length / 2) {
   process.exit(2);
 }
 if (red.length > 0) { console.error(`${red.length}/${ran.length} built programs failed an oracle`); process.exit(1); }
-console.log(`every value constructed was destroyed exactly once, ledger clean, ASan clean, across ${ran.length} programs`);
+console.log(`every value constructed was destroyed exactly once, ASan clean, across ${ran.length} programs`);

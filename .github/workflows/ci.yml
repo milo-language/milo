@@ -94,8 +94,8 @@ jobs:
       # keeps asking. Reduction is off: a red here is triaged locally with --keep.
       # fuzz:drops composes the ownership forms that produced the October 2026 memory
       # bugs (for-in over iterators/channels/forks/temps, struct update, array-literal
-      # args, heap moves, combinators, [v; N], match v[i]) under four oracles: Drop
-      # balance, ASan, the ownership ledger and a read-integrity check. A reverted fix
+      # args, heap moves, combinators, [v; N], match v[i]) under three oracles: Drop
+      # balance, ASan and a read-integrity check. A reverted fix
       # among those is red within its first ~15 cases. COST: ~5 CPU-s per case, so ~70s for 40 at --jobs 3.
       - name: Soundness fuzzers
         if: matrix.lane == 'fuzz'
