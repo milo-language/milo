@@ -36,6 +36,14 @@ describe("ts2milo", () => {
     expect(summary(r)).toContain("functions: 1 total, 1 automatic, 0 overrides = 100.0% automatic");
   });
 
+  test("xs.pop() on a local or a parameter borrows the vector &mut and makes it mutable", () => {
+    const { file, dir } = tmpTs("tsm_pop.ts", "export function local(): number {\n  const a: number[] = [1, 2];\n  const x = a.pop();\n  if (x !== undefined) { return x; }\n  return 0;\n}\nexport function param(a: number[]): number {\n  const x = a.pop();\n  if (x !== undefined) { return x; }\n  return 0;\n}\n");
+    const out = transpile([file], { overridesDir: join(dir, "none") }).files.get("tsm_pop.milo")!;
+    expect(out).toContain("var a: Vec<i64>");
+    expect(out).toContain("vecPop(&mut a)");
+    expect(out).toContain("a: &mut Vec<i64>");
+  });
+
   test("lenient mode refuses odd shapes with a named reason, never a crash", () => {
     const src = [
       "export type P = { a: number } | { b: number };",

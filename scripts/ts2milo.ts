@@ -251,7 +251,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     }
     if (ts.isCallExpression(n)) {
       const k = calleeKey(program, checker, n);
-      if (k === "Array.push" || k === "Set.add" || k === "Map.set") return rootOf((n.expression as ts.PropertyAccessExpression).expression);
+      if (k === "Array.push" || k === "Array.pop" || k === "Set.add" || k === "Map.set") return rootOf((n.expression as ts.PropertyAccessExpression).expression);
     }
     return null;
   };
@@ -1032,7 +1032,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "Array.pop": {
             const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0];
             if (a.length !== 0) return fail(c, "Array.pop with arguments");
-            return `${useRuntime(onCycle(el) && !isOptionT(el) ? "vecPopHeap" : "vecPop", c)}(${ex(recv!)})`;
+            // The runtime helper takes the vector `&mut`, written at the call even for a `&mut` parameter.
+            return `${useRuntime(onCycle(el) && !isOptionT(el) ? "vecPopHeap" : "vecPop", c)}(&mut ${ex(recv!)})`;
           }
           case "Set.has": case "ReadonlySet.has": case "WeakSet.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Set.add": case "WeakSet.add": return `${ex(recv!)}.add(${keyEx(recv!, a[0], true)})`;
@@ -1947,7 +1948,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (ts.isForOfStatement(n) && forOfMutates(n)) consider(n.expression);
         if (ts.isCallExpression(n)) {
           const k = calleeKey(program, checker, n);
-          if (k === "Array.push" || k === "Set.add" || k === "Map.set") consider((n.expression as ts.PropertyAccessExpression).expression);
+          if (k === "Array.push" || k === "Array.pop" || k === "Set.add" || k === "Map.set") consider((n.expression as ts.PropertyAccessExpression).expression);
           // A local lent to a `&mut` parameter, or the receiver of a mutating method, is a `var`.
           const d = declOf(n);
           const mp = d && mutParams.get(d);

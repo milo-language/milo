@@ -768,7 +768,7 @@ export class Parser {
         }
       }
     }
-    const k = this.tokens[p]?.kind;
+    const k = p < this.tokens.length ? this.tokens[p].kind : undefined;
     return k === TokenKind.Requires || k === TokenKind.Ensures || k === TokenKind.Invariant || k === TokenKind.Decreases;
   }
 
@@ -1321,7 +1321,9 @@ export class Parser {
   // path where `c` alone held.
   private parseChainClauses(): ChainClause[] {
     const clauses: ChainClause[] = [];
-    for (;;) {
+    let more = true;
+    // The returned list is moved out after the loop, not from inside it.
+    while (more) {
       const tok = this.peek();
       if (this.match(TokenKind.Let)) {
         const pattern = this.parsePattern();
@@ -1336,8 +1338,9 @@ export class Parser {
         this.error(`'||' cannot join a condition that has a 'let' clause`, this.peek(), undefined,
           `a 'let' clause binds only on the path where it matched; use two 'if' statements, or parenthesize the boolean part: 'let P = x && (a || b)'`);
       }
-      return clauses;
+      more = false;
     }
+    return clauses;
   }
 
   private parseChainOperand(): Expr {
@@ -1367,7 +1370,7 @@ export class Parser {
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
     const elseBody = this.parseIfElse();
-    if (clauses.length === 1 && clauses[0].kind === "LetClause") {
+    if (clauses.length === 1 && clauses.some(c => c.kind === "LetClause")) {
       const only = clauses.pop();
       if (only !== undefined && only.kind === "LetClause") {
         return { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody, elseBody, span: s };
