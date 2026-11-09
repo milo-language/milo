@@ -1,6 +1,9 @@
 // scripts/ts2milo.ts: a function that maps, an unsupported construct that fails with
 // file:line, an override that is counted, and the frontend files that must stay portable.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+// These tests transpile, compile and run Milo programs: several seconds each, more on a loaded
+// machine. Same budget as CI (`bun test --timeout 30000`).
+setDefaultTimeout(30_000);
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
