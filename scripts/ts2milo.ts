@@ -17,6 +17,8 @@ const RESERVED = new Set("fn extern let var return if else while true false stru
 export interface Report {
   files: Map<string, string>;
   functions: { file: string; name: string; override: boolean }[];
+  // --lenient: functions whose body hit an unsupported construct, emitted as a stub that names it.
+  stubs: { file: string; name: string; reason: string }[];
   constructs: Map<string, { count: number; how: string }>;
   // src/ast.ts is types-only: Milo types and a JSON decoder are generated from its interfaces
   // and tagged unions. Fields with no Milo type are listed, not silently lost.
@@ -26,7 +28,7 @@ export interface Report {
 export class Unsupported extends Error {}
 
 // `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
-export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[] } = {}): Report {
+export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean } = {}): Report {
   const files = inputs.map((f) => resolve(ROOT, f));
   const astFile = files.find((f) => basename(f) === "ast.ts");
   const program = makeProgram(ROOT, files);
@@ -38,7 +40,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   const modOf = (f: string) => "./" + basename(f).replace(/\.ts$/, "");
   const inputSet = new Set(files);
 
-  const report: Report = { files: new Map(), functions: [], constructs: new Map() };
+  const report: Report = { files: new Map(), functions: [], constructs: new Map(), stubs: [] };
   const hit = (construct: string, how: string) => {
     const e = report.constructs.get(construct);
     if (e) e.count++; else report.constructs.set(construct, { count: 1, how });
@@ -51,7 +53,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
 
   // 1. The subset gate: nothing outside it reaches the emitter.
   const viol = files.filter((f) => f !== astFile).flatMap((f) => violationsOf(program, checker, program.getSourceFile(f)!));
-  if (viol.length) {
+  // --lenient generates the whole tree anyway: each function that hits an unsupported construct
+  // becomes a stub, so the generated frontend compiles and the stubs are the list of what is left.
+  if (viol.length && !opts.lenient) {
     const v = viol[0];
     throw new Unsupported(`${rel(v.file)}:${v.line}: ${v.construct}` + (viol.length > 1 ? ` (and ${viol.length - 1} more)` : ""));
   }
@@ -104,13 +108,21 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   const declOf = (call: ts.CallExpression | ts.NewExpression): ts.SignatureDeclaration | undefined => checker.getResolvedSignature(call)?.declaration as ts.SignatureDeclaration | undefined;
   const isThrower = (d: ts.Node) => (ts.isFunctionDeclaration(d) || ts.isMethodDeclaration(d)) && d.type?.kind === ts.SyntaxKind.NeverKeyword;
   const throwing = new Set<ts.Node>();
+  // --lenient: functions a whole-program pass could not handle; emitFn stubs them with the reason.
+  const forceStub = new Map<ts.Node, string>();
   let errType = "";
   const walkBody = (body: ts.Node, f: (n: ts.Node) => void) => { const w = (n: ts.Node) => { f(n); ts.forEachChild(n, w); }; w(body); };
   for (const fn of allFns) walkBody(fn.body!, (n) => {
     if (ts.isThrowStatement(n)) {
       throwing.add(fn);
       const name = checker.getTypeAtLocation(n.expression).symbol?.name ?? "?";
-      if (errType && errType !== name) fail(n, "throw of two different error types");
+      if (errType && errType !== name) {
+        if (!opts.lenient) fail(n, "throw of two different error types");
+        const sf = n.getSourceFile();
+        forceStub.set(fn, `${rel(sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: throw of a second error type (${name}, the program's is ${errType})`);
+        throwing.delete(fn);
+        return;
+      }
       errType = name;
     }
   });
@@ -918,23 +930,47 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         return;
       }
       report.functions.push({ file: rel(file), name, override: false });
-      curFn = fn; scopes = []; usedNames = []; push();
-      prepareMutated(fn);
-      const hdr = fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : "");
-      line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
-      ind++;
-      if (isThrower(fn)) hit("never-returning function", "returns the error value; callers `return Result.Err(call)`");
-      block(fn.body as ts.Block);
-      if (retWrap(fn) && (fn.type?.kind === ts.SyntaxKind.VoidKeyword)) line("return Result.Ok(true)");
-      ind--;
-      line("}");
-      pop(); curFn = null;
+      const mark = out.length, markInd = ind;
+      try {
+        const forced = forceStub.get(fn);
+        if (forced) throw new Unsupported(forced);
+        curFn = fn; scopes = []; usedNames = []; push();
+        prepareMutated(fn);
+        const hdr = fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : "");
+        line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
+        ind++;
+        if (isThrower(fn)) hit("never-returning function", "returns the error value; callers `return Result.Err(call)`");
+        block(fn.body as ts.Block);
+        if (retWrap(fn) && (fn.type?.kind === ts.SyntaxKind.VoidKeyword)) line("return Result.Ok(true)");
+        ind--;
+        line("}");
+      } catch (err) {
+        let e = err as Error;
+        if (!opts.lenient) throw e;
+        if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
+        out.length = mark; ind = markInd;
+        report.stubs.push({ file: rel(file), name, reason: e.message });
+        let hdr: string | null = null;
+        try { scopes = []; usedNames = []; push(); hdr = fnHeader(fn, name, isMethod ? (mutating.has(fn) ? "&mut " : "&") : ""); } catch (e2) { if (!(e2 instanceof Unsupported)) throw e2; }
+        // A signature the transpiler cannot type is left out; its callers then fail to compile, which is the honest count.
+        if (hdr !== null) {
+          line(`${exported && !isMethod ? "pub " : ""}${hdr} {`);
+          // exit never returns; the empty loop only satisfies the checker's "every path returns".
+          line(`    eprint(${JSON.stringify("ts2milo stub: " + e.message)})`);
+          line("    exit(70)");
+          line("    while true {");
+          line("    }");
+          line("}");
+        }
+      } finally {
+        pop(); curFn = null;
+      }
     };
     const isExported = (n: ts.Node) => !!(ts.canHaveModifiers(n) && ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
     const mname = (n: ts.PropertyName) => (n as ts.Identifier).text;
 
-    for (const n of sf.statements) {
-      if (ts.isImportDeclaration(n) || ts.isEmptyStatement(n)) continue;
+    const emitTop = (n: ts.Statement): void => {
+      if (ts.isImportDeclaration(n) || ts.isEmptyStatement(n)) return;
       const pub = isExported(n) ? "pub " : "";
       if (ts.isEnumDeclaration(n)) {
         hit("string enum", "enum + Enum_value + Enum_fromValue");
@@ -1015,6 +1051,20 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         }
         pop();
       } else fail(n, `top-level ${ts.SyntaxKind[n.kind]}`);
+    };
+    for (const n of sf.statements) {
+      const tmark = out.length, tind = ind;
+      try { emitTop(n); } catch (err) {
+        let e = err as Error;
+        if (!opts.lenient) throw e;
+        if (!(e instanceof Unsupported)) e = new Unsupported(`transpiler crash: ${(e as Error).message}`);
+        // A declaration the transpiler cannot express (a type it has no mapping for) is left out
+        // with its reason; whatever uses it then fails to compile, which is the honest count.
+        out.length = tmark; ind = tind;
+        const nm = (n as { name?: ts.Node }).name?.getText() ?? ts.SyntaxKind[n.kind];
+        report.stubs.push({ file: rel(file), name: nm, reason: e.message });
+        line(`// ts2milo stub: ${e.message.replace(/\n/g, " ")}`);
+      }
     }
     function emitUnion(u: { name: string; lits: string[] }) {
       hit("string-literal union", "generated enum + Name_value");
@@ -1035,6 +1085,7 @@ export function summary(r: Report): string {
   const ov = r.functions.filter((f) => f.override);
   const auto = total - ov.length;
   let s = `functions: ${total} total, ${auto} automatic, ${ov.length} overrides = ${total ? ((auto / total) * 100).toFixed(1) : "0"}% automatic\n`;
+  if (r.stubs.length) s += `stubs: ${r.stubs.length} (${((1 - r.stubs.length / Math.max(total, 1)) * 100).toFixed(1)}% of functions translated)\n`;
   for (const o of ov) s += `override: ${o.file} ${o.name}\n`;
   if (r.ast) {
     s += `ast types: ${r.ast.types} generated from src/ast.ts (fields no input reads are not carried)\n`;
@@ -1054,13 +1105,14 @@ if (import.meta.main) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "-o") outDir = argv[++i];
     else if (argv[i] === "--check") check = true;
+    else if (argv[i] === "--lenient") continue;
     else if (argv[i] === "--overrides") overridesDir = argv[++i];
     else if (argv[i] === "--ast-root") astRoots.push(argv[++i]);
     else inputs.push(argv[i]);
   }
-  if (!inputs.length || !outDir) { console.error("usage: ts2milo.ts <files.ts...> -o <dir> [--check] [--overrides <dir>] [--ast-root <Type>]"); process.exit(2); }
+  if (!inputs.length || !outDir) { console.error("usage: ts2milo.ts <files.ts...> -o <dir> [--check] [--overrides <dir>] [--ast-root <Type>] [--lenient]"); process.exit(2); }
   try {
-    const r = transpile(inputs, { overridesDir, astRoots });
+    const r = transpile(inputs, { overridesDir, astRoots, lenient: argv.includes("--lenient") });
     console.log(summary(r).trimEnd());
     if (check) {
       let stale = 0;
