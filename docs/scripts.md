@@ -41,7 +41,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
-| `scripts/checker-diag-snapshot.ts` | Diagnostics oracle for behavior-preserving checker refactors: type-check every tests/errors/*.milo and tests/fixtures/*.milo in-process and write every diagnostic (severity, code, message, span, len,… |
+| `scripts/checker-diag-snapshot.ts` | Diagnostics oracle for checker refactors: every diagnostic of every corpus program, as one JSON file. |
 | `scripts/checker-seam.ts` | Seam measurement for src/checker.ts: every top-level declaration and TypeChecker member with its line span, the reference graph among them, and the cost of cutting a cluster out. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
 | `scripts/dialect-hygiene.ts` | Hygiene gate for the milo MLIR dialect (mlir/Milo.td): docs on every op, type and attribute, and no hygiene count below its baseline. |

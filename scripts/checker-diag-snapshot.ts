@@ -1,7 +1,8 @@
-// Diagnostics oracle for behavior-preserving checker refactors: type-check every
-// tests/errors/*.milo and tests/fixtures/*.milo in-process and write every diagnostic
-// (severity, code, message, span, len, hint, notes) to one JSON file. Run it before and
-// after a move; the two files must be byte-identical.
+// Diagnostics oracle for checker refactors: every diagnostic of every corpus program, as one JSON file.
+//
+// Type-checks tests/errors/*.milo and tests/fixtures/*.milo in-process and records severity, code,
+// message, span, len, hint and notes. Run it before and after a move; the two files must be
+// byte-identical.
 //   bun scripts/checker-diag-snapshot.ts . <out.json> [--only <substr>] [--limit N] [--jobs N]
 import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
