@@ -2314,7 +2314,10 @@ class FnEmitter {
     const t = this.ty(e);
     // A discarded 128+ byte value that is built in place (`into`: an sret call, replace,
     // `?`, `??`, `!`) goes to a temporary dropped at the statement's end.
-    const built = e.kind === "MemReplace" || e.kind === "Propagate" || e.kind === "DefaultValue" || e.kind === "Unwrap";
+    const built = e.kind === "MemReplace" || e.kind === "Propagate" || e.kind === "DefaultValue" || e.kind === "Unwrap" ||
+      // A user fn's big result comes back through the ABI (not sret): into stores it in the temporary.
+      (e.kind === "Call" && !this.cx.isBuiltinName(e.func)) || e.kind === "ClosureCall" ||
+      ((e.kind === "MatchExpr" || e.kind === "IfExpr") && (this.fx.rawTypeOf(this.fx.ast(e.node)) ?? t).tag !== "never");
     if (this.isSretCall(e) || (built && t.tag !== "void" && inSlot(this.cx, this.place$(t, "discarded value")))) { this.bigSlot("tmp", e, true); return false; }
     // An if or a match whose value nobody takes (void, or never: every arm jumps) is the
     // statement, whose arms may end in a jump.

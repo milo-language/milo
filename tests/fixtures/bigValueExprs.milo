@@ -1,0 +1,106 @@
+// A match or if EXPRESSION of a 128+ byte type (also discarded), a match as an argument or
+// a return value, and a big local passed by value: each is written into a place.
+// @expect: 1
+// @expect: x
+// @expect: 100
+// @expect: 2
+// @expect: y
+// @expect: 100
+// @expect: 3
+// @expect: lit
+// @expect: 100
+// @expect: 4
+// @expect: var
+// @expect: 100
+// @expect: 5
+// @expect: y
+// @expect: 100
+// @expect: 6
+// @expect: arg
+// @expect: 100
+// @expect: 7
+// @expect: ret
+// @expect: 100
+// @expect: 9
+// @expect: loc
+// @expect: 100
+// @expect: 3
+// @expect: 2
+// @expect: y
+// @expect: 100
+// @expect: done
+enum Kind { A, B, C, D }
+
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    s: string,
+    v: Vec<i64>,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, q: i64, r: i64,
+}
+
+fn mk(x: i64, s: string): Big {
+    var v: Vec<i64> = []
+    v.push(x)
+    return Big { a: x, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, s: s, v: v, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 100 }
+}
+
+fn show(b: Big) {
+    print(b.v[0])
+    print(b.s)
+    print(b.r)
+}
+
+fn take(b: Big): i64 {
+    return b.v[0]
+}
+
+fn pick(k: Kind): Big {
+    return match k {
+        Kind.A => mk(1, "x"),
+        Kind.B => mk(2, "y"),
+        Kind.C => Big { a: 3, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, s: "lit", v: [3], i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 100 },
+        Kind.D => {
+            let w = mk(4, "var")
+            w
+        },
+    }
+}
+
+fn main() {
+    let e = Kind.A
+    let x = match e {
+        Kind.A => mk(1, "x"),
+        Kind.B => mk(2, "y"),
+        _ => mk(0, "z"),
+    }
+    show(x)
+    let c = true
+    let y = if c { mk(2, "y") } else { mk(0, "n") }
+    show(y)
+    show(pick(Kind.C))
+    show(pick(Kind.D))
+    // a match as a call argument, with a variable arm
+    let w = mk(5, "y")
+    show(match Kind.B {
+        Kind.A => mk(0, "a"),
+        _ => w,
+    })
+    // a discarded big match and if
+    match e {
+        Kind.A => mk(1, "x"),
+        _ => mk(0, "z"),
+    }
+    if c { mk(1, "x") } else { mk(0, "z") }
+    show(if c { mk(6, "arg") } else { mk(0, "n") })
+    show(pick2(c))
+    // a big local passed by value
+    let loc = mk(9, "loc")
+    show(loc)
+    print(take(pick(Kind.C)))
+    show(pick(Kind.B))
+    print("done")
+}
+
+fn pick2(c: bool): Big {
+    return if c { mk(7, "ret") } else { mk(0, "n") }
+}
