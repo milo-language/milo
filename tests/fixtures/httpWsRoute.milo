@@ -5,7 +5,7 @@
 // descriptor), so the broadcaster prunes it. A GET without an upgrade falls through to
 // the ordinary routes; an upgrade with no key is refused.
 // (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
-// @expect: listening on http://127.0.0.1:47394 (bound)
+// @expect: listening on http://127.0.0.1:27394 (bound)
 // @expect: a got: echo: hi
 // @expect: a got: a says hi
 // @expect: b got: a says hi
@@ -38,7 +38,7 @@ from "std/time" import {
     sleepMs
 }
 
-let PORT: u16 = 47394
+let PORT: u16 = 27394
 
 var peers: Vec<Outbox> = []
 var stale: Vec<Outbox> = []

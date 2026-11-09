@@ -4,7 +4,7 @@
 // bounds answers its client 500 while the server goes on serving; a spawned task that
 // overflows ends, and join returns. A panic off any green task still aborts (every
 // other panic fixture covers that).
-// @expect: listening on http://127.0.0.1:47395 (bound)
+// @expect: listening on http://127.0.0.1:27400 (bound)
 // @expect: boom: HTTP/1.1 500 Internal Server Error
 // @expect: boom has Date: true
 // @expect: ok after boom: HTTP/1.1 200 OK
@@ -21,7 +21,7 @@ from "std/runtime" import {
     Task
 }
 
-let PORT: u16 = 47395
+let PORT: u16 = 27400
 
 // recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
 fn statusLine(req: string): string {

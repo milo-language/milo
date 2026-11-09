@@ -4,7 +4,7 @@
 // 60 requests over fresh connections all get the right answer, and each handler sends on a
 // Channel that a task on the main scheduler drains: a cross-scheduler wake per request.
 // @expect: bad workers refused
-// @expect: listening on http://127.0.0.1:47411 (bound)
+// @expect: listening on http://127.0.0.1:27411 (bound)
 // @expect: ok 60 of 60
 // @expect: handler sends seen 60
 // @expect: post echo ok
@@ -24,7 +24,7 @@ from "std/time" import {
     sleepMs
 }
 
-let PORT: u16 = 47411
+let PORT: u16 = 27411
 
 fn clients(hits: &Channel<i64>): void {
     sleepMs(200)

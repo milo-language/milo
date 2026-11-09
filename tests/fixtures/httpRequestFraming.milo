@@ -5,7 +5,7 @@
 // and deflate (zlib or bare) are undone with the decoded size capped, so a zip bomb is
 // 413, and the handler sees headers describing the decoded body. Malformed request lines,
 // field names and lengths are 400; unknown codings are 415/501; HTTP/2.0 on this wire is 505.
-// @expect: listening on http://127.0.0.1:47393 (bound)
+// @expect: listening on http://127.0.0.1:27397 (bound)
 // @expect: chunked: 200 [11 bytes: hello world; ce=-; cl=-]
 // @expect: chunked with ext+trailer: 200 [3 bytes: abc; ce=-; cl=-]
 // @expect: chunked over limit: 413
@@ -45,7 +45,7 @@ from "std/deflate" import {
     Deflate
 }
 
-let PORT: u16 = 47393
+let PORT: u16 = 27397
 
 // recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
 fn exchange(req: &string): string {

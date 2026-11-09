@@ -3,7 +3,7 @@
 // must leave nothing behind: its descriptor closed by the server (counted in /dev/fd,
 // which is /proc/self/fd on Linux), its outbox refusing sends, its task finished.
 // (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
-// @expect: listening on http://127.0.0.1:47395 (bound)
+// @expect: listening on http://127.0.0.1:27395 (bound)
 // @expect: streams: 200 opened, 200 answered
 // @expect: sockets: 200 opened, 200 echoed
 // @expect: live outboxes after churn: 0
@@ -27,7 +27,7 @@ from "std/time" import {
     sleepMs
 }
 
-let PORT: u16 = 47395
+let PORT: u16 = 27395
 let CYCLES: i64 = 200
 
 var outboxes: Vec<Outbox> = []

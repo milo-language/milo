@@ -1,7 +1,7 @@
 // @skip-os: win32
 // ServeOptions.keepAlive false restores one request per connection: the first of two
 // pipelined requests is answered with Connection: close and the second is never read.
-// @expect: listening on http://127.0.0.1:47399 (bound)
+// @expect: listening on http://127.0.0.1:27399 (bound)
 // @expect: responses: 1
 // @expect: first: HTTP/1.1 200 OK conn=close body=a
 from "std/http" import {
@@ -20,7 +20,7 @@ from "std/time" import {
     sleepMs
 }
 
-let PORT: u16 = 47399
+let PORT: u16 = 27399
 
 fn clients(): void {
     let c = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!

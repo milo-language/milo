@@ -8,7 +8,7 @@
 // ambiguously, the per-connection request cap is reached, or the connection idles past
 // idleTimeoutMs (silently: no request, no response). std/fetch's pool reuses the
 // connection: with maxRequestsPerConn 3, its third response is the one that says close.
-// @expect: listening on http://127.0.0.1:47398 (bound)
+// @expect: listening on http://127.0.0.1:27398 (bound)
 // @expect: reuse: 200 a conn=- | 200 b conn=-
 // @expect: pipelined: 200 a | 200 b | 200 a
 // @expect: close asked: 200 conn=close eof=true
@@ -40,7 +40,7 @@ from "std/time" import {
     unrecordedEpochMillis, sleepMs
 }
 
-let PORT: u16 = 47398
+let PORT: u16 = 27398
 
 fn connect(): TcpStream {
     return TcpStream.connect(ip4(127, 0, 0, 1), PORT)!

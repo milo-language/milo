@@ -11,11 +11,11 @@ from "std/http" import {
 
 pub fn main(): i32 {
     let r = Router.new()
-    match serveRouterSerialOn("example.com", 47392, r) {
+    match serveRouterSerialOn("example.com", 27392, r) {
         Result.Ok(_) => print("Ok")
         Result.Err(e) => print("Err: " + e)
     }
-    match serveRouterOn("127.0.0.256", 47392, Router.new()) {
+    match serveRouterOn("127.0.0.256", 27392, Router.new()) {
         Result.Ok(_) => print("Ok")
         Result.Err(e) => print("Err: " + e)
     }
