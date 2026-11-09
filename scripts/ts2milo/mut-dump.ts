@@ -18,7 +18,7 @@ export function dumpInput(input: MutInput, keys: Set<string>): string {
   const body = (f: Function): string => {
     let s = cache.get(f);
     if (s === undefined) {
-      s = JSON.stringify(f, function (this: unknown, k, v) {
+      s = JSON.stringify(f, function (this: unknown, _k, v) {
         if (typeof v === "bigint") return String(v);
         // Array indices and the root have no key to test; an object's own keys are filtered.
         if (v && typeof v === "object" && !Array.isArray(v)) {

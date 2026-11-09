@@ -206,7 +206,7 @@ export function emitAst(checker: ts.TypeChecker, model: AstModel, astFile: strin
   // Milo type of a field, or null when it has none (an untagged union of primitives).
   const typeOf = (m: ts.PropertySignature): string | null => {
     const wrap = (s: string, node: ts.TypeNode, question: boolean) => (question || stripOptional(node) !== node ? `Option<${s}>` : s);
-    const conv = (n: ts.TypeNode, boxedHere: boolean): string | null => {
+    const conv = (n: ts.TypeNode, _boxedHere: boolean): string | null => {
       n = stripOptional(n);
       if (ts.isArrayTypeNode(n)) {
         const e = conv(n.elementType, false);

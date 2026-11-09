@@ -100,7 +100,6 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     if (!u) return fail(at, "string-literal union without a declared name");
     return u;
   };
-  const unionName = (t: ts.Type, at: ts.Node): string => resolveUnion(t, at).name;
 
   const declOf = (call: ts.CallExpression | ts.NewExpression): ts.SignatureDeclaration | undefined => checker.getResolvedSignature(call)?.declaration as ts.SignatureDeclaration | undefined;
   const isThrower = (d: ts.Node) => (ts.isFunctionDeclaration(d) || ts.isMethodDeclaration(d)) && d.type?.kind === ts.SyntaxKind.NeverKeyword;
