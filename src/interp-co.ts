@@ -31,6 +31,9 @@ export interface Task {
   envBlock?: number; // the heap block holding a capturing closure's environment, freed when the task ends
   why: string; // what a parked task waits for, for the deadlock report
   panicReply?: { fd: number; bytes: Uint8Array }; // R-TASK-PANIC: sent on fd if the task panics
+  // Set on a blocking-pool job: whether the job has started a scheduler on its worker thread.
+  // The pool clears a worker's scheduler between jobs, so every job starts without one.
+  poolJobSched?: boolean;
 }
 
 // The scheduler runs this many tasks before it moves the front of the queue to the back (std/runtime

@@ -88,7 +88,8 @@ plain("taskOnPanicReply", (it, [fd, reply]) => {
 plain("taskOnPanicNote", () => undefined);
 // R-TASK-MAIN: a task pointer is the task's number; main is a task whenever the program can spawn.
 plain("schedulerCurrent", it => BigInt((it as InterpCo).cur.id));
-plain("schedulerExists", () => true);
+// R-TASK-BLOCKING: a blocking-pool job has no scheduler until it starts one itself.
+plain("schedulerExists", it => (it as InterpCo).cur.poolJobSched ?? true);
 co("schedulerYield", function* (it) { yield* it.yieldNow(); return undefined; });
 co("schedulerPark", function* (it) { yield* it.park("schedulerPark"); return undefined; });
 plain("schedulerUnpark", (it, [p]) => { const t = (it as InterpCo).tasks.get(Number(p as bigint)); if (t) (it as InterpCo).unpark(t); return undefined; });
@@ -102,15 +103,17 @@ co("schedulerRunToCompletion", function* (it) {
 co("time$sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 co("sleepMs", function* (it, [ms]) { yield* it.sleep(Number(ms as bigint)); return undefined; });
 plain("sleepBlockingMs", (it, [ms]) => { (it as InterpCo).clock += Math.max(0, Number(ms as bigint)); return undefined; });
-// R-TIME: the scheduler is always up under the task interpreter, so making timers live is a no-op
-plain("ensureTimersLive", () => undefined);
-plain("schedulerEnsureInit", () => undefined);
+// R-TIME: the scheduler is always up under the task interpreter, so making timers live only
+// records that a blocking-pool job now has one (R-TASK-BLOCKING).
+const startScheduler: Native = it => { const t = (it as InterpCo).cur; if (t.poolJobSched === false) t.poolJobSched = true; return undefined; };
+plain("ensureTimersLive", startScheduler);
+plain("schedulerEnsureInit", startScheduler);
 // A blocking-pool job or OS thread runs as one more task (R-TASK-BLOCKING): the interpreter has no second thread.
 // The pool itself is one heap block built by the first job and never freed, so it is live at exit.
 plain("runtime$blockingPoolSubmit", (it, [f]) => {
   const co = it as InterpCo;
   if (co.blockingPoolBlock === null) co.blockingPoolBlock = co.alloc();
-  co.spawnTask(f as ClosureV);
+  co.spawnTask(f as ClosureV).poolJobSched = false;
   return undefined;
 });
 plain("spawnOsThreadDetached", (it, [f]) => { (it as InterpCo).spawnTask(f as ClosureV); return undefined; });
@@ -372,7 +375,7 @@ function lookup(name: string): Native | undefined {
     return SELECT_NATIVES[m[1]!];
   }
   if (name === "Select$Drop$drop") return () => undefined;
-  if (name === "ensureTimersLive") return () => undefined; // a scheduler always exists under the task interpreter
+  if (name === "ensureTimersLive") return startScheduler;
   if (/^Channel_.+?\$Drop\$drop$/.test(name) || /^(WaitGroup|Once|Atomic\w+)\$Drop\$drop$/.test(name)) return () => undefined;
   m = WG.exec(name);
   if (m) {
