@@ -31,15 +31,13 @@ function moduleBytes(src: string): number {
   }
 }
 
-test("24 mutually recursive enums and structs emit a linear-size module", () => {
-  const bytes = moduleBytes(enums(24));
-  // The runtime and scaffold alone are ~325 KB; each enum+struct pair adds ~8 KB of
-  // per-type clone and drop functions (measured: 6 pairs 378 KB, 12 427 KB, 24 527 KB).
-  expect(bytes).toBeLessThan(600_000);
-});
-
-test("module size grows by the types, not by their paths", () => {
+test("mutually recursive enums and structs: module size grows by the types, not by their paths", () => {
   const a = moduleBytes(enums(6)), b = moduleBytes(enums(12)), c = moduleBytes(enums(24));
   // Twice the types adds about twice the bytes; path-wise spelling would square or worse.
   expect(c - b).toBeLessThan(2.5 * (b - a));
+  // What one enum+struct pair costs: its drop functions and derived Clone instances. Measured
+  // 15.8 KB (6 pairs 422 KB, 12 516 KB, 24 706 KB; the runtime and scaffold are ~327 KB of each).
+  // It was 8.3 KB until structs derived Clone through Option<Heap<T>> and Vec<T> fields, which
+  // these structs have. The bound is per pair so that growth in the runtime does not trip it.
+  expect((c - b) / 12).toBeLessThan(20_000);
 });
