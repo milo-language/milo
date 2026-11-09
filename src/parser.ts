@@ -38,6 +38,41 @@ function isIntTypeName(name: string): boolean {
   return true;
 }
 
+// The clause keyword token's text as its literal type (atClause already established it is one of the four).
+function contractKindOf(v: string): "requires" | "ensures" | "invariant" | "decreases" {
+  if (v === "requires") return "requires";
+  if (v === "ensures") return "ensures";
+  if (v === "invariant") return "invariant";
+  return "decreases";
+}
+
+// The binary operator a compound-assignment token stands for, "" for any other token.
+function compoundOpOf(k: TokenKind): string {
+  if (k === TokenKind.PlusEq) return "+";
+  if (k === TokenKind.MinusEq) return "-";
+  if (k === TokenKind.StarEq) return "*";
+  if (k === TokenKind.SlashEq) return "/";
+  if (k === TokenKind.PercentEq) return "%";
+  if (k === TokenKind.AmpEq) return "&";
+  if (k === TokenKind.PipeEq) return "|";
+  if (k === TokenKind.CaretEq) return "^";
+  return "";
+}
+
+const MAX_EXPR_DEPTH = 2000;
+
+function isSigilBuiltin(name: string): boolean {
+  return name === "embedFile" || name === "targetOs" || name === "targetArch";
+}
+
+// Tokens that can never begin an expression. Seeing one where a binding's
+// value should be means the value is missing (e.g. `let x =` then `return`).
+function nonExprStart(k: TokenKind): boolean {
+  return k === TokenKind.Let || k === TokenKind.Var || k === TokenKind.Return || k === TokenKind.Else
+    || k === TokenKind.While || k === TokenKind.For || k === TokenKind.Break || k === TokenKind.Continue
+    || k === TokenKind.Semicolon || k === TokenKind.RBrace || k === TokenKind.Eof;
+}
+
 export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
@@ -47,7 +82,6 @@ export class Parser {
 
   // Builtins that may be written with the `@` sigil in expression position. These
   // are compile-time-only: the compiler, not the runtime, does the work.
-  private static SIGIL_BUILTINS = new Set(["embedFile", "targetOs", "targetArch"]);
 
   // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
   // so the CLI renders the offending file's source line + caret (essential for errors
@@ -710,7 +744,7 @@ export class Parser {
       }
       if (!atClause()) break;
       const s = this.span(this.peek());
-      const kind = this.advance().value as "requires" | "ensures" | "invariant" | "decreases";
+      const kind = contractKindOf(this.advance().value);
       const expr = this.parseExpr();
       const contract: import("./ast").Contract = { kind, expr, span: s };
       if (attrs.length > 0) contract.attributes = attrs;
@@ -1059,19 +1093,16 @@ export class Parser {
       return { kind: "Assign", target: expr, value, span: expr.span };
     }
     // compound assignment: x += ..., x -= ..., etc.
-    const compoundOps: Record<string, string> = {
-      [TokenKind.PlusEq]: "+", [TokenKind.MinusEq]: "-",
-      [TokenKind.StarEq]: "*", [TokenKind.SlashEq]: "/", [TokenKind.PercentEq]: "%",
-      [TokenKind.AmpEq]: "&", [TokenKind.PipeEq]: "|", [TokenKind.CaretEq]: "^",
-    };
-    const op = compoundOps[this.peek().kind];
-    if (op) {
+    const op = compoundOpOf(this.peek().kind);
+    if (op !== "") {
       this.advance();
       const rhs = this.parseExpr();
-      const value: Expr = { kind: "BinOp", op, left: this.cloneExpr(expr), right: rhs, span: expr.span };
-      return { kind: "Assign", target: expr, value, span: expr.span };
+      const sp = expr.span;
+      const value: Expr = { kind: "BinOp", op, left: this.cloneExpr(expr), right: rhs, span: sp };
+      return { kind: "Assign", target: expr, value, span: sp };
     }
-    return { kind: "ExprStmt", expr, span: expr.span };
+    const exprSpan = expr.span;
+    return { kind: "ExprStmt", expr, span: exprSpan };
   }
 
   private parseGlobalDecl(): GlobalDecl {
@@ -1092,21 +1123,13 @@ export class Parser {
     return { kind: "GlobalDecl", name, type, value, mutable, threadLocal, span: s };
   }
 
-  // Tokens that can never begin an expression. Seeing one where a binding's
-  // value should be means the value is missing (e.g. `let x =` then `return`).
-  private static readonly NON_EXPR_START = new Set<TokenKind>([
-    TokenKind.Let, TokenKind.Var, TokenKind.Return, TokenKind.Else,
-    TokenKind.While, TokenKind.For, TokenKind.Break, TokenKind.Continue,
-    TokenKind.Semicolon, TokenKind.RBrace, TokenKind.Eof,
-  ]);
-
   // After consuming `=`, error if no expression follows. Anchored at the binding
   // keyword, not the unrelated next token: the real cause is the dangling
   // `let x =` a line earlier, so pointing the caret there (with the offending
   // token named in the message) is what makes the diagnostic land.
   private requireBindingValue(kw: "let" | "var", name: string, kwTok: Token): void {
     const next = this.peek();
-    if (Parser.NON_EXPR_START.has(next.kind)) {
+    if (nonExprStart(next.kind)) {
       this.error(
         `${kw} binding '${name}' has no value after '='`,
         kwTok, undefined,
@@ -1190,12 +1213,14 @@ export class Parser {
     // ordinary condition parse stops at that `let` (it is not an expression), so retry
     // as a chain from the same token. Any other parse error is the real one.
     const saved = this.pos;
+    const savedDepth = this.exprDepth;
     let cond: Expr;
     try {
       cond = this.parseExpr();
     } catch (e) {
       if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
       this.pos = saved;
+      this.exprDepth = savedDepth;
       const clauses = this.parseChainClauses();
       return this.finishIfChain(s, clauses);
     }
@@ -1342,12 +1367,14 @@ export class Parser {
     if (this.at(TokenKind.Let)) return desugar(this.parseChainClauses());
     // `while more && let Some(x) = next()`: same retry as parseIf.
     const saved = this.pos;
+    const savedDepth = this.exprDepth;
     let cond: Expr;
     try {
       cond = this.parseExpr();
     } catch (e) {
       if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
       this.pos = saved;
+      this.exprDepth = savedDepth;
       return desugar(this.parseChainClauses());
     }
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
@@ -1606,21 +1633,24 @@ export class Parser {
   // (parens, calls, indexes, unary chains) recurses through, so bounding it turns a
   // pathological input like `((((…))))` 5000-deep from a raw `RangeError: Maximum
   // call stack` into a clean diagnostic. 2000 is far past any human-written nesting.
-  private static readonly MAX_EXPR_DEPTH = 2000;
 
   private parseExpr(): Expr {
-    if (++this.exprDepth > Parser.MAX_EXPR_DEPTH) {
-      this.error(`expression nesting too deep (>${Parser.MAX_EXPR_DEPTH})`, this.peek(), undefined,
+    if (++this.exprDepth > MAX_EXPR_DEPTH) {
+      this.error(`expression nesting too deep (>${MAX_EXPR_DEPTH})`, this.peek(), undefined,
         `deeply nested expressions exceed the parser's depth limit — flatten the expression`);
     }
-    try {
-      return this.parseExprInner();
-    } finally {
-      this.exprDepth--;
-    }
+    // No try/finally: a throw unwinds to a catch that backtracks, and each of those restores exprDepth itself.
+    const e = this.parseExprInner();
+    this.exprDepth--;
+    return e;
   }
 
   private exprDepth = 0;
+
+  // Its own function: floats are not translated yet (the generated AST holds numbers as i64), so only this stubs.
+  private floatLit(text: string, s: Span): Expr {
+    return { kind: "FloatLit", value: parseFloat(text), span: s };
+  }
 
   private parseExprInner(): Expr {
     let left = this.parseOr();
@@ -1826,7 +1856,7 @@ export class Parser {
         this.error(`no whitespace allowed between '@' and '${nameTok.value}'`, nameTok, undefined,
           `write '@${nameTok.value}(...)'`);
       }
-      if (!Parser.SIGIL_BUILTINS.has(nameTok.value)) {
+      if (!isSigilBuiltin(nameTok.value)) {
         this.error(`unknown compile-time builtin '@${nameTok.value}'`, nameTok, undefined,
           `'@' expressions are '@embedFile("path")', '@targetOs()' and '@targetArch()'`);
       }
@@ -1848,7 +1878,7 @@ export class Parser {
     }
     if (tok.kind === TokenKind.Float) {
       this.advance();
-      return { kind: "FloatLit", value: parseFloat(tok.value), span: s };
+      return this.floatLit(tok.value, s);
     }
     if (tok.kind === TokenKind.True) {
       this.advance();
@@ -1898,7 +1928,10 @@ export class Parser {
       // comparison. The trailing `.`/`(` requirement is the disambiguator.
       if (this.at(TokenKind.Lt)) {
         const saved = this.pos;
-        let structTurbofish: { typeArgs: import("./ast").MiloType[]; pos: number } | null = null;
+        const savedDepth = this.exprDepth;
+        let hasStructTurbofish = false;
+        let turbofishPos = 0;
+        const turbofishArgs: import("./ast").MiloType[] = [];
         try {
           this.advance(); // consume <
           const typeArgs: import("./ast").MiloType[] = [this.parseType()];
@@ -1935,15 +1968,18 @@ export class Parser {
           // field would otherwise be swallowed by the `catch`, which falls back to `<` as
           // a comparison and reports `unexpected token ','` at the type-argument comma.
           if (this.at(TokenKind.LBrace) && typeSpelled(tok.value)) {
-            structTurbofish = { typeArgs, pos: this.pos };
+            hasStructTurbofish = true;
+            turbofishPos = this.pos;
+            turbofishArgs.push(...typeArgs);
           }
           this.pos = saved; // not a turbofish — fall through to `<` as comparison
         } catch {
           this.pos = saved;
+          this.exprDepth = savedDepth;
         }
-        if (structTurbofish) {
-          this.pos = structTurbofish.pos;
-          return this.parseStructLit(tok.value, s, structTurbofish.typeArgs);
+        if (hasStructTurbofish) {
+          this.pos = turbofishPos;
+          return this.parseStructLit(tok.value, s, turbofishArgs);
         }
       }
       // struct literal: Name { field: value, ... }
@@ -1982,15 +2018,13 @@ export class Parser {
     if (tok.kind === TokenKind.Move) {
       this.advance(); // consume 'move'
       if (this.at(TokenKind.LParen) && this.isArrowClosure()) {
-        const closure = this.parseClosure(s);
-        (closure as any).isMove = true;
-        return closure;
+        return this.parseClosure(s, true);
       }
       this.error("'move' must precede a closure", tok);
     }
     if (tok.kind === TokenKind.LParen) {
       if (this.isArrowClosure()) {
-        return this.parseClosure(s);
+        return this.parseClosure(s, false);
       }
       this.advance();
       const expr = this.parseExpr();
@@ -2022,13 +2056,20 @@ export class Parser {
     // A ':' with a '?' earlier on the same line is a ternary: the '?' was already
     // taken as the propagate operator, leaving the ':' with nothing to attach to.
     if (tok.kind === TokenKind.Colon) {
-      for (let i = this.pos - 1; i >= 0 && this.tokens[i]!.line === tok.line; i--) {
+      let i = this.pos - 1;
+      while (i >= 0 && this.tokens[i]!.line === tok.line) {
         if (this.tokens[i]!.kind === TokenKind.Question) {
           this.error(`unexpected token '${tok.kind}'`, tok, undefined,
             "Milo has no '?:' — 'if' is an expression: 'let y = if cond { a } else { b }'");
         }
+        i--;
       }
     }
+    this.unexpectedToken(tok);
+  }
+
+  // Its own method: in parsePrimary tok.kind is narrowed by every earlier branch, which hides that it is a TokenKind.
+  private unexpectedToken(tok: Token): never {
     this.error(`unexpected token '${tok.kind}'`, tok);
   }
 
@@ -2135,7 +2176,7 @@ export class Parser {
   }
 
   // (params) => expr  or  (params): RetType => { body }
-  private parseClosure(span: Span): Expr {
+  private parseClosure(span: Span, isMove: boolean): Expr {
     this.expect(TokenKind.LParen);
     const params: Param[] = [];
     while (!this.at(TokenKind.RParen)) {
@@ -2156,7 +2197,9 @@ export class Parser {
       const expr = this.parseExpr();
       body = [{ kind: "Return" as const, value: expr, span: expr.span }];
     }
-    return { kind: "Closure", params, retType, body, span };
+    const closure: import("./ast").ClosureExpr = { kind: "Closure", params, retType, body, span };
+    if (isMove) closure.isMove = true;
+    return closure;
   }
 
   // $"hello {name}, you are {age} years old" → format("hello ", name, ", you are ", age, " years old")

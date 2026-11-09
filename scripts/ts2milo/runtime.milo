@@ -420,6 +420,13 @@ pub fn optNone<T>(): Option<T> {
 
 // An Option<Heap<T>> field read where an Option<T> is wanted. The type argument is written out at
 // every call: inference does not see T through &Option<Heap<T>>.
+// A one-element Vec where the element type cannot be inferred from context (a literal straight into Heap(...)).
+pub fn vec1<T>(a: T): Vec<T> {
+    var v: Vec<T> = Vec.new()
+    v.push(a)
+    return v
+}
+
 pub fn optBox<T>(o: Option<T>): Option<Heap<T>> {
     return match o {
         Option.Some(v) => Option.Some(Heap(v)),

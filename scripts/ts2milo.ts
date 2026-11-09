@@ -395,7 +395,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     let usedNames: Set<string>[] = [];
     let curFn: ts.FunctionLikeDeclaration | null = null;
     let mutated = new Set<ts.Symbol>();
-    const symOf = (id: ts.Identifier) => checker.getSymbolAtLocation(id);
+    const symOf = (id: ts.Identifier) => (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id ? checker.getShorthandAssignmentValueSymbol(id.parent) : checker.getSymbolAtLocation(id));
     const declareLocal = (sym: ts.Symbol, base: string) => {
       let name = safeId(base);
       const taken = () => usedNames.some((s) => s.has(name));
@@ -598,22 +598,38 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (!ts.isVariableDeclarationList(dl) || ts.isForOfStatement(dl.parent) || ts.isForInStatement(dl.parent)) return false;
       const fnOf = (n: ts.Node) => { for (let p = n.parent; p; p = p.parent) if (ts.isFunctionLike(p)) return p; return undefined; };
       if (fnOf(id) !== fnOf(d)) return false;
-      for (let p: ts.Node | undefined = id.parent; p && p !== dl.parent.parent; p = p.parent) {
+      // `x = { ...x... }`: the old value dies in the assignment, so reading it there is its last use wherever the assignment sits.
+      let selfAssign: ts.Node | undefined;
+      for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p) && !ts.isStatement(p); p = p.parent) {
+        if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(p.left) && symOf(p.left) === sy && id.pos >= p.right.pos && id.end <= p.right.end) { selfAssign = p; break; }
+      }
+      for (let p: ts.Node | undefined = id.parent; !selfAssign && p && p !== dl.parent.parent; p = p.parent) {
         if (ts.isIterationStatement(p, false) && !(d.pos >= p.pos && d.end <= p.end)) return false;
       }
       let scope: ts.Node = d.getSourceFile();
       for (let p: ts.Node = d; p.parent; p = p.parent) if (ts.isBlock(p.parent) || ts.isCaseClause(p.parent) || ts.isDefaultClause(p.parent)) { scope = p.parent; break; }
       // Inside a `return` nothing after the statement runs: only the rest of that expression can read the place again.
       for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p); p = p.parent) if (ts.isReturnStatement(p)) { scope = p; break; }
+      if (selfAssign) scope = selfAssign;
       // A block that ends in a return: nothing outside it runs after this read.
       let limit = Infinity;
       for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p) && p !== scope; p = p.parent) {
         if (ts.isBlock(p) && p.statements.length > 0 && ts.isReturnStatement(p.statements[p.statements.length - 1])) { limit = p.end; break; }
       }
+      // `{ target: x, span: x.span }`: the literal's fields are emitted reads-first (moveOrder), so that read is not after the move.
+      const lit = (() => { for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p); p = p.parent) if (ts.isObjectLiteralExpression(p)) return p; return undefined; })();
+      const siblingFieldRead = (n: ts.Node) => !!lit && n.pos >= lit.pos && n.end <= lit.end && ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n && (ts.isPropertyAssignment(id.parent) || ts.isShorthandPropertyAssignment(id.parent)) && id.parent.parent === lit;
+      // A read in the else arm never follows one in the then arm of the same if.
+      const inOtherBranch = (n: ts.Node) => {
+        for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p); p = p.parent) {
+          if (ts.isIfStatement(p) && p.elseStatement && id.pos >= p.thenStatement.pos && id.end <= p.thenStatement.end && n.pos >= p.elseStatement.pos && n.end <= p.elseStatement.end) return true;
+        }
+        return false;
+      };
       let later = false;
       const walk = (n: ts.Node) => {
         if (later) return;
-        if (ts.isIdentifier(n) && n !== id && n.text === id.text && n.pos >= id.end && n.pos < limit && symOf(n) === sy) later = true;
+        if (ts.isIdentifier(n) && n !== id && n.text === id.text && n.pos >= id.end && n.pos < limit && !siblingFieldRead(n) && !inOtherBranch(n) && symOf(n) === sy) later = true;
         ts.forEachChild(n, walk);
       };
       walk(scope);
@@ -690,6 +706,26 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return owned(ex(e, want));
     };
     const ownConv = (e: ts.Expression, want?: ts.Type) => conv(e, want, true);
+    // A value going straight into Heap(...) has nothing to infer an empty array's element type from: it is spelled out.
+    let boxedFieldInit = false;
+    const heapConv = (e: ts.Expression, want?: ts.Type) => { boxedFieldInit = true; try { return ownConv(e, want); } finally { boxedFieldInit = false; } };
+    // Struct literal fields evaluate in emitted order, so a field taking a local whole (`target: expr`, a move)
+    // must come after a field reading through it (`span: expr.span`); field order does not matter to the struct.
+    const moveOrder = (o: ts.ObjectLiteralExpression) => {
+      const init = (p: ts.ObjectLiteralElementLike) => (ts.isShorthandPropertyAssignment(p) ? p.name : ts.isPropertyAssignment(p) ? unparen(p.initializer) : undefined);
+      const readsThrough = new Set<ts.Symbol>();
+      for (const p of o.properties) {
+        const i = init(p);
+        if (i) walkBody(i, (n) => { if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression)) { const s = symOf(n.expression); if (s) readsThrough.add(s); } });
+      }
+      const rank = (m: ts.PropertySignature) => {
+        const p = o.properties.find((q) => (q.name as ts.Identifier).text === (m.name as ts.Identifier).text);
+        const i = p && init(p);
+        const s = i && ts.isIdentifier(i) ? (ts.isShorthandPropertyAssignment(i.parent) ? checker.getShorthandAssignmentValueSymbol(i.parent) : symOf(i)) : undefined;
+        return s && readsThrough.has(s) ? 1 : 0;
+      };
+      return (a: ts.PropertySignature, b: ts.PropertySignature) => rank(a) - rank(b);
+    };
 
     // A type with no Milo mapping is a TsOpaque field or parameter; code that reads through it or passes a real value to it cannot compile, so it stubs.
     const unmappableCache = new Map<ts.Type, boolean>();
@@ -828,9 +864,18 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     };
 
     let closureDepth = 0;
+    // The failure flags of the enclosing `try` blocks, innermost last: inside one, an error sets the flag and leaves the block.
+    const tryFlags: string[] = [];
+    // A failure inside a loop within a try only left that loop: leave the enclosing ones too.
+    const afterLoop = () => { if (tryFlags.length) { line(`if ${tryFlags[tryFlags.length - 1]} {`); line("    break"); line("}"); } };
     const withTry = (call: ts.CallExpression, code: string): string => {
       const d = declOf(call);
       if (closureDepth > 0 && d && throwing.has(d) && !isThrower(d)) fail(call, "closure (loop tier) calling a function that throws");
+      if (d && throwing.has(d) && !isThrower(d) && tryFlags.length) {
+        hit("call of a throwing function in try", "match on the Result, the Err arm sets the try's flag and breaks out");
+        const v = fresh("ok");
+        return `(match ${code} { Result.Ok(${v}) => ${v}, Result.Err(_) => { ${tryFlags[tryFlags.length - 1]} = true; break } })`;
+      }
       if (d && throwing.has(d) && !isThrower(d)) { hit("call of a throwing function", "`?` on the Result"); return `${code}?`; }
       return code;
     };
@@ -928,7 +973,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "StringConstructor.fromCharCode": return `${useRuntime("jsFromCharCode", c)}(${ex(a[0])})`;
           case "StringConstructor.fromCodePoint": return `${useRuntime("jsFromCodePoint", c)}(${ex(a[0])})`;
           case "Number.toString": return a.length ? `${useRuntime("jsNumRadix", c)}(${ex(recv!)}, ${ex(a[0])})` : `${useRuntime("jsNum", c)}(${ex(recv!)})`;
-          case "Array.push": { const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${heapElem(el, ownConv(a[0], el))})`; }
+          case "Array.push": {
+            // xs.push(...ys): ys is consumed (a borrowed place is cloned under the usual rules).
+            if (a.length === 1 && ts.isSpreadElement(a[0])) return `${ex(recv!)}.extend(${ownConv(a[0].expression, tOf(recv!))})`;
+            const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${heapElem(el, ownConv(a[0], el))})`; }
           case "Set.has": case "ReadonlySet.has": case "WeakSet.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Set.add": case "WeakSet.add": return `${ex(recv!)}.add(${keyEx(recv!, a[0], true)})`;
           case "Set.delete": case "WeakSet.delete": case "Map.delete": case "WeakMap.delete": return `${ex(recv!)}.remove(${keyEx(recv!, a[0])})`;
@@ -936,6 +984,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "Map.has": case "ReadonlyMap.has": case "WeakMap.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Map.set": case "WeakMap.set": { const [, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${keyEx(recv!, a[0], true)}, ${ownConv(a[1], vt)})`; }
           case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
+          // A bigint is its decimal string in the Milo AST. BigInt of a string is that string (the lexer's decimal digits are already canonical).
+          case "BigInt": if (a.length !== 1 || !(isStr(a[0]) || isNum(a[0]))) return fail(c, "BigInt of other than one string or number"); return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
           // Only the single-argument forms the runtime helpers implement exactly; anything else (a position, a regex, a limit) stays refused.
           case "String.startsWith": case "String.endsWith": case "String.includes": case "String.indexOf": case "String.lastIndexOf": case "String.split": {
@@ -1313,14 +1363,20 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             hit("tagged union literal", "Union.Variant(Struct { fields })");
             const uname = useDeclared(lu.name, lu.decl.getSourceFile().fileName, e);
             const sname = useDeclared(v.name, lu.decl.getSourceFile().fileName, e);
-            const vfields = v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== lu.field).map((m) => {
+            const vfields = v.members.filter(ts.isPropertySignature).filter((m) => (m.name as ts.Identifier).text !== lu.field).sort(moveOrder(o)).map((m) => {
               const fname = (m.name as ts.Identifier).text;
               const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
               const pt = checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!);
-              let val = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
+              const conv1 = astModel.boxed.has(m) && !isOptionT(pt) ? heapConv : ownConv;
+              let val = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? conv1(prop.name, pt) : conv1((prop as ts.PropertyAssignment).initializer, pt);
               if (astModel.boxed.has(m)) {
-                if (isOptionT(pt)) return fail(e, "object literal with a boxed optional field");
-                val = `Heap(${val})`;
+                if (!isOptionT(pt)) val = `Heap(${val})`;
+                else if (prop) {
+                  const pv = ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer;
+                  if (isUndefinedId(unparen(pv)) || unparen(pv).kind === ts.SyntaxKind.NullKeyword) val = "Option.None";
+                  else if (isOptionT(tOf(pv))) val = `${useRuntime("optBox", e)}<${ty(checker.getNonNullableType(pt), e)}>(${val})`;
+                  else val = `Option.Some(Heap(${heapConv(pv, checker.getNonNullableType(pt))}))`;
+                }
               }
               return `${safeId(fname)}: ${val}`;
             });
@@ -1335,7 +1391,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const tagOnly = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && d.getSourceFile().fileName === astFile && astModel.ifaces.has(d.name.text) && !!m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal);
           // A field the Milo AST dropped (a type with no mapping, e.g. a Map of a non-AST class) is not initialised.
           const dropped = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && !!report.ast?.dropped.some((x) => x.iface === d.name.text && x.field === (m.name as ts.Identifier).text);
-          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).map((m) => {
+          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).sort(moveOrder(o)).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
@@ -1346,7 +1402,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
               if (!isOptionT(pt)) v = `Heap(${v})`;
               else if (isUndefinedId(unparen(val)) || unparen(val).kind === ts.SyntaxKind.NullKeyword) v = "Option.None";
               else if (isOptionT(tOf(val))) v = `${useRuntime("optBox", e)}<${ty(checker.getNonNullableType(pt), e)}>(${v})`;
-              else if (!isUndefinedId(unparen(val)) && unparen(val).kind !== ts.SyntaxKind.NullKeyword) v = `Option.Some(Heap(${ownConv(val, checker.getNonNullableType(pt))}))`;
+              else if (!isUndefinedId(unparen(val)) && unparen(val).kind !== ts.SyntaxKind.NullKeyword) v = `Option.Some(Heap(${heapConv(val, checker.getNonNullableType(pt))}))`;
             }
             return `${safeId(fname)}: ${v}`;
           });
@@ -1355,8 +1411,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         }
         case ts.SyntaxKind.ArrayLiteralExpression: {
           const a = e as ts.ArrayLiteralExpression;
-          if (a.elements.length === 0) return "Vec.new()";
+          if (a.elements.length === 0) return want && checker.isArrayType(want) && boxedFieldInit ? `${ty(want, e)}.new()` : "Vec.new()";
           const et = want && checker.isArrayType(want) ? checker.getTypeArguments(want as ts.TypeReference)[0] : undefined;
+          if (boxedFieldInit && et && a.elements.length === 1 && !ts.isSpreadElement(a.elements[0])) { boxedFieldInit = false; return `${useRuntime("vec1", e)}<${heapElem(et, "X") !== "X" ? `Heap<${ty(et, e)}>` : ty(et, e)}>(${heapElem(et, ownConv(a.elements[0], et))})`; }
           return `[${a.elements.map((x) => (et ? heapElem(et, ownConv(x, et)) : ownConv(x, et))).join(", ")}]`;
         }
       }
@@ -1480,6 +1537,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           ind++; body(f.statement); ind--;
           line("}");
           pop();
+          afterLoop();
           return;
         }
         case ts.SyntaxKind.WhileStatement: {
@@ -1487,10 +1545,38 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           line(`while ${cond(w.expression)} {`);
           ind++; body(w.statement); ind--;
           line("}");
+          afterLoop();
           return;
         }
-        case ts.SyntaxKind.BreakStatement: line("break"); return;
-        case ts.SyntaxKind.ContinueStatement: line("continue"); return;
+        case ts.SyntaxKind.BreakStatement: case ts.SyntaxKind.ContinueStatement: {
+          // Inside a try (emitted as a one-shot loop) a break or continue aimed at an outer loop would hit that loop instead.
+          for (let p: ts.Node | undefined = s.parent; p && !ts.isFunctionLike(p); p = p.parent) {
+            if (ts.isIterationStatement(p, false) || ts.isSwitchStatement(p)) break;
+            if (ts.isTryStatement(p)) fail(s, "break or continue out of a try block");
+          }
+          line(s.kind === ts.SyntaxKind.BreakStatement ? "break" : "continue");
+          return;
+        }
+        case ts.SyntaxKind.TryStatement: {
+          const t = s as ts.TryStatement;
+          if (t.finallyBlock) fail(t, "try with finally");
+          if (!t.catchClause) fail(t, "try without catch");
+          if (t.catchClause!.variableDeclaration) fail(t, "catch with a binding");
+          hit("try/catch", "one-shot while loop, failure flag, catch body under if flag");
+          const flag = fresh("failed");
+          line(`var ${flag}: bool = false`);
+          line("while true {");
+          ind++;
+          tryFlags.push(flag);
+          try { body(t.tryBlock); } finally { tryFlags.pop(); }
+          line("break");
+          ind--;
+          line("}");
+          line(`if ${flag} {`);
+          ind++; body(t.catchClause!.block); ind--;
+          line("}");
+          return;
+        }
         case ts.SyntaxKind.ReturnStatement: {
           const r = s as ts.ReturnStatement;
           const rt = curFn ? checker.getSignatureFromDeclaration(curFn)!.getReturnType() : undefined;
@@ -1503,6 +1589,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           hit("throw", "Result.Err (a never-returning function returns the error itself)");
           // With several thrown classes the value is wrapped in its variant of the program-wide enum.
           const thrown = multiErr ? `${std(THROWN_ENUM)}.${thrownName(checker.getTypeAtLocation(t.expression).symbol)}(${ex(t.expression)})` : ex(t.expression);
+          if (tryFlags.length) { line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
           line(curFn && isThrower(curFn) ? `return ${thrown}` : `return Result.Err(${thrown})`);
           return;
         }
@@ -1642,7 +1729,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             if (!isOptionT(lt)) fail(e, "assignment to a boxed non-optional field");
             hit("boxed optional field", "assigned as Option.Some(Heap(v)) or Option.None");
             const rhs = unparen(e.right);
-            line(`${ex(e.left)} = ${isUndefinedId(rhs) || rhs.kind === ts.SyntaxKind.NullKeyword ? "Option.None" : `Option.Some(Heap(${ownConv(e.right, checker.getNonNullableType(lt))}))`}`);
+            line(`${ex(e.left)} = ${isUndefinedId(rhs) || rhs.kind === ts.SyntaxKind.NullKeyword ? "Option.None" : `Option.Some(Heap(${heapConv(e.right, checker.getNonNullableType(lt))}))`}`);
             return;
           }
         }
@@ -1661,7 +1748,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
       if (ts.isCallExpression(e)) {
         const d = declOf(e);
-        if (d && isThrower(d)) { if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws"); line(`return Result.Err(${callEx(e)})`); return; }
+        if (d && isThrower(d)) {
+          if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws");
+          if (tryFlags.length) { line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
+          line(`return Result.Err(${callEx(e)})`);
+          return;
+        }
         line(callEx(e));
         return;
       }
