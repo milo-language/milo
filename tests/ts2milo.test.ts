@@ -44,6 +44,13 @@ describe("ts2milo", () => {
     expect(out).toContain("a: &mut Vec<i64>");
   });
 
+  test("structuredClone of a cloneable value is a deep .clone(); of a class it is refused", () => {
+    const { file, dir } = tmpTs("tsm_sc.ts", "export function copy(a: number[]): number[] {\n  return structuredClone(a);\n}\nexport class K { n = 1; }\nexport function bad(k: K): K {\n  return structuredClone(k);\n}\n");
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    expect(r.files.get("tsm_sc.milo")!).toContain("a.clone()");
+    expect(r.stubs.some((s) => s.name === "bad" && s.reason.includes("structuredClone"))).toBe(true);
+  });
+
   test("lenient mode refuses odd shapes with a named reason, never a crash", () => {
     const src = [
       "export type P = { a: number } | { b: number };",
