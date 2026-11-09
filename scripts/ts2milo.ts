@@ -264,6 +264,27 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   // One fixpoint: each answer feeds the others.
   const mutating = new Set<ts.Node>();
   const mutParams = new Map<ts.Node, Set<number>>();
+  // A for-of whose body writes through the loop variable (or hands it to something that does) iterates `&mut`,
+  // which also makes the iterated array mutated.
+  const forOfMutates = (f: ts.ForOfStatement): boolean => {
+    const dl = f.initializer;
+    const sym = ts.isVariableDeclarationList(dl) && ts.isIdentifier(dl.declarations[0].name) ? checker.getSymbolAtLocation(dl.declarations[0].name) : undefined;
+    if (!sym) return false;
+    const rooted = (r: ts.Expression) => ts.isIdentifier(r) && checker.getSymbolAtLocation(r) === sym;
+    let yes = false;
+    walkBody(f.statement, (n) => {
+      const w = writes(n);
+      if (w && rooted(w)) yes = true;
+      if (ts.isCallExpression(n)) {
+        const d = declOf(n);
+        if (d && mutating.has(d) && ts.isPropertyAccessExpression(n.expression) && rooted(rootOf(n.expression.expression))) yes = true;
+        const mp = d && mutParams.get(d);
+        if (mp) n.arguments.forEach((a, j) => { if (mp.has(j) && rooted(rootOf(a))) yes = true; });
+      }
+      if (ts.isForOfStatement(n) && rooted(rootOf(n.expression)) && forOfMutates(n)) yes = true;
+    });
+    return yes;
+  };
   for (let changed = true; changed;) {
     changed = false;
     for (const fn of allFns) {
@@ -283,6 +304,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       walkBody(fn.body!, (n) => {
         const w = writes(n);
         if (w) hitRoot(w);
+        if (ts.isForOfStatement(n) && forOfMutates(n)) hitRoot(rootOf(n.expression));
         if (ts.isCallExpression(n)) {
           const d = declOf(n);
           if (d && mutating.has(d) && ts.isPropertyAccessExpression(n.expression)) hitRoot(rootOf(n.expression.expression));
@@ -404,6 +426,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const d = t.symbol?.declarations?.[0];
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cyclic.has(d.name.text);
     };
+    // An element stored into a Vec<Heap<T>> (T on a cycle) is boxed on the way in.
+    const heapElem = (el: ts.Type, code: string): string => (onCycle(isOptionT(el) ? checker.getNonNullableType(el) : el) && !isOptionT(el) ? `Heap(${code})` : code);
     // Whether `e` reads an array element held as Heap<T> (see `ty`).
     const boxedElem = (e: ts.Expression): boolean => ts.isElementAccessExpression(e) && checker.isArrayType(tOf(e.expression)) && onCycle(checker.getNonNullableType(checker.getTypeArguments(tOf(e.expression) as ts.TypeReference)[0]));
     let opaqueFallback = false; // lenient signatures: a type with no mapping becomes TsOpaque so the function still exists for importers
@@ -558,7 +582,44 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       return ts.isIdentifier(e) || ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e);
     };
     const isCopyT = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike | ts.TypeFlags.Void | ts.TypeFlags.Never | ts.TypeFlags.Undefined | ts.TypeFlags.Null)) || !!enumDeclOf(t) || !!litsOf(t);
-    const needsClone = (e: ts.Expression) => isPlace(e) && !isCopyT(tOf(e));
+    // A local whose last read (in source order, with no loop between it and its declaration) is this one:
+    // the value is moved, which is what TS sharing amounts to when nothing reads the place afterwards.
+    const isLastUseLocal = (e0: ts.Expression): boolean => {
+      let e = e0;
+      while (ts.isParenthesizedExpression(e)) e = e.expression;
+      if (!ts.isIdentifier(e)) return false;
+      const id = e;
+      // A shorthand property `{ xs }` names the variable through its own symbol lookup.
+      const symOf = (n: ts.Identifier) => ts.isShorthandPropertyAssignment(n.parent) ? checker.getShorthandAssignmentValueSymbol(n.parent) : checker.getSymbolAtLocation(n);
+      const sy = symOf(id);
+      const d = sy?.declarations?.[0];
+      if (!sy || sy.declarations?.length !== 1 || !d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return false;
+      const dl = d.parent;
+      if (!ts.isVariableDeclarationList(dl) || ts.isForOfStatement(dl.parent) || ts.isForInStatement(dl.parent)) return false;
+      const fnOf = (n: ts.Node) => { for (let p = n.parent; p; p = p.parent) if (ts.isFunctionLike(p)) return p; return undefined; };
+      if (fnOf(id) !== fnOf(d)) return false;
+      for (let p: ts.Node | undefined = id.parent; p && p !== dl.parent.parent; p = p.parent) {
+        if (ts.isIterationStatement(p, false) && !(d.pos >= p.pos && d.end <= p.end)) return false;
+      }
+      let scope: ts.Node = d.getSourceFile();
+      for (let p: ts.Node = d; p.parent; p = p.parent) if (ts.isBlock(p.parent) || ts.isCaseClause(p.parent) || ts.isDefaultClause(p.parent)) { scope = p.parent; break; }
+      // Inside a `return` nothing after the statement runs: only the rest of that expression can read the place again.
+      for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p); p = p.parent) if (ts.isReturnStatement(p)) { scope = p; break; }
+      // A block that ends in a return: nothing outside it runs after this read.
+      let limit = Infinity;
+      for (let p: ts.Node | undefined = id.parent; p && !ts.isFunctionLike(p) && p !== scope; p = p.parent) {
+        if (ts.isBlock(p) && p.statements.length > 0 && ts.isReturnStatement(p.statements[p.statements.length - 1])) { limit = p.end; break; }
+      }
+      let later = false;
+      const walk = (n: ts.Node) => {
+        if (later) return;
+        if (ts.isIdentifier(n) && n !== id && n.text === id.text && n.pos >= id.end && n.pos < limit && symOf(n) === sy) later = true;
+        ts.forEachChild(n, walk);
+      };
+      walk(scope);
+      return !later;
+    };
+    const needsClone = (e: ts.Expression) => isPlace(e) && !isCopyT(tOf(e)) && !isLastUseLocal(e);
     // A value of a recursive AST type: its clone is only safe where the copy is never mutated.
     const isRecursiveT = (t: ts.Type): boolean => {
       if (isCopyT(t)) return false;
@@ -867,20 +928,24 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "StringConstructor.fromCharCode": return `${useRuntime("jsFromCharCode", c)}(${ex(a[0])})`;
           case "StringConstructor.fromCodePoint": return `${useRuntime("jsFromCodePoint", c)}(${ex(a[0])})`;
           case "Number.toString": return a.length ? `${useRuntime("jsNumRadix", c)}(${ex(recv!)}, ${ex(a[0])})` : `${useRuntime("jsNum", c)}(${ex(recv!)})`;
-          case "Array.push": return `${ex(recv!)}.push(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
+          case "Array.push": { const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0]; return `${ex(recv!)}.push(${heapElem(el, ownConv(a[0], el))})`; }
           case "Set.has": case "ReadonlySet.has": case "WeakSet.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Set.add": case "WeakSet.add": return `${ex(recv!)}.add(${keyEx(recv!, a[0], true)})`;
           case "Set.delete": case "WeakSet.delete": case "Map.delete": case "WeakMap.delete": return `${ex(recv!)}.remove(${keyEx(recv!, a[0])})`;
           case "Map.get": case "ReadonlyMap.get": case "WeakMap.get": return `${ex(recv!)}.get(${keyEx(recv!, a[0])})`;
           case "Map.has": case "ReadonlyMap.has": case "WeakMap.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Map.set": case "WeakMap.set": { const [, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${keyEx(recv!, a[0], true)}, ${ownConv(a[1], vt)})`; }
-          case "parseInt": if (!a[1]) fail(c, "parseInt without a radix"); return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
+          case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
           // Only the single-argument forms the runtime helpers implement exactly; anything else (a position, a regex, a limit) stays refused.
           case "String.startsWith": case "String.endsWith": case "String.includes": case "String.indexOf": case "String.lastIndexOf": case "String.split": {
             if (a.length !== 1 || !isStr(a[0])) return fail(c, `library call ${key} with other than one string argument`);
             const h = { "String.startsWith": "jsStartsWith", "String.endsWith": "jsEndsWith", "String.includes": "jsIncludes", "String.indexOf": "jsIndexOf", "String.lastIndexOf": "jsLastIndexOf", "String.split": "jsSplit" }[key];
             return `${useRuntime(h, c)}(${ex(recv!)}, ${ex(a[0])})`;
+          }
+          case "Math.min": case "Math.max": {
+            if (a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) return fail(c, `library call ${key} with other than two numbers`);
+            return `${useRuntime(key === "Math.min" ? "jsMin" : "jsMax", c)}(${ex(a[0])}, ${ex(a[1])})`;
           }
           case "String.trim": return `${useRuntime("jsTrim", c)}(${ex(recv!)})`;
           case "String.charAt": if (a.length !== 1) return fail(c, "String.charAt without an index"); return `${useRuntime("jsAt", c)}(${ex(recv!)}, ${ex(a[0])})`;
@@ -1045,6 +1110,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       }
       switch (e.kind) {
         case ts.SyntaxKind.ParenthesizedExpression: return `(${ex((e as ts.ParenthesizedExpression).expression, want)})`;
+        case ts.SyntaxKind.NonNullExpression: {
+          // `xs[i]!` asserts what an index read already is; an operand that really is optional would need an unwrap.
+          const inner = (e as ts.NonNullExpression).expression;
+          if (isOptionT(tOf(inner))) fail(e, "non-null assertion on an optional value");
+          return ex(inner, want);
+        }
         case ts.SyntaxKind.ThisKeyword: return "self";
         case ts.SyntaxKind.TrueKeyword: return "true";
         case ts.SyntaxKind.FalseKeyword: return "false";
@@ -1262,11 +1333,21 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const name = ts.isInterfaceDeclaration(d!) ? useDeclared(d.name.text, d.getSourceFile().fileName, e) : ty(t, e);
           // An AST struct has no field for a single-literal type (its `kind: "ImportDecl"` tag): the Milo struct itself is the tag.
           const tagOnly = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && d.getSourceFile().fileName === astFile && astModel.ifaces.has(d.name.text) && !!m.type && ts.isLiteralTypeNode(m.type) && ts.isStringLiteral(m.type.literal);
-          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m)).map((m) => {
+          // A field the Milo AST dropped (a type with no mapping, e.g. a Map of a non-AST class) is not initialised.
+          const dropped = (m: ts.PropertySignature) => ts.isInterfaceDeclaration(d!) && !!report.ast?.dropped.some((x) => x.iface === d.name.text && x.field === (m.name as ts.Identifier).text);
+          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).map((m) => {
             const fname = (m.name as ts.Identifier).text;
             const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
-            const v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
+            let v = !prop ? "Option.None" : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
+            // A boxed AST field stores a Heap: Option<Heap<T>> for an optional one.
+            if (prop && ts.isInterfaceDeclaration(d!) && astModel.boxed.has(m)) {
+              const val = ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer;
+              if (!isOptionT(pt)) v = `Heap(${v})`;
+              else if (isUndefinedId(unparen(val)) || unparen(val).kind === ts.SyntaxKind.NullKeyword) v = "Option.None";
+              else if (isOptionT(tOf(val))) v = `${useRuntime("optBox", e)}<${ty(checker.getNonNullableType(pt), e)}>(${v})`;
+              else if (!isUndefinedId(unparen(val)) && unparen(val).kind !== ts.SyntaxKind.NullKeyword) v = `Option.Some(Heap(${ownConv(val, checker.getNonNullableType(pt))}))`;
+            }
             return `${safeId(fname)}: ${v}`;
           });
           if (ts.isInterfaceDeclaration(d!) && ((astModel.identity.has(d.name.text) && inputSet.has(d.getSourceFile().fileName)) || RUNTIME_OWNED.has(d.name.text))) fields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
@@ -1276,7 +1357,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const a = e as ts.ArrayLiteralExpression;
           if (a.elements.length === 0) return "Vec.new()";
           const et = want && checker.isArrayType(want) ? checker.getTypeArguments(want as ts.TypeReference)[0] : undefined;
-          return `[${a.elements.map((x) => ownConv(x, et)).join(", ")}]`;
+          return `[${a.elements.map((x) => (et ? heapElem(et, ownConv(x, et)) : ownConv(x, et))).join(", ")}]`;
         }
       }
       return fail(e, `expression ${ts.SyntaxKind[e.kind]}`);
@@ -1395,7 +1476,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           push();
           const name = declareLocal(sym, (d.name as ts.Identifier).text);
           if (onCycle(isOptionT(el) ? checker.getNonNullableType(el) : el)) elemBoxed.add(sym);
-          line(`for ${name} in ${arr} {`);
+          line(`for ${name} in ${!mv && forOfMutates(f) ? "&mut " : ""}${arr} {`);
           ind++; body(f.statement); ind--;
           line("}");
           pop();
@@ -1554,6 +1635,17 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const lt = tOf(e.left);
         // A Milo parameter is immutable (or a borrow): rebinding one needs a local copy, which is not emitted yet.
         if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment && ts.isIdentifier(e.left) && checker.getSymbolAtLocation(e.left)?.declarations?.some((d) => ts.isParameter(d))) fail(e, `assignment to the parameter ${e.left.text}`);
+        if (op === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(e.left) && !unionOfType(checker, tOf(e.left.expression))) {
+          const bd = checker.getSymbolAtLocation(e.left.name)?.declarations?.[0];
+          if (bd && ts.isPropertySignature(bd) && astModel.boxed.has(bd)) {
+            // A boxed field stores a Heap: Option<Heap<T>> for an optional one.
+            if (!isOptionT(lt)) fail(e, "assignment to a boxed non-optional field");
+            hit("boxed optional field", "assigned as Option.Some(Heap(v)) or Option.None");
+            const rhs = unparen(e.right);
+            line(`${ex(e.left)} = ${isUndefinedId(rhs) || rhs.kind === ts.SyntaxKind.NullKeyword ? "Option.None" : `Option.Some(Heap(${ownConv(e.right, checker.getNonNullableType(lt))}))`}`);
+            return;
+          }
+        }
         if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${ownConv(e.right, lt)}`); return; }
         if (op === ts.SyntaxKind.PlusEqualsToken && isStr(e.left)) { hit("string +=", "pushStr in place"); line(`${ex(e.left)}.pushStr(${ex(e.right)})`); return; }
         // Only the compound assignments Milo has; `??=`, `||=`, `&&=`, `**=` and `>>>=` would be emitted verbatim.
@@ -1613,6 +1705,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const consider = (target: ts.Expression) => { const r = rootOf(target); if (ts.isIdentifier(r)) { const s = symOf(r); if (s) mutated.add(s); } };
         if (ts.isBinaryExpression(n) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken].includes(n.operatorToken.kind)) consider(n.left);
         if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) consider(n.operand);
+        if (ts.isForOfStatement(n) && forOfMutates(n)) consider(n.expression);
         if (ts.isCallExpression(n)) {
           const k = calleeKey(program, checker, n);
           if (k === "Array.push" || k === "Set.add" || k === "Map.set") consider((n.expression as ts.PropertyAccessExpression).expression);

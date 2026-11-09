@@ -193,6 +193,22 @@ pub fn jsParseInt(s: &string, radix: i64): i64 {
     return if neg { 0 - v } else { v }
 }
 
+// parseInt(s) with no radix: 16 when the digits (after space and sign) start with 0x, else 10.
+pub fn jsParseIntAuto(s: &string): i64 {
+    let n = jsLen(s)
+    var i: i64 = 0
+    while i < n && (unitAt(s, i) == 32 || unitAt(s, i) == 9 || unitAt(s, i) == 10 || unitAt(s, i) == 13) {
+        i += 1
+    }
+    if i < n && (unitAt(s, i) == 45 || unitAt(s, i) == 43) {
+        i += 1
+    }
+    if i + 1 < n && unitAt(s, i) == 48 && (unitAt(s, i + 1) == 120 || unitAt(s, i + 1) == 88) {
+        return jsParseInt(s, 16)
+    }
+    return jsParseInt(s, 10)
+}
+
 // ---- String / Array library methods (single-argument forms; the transpiler refuses the rest) ----
 
 fn unitsEqualAt(s: &string, p: &string, at: i64): bool {
@@ -248,6 +264,21 @@ pub fn jsIncludes(s: &string, p: &string): bool {
 fn isJsSpace(u: i64): bool {
     return (u >= 9 && u <= 13) || u == 32 || u == 160 || u == 5760 || (u >= 8192 && u <= 8202)
     || u == 8232 || u == 8233 || u == 8239 || u == 8287 || u == 12288 || u == 65279
+}
+
+// Math.min / Math.max of two numbers (every number is an i64, so no NaN or -0 cases).
+pub fn jsMin(a: i64, b: i64): i64 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+pub fn jsMax(a: i64, b: i64): i64 {
+    if a > b {
+        return a
+    }
+    return b
 }
 
 pub fn jsTrim(s: &string): string {
@@ -389,6 +420,13 @@ pub fn optNone<T>(): Option<T> {
 
 // An Option<Heap<T>> field read where an Option<T> is wanted. The type argument is written out at
 // every call: inference does not see T through &Option<Heap<T>>.
+pub fn optBox<T>(o: Option<T>): Option<Heap<T>> {
+    return match o {
+        Option.Some(v) => Option.Some(Heap(v)),
+        Option.None => Option.None,
+    }
+}
+
 pub fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
     if let Option.Some(h) = o {
         return Option.Some((*h).clone())

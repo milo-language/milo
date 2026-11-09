@@ -5752,7 +5752,7 @@ class FnEmitter {
     if (e.variadic) throw new MlirUnsupported("variadic call");
     if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");
     const sret = this.cx.sretFns.has(e.func);
-    if (sret !== (into !== undefined)) throw new MlirUnsupported("sret call as a value");
+    if (sret !== (into !== undefined)) throw new MlirUnsupported(`sret call as a value: ${e.func}`);
     // A per-module extern (`linkName`) is called by its HIR name: the
     // backend maps both modules' symbols to the C one (mlir-backend compile).
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");

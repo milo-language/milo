@@ -25,6 +25,19 @@ function typeSpelled(name: string): boolean {
 // Attributes whose argument is a requirement id (src/requirements.ts), not an ident or string.
 const REQ_ATTRS = new Set(["req", "assume", "derived"]);
 
+// `i32`, `u8`, `int`, `byte`: the integer type names that may carry a range constraint (/^[iu]\d+$|^int$|^byte$/).
+function isIntTypeName(name: string): boolean {
+  if (name === "int" || name === "byte") return true;
+  if (name.length < 2) return false;
+  const c0 = name.charCodeAt(0);
+  if (c0 !== 105 && c0 !== 117) return false;
+  for (let i = 1; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    if (c < 48 || c > 57) return false;
+  }
+  return true;
+}
+
 export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
@@ -135,6 +148,13 @@ export class Parser {
     }, this.source, this.filePath);
   }
 
+  private withModuleReqs(attrs: Attribute[] | undefined): Attribute[] {
+    const out: Attribute[] = [];
+    if (attrs !== undefined) for (const a of attrs) out.push(a);
+    for (const a of this.moduleReqs) out.push(a);
+    return out;
+  }
+
   parse(): Program {
     const structs: StructDecl[] = [];
     const enums: EnumDecl[] = [];
@@ -151,7 +171,7 @@ export class Parser {
       if (this.match(TokenKind.Semicolon)) continue;
       // collect attributes before struct/enum; `@!wrapping` is an inner (file-level)
       // directive, not a decl attribute — consume it separately so it never attaches.
-      let attrs: Attribute[] | undefined;
+      const attrs: Attribute[] = [];
       while (this.at(TokenKind.At)) {
         const a = this.parseAttribute();
         if (a.inner) {
@@ -162,13 +182,13 @@ export class Parser {
           else this.moduleReplayHooked = true;
           continue;
         }
-        if (!attrs) attrs = [];
         attrs.push(a);
       }
       // `pub` is a soft keyword, not reserved: it only marks visibility when a
       // declaration actually follows, so a variable or fn named `pub` still parses
       // as an ordinary identifier. Same lookahead trick as `from` below.
-      const pubTok = this.atSoftKw("pub") && this.startsDecl(this.peekN(1)) ? this.advance() : undefined;
+      let pubTok: Token | undefined;
+      if (this.atSoftKw("pub") && this.startsDecl(this.peekN(1))) pubTok = this.advance();
       // `from` is an import only when followed by the path string; otherwise it's an
       // ordinary identifier (e.g. a top-level binding), so let it fall through.
       if (this.at(TokenKind.Import) || (this.atSoftKw("from") && this.peekN(1).kind === TokenKind.String)) {
@@ -176,19 +196,19 @@ export class Parser {
         imports.push(this.parseImport());
       } else if (this.at(TokenKind.Struct)) {
         const s = this.parseStruct();
-        if (attrs) s.attributes = attrs;
+        if (attrs.length > 0) s.attributes = attrs;
         s.isPub = !!pubTok;
         structs.push(s);
       } else if (this.at(TokenKind.Enum)) {
         const e = this.parseEnum();
-        if (attrs) e.attributes = attrs;
+        if (attrs.length > 0) e.attributes = attrs;
         e.isPub = !!pubTok;
         enums.push(e);
       } else if (this.at(TokenKind.Extern)) {
         const nextTok = this.tokens[this.pos + 1];
         if (nextTok && nextTok.kind === TokenKind.Struct) {
           const s = this.parseExternStruct();
-          if (attrs) s.attributes = attrs;
+          if (attrs.length > 0) s.attributes = attrs;
           s.isPub = !!pubTok;
           structs.push(s);
         } else if (nextTok && nextTok.kind === TokenKind.Type) {
@@ -197,13 +217,13 @@ export class Parser {
           structs.push(s);
         } else {
           const f = this.parseExternFn();
-          if (attrs) f.attributes = attrs;
+          if (attrs.length > 0) f.attributes = attrs;
           f.isPub = !!pubTok;
           functions.push(f);
         }
       } else if (this.at(TokenKind.Fn)) {
-        const f = this.parseFn(!!attrs?.some(a => a.name === "externalLinkage"));
-        if (attrs) f.attributes = attrs;
+        const f = this.parseFn(attrs.some(a => a.name === "externalLinkage"));
+        if (attrs.length > 0) f.attributes = attrs;
         f.isPub = !!pubTok;
         functions.push(f);
       } else if (this.at(TokenKind.Trait)) {
@@ -227,7 +247,7 @@ export class Parser {
         interfaces.push(i);
       } else if (this.at(TokenKind.Let) || this.at(TokenKind.Var)) {
         const g = this.parseGlobalDecl();
-        if (attrs) g.attributes = attrs;
+        if (attrs.length > 0) g.attributes = attrs;
         g.isPub = !!pubTok;
         globals.push(g);
       } else if (this.atSoftKw("derive")
@@ -239,7 +259,7 @@ export class Parser {
         deriveTemplates.push(d);
       } else if (this.at(TokenKind.Ident) && this.peek().value === "thread_local") {
         const g = this.parseGlobalDecl();
-        if (attrs) g.attributes = attrs;
+        if (attrs.length > 0) g.attributes = attrs;
         g.isPub = !!pubTok;
         globals.push(g);
       } else {
@@ -267,12 +287,14 @@ export class Parser {
     // `@!req(ID)` says the whole module implements ID, so stamp it on each decl as an ordinary
     // `@req` (marked inner so tooling can tell it was inherited). Per-file, like @!wrapping.
     if (this.moduleReqs.length > 0) {
-      const stamp = (d: { attributes?: Attribute[] }) => { d.attributes = [...(d.attributes ?? []), ...this.moduleReqs]; };
-      for (const f of functions) if (!f.isExtern) stamp(f);
-      for (const im of impls) for (const m of im.methods) stamp(m);
-      for (const s of structs) if (!s.isExtern) stamp(s);
+      for (const f of functions) if (!f.isExtern) f.attributes = this.withModuleReqs(f.attributes);
+      for (const im of impls) for (const m of im.methods) m.attributes = this.withModuleReqs(m.attributes);
+      for (const s of structs) if (!s.isExtern) s.attributes = this.withModuleReqs(s.attributes);
     }
-    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates, ...(this.moduleWrapping && { moduleWrapping: true }), ...(this.moduleReplayHooked && { moduleReplayHooked: true }) };
+    const program: Program = { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates };
+    if (this.moduleWrapping) program.moduleWrapping = true;
+    if (this.moduleReplayHooked) program.moduleReplayHooked = true;
+    return program;
   }
 
   private parseImport(): ImportDecl {
@@ -342,13 +364,16 @@ export class Parser {
       if (inner.isPtr || inner.isFn || inner.typeArgs?.length) {
         this.error("'?&' takes a plain named type: '?&mut GifFileType'", q);
       }
-      return { ...inner, isNullableRef: true };
+      inner.isNullableRef = true;
+      return inner;
     }
     // &T or &mut T
     if (this.match(TokenKind.Amp)) {
       const isMut = !!this.match(TokenKind.Mut);
       const inner = this.parseType();
-      return { ...inner, isRef: !isMut, isRefMut: isMut };
+      inner.isRef = !isMut;
+      inner.isRefMut = isMut;
+      return inner;
     }
     // *T — count nesting so `**u8` is depth 2, not a collapsed single level.
     // `char***` (depth 3, e.g. _NSGetEnviron) is real; only guard against runaway
@@ -358,7 +383,9 @@ export class Parser {
       const inner = this.parseType();
       const depth = (inner.ptrDepth ?? (inner.isPtr ? 1 : 0)) + 1;
       if (depth > 16) this.error(`pointer nesting too deep (${depth}); max is 16`, star);
-      return { ...inner, isPtr: true, ptrDepth: depth };
+      inner.isPtr = true;
+      inner.ptrDepth = depth;
+      return inner;
     }
     // [T] or [T; N]
     if (this.at(TokenKind.LBracket)) {
@@ -388,14 +415,17 @@ export class Parser {
       // Spread rather than rebuild from `name`: this also carries `typeArgs`, which the
       // old form dropped, so `[Vec<i64>; 2]` lost its element type and reported the
       // baffling "cannot infer Vec element type" against an annotation that stated it.
-      return { ...inner, isArray: true, arraySize };
+      inner.isArray = true;
+      inner.arraySize = arraySize;
+      return inner;
     }
     // extern (T1, T2) => R — a C function pointer, e.g. the result of dlsym
     if (this.at(TokenKind.Extern)) {
       this.advance();
       const cf = this.parseType();
       if (!cf.isFn) this.error("expected a function type after 'extern'", this.peek());
-      return { ...cf, isCFn: true };
+      cf.isCFn = true;
+      return cf;
     }
     // move (T1, T2) => R — an owning closure. Same keyword as the closure EXPRESSION
     // form (`move(): void => {…}`) because it marks the same thing on both sides: this
@@ -404,7 +434,8 @@ export class Parser {
       this.advance();
       const inner = this.parseType();
       if (!inner.isFn) this.error("expected a function type after 'move'", this.peek());
-      return { ...inner, isMoveFn: true };
+      inner.isMoveFn = true;
+      return inner;
     }
     // (T1, T2) => R
     if (this.at(TokenKind.LParen) && this.isFnType()) {
@@ -420,19 +451,23 @@ export class Parser {
       return { name: "fn", isFn: true, fnParams, fnRet, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     }
     const tok = this.advance();
-    let typeArgs: MiloType[] | undefined;
+    const typeArgs: MiloType[] = [];
+    let hasTypeArgs = false;
     if (this.at(TokenKind.Lt)) {
       this.advance();
-      typeArgs = [this.parseType()];
+      hasTypeArgs = true;
+      typeArgs.push(this.parseType());
       while (this.match(TokenKind.Comma)) {
         typeArgs.push(this.parseType());
       }
       this.expect(TokenKind.Gt);
     }
-    let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: this.span(tok) };
+    // typeArgs stays a present-but-undefined key when there are none, as before.
+    let result: MiloType = { name: tok.value, typeArgs: undefined, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: this.span(tok) };
+    if (hasTypeArgs) result.typeArgs = typeArgs;
     // i32(0..50000) — range constraint on integer types (must be on same line to avoid ambiguity)
-    if (this.at(TokenKind.LParen) && !typeArgs && this.peek().line === tok.line) {
-      const isIntType = /^[iu]\d+$|^int$|^byte$/.test(tok.value);
+    if (this.at(TokenKind.LParen) && !hasTypeArgs && this.peek().line === tok.line) {
+      const isIntType = isIntTypeName(tok.value);
       if (isIntType) {
         this.advance(); // consume (
         let negative = false;
@@ -451,7 +486,10 @@ export class Parser {
     }
     // T? desugars to Option<T>
     if (this.match(TokenKind.Question)) {
-      result = { name: "Option", typeArgs: [result], isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: result.span };
+      const span = result.span;
+      const optArgs: MiloType[] = [];
+      optArgs.push(result);
+      return { name: "Option", typeArgs: optArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span };
     }
     return result;
   }
@@ -587,7 +625,9 @@ export class Parser {
 
   private parseSpannedType(): MiloType {
     const start = this.peek();
-    return { ...this.parseType(), span: this.span(start) };
+    const t = this.parseType();
+    t.span = this.span(start);
+    return t;
   }
 
   private parseReturnType(): MiloType {
@@ -600,7 +640,9 @@ export class Parser {
     this.expect(TokenKind.Fn);
     const nameTok = this.expect(TokenKind.Ident);
     const name = nameTok.value;
-    const { params, variadic } = this.parseParamList(true);
+    const plist = this.parseParamList(true);
+    const params = plist.params;
+    const variadic = plist.variadic;
     const retType = this.parseReturnType();
     return { kind: "Function", name, typeParams: [], params, retType, contracts: [], body: [], isExtern: true, isVariadic: variadic, span: this.span(nameTok) };
   }
@@ -643,7 +685,9 @@ export class Parser {
     const nameTok = this.expect(TokenKind.Ident);
     const name = nameTok.value;
     const typeParams = this.parseTypeParams();
-    const { params, variadic } = this.parseParamList(externalLinkage);
+    const plist = this.parseParamList(externalLinkage);
+    const params = plist.params;
+    const variadic = plist.variadic;
     const retType = this.parseReturnType();
     const contracts = this.parseContracts();
     this.expect(TokenKind.LBrace);
@@ -660,16 +704,17 @@ export class Parser {
       // `@req(ID) ensures ...`: attributes before a clause. A struct's trailing invariants
       // are followed by the NEXT declaration, which may start with its own attribute, so
       // read ahead and only keep the attributes when a clause keyword follows them.
-      let attrs: Attribute[] | undefined;
+      const attrs: Attribute[] = [];
       if (this.at(TokenKind.At) && this.clauseFollowsAttributes()) {
-        attrs = [];
         while (this.at(TokenKind.At)) attrs.push(this.parseAttribute());
       }
       if (!atClause()) break;
       const s = this.span(this.peek());
       const kind = this.advance().value as "requires" | "ensures" | "invariant" | "decreases";
       const expr = this.parseExpr();
-      contracts.push({ kind, expr, span: s, ...(attrs ? { attributes: attrs } : {}) });
+      const contract: import("./ast").Contract = { kind, expr, span: s };
+      if (attrs.length > 0) contract.attributes = attrs;
+      contracts.push(contract);
     }
     return contracts;
   }
@@ -719,11 +764,11 @@ export class Parser {
 
   // Attributes preceding a struct field — `@cOpaque` marks C-invisible padding.
   private parseFieldAttributes(): Attribute[] | undefined {
-    let attrs: Attribute[] | undefined;
+    const attrs: Attribute[] = [];
     while (this.at(TokenKind.At)) {
-      if (!attrs) attrs = [];
       attrs.push(this.parseAttribute());
     }
+    if (attrs.length === 0) return undefined;
     return attrs;
   }
 
@@ -860,7 +905,7 @@ export class Parser {
     if (typeParams.length > 0 && isInterface) {
       this.error(`interface method '${name}' cannot take type parameters — an interface dispatches through a vtable, and a generic method has one address per instantiation`, tok);
     }
-    const { params } = this.parseParamList();
+    const params = this.parseParamList().params;
     const retType = this.parseReturnType();
     let body: Stmt[] | null = null;
     if (this.at(TokenKind.LBrace)) {
@@ -907,7 +952,7 @@ export class Parser {
       // Methods take the same attributes as free fns (`@pure`, `@wrapping`). An `@!`
       // directive is file-scoped and has no meaning here, so reject it rather than
       // silently attaching it to the method.
-      let attrs: Attribute[] | undefined;
+      const attrs: Attribute[] = [];
       while (this.at(TokenKind.At)) {
         const a = this.parseAttribute();
         if (a.inner) {
@@ -915,11 +960,10 @@ export class Parser {
             undefined, `move it to the top of the file`);
           continue;
         }
-        if (!attrs) attrs = [];
         attrs.push(a);
       }
       const m = this.parseFn();
-      if (attrs) m.attributes = attrs;
+      if (attrs.length > 0) m.attributes = attrs;
       methods.push(m);
     }
     this.expect(TokenKind.RBrace);
