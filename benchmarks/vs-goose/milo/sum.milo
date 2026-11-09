@@ -1,0 +1,25 @@
+// Control: a flat Vec<i32> filled from the PRNG, then scanned eight times. Same
+// shape as the Rust row (Vec built once, summed by iteration); Vec.withCapacity
+// matches Rust's exact-size collect.
+from "./bench" import { xsNext, xsMod }
+
+fn main(): i32 {
+    let n: i64 = 1000000 // BENCH_N
+    let passes: i64 = 8
+    var data: Vec<i32> = Vec.withCapacity(n)
+    var r: u64 = 12345
+    for _ in 0..n {
+        r = xsNext(r)
+        data.push(xsMod(r, 1000) as i32)
+    }
+    var total: i64 = 0
+    for p in 0..passes {
+        // The `^ p` keeps the passes from collapsing into one multiply.
+        for x in data {
+            total += (x as i64) ^ p
+        }
+    }
+    print(data.len)
+    print(total)
+    return 0
+}

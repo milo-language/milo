@@ -1,0 +1,60 @@
+// Benchmarks Game binary-trees over a Vec pool that is cleared between trees and
+// keeps its capacity: the Rust Vec arena row. Children are Option<NodeId> (None
+// takes the ranged NodeId's niche), so there is no wasted sentinel slot; a tree is
+// discarded by resetting the pool's length.
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+struct TNode { l: Option<NodeId>, r: Option<NodeId> }
+
+fn make(pool: &mut Vec<TNode>, depth: i64): NodeId {
+    if depth == 0 {
+        pool.push(TNode { l: Option.None, r: Option.None })
+        return NodeId { at: (pool.len - 1) as Idx }
+    }
+    let l = make(&mut pool, depth - 1)
+    let r = make(&mut pool, depth - 1)
+    pool.push(TNode { l: Option.Some(l), r: Option.Some(r) })
+    return NodeId { at: (pool.len - 1) as Idx }
+}
+
+// The node count: a leaf counts 1.
+fn check(pool: &Vec<TNode>, id: NodeId): i64 {
+    let n = pool[id.at as i64]
+    let Some(l) = n.l else { return 1 }
+    let Some(r) = n.r else { return 1 }
+    return 1 + check(pool, l) + check(pool, r)
+}
+
+// Build, check, discard: the discard is the clear() the next tree starts with.
+fn treeCheck(pool: &mut Vec<TNode>, depth: i64): i64 {
+    pool.clear()
+    let root = make(&mut pool, depth)
+    return check(pool, root)
+}
+
+fn main(): i32 {
+    let maxDepth: i64 = 15 // BENCH_N
+    let minDepth: i64 = 4
+    var pool: Vec<TNode> = Vec.new()
+    print(treeCheck(&mut pool, maxDepth + 1)) // The stretch tree.
+    var long: Vec<TNode> = Vec.new()
+    let lroot = make(&mut long, maxDepth)
+    var d = minDepth
+    while d <= maxDepth {
+        let iters: i64 = 1 << (maxDepth - d + minDepth)
+        var sum: i64 = 0
+        for _ in 0..iters {
+            sum += treeCheck(&mut pool, d)
+        }
+        print(iters)
+        print(d)
+        print(sum)
+        d += 2
+    }
+    print(check(long, lroot))
+    return 0
+}

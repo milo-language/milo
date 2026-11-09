@@ -1,0 +1,49 @@
+// Integrate N particles for 200 steps of f32 math: the Rust per-component AoS row.
+// All arithmetic is exact in binary32, so the checksum cannot depend on how the
+// backend orders it.
+from "./bench" import { xsNext, xsMod }
+
+struct F3 { x: f32, y: f32, z: f32 }
+
+struct P { pos: F3, vel: F3 }
+
+fn main(): i32 {
+    let n: i64 = 100000 // BENCH_N
+    let steps: i64 = 200
+    var r: u64 = 12345
+    var ps: Vec<P> = Vec.withCapacity(n)
+    for _ in 0..n {
+        r = xsNext(r)
+        ps.push(P {
+            pos: F3 {
+                x: xsMod(r, 1024) as f32,
+                y: xsMod(r >> 12, 1024) as f32,
+                z: xsMod(r >> 24, 1024) as f32
+            },
+            vel: F3 {
+                x: (xsMod(r >> 36, 256) - 128) as f32 / 16.0,
+                y: (xsMod(r >> 44, 256) - 128) as f32 / 16.0,
+                z: (xsMod(r >> 52, 256) - 128) as f32 / 16.0
+            }
+        })
+    }
+    for _ in 0..steps {
+        for i in 0..n {
+            ps[i].vel.y += -0.0625
+            ps[i].pos.x += ps[i].vel.x
+            ps[i].pos.y += ps[i].vel.y
+            ps[i].pos.z += ps[i].vel.z
+            if ps[i].pos.y < 0.0 {
+                ps[i].pos.y = -ps[i].pos.y
+                ps[i].vel.y = -(ps[i].vel.y * 0.5)
+            }
+        }
+    }
+    var total: i64 = 0
+    for p in ps {
+        total += (p.pos.x * 16.0) as i64 + (p.pos.y * 16.0) as i64 + (p.pos.z * 16.0) as i64
+    }
+    print(n)
+    print(total)
+    return 0
+}

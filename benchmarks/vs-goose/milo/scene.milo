@@ -1,0 +1,131 @@
+// Scene graph of the given depth in one flat Vec pool: each node names its (up to
+// four) children by typed NodeId in a fixed array, then 16 animated frames
+// recompute every world transform (the Rust arena row). Composing into a local and
+// storing it afterwards mirrors that row's borrow-split workaround, so the extra
+// 48-byte copy per node per frame is in both.
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+struct F3 { x: f32, y: f32, z: f32 }
+
+struct Xf { m: [f32; 9], t: F3 }
+
+struct SNode { id: i32, local: Xf, world: Xf, kids: [NodeId; 4], nkids: u8 }
+
+fn ident(): Xf {
+    return Xf { m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], t: F3 { x: 0.0, y: 0.0, z: 0.0 } }
+}
+
+// One of twelve axis-aligned rotations, from the seed.
+fn rotation(seed: u64): [f32; 9] {
+    let axis = xsMod(seed, 3)
+    let quarter = xsMod(seed >> 8, 4)
+    var c: f32 = 1.0
+    var s: f32 = 0.0
+    if quarter == 1 {
+        c = 0.0
+        s = 1.0
+    } else if quarter == 2 {
+        c = -1.0
+        s = 0.0
+    } else if quarter == 3 {
+        c = 0.0
+        s = -1.0
+    }
+    if axis == 0 {
+        return [1.0, 0.0, 0.0, 0.0, c, 0.0 - s, 0.0, s, c]
+    }
+    if axis == 1 {
+        return [c, 0.0, s, 0.0, 1.0, 0.0, 0.0 - s, 0.0, c]
+    }
+    return [c, 0.0 - s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]
+}
+
+// The node is pushed before its children, so its index is its pre-order id.
+fn build(pool: &mut Vec<SNode>, depth: i64, seed: u64): NodeId {
+    let r = xsNext(seed)
+    let me = pool.len
+    let meId = NodeId { at: me as Idx }
+    pool.push(SNode {
+        id: me as i32,
+        local: Xf {
+            m: rotation(r),
+            t: F3 {
+                x: xsMod(r >> 16, 9) as f32,
+                y: xsMod(r >> 24, 9) as f32,
+                z: xsMod(r >> 32, 9) as f32
+            }
+        },
+        world: ident(),
+        kids: [meId; 4],
+        nkids: 0
+    })
+    if depth == 0 {
+        return meId
+    }
+    let n = 1 + xsMod(r >> 40, 4)
+    for i in 0..n {
+        let c = build(&mut pool, depth - 1, xsNext(r.wrappingAdd(i as u64)))
+        let k = pool[me].nkids as i64
+        pool[me].kids[k] = c
+        pool[me].nkids += 1
+    }
+    return meId
+}
+
+// world = parent o local: a 3x3 product and a transformed translation.
+fn compose(p: &Xf, l: &Xf, w: &mut Xf) {
+    for i in 0..3 {
+        for j in 0..3 {
+            var s: f32 = 0.0
+            for k in 0..3 {
+                s = s + p.m[i * 3 + k] * l.m[k * 3 + j]
+            }
+            w.m[i * 3 + j] = s
+        }
+    }
+    w.t.x = p.m[0] * l.t.x + p.m[1] * l.t.y + p.m[2] * l.t.z + p.t.x
+    w.t.y = p.m[3] * l.t.x + p.m[4] * l.t.y + p.m[5] * l.t.z + p.t.y
+    w.t.z = p.m[6] * l.t.x + p.m[7] * l.t.y + p.m[8] * l.t.z + p.t.z
+}
+
+fn update(pool: &mut Vec<SNode>, i: i64, parent: &Xf) {
+    var w = ident()
+    compose(parent, pool[i].local, &mut w)
+    pool[i].world = w
+    let kids = pool[i].kids
+    let nkids = pool[i].nkids as i64
+    for j in 0..nkids {
+        update(&mut pool, kids[j].at as i64, w)
+    }
+}
+
+fn main(): i32 {
+    let depth: i64 = 12 // BENCH_N
+    let frames: i64 = 16
+    var pool: Vec<SNode> = Vec.new()
+    let root = build(&mut pool, depth, 12345)
+    var total: i64 = 0
+    let id = ident()
+    for f in 0..frames {
+        // A seventh of the nodes move each frame: the animation.
+        let step = (f % 5) as f32
+        for i in 0..pool.len {
+            if pool[i].id as i64 % 7 == f % 7 {
+                pool[i].local.t.x = step
+                pool[i].local.t.z = 8.0 - step
+            }
+        }
+        update(&mut pool, root.at as i64, id)
+        // Where everything ended up, as an integer: exact in f32, summed in i64.
+        for n in pool {
+            total += (n.world.t.x + n.world.t.y + n.world.t.z) as i64
+        }
+    }
+    print(pool.len)
+    print(total)
+    return 0
+}

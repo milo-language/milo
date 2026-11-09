@@ -1,0 +1,29 @@
+// The owning row (Rust Vec<String>): every word is its own heap string, made by
+// the stdlib splitWhitespace.
+from "./bench" import { xsNext, xsMod }
+
+fn main(): i32 {
+    let n: i64 = 200000 // BENCH_N
+    let passes: i64 = 4
+    var text = ""
+    var r: u64 = 12345
+    for _ in 0..n {
+        r = xsNext(r)
+        let wl = 3 + xsMod(r, 18)
+        for _ in 0..wl {
+            r = xsNext(r)
+            text.push(('a' as i64 + xsMod(r, 26)) as u8)
+        }
+        text.push(' ')
+    }
+    let words: Vec<string> = text.splitWhitespace()
+    var total: i64 = 0
+    for _ in 0..passes {
+        for w in words {
+            total += w.len + w[0] as i64 + w[w.len - 1] as i64
+        }
+    }
+    print(words.len)
+    print(total)
+    return 0
+}

@@ -1,0 +1,44 @@
+// The same count in the stdlib HashMap<string, i32> (the Rust HashMap row). The text
+// is walked with splitView, so a word is only copied when its key is first inserted.
+from "./bench" import { xsNext, xsMod }
+
+fn main(): i32 {
+    let n: i64 = 500000 // BENCH_N
+    let vocab = n / 10 + 16
+    var r: u64 = 12345
+    var dict: Vec<string> = Vec.withCapacity(vocab)
+    for _ in 0..vocab {
+        var w = ""
+        r = xsNext(r)
+        let len = 3 + xsMod(r, 12)
+        for _ in 0..len {
+            r = xsNext(r)
+            w.push(('a' as i64 + xsMod(r, 26)) as u8)
+        }
+        dict.push(w)
+    }
+    var text = ""
+    for _ in 0..n {
+        r = xsNext(r)
+        let a = xsMod(r, vocab)
+        text.pushStr(dict[(a * a) / vocab])
+        text.push(' ')
+    }
+    var map: HashMap<string, i32> = HashMap.new()
+    var count: i64 = 0
+    for w in text.splitView(" ") {
+        if w.len == 0 {
+            continue
+        }
+        count += 1
+        map.upsert(w, 0, (c: &mut i32): void => { c += 1 })
+    }
+    var total: i64 = 0
+    for k, c in map {
+        total += c as i64 * (k.len + k[0] as i64)
+    }
+    print(count)
+    print(map.len)
+    print(total)
+    return 0
+}

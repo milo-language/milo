@@ -1,0 +1,152 @@
+// Generate N s-expression forms as text, parse them into one Vec pool, walk the
+// trees four times: the Rust arena row. Siblings are chained through an
+// Option<NodeId> `next` (None takes the niche), and a symbol is a {start, len} span
+// of the finished text, which is what Rust's borrowed &str is (Milo cannot store a
+// string view in an enum payload).
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+enum Node {
+    Sym(i64, i64, Option<NodeId>),
+    Num(i32, Option<NodeId>),
+    List(Option<NodeId>, Option<NodeId>),
+}
+
+// --- generation ---
+
+fn emitSym(text: &mut string, seed: u64) {
+    var r = seed
+    let n = 3 + xsMod(r, 12)
+    for _ in 0..n {
+        r = xsNext(r)
+        text.push(('a' as i64 + xsMod(r, 26)) as u8)
+    }
+}
+
+fn gen(text: &mut string, depth: i64, seed: u64): u64 {
+    var r = xsNext(seed)
+    if depth == 0 || xsMod(r, 4) == 0 {
+        if xsMod(r >> 8, 2) == 0 {
+            emitSym(&mut text, r)
+        } else {
+            text.pushInt(xsMod(r >> 16, 100000))
+        }
+        text.push(' ')
+        return r
+    }
+    text.push('(')
+    let kids = 2 + xsMod(r >> 24, 4)
+    for _ in 0..kids {
+        r = gen(&mut text, depth - 1, r)
+    }
+    text.push(')')
+    text.push(' ')
+    return r
+}
+
+// --- parse and walk ---
+
+fn skipSpace(text: &string, pos: &mut i64) {
+    while pos < text.len && text[pos] == ' ' {
+        pos += 1
+    }
+}
+
+fn isDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn push(pool: &mut Vec<Node>, n: Node): NodeId {
+    pool.push(n)
+    return NodeId { at: (pool.len - 1) as Idx }
+}
+
+fn parseNode(text: &string, pos: &mut i64, pool: &mut Vec<Node>, prev: Option<NodeId>): NodeId {
+    skipSpace(text, &mut pos)
+    let c = text[pos]
+    if c == '(' {
+        pos += 1
+        var chain: Option<NodeId> = Option.None
+        while true {
+            skipSpace(text, &mut pos)
+            if text[pos] == ')' {
+                pos += 1
+                break
+            }
+            chain = Option.Some(parseNode(text, &mut pos, &mut pool, chain))
+        }
+        return push(&mut pool, Node.List(chain, prev))
+    }
+    let start = pos
+    if isDigit(c) {
+        var v: i64 = 0
+        while pos < text.len && isDigit(text[pos]) {
+            v = v * 10 + (text[pos] - '0') as i64
+            pos += 1
+        }
+        return push(&mut pool, Node.Num(v as i32, prev))
+    }
+    while pos < text.len && text[pos] != ' ' && text[pos] != '(' && text[pos] != ')' {
+        pos += 1
+    }
+    return push(&mut pool, Node.Sym(start, pos - start, prev))
+}
+
+fn nextOf(n: Node): Option<NodeId> {
+    return match n {
+        Sym(_, _, next) => next
+        Num(_, next) => next
+        List(_, next) => next
+    }
+}
+
+fn walk(text: &string, pool: &Vec<Node>, id: NodeId, p: i64): i64 {
+    match pool[id.at as i64] {
+        Sym(start, len, _) => { return len + text[start] as i64 + p }
+        Num(v, _) => { return (v as i64) ^ p }
+        List(first, _) => { return 1 + walkChain(text, pool, first, p) }
+    }
+}
+
+fn walkChain(text: &string, pool: &Vec<Node>, c: Option<NodeId>, p: i64): i64 {
+    if let Some(id) = c {
+        return walk(text, pool, id, p) + walkChain(text, pool, nextOf(pool[id.at as i64]), p)
+    }
+    return 0
+}
+
+fn main(): i32 {
+    let n: i64 = 20000 // BENCH_N
+    let depth: i64 = 4
+    let passes: i64 = 4
+    var text = ""
+    var seed: u64 = 12345
+    for _ in 0..n {
+        seed = gen(&mut text, depth, seed)
+    }
+    var pos: i64 = 0
+    var pool: Vec<Node> = Vec.new()
+    var roots: Vec<NodeId> = Vec.new()
+    while true {
+        skipSpace(text, &mut pos)
+        if pos >= text.len {
+            break
+        }
+        roots.push(parseNode(text, &mut pos, &mut pool, Option.None))
+    }
+    print(text.len)
+    print(pool.len)
+    print(roots.len)
+    print(0)
+    var total: i64 = 0
+    for p in 0..passes {
+        for r in roots {
+            total += walk(text, pool, r, p)
+        }
+    }
+    print(total)
+    return 0
+}

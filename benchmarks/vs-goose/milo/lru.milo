@@ -1,0 +1,161 @@
+// LRU cache of capacity N/8 under N skewed lookups, an invalidation every 16th
+// operation: the Rust open-addressing row. The map is a table of (key, node) slots
+// with a Fibonacci hash, linear probing and backward-shift deletion; the recency
+// list is a Vec pool with typed NodeId links and a free list. Both list sentinels
+// live in the pool, so a link is never null. An empty slot is None, which takes the
+// ranged NodeId's niche, so a slot is 8 bytes like Rust's (key, idx) pair.
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+struct Node { key: i32, val: i32, prev: NodeId, next: NodeId }
+
+struct Slot { key: i32, node: Option<NodeId> }
+
+fn nid(i: i64): NodeId {
+    return NodeId { at: i as Idx }
+}
+
+// Pool slots 0 and 1 are the list's head and tail sentinels.
+let head: i64 = 0
+let tail: i64 = 1
+
+@wrapping
+fn home(key: i32, mask: u64): i64 {
+    return ((((key as u64) * 0x9E3779B97F4A7C15) >> 24) & mask) as i64
+}
+
+// The slot holding `key`, or the empty slot where it would go.
+fn find(slots: &Vec<Slot>, mask: u64, key: i32): i64 {
+    var i = home(key, mask)
+    while slots[i].node.isSome() && slots[i].key != key {
+        i = (i + 1) & (mask as i64)
+    }
+    return i
+}
+
+// Backward-shift deletion: slide later entries of the probe run down over the hole,
+// so no tombstones accumulate.
+fn mapRemove(slots: &mut Vec<Slot>, mask: u64, at: i64) {
+    var i = at
+    var j = i
+    while true {
+        j = (j + 1) & (mask as i64)
+        let s = slots[j]
+        let Some(jn) = s.node else { break }
+        let h = home(s.key, mask)
+        if (i < j && (h <= i || h > j)) || (i > j && h <= i && h > j) {
+            slots[i] = Slot { key: s.key, node: Option.Some(jn) }
+            i = j
+        }
+    }
+    slots[i].node = Option.None
+}
+
+fn unlink(pool: &mut Vec<Node>, n: NodeId) {
+    let p = pool[n.at as i64].prev
+    let q = pool[n.at as i64].next
+    pool[p.at as i64].next = q
+    pool[q.at as i64].prev = p
+}
+
+fn linkFront(pool: &mut Vec<Node>, n: NodeId) {
+    let q = pool[head].next
+    pool[n.at as i64].prev = nid(head)
+    pool[n.at as i64].next = q
+    pool[q.at as i64].prev = n
+    pool[head].next = n
+}
+
+fn alloc(pool: &mut Vec<Node>, free: &mut Vec<NodeId>, key: i32, val: i32): NodeId {
+    let n = Node { key: key, val: val, prev: nid(0), next: nid(0) }
+    if let Some(i) = free.pop() {
+        pool[i.at as i64] = n
+        return i
+    }
+    pool.push(n)
+    return nid(pool.len - 1)
+}
+
+fn main(): i32 {
+    let n: i64 = 2000000 // BENCH_N
+    let cap = n / 8
+    let keys = cap * 2
+    var nslots: i64 = 16
+    while nslots < cap * 2 {
+        nslots *= 2
+    }
+    let mask = (nslots - 1) as u64
+    var slots: Vec<Slot> = Vec.filled(nslots, Slot { key: 0, node: Option.None })
+    var pool: Vec<Node> = Vec.new()
+    pool.push(Node { key: -1, val: 0, prev: nid(0), next: nid(tail) })
+    pool.push(Node { key: -1, val: 0, prev: nid(head), next: nid(0) })
+    var free: Vec<NodeId> = Vec.new()
+    var count: i64 = 0
+    var hits: i64 = 0
+    var misses: i64 = 0
+    var removes: i64 = 0
+    var r: u64 = 12345
+    for _ in 0..n {
+        r = xsNext(r)
+        let a = xsMod(r, keys)
+        let key = (a * a) / keys // Skewed towards small keys.
+        let k = key as i32
+        let at = find(slots, mask, k)
+        let found = slots[at].node
+        if xsMod(r >> 40, 16) == 0 {
+            // An invalidation: drop the entry if it is cached.
+            if let Some(fi) = found {
+                unlink(&mut pool, fi)
+                mapRemove(&mut slots, mask, at)
+                free.push(fi)
+                count -= 1
+                removes += 1
+            }
+            continue
+        }
+        if let Some(fi) = found {
+            pool[fi.at as i64].val += 1
+            unlink(&mut pool, fi)
+            linkFront(&mut pool, fi)
+            hits += 1
+            continue
+        }
+        misses += 1
+        var ins = at
+        if count == cap {
+            let lru = pool[tail].prev
+            unlink(&mut pool, lru)
+            let lat = find(slots, mask, pool[lru.at as i64].key)
+            let Some(li) = slots[lat].node else { return 1 }
+            mapRemove(&mut slots, mask, lat)
+            free.push(li)
+            count -= 1
+            // The deletion may have shifted entries in this key's probe run, so the
+            // empty slot found above can be stale.
+            ins = find(slots, mask, k)
+        }
+        let ni = alloc(&mut pool, &mut free, k, (key % 1000) as i32)
+        slots[ins] = Slot { key: k, node: Option.Some(ni) }
+        linkFront(&mut pool, ni)
+        count += 1
+    }
+    // Walk the list from most to least recent, so the order is checked too.
+    var walk: u64 = 0
+    var vals: i64 = 0
+    var cur = pool[head].next.at as i64
+    while pool[cur].key >= 0 {
+        walk = walk.wrappingMul(31).wrappingAdd(pool[cur].key as u64)
+        vals += pool[cur].val as i64
+        cur = pool[cur].next.at as i64
+    }
+    print(hits)
+    print(misses)
+    print(removes)
+    print(count)
+    print(walk)
+    print(vals)
+    return 0
+}

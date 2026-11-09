@@ -1,6 +1,6 @@
 #!/bin/sh
-# Milo against Goose, C++ and Rust on five benchmarks from Goose's own suite
-# (records, interp, graph, blur, respond), at the suite's three sizes. The Goose,
+# Milo against Goose, C++ and Rust on sixteen benchmarks from Goose's own suite
+# (see BENCHES in bench.py), at the suite's three sizes. The Goose,
 # C++ and Rust sources are read from a Goose checkout, not copied here. Writes
 # results.md and exits nonzero if any row's checksum disagrees with the others.
 #   G=~/src/goose ./benchmarks/vs-goose/run.sh [records,interp,...]

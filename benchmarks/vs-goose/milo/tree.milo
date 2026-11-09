@@ -1,0 +1,48 @@
+// Complete binary tree of the given depth in one exactly-reserved Vec pool, summed
+// eight times: the Rust arena row. Children are Option<NodeId> over a ranged i32,
+// so None takes the niche and a node is 12 bytes, with no sentinel slot.
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+struct TNode { v: i32, l: Option<NodeId>, r: Option<NodeId> }
+
+fn build(pool: &mut Vec<TNode>, depth: i64, seed: u64): NodeId {
+    if depth == 0 {
+        pool.push(TNode { v: xsMod(seed, 1000) as i32, l: Option.None, r: Option.None })
+        return NodeId { at: (pool.len - 1) as Idx }
+    }
+    let l = build(&mut pool, depth - 1, xsNext(seed))
+    let r = build(&mut pool, depth - 1, xsNext(seed + 1))
+    pool.push(TNode { v: xsMod(seed, 1000) as i32, l: Option.Some(l), r: Option.Some(r) })
+    return NodeId { at: (pool.len - 1) as Idx }
+}
+
+// The pass index is folded into every node so the eight passes are different work.
+fn sumTree(pool: &Vec<TNode>, id: NodeId, p: i64): i64 {
+    let t = pool[id.at as i64]
+    var s = (t.v as i64) ^ p
+    if let Some(l) = t.l {
+        s += sumTree(pool, l, p)
+    }
+    if let Some(r) = t.r {
+        s += sumTree(pool, r, p)
+    }
+    return s
+}
+
+fn main(): i32 {
+    let depth: i64 = 16 // BENCH_N
+    let passes: i64 = 8
+    var pool: Vec<TNode> = Vec.withCapacity((1 << (depth + 1)) - 1)
+    let root = build(&mut pool, depth, 12345)
+    var total: i64 = 0
+    for p in 0..passes {
+        total += sumTree(pool, root, p)
+    }
+    print(pool.len)
+    print(total)
+    return 0
+}

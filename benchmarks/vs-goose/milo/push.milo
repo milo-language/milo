@@ -1,0 +1,32 @@
+// Push N records while remembering every 64th. Milo, like safe Rust, cannot hold a
+// reference across a push, so the marks are indices into the reserved Vec.
+from "./bench" import { xsNext, xsMod }
+
+struct Item { key: i32, val: i32 }
+
+fn main(): i32 {
+    let n: i64 = 1000000 // BENCH_N
+    var items: Vec<Item> = Vec.withCapacity(n)
+    var marks: Vec<i64> = Vec.new()
+    var r: u64 = 12345
+    for i in 0..n {
+        r = xsNext(r)
+        items.push(Item { key: xsMod(r, 1000000) as i32, val: (i % 97) as i32 })
+        if i % 64 == 0 {
+            marks.push(items.len - 1)
+        }
+    }
+    var total: i64 = 0
+    for it in items {
+        total += it.key as i64
+    }
+    var mt: i64 = 0
+    for m in marks {
+        mt += items[m].val as i64
+    }
+    print(items.len)
+    print(marks.len)
+    print(total)
+    print(mt)
+    return 0
+}

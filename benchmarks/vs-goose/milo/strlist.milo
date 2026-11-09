@@ -1,0 +1,45 @@
+// Split a text into N words, keep them as a list, scan it four times: the borrowed
+// Rust row (Vec<&str> into the one text buffer). Milo has no storable string view
+// (a `&string` slice cannot live in a Vec or a struct field), so each word is a
+// {start, len} pair of byte offsets into the text, which is what a &str is.
+from "./bench" import { xsNext, xsMod }
+
+struct Word { start: i64, len: i64 }
+
+fn main(): i32 {
+    let n: i64 = 200000 // BENCH_N
+    let passes: i64 = 4
+    var text = ""
+    var r: u64 = 12345
+    for _ in 0..n {
+        r = xsNext(r)
+        let wl = 3 + xsMod(r, 18)
+        for _ in 0..wl {
+            r = xsNext(r)
+            text.push(('a' as i64 + xsMod(r, 26)) as u8)
+        }
+        text.push(' ')
+    }
+    let tl = text.len
+    var words: Vec<Word> = Vec.new()
+    var i: i64 = 0
+    while i < tl {
+        let start = i
+        while i < tl && text[i] != ' ' {
+            i += 1
+        }
+        words.push(Word { start: start, len: i - start })
+        while i < tl && text[i] == ' ' {
+            i += 1
+        }
+    }
+    var total: i64 = 0
+    for _ in 0..passes {
+        for w in words {
+            total += w.len + text[w.start] as i64 + text[w.start + w.len - 1] as i64
+        }
+    }
+    print(words.len)
+    print(total)
+    return 0
+}
