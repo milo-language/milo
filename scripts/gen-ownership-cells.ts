@@ -432,12 +432,13 @@ if (argv.includes("--update-baseline")) {
   let knownWrong: Record<string, string> | undefined; // hand-written triage notes survive a rewrite
   try { knownWrong = (JSON.parse(readFileSync(BASELINE, "utf-8")) as Baseline).knownWrong; } catch {}
   const base: Baseline = { refused: n("refused"), wrong: n("WRONG"), covered: list.filter(r => r.status === "covered").map(r => r.name), refusedCells: list.filter(r => r.status === "refused").map(r => r.name) };
-  if (knownWrong) base.knownWrong = knownWrong;
+  // Only for cells still WRONG: a note left on a fixed cell would excuse its next regression.
+  const stillWrong = Object.entries(knownWrong ?? {}).filter(([c]) => list.some(r => r.name === c && r.status === "WRONG"));
+  if (stillWrong.length) base.knownWrong = Object.fromEntries(stillWrong);
   writeFileSync(BASELINE, JSON.stringify(base, null, 1) + "\n");
   console.log(`baseline written: ${base.covered.length} covered, ${base.refused} refused`);
 }
 if (argv.includes("--check")) {
-  plantRegression(list, process.env.OWNERSHIP_CELLS_PLANT);
   const { failures, notes } = compareToBaseline(JSON.parse(readFileSync(BASELINE, "utf-8")), list, filter);
   for (const m of notes) console.error(`note: ${m}`);
   for (const m of failures) console.error(m);
