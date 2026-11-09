@@ -3,6 +3,7 @@ import type { Token } from "./tokens";
 import { TokenKind } from "./tokens";
 import { Lexer, FSTRING_LBRACE, FSTRING_RBRACE } from "./lexer";
 import { ParseError } from "./diagnostics";
+import type { Diagnostic } from "./diagnostics";
 import { StampScan } from "./parser-stamp";
 import { walkExpr } from "./ast-walk-stamp";
 import type {
@@ -1037,6 +1038,12 @@ export class Parser {
   // (a field of a `Drop` struct cannot be moved out, a non-Copy field of a `&S` is a
   // move out of a borrow). The hidden local's unlisted fields drop with the block.
   private destructureCount = 0;
+  // A place is read in situ; anything else is a temporary.
+  private isPlaceExpr(e: Expr): boolean {
+    if (e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess") return true;
+    return false;
+  }
+
   private parseDestructure(): Stmt[] {
     const kw = this.advance();
     const mutable = kw.kind === TokenKind.Var;
@@ -1056,22 +1063,28 @@ export class Parser {
     this.expect(TokenKind.Eq);
     const value = this.parseExpr();
     const out: Stmt[] = [];
-    const isPlace = value.kind === "Ident" || value.kind === "FieldAccess" || value.kind === "IndexAccess";
+    const isPlace = this.isPlaceExpr(value);
     const tmpId = this.destructureCount;
     if (!isPlace) this.destructureCount += 1;
     const tmp = isPlace ? "" : `_destructure${tmpId}`;
     // Each read gets its own source node: the checker keys its per-expression maps by node identity.
     // A place is copied per field; a temporary is bound once (first) and each read names it afresh.
-    const reads: Stmt[] = [];
-    for (const f of fields) {
-      const source: Expr = isPlace ? this.cloneExpr(value) : { kind: "Ident", name: tmp, span: s };
-      const read: Expr = { kind: "FieldAccess", object: source, field: f.field, span: f.span };
-      reads.push(mutable
-        ? { kind: "VarDecl", name: f.name, type: null, value: read, span: f.span }
-        : { kind: "LetDecl", name: f.name, type: null, value: read, span: f.span });
+    if (isPlace) {
+      for (const f of fields) {
+        const read: Expr = { kind: "FieldAccess", object: this.cloneExpr(value), field: f.field, span: f.span };
+        out.push(mutable
+          ? { kind: "VarDecl", name: f.name, type: null, value: read, span: f.span }
+          : { kind: "LetDecl", name: f.name, type: null, value: read, span: f.span });
+      }
+    } else {
+      out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
+      for (const f of fields) {
+        const read: Expr = { kind: "FieldAccess", object: { kind: "Ident", name: tmp, span: s }, field: f.field, span: f.span };
+        out.push(mutable
+          ? { kind: "VarDecl", name: f.name, type: null, value: read, span: f.span }
+          : { kind: "LetDecl", name: f.name, type: null, value: read, span: f.span });
+      }
     }
-    if (!isPlace) out.push({ kind: "LetDecl", name: tmp, type: null, value, span: s });
-    out.push(...reads);
     return out;
   }
 
@@ -1268,7 +1281,13 @@ export class Parser {
       return new Parser(tokens).parseExpr();
     } catch (e) {
       if (!(e instanceof ParseError)) throw e;
-      throw new ParseError({ ...e.diagnostic, span }, this.source, this.filePath);
+      // Every field of the original with its span replaced (a field the original lacks stays absent).
+      const d: Diagnostic = { severity: e.diagnostic.severity, message: e.diagnostic.message, span };
+      if (e.diagnostic.len !== undefined) d.len = e.diagnostic.len;
+      if (e.diagnostic.hint !== undefined) d.hint = e.diagnostic.hint;
+      if (e.diagnostic.code !== undefined) d.code = e.diagnostic.code;
+      if (e.diagnostic.notes !== undefined) d.notes = e.diagnostic.notes;
+      throw new ParseError(d, this.source, this.filePath);
     }
   }
 
@@ -1499,7 +1518,7 @@ export class Parser {
     // be bound once, or `.len` and each decode would re-evaluate it. Binding a
     // place would MOVE it — and a borrow can't be bound to a local at all.
     // Each use below gets its own node (a place is copied, a temporary is named afresh).
-    const isPlace = subject.kind === "Ident" || subject.kind === "FieldAccess" || subject.kind === "IndexAccess";
+    const isPlace = this.isPlaceExpr(subject);
     const tmp = `__cpSrc${uid}`;
     const decodeSrc: Expr = isPlace ? this.cloneExpr(subject) : id(tmp);
     const lenSrc: Expr = isPlace ? this.cloneExpr(subject) : id(tmp);
