@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf } from "./ts2milo/subset";
+import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
 import { RUNTIME_OWNED, buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
@@ -26,6 +26,8 @@ export interface Report {
   stubs: { file: string; name: string; reason: string }[];
   // Copies of recursive AST values the read-only rule allowed (a perf note: each is a deep clone).
   recursiveClones: number;
+  // "file::Name" of each type, class or module-level const that lenient mode left out as a stub.
+  deadDecls: Set<string>;
   constructs: Map<string, { count: number; how: string }>;
   // src/ast.ts is types-only: Milo types and a JSON decoder are generated from its interfaces
   // and tagged unions. Fields with no Milo type are listed, not silently lost.
@@ -35,7 +37,15 @@ export interface Report {
 export class Unsupported extends Error {}
 
 // `astRoots`: the types of src/ast.ts the Milo AST must contain (everything reachable from them).
+// A declaration that turns into a stub can be named by code emitted before it, and the importer then fails to
+// compile. A second pass knows which declarations are dead, so their users stub too (the reason names the dead one).
 export function transpile(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean } = {}): Report {
+  const first = transpileOnce(inputs, opts, new Set());
+  if (!opts.lenient || first.deadDecls.size === 0) return first;
+  return transpileOnce(inputs, opts, first.deadDecls);
+}
+
+function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots?: string[]; lenient?: boolean }, dead: Set<string>): Report {
   const files = inputs.map((f) => resolve(ROOT, f));
   const astFile = files.find((f) => basename(f) === "ast.ts");
   const program = makeProgram(ROOT, files);
@@ -47,7 +57,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   const modOf = (f: string) => "./" + basename(f).replace(/\.ts$/, "");
   const inputSet = new Set(files);
 
-  const report: Report = { files: new Map(), functions: [], constructs: new Map(), stubs: [], recursiveClones: 0 };
+  const report: Report = { files: new Map(), functions: [], constructs: new Map(), stubs: [], recursiveClones: 0, deadDecls: new Set() };
   const hit = (construct: string, how: string) => {
     const e = report.constructs.get(construct);
     if (e) e.count++; else report.constructs.set(construct, { count: 1, how });
@@ -69,7 +79,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
 
   // 2. Whole-program facts: string-literal unions, throwing and mutating functions.
   // A leading non-identifier character (`"$peel"`) is dropped, and a leading digit gets a `V`: both must still give a Milo identifier.
-  const pascal = (s: string) => { const t = s.replace(/^[^a-zA-Z0-9]+/, "").replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase()); return /^[0-9]/.test(t) || t === "" ? "V" + t : t; };
+  const pascal = (s: string) => { const t = s.replace(/^[^a-zA-Z0-9]+/, "").replace(/(^|[^a-zA-Z0-9]+)(.)/g, (_, __, c) => c.toUpperCase()); return t === "" ? "V" + [...s].map((c) => c.charCodeAt(0).toString(16)).join("_") : /^[0-9]/.test(t) ? "V" + t : t; };
   const unionKey = (lits: string[]) => [...lits].sort().join("\u0000");
   const litUnions = new Map<string, { name: string; lits: string[]; file: string }>();
   const litsOf = (t: ts.Type): string[] | null => {
@@ -340,6 +350,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     };
     // A name declared elsewhere: another input file, or the hand-written runtime.
     const useDeclared = (name: string, declFile: string | undefined, at: ts.Node) => {
+      if (dead.has(`${declFile ?? file}::${name}`)) throw new Unsupported(`${name} is itself a stub`);
       if (!declFile || declFile === file) return name;
       if (RUNTIME_OWNED.has(name) && declFile === astFile) use(RUNTIME_MOD, name);
       else if (inputSet.has(declFile)) use(modOf(declFile), name);
@@ -451,22 +462,32 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const isStr = (e: ts.Node) => !!(tOf(e).flags & ts.TypeFlags.StringLike) && !litsOf(tOf(e)) && !enumDeclOf(tOf(e));
     const isNum = (e: ts.Node) => !!(tOf(e).flags & ts.TypeFlags.NumberLike);
     const isUndefinedId = (e: ts.Expression) => ts.isIdentifier(e) && e.text === "undefined";
+    // A value of a string-literal union is an enum in Milo; used as text (`+`, template span) it reads through Name_value.
+    const textOf = (x: ts.Expression): string => {
+      const u0 = unparen(x);
+      const t = tOf(x);
+      // A TS string enum is text through its generated Name_value (`"x" + tok.kind`).
+      const ed = enumDeclOf(t);
+      if (ed && !isOptionT(t)) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, x)}(${ex(x)})`;
+      if (ts.isStringLiteral(u0) || ts.isNoSubstitutionTemplateLiteral(u0) || !litsOf(t) || ed || isOptionT(t)) return ex(x);
+      // Only a place or call typed by a declaration holds an enum; a ternary of literals is emitted as text.
+      let declT: ts.Type | undefined;
+      if (ts.isIdentifier(u0) || ts.isPropertyAccessExpression(u0)) { const sy = checker.getSymbolAtLocation(ts.isIdentifier(u0) ? u0 : u0.name); declT = sy && checker.getTypeOfSymbol(sy); }
+      else if (ts.isCallExpression(u0)) { const sg = checker.getResolvedSignature(u0); declT = sg && checker.getReturnTypeOfSignature(sg); }
+      if (!declT || !litsOf(checker.getNonNullableType(declT))) return ex(x);
+      const u = resolveUnion(t, x);
+      if (u.file === astFile) return fail(x, `text of ${u.name}, a union of ast.ts`);
+      return `${useDeclared(`${u.name}_value`, u.file, x)}(${ex(x)})`;
+    };
     // JS truthiness of a non-boolean (subset.ts truthyHandled). The value is evaluated once.
     const truthText = (k: "str" | "num" | "optBool", code: string) =>
       k === "str" ? `(${useRuntime("jsLen", sf)}(${code}) != 0)` : k === "num" ? `(${code} != 0)` : code;
     // An enum-typed operand where a js string is wanted (`"x" + tok.kind`): its string value.
-    const strOperand = (x: ts.Expression): string => {
-      const t = tOf(x);
-      const ed = enumDeclOf(t);
-      if (ed) return `${useDeclared(`${ed.name.text}_value`, ed.getSourceFile().fileName, x)}(${ex(x)})`;
-      const lits = litsOf(t);
-      const u = lits && !isOptionT(t) ? litUnions.get(unionKey(lits)) : null;
-      if (u && u.file !== astFile) return `${useDeclared(`${u.name}_value`, u.file, x)}(${ex(x)})`;
-      return ex(x);
-    };
     const cond = (e: ts.Expression): string => {
-      const k = truthyHandled(checker, e);
+      // Outside the subset's narrowing positions (lenient only), an optional is still tested, just not narrowed.
       const ue = unparen(e);
+      const logical = ts.isBinaryExpression(ue) && (ue.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || ue.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+      const k = truthyHandled(checker, e) ?? (inCondPos(e) && !logical ? truthyKind(tOf(e)) : null);
       if (!k && ts.isBinaryExpression(ue) && (ue.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || ue.operatorToken.kind === ts.SyntaxKind.BarBarToken)) return ex(e);
       if (!k) {
         // Only a boolean may stand where the output wants one: an optional or struct value is not one.
@@ -485,7 +506,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         return ex(e);
       }
       if (k === "str" || k === "num") { hit("truthiness", "string: jsLen != 0, number: != 0"); return truthText(k, ex(e)); }
-      return fail(e, "optional truthiness outside an if guard");
+      // An optional outside an if-guard binding: only the test, the place is not narrowed.
+      const v = fresh("v");
+      const pay = k === "optStr" ? truthText("str", v) : k === "optNum" ? truthText("num", v) : k === "optBool" ? v : "true";
+      hit("optional truthiness", "match on Some / None");
+      return k === "opt" ? `${ex(e)}.isSome()` : `(match ${ex(e)} { Option.Some(${v}) => ${pay}, Option.None => false })`;
     };
 
     // Narrowing. Inside `if (x.kind === "K")` the guarded expression reads as the variant's struct,
@@ -554,6 +579,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       const d = t.symbol?.declarations?.[0];
       return !!d && ts.isInterfaceDeclaration(d) && astModel.cloneable.has(d.name.text);
     };
+    // Ternaries whose value is taken by value: each branch is then an owned value (a borrowed place is cloned).
+    const ownBranches = new Set<ts.Node>();
     const conv = (e: ts.Expression, want?: ts.Type, own = false): string => {
       // The read-only flag belongs to this value only, never to the expressions nested inside it.
       const ro = roDest;
@@ -591,13 +618,31 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           return `${useDeclared(wu.name, wu.decl.getSourceFile().fileName, e)}.${m!.name}(${owned(ex(e), true)})`;
         }
       }
+      if (own && ts.isConditionalExpression(e)) ownBranches.add(e);
       return owned(ex(e, want));
     };
     const ownConv = (e: ts.Expression, want?: ts.Type) => conv(e, want, true);
 
+    // A type with no Milo mapping is a TsOpaque field or parameter; code that reads through it or passes a real value to it cannot compile, so it stubs.
+    const unmappableCache = new Map<ts.Type, boolean>();
+    const unmappable = (t: ts.Type, at: ts.Node): boolean => {
+      let r = unmappableCache.get(t);
+      if (r === undefined) { try { ty0(t, at); r = false; } catch (err) { if (!(err instanceof Unsupported)) throw err; r = true; } unmappableCache.set(t, r); }
+      return r;
+    };
+    // By the declared type, not the narrowed one: a tagged union narrowed to a variant is an object type with no name of its own.
+    const declUnmappable = (x: ts.Expression): boolean => {
+      const u = unparen(x);
+      const sy = ts.isPropertyAccessExpression(u) ? checker.getSymbolAtLocation(u.name) : ts.isIdentifier(u) ? checker.getSymbolAtLocation(u) : undefined;
+      const d0 = sy?.declarations?.[0];
+      return !!sy && !!d0 && (ts.isPropertyDeclaration(d0) || ts.isPropertySignature(d0) || ts.isParameter(d0) || ts.isVariableDeclaration(d0)) && !isLibDecl(program, d0) && unmappable(checker.getTypeOfSymbol(sy), u);
+    };
     const memberAccess = (e: ts.PropertyAccessExpression): string => {
       const sym = checker.getSymbolAtLocation(e.name);
       const d = sym?.declarations?.[0];
+      // A field whose own type has no mapping was left out of its struct (or is a TsOpaque there).
+      if (d && (ts.isPropertyDeclaration(d) || ts.isPropertySignature(d) || (ts.isParameter(d) && ts.isConstructorDeclaration(d.parent))) && !isLibDecl(program, d) && unmappable(tOf(e), e)) return fail(e, `field ${e.name.text} whose type has no mapping`);
+      if (d && !isLibDecl(program, d) && !ts.isEnumMember(d) && declUnmappable(e.expression)) return fail(e, `member of a value whose type has no mapping (${checker.typeToString(tOf(e.expression))})`);
       if (d && ts.isEnumMember(d)) {
         const en = d.parent as ts.EnumDeclaration;
         return `${useDeclared(en.name.text, en.getSourceFile().fileName, e)}.${d.name.getText()}`;
@@ -795,6 +840,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const callEx = (c: ts.CallExpression): string => {
       const key = calleeKey(program, checker, c);
       const a = c.arguments;
+      if (ts.isPropertyAccessExpression(c.expression)) {
+        const rx = c.expression.expression;
+        // `Math`, `Object` and the like are library namespaces, not values.
+        const libNs = ts.isIdentifier(rx) && (checker.getSymbolAtLocation(rx)?.declarations ?? []).every((d) => isLibDecl(program, d));
+        if (!libNs && declUnmappable(rx)) return fail(c, `call on a value whose type has no mapping (${checker.typeToString(tOf(rx))})`);
+        const cd = checker.getSymbolAtLocation(c.expression.name)?.declarations?.[0];
+        if (cd && (ts.isPropertyDeclaration(cd) || ts.isPropertySignature(cd) || (ts.isParameter(cd) && ts.isConstructorDeclaration(cd.parent))) && !isLibDecl(program, cd) && unmappable(tOf(c.expression), c)) return fail(c, `call of field ${c.expression.name.text} whose type has no mapping`);
+      }
       const cl = arrayClosureCall(program, checker, c);
       if (cl !== null) return typeof cl === "string" ? fail(c, cl) : closureCall(c, cl);
       if (key !== null) {
@@ -835,6 +888,14 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           }
         }
         return fail(c, `library call ${key}`);
+      }
+      const csig = checker.getResolvedSignature(c);
+      // An interface is emitted as a struct of its data members; its methods have no Milo declaration.
+      if (csig?.declaration && ts.isMethodSignature(csig.declaration) && !isLibDecl(program, csig.declaration)) return fail(c, `call of interface method ${csig.declaration.name.getText()}`);
+      if (csig?.declaration && !isLibDecl(program, csig.declaration) && unmappable(checker.getReturnTypeOfSignature(csig), c)) return fail(c, `call whose result type has no mapping (${checker.typeToString(checker.getReturnTypeOfSignature(csig))})`);
+      if (csig && csig.declaration && !isLibDecl(program, csig.declaration)) for (const ps of csig.getParameters()) {
+        const pt = checker.getTypeOfSymbolAtLocation(ps, c);
+        if (unmappable(pt, c)) return fail(c, `argument for parameter ${ps.name} whose type has no mapping (${checker.typeToString(pt)})`);
       }
       const argStr = args(c);
       let code: string;
@@ -1007,7 +1068,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
               const v = fresh("v");
               const some = inner.flags & ts.TypeFlags.NumberLike ? `${useRuntime("jsNum", e)}(${v})` : v;
               parts.push(`(match ${ex(sp.expression)} { Option.Some(${v}) => ${some}, Option.None => ${jsLit("undefined")} })`);
-            } else parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : strOperand(sp.expression));
+            } else parts.push(isNum(sp.expression) ? `${useRuntime("jsNum", e)}(${ex(sp.expression)})` : textOf(sp.expression));
             if (sp.literal.text) parts.push(jsLit(sp.literal.text));
           }
           return `(${parts.join(" + ")})`;
@@ -1072,14 +1133,24 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
               const nn = checker.getNonNullableType(ot);
               return `(match ${ex(o, litsOf(pt) ? pt : undefined)} { Option.Some(${v}) => (${v} ${sym} ${ex(p, litsOf(nn) ? nn : undefined)}), Option.None => ${sym === "==" ? "false" : "true"} })`;
             }
-            return `(${ex(b.left, litsOf(rt) ? rt : undefined)} ${sym} ${ex(b.right, litsOf(lt) ? lt : undefined)})`;
+            // Narrowing can make a `string` field's type a literal; the field is still a string, so the other side stays one.
+            const wantEnum = (x: ts.Expression, t: ts.Type) => {
+              const u = unparen(x);
+              const s = ts.isPropertyAccessExpression(u) ? checker.getSymbolAtLocation(u.name) : ts.isIdentifier(u) ? checker.getSymbolAtLocation(u) : undefined;
+              const d0 = s?.declarations?.[0];
+              const dt = s && d0 && !ts.isTypeAliasDeclaration(d0) && !ts.isEnumMember(d0) ? checker.getNonNullableType(checker.getTypeOfSymbol(s)) : t;
+              return litsOf(t) && (dt === t || litsOf(dt)) ? t : undefined;
+            };
+            return `(${ex(b.left, wantEnum(b.right, rt))} ${sym} ${ex(b.right, wantEnum(b.left, lt))})`;
           }
           if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
+            // `a && b` as a value yields an operand, not a bool; only the boolean test has a Milo form.
+            if (!(tOf(b).flags & ts.TypeFlags.BooleanLike) && !inCondPos(b)) return fail(b, `${b.operatorToken.getText()} as a value`);
             const g = foldKindGuards(b);
             if (g) return g;
             return `(${cond(b.left)} ${text} ${cond(b.right)})`;
           }
-          if (op === ts.SyntaxKind.PlusToken && (isStr(b.left) || isStr(b.right) || tOf(b).flags & ts.TypeFlags.StringLike)) return `(${strOperand(b.left)} + ${strOperand(b.right)})`;
+          if (op === ts.SyntaxKind.PlusToken && (isStr(b.left) || isStr(b.right) || (tOf(b).flags & ts.TypeFlags.StringLike) !== 0 || litsOf(tOf(b.left)) || litsOf(tOf(b.right)))) return `(${textOf(b.left)} ${text} ${textOf(b.right)})`;
           return `(${ex(b.left)} ${text} ${ex(b.right)})`;
         }
         case ts.SyntaxKind.PrefixUnaryExpression: {
@@ -1091,7 +1162,22 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           hit("ternary", "if-expression");
           const fg = foldCondGuard(c, want);
           if (fg) return fg;
-          return `(if ${cond(c.condition)} { ${conv(c.whenTrue, want)} } else { ${conv(c.whenFalse, want)} })`;
+          // `place ? a : b` on an optional place: a reads the payload, so bind it like an if guard.
+          const ct = unparen(c.condition);
+          const ck = truthyHandled(checker, ct);
+          if (ck && ck !== "str" && ck !== "num" && (ts.isIdentifier(ct) || ts.isPropertyAccessExpression(ct)) && !isChainMember(ct)) {
+            const key = ct.getText();
+            const nm = fresh(key);
+            const scrutCode = ex(ct);
+            const prev = narrow.get(key);
+            narrow.set(key, { name: nm, deref: boxedPlace(ct) });
+            const yes = conv(c.whenTrue, want, ownBranches.has(c));
+            if (prev) narrow.set(key, prev); else narrow.delete(key);
+            const no = conv(c.whenFalse, want, ownBranches.has(c));
+            const pay = ck === "optStr" ? truthText("str", nm) : ck === "optNum" ? truthText("num", nm) : ck === "optBool" ? nm : "true";
+            return `(match ${scrutCode} { Option.Some(${nm}) => (if ${pay} { ${yes} } else { ${no} }), Option.None => ${no} })`;
+          }
+          return `(if ${cond(c.condition)} { ${conv(c.whenTrue, want, ownBranches.has(c))} } else { ${conv(c.whenFalse, want, ownBranches.has(c))} })`;
         }
         case ts.SyntaxKind.AsExpression: {
           const a = e as ts.AsExpression;
@@ -1349,6 +1435,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         guardScrut = bind.scrut;
         let scrutCode = ex(bind.scrut);
         guardScrut = null;
+        // Binding a string payload out of a local Option moves the local; the rest of the block may still read it.
+        const sp = unparen(bind.scrut);
+        if (ts.isIdentifier(sp) && !bind.outer && !bind.deref && isOptionT(tOf(sp)) && checker.getNonNullableType(tOf(sp)).flags & ts.TypeFlags.StringLike && !litsOf(checker.getNonNullableType(tOf(sp)))) scrutCode += ".clone()";
         if (bind.outer) { const o = fresh(key); heads.push(`if let ${bind.outer(o)} = ${scrutCode} {`); scrutCode = o; }
         heads.push(`if let ${bind.pat(name)} = ${scrutCode} {`);
         saved.push([key, narrow.get(key)]);
@@ -1361,7 +1450,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const body = (s: ts.Statement) => { push(); if (ts.isBlock(s)) block(s); else stmt(s); pop(); };
     // `if (!x) return` / `if (x === undefined) throw ...` on an optional place: the rest of the block
     // reads x as its payload, so the exit becomes `let Option.Some(x_2) = x else { exit }`.
-    const earlyExitNarrow = (s: ts.Statement): { x: ts.Expression; kind?: { tu: NonNullable<ReturnType<typeof discriminantRead>>; k: string } } | null => {
+    const earlyExitNarrow = (s: ts.Statement): { x: ts.Expression; payload?: "str" | "num" | "optBool"; kind?: { tu: NonNullable<ReturnType<typeof discriminantRead>>; k: string } } | null => {
       if (!ts.isIfStatement(s) || s.elseStatement) return null;
       const last = ts.isBlock(s.thenStatement) ? s.thenStatement.statements[s.thenStatement.statements.length - 1] : s.thenStatement;
       if (!last || !(ts.isReturnStatement(last) || ts.isThrowStatement(last) || ts.isContinueStatement(last) || ts.isBreakStatement(last))) return null;
@@ -1375,7 +1464,13 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) {
         x = unparen(c.operand);
         const nn = isOptionT(tOf(x)) ? checker.getNonNullableType(tOf(x)) : null;
-        if (!nn || nn.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike) || litsOf(nn)) return null;
+        if (!nn || litsOf(nn)) return null;
+        // `if (!s) exit` on string | undefined: absent or empty exits, so the rest reads the payload.
+        if (nn.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) {
+          const pk = truthyKind(tOf(x));
+          const pay = pk === "optStr" ? "str" : pk === "optNum" ? "num" : pk === "optBool" ? "optBool" : null;
+          return pay && (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x)) && !isChainMember(x) ? { x, payload: pay } : null;
+        }
       } else if (ts.isBinaryExpression(c) && (c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken || c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken) && (isUndefinedId(c.right) || c.right.kind === ts.SyntaxKind.NullKeyword)) {
         x = unparen(c.left);
         if (!isOptionT(tOf(x))) return null;
@@ -1403,6 +1498,11 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         line(`let ${pat} = ${scrut} else {`);
         ind++; body((s as ts.IfStatement).thenStatement); ind--;
         line("}");
+        if (en.payload) {
+          line(`if !${truthText(en.payload, name)} {`);
+          ind++; body((s as ts.IfStatement).thenStatement); ind--;
+          line("}");
+        }
         saved.push([key, narrow.get(key)]);
         narrow.set(key, { name, deref: en.kind ? false : boxedPlace(x) });
       }
@@ -1412,6 +1512,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (ts.isBinaryExpression(e)) {
         const op = e.operatorToken.kind;
         const lt = tOf(e.left);
+        // A Milo parameter is immutable (or a borrow): rebinding one needs a local copy, which is not emitted yet.
+        if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment && ts.isIdentifier(e.left) && checker.getSymbolAtLocation(e.left)?.declarations?.some((d) => ts.isParameter(d))) fail(e, `assignment to the parameter ${e.left.text}`);
         if (op === ts.SyntaxKind.EqualsToken) { line(`${ex(e.left)} = ${ownConv(e.right, lt)}`); return; }
         if (op === ts.SyntaxKind.PlusEqualsToken && isStr(e.left)) { hit("string +=", "pushStr in place"); line(`${ex(e.left)}.pushStr(${ex(e.right)})`); return; }
         // Only the compound assignments Milo has; `??=`, `||=`, `&&=`, `**=` and `>>>=` would be emitted verbatim.
@@ -1594,7 +1696,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
             if (seenF.has(f.name)) continue;
             seenF.add(f.name);
             const having = tu.variants.filter((_, i) => per[i].some((x) => x.name === f.name));
-            if (per.some((p) => p.some((x) => x.name === f.name && (x.ty !== f.ty || x.ty.includes("Heap<"))))) continue;
+            if (per.some((p) => p.some((x) => x.name === f.name && (x.ty !== f.ty || x.ty.includes("Heap<"))))) { report.deadDecls.add(`${file}::${tu.name}_${f.name}`); continue; }
             const fn = safeId(f.name);
             line(`${pub}fn ${tu.name}_${f.name}(e: &${tu.name}): ${f.ty} {`);
             ind++; line("return match e {"); ind++;
@@ -1746,6 +1848,8 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         out.length = tmark; ind = tind;
         const nm = (n as { name?: ts.Node }).name?.getText() ?? ts.SyntaxKind[n.kind];
         report.stubs.push({ file: rel(file), name: nm, reason: e.message });
+        if (ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n) || ts.isClassDeclaration(n)) report.deadDecls.add(`${file}::${nm}`);
+        if (ts.isVariableStatement(n)) for (const d of n.declarationList.declarations) report.deadDecls.add(`${file}::${d.name.getText()}`);
         line(`// ts2milo stub: ${e.message.replace(/\n/g, " ")}`);
       }
     }
@@ -1756,7 +1860,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       try {
         const fields = lit.members.filter(ts.isPropertySignature).map((m) => {
           const pt = m.questionToken ? checker.getTypeOfSymbol(checker.getSymbolAtLocation(m.name)!) : checker.getTypeAtLocation(m);
-          return `${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${lenientField(() => ({ type: ty(pt, m), init: null }), `${a.name}.${mname(m.name)}`).type},`;
+          return `${RESERVED.has(mname(m.name)) ? mname(m.name) + "_" : mname(m.name)}: ${ty(pt, m)},`;
         });
         line("@derive(Clone)");
         line(`pub struct ${a.name} {`);
@@ -1766,6 +1870,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         if (!(err instanceof Unsupported) || !opts.lenient) throw err;
         out.length = tmark;
         report.stubs.push({ file: rel(file), name: a.name, reason: err.message });
+        report.deadDecls.add(`${file}::${a.name}`);
         line(`// ts2milo stub: ${err.message.replace(/\n/g, " ")}`);
       }
     }
@@ -1774,9 +1879,10 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       hit("string-literal union", "generated enum + Name_value");
       line("@derive(Clone)");
       line(`pub enum ${u.name} { ${u.lits.map(pascal).join(", ")} }`);
-      line(`pub fn ${u.name}_value(k: ${u.name}): string {`);
-      line(`    return match k { ${u.lits.map((l) => `${u.name}.${pascal(l)} => ${jsLit(l)}`).join(", ")} }`);
-      line("}");
+      line(`pub fn ${u.name}_value(k: &${u.name}): string {`);
+      ind++; line("return match k {"); ind++;
+      for (const l of u.lits) line(`${u.name}.${pascal(l)} => ${jsLit(l)},`);
+      ind--; line("}"); ind--; line("}");
     }
 
     const header = `// GENERATED by scripts/ts2milo.ts from ${rel(file)}. Do not edit; change the TypeScript.`;

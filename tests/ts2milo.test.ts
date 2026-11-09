@@ -294,7 +294,7 @@ describe("truthiness in condition position", () => {
     ].join("\n"));
     expect(out).toMatch(/if let Option\.Some\(\w+\) = b \{/);
     expect(out).toMatch(/if \(n != 0\) \{\n\s+if let Option\.Some/);
-    expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \(jsLen\(\1\) != 0\) \{/);
+    expect(out).toMatch(/if let Option\.Some\((\w+)\) = x(?:\.clone\(\))? \{\n\s+if \(jsLen\(\1\) != 0\) \{/);
     expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \(\1 != 0\) \{/);
     expect(out).toMatch(/if let Option\.Some\((\w+)\) = x \{\n\s+if \1 \{/);
   });
@@ -302,9 +302,67 @@ describe("truthiness in condition position", () => {
   test("what stays outside the subset is still rejected", () => {
     rejects("export function f(a: number, b: number): number {\n  const c = a || b;\n  return c;\n}\n");
     rejects("export function f(a: string): number {\n  const c = a && \"y\";\n  return c.length;\n}\n");
-    rejects("export function f(x: string | undefined): number {\n  return x ? 1 : 0;\n}\n");
     rejects("export interface B { v: number }\nexport function f(x: B | undefined): number {\n  if (!x) { return 0; }\n  return x.v;\n}\n");
     rejects("export function f(x: bigint): number {\n  if (x) { return 1; }\n  return 0;\n}\n");
+  });
+
+  test("lenient: code through a field or parameter with no Milo type, and users of a stubbed alias, stub with a reason", () => {
+    const { file, dir } = tmpTs("tsm_dead.ts", [
+      "export type Dead = { tag: \"a\"; v: Intl.Collator } | { tag: \"b\" };",
+      "export interface Tables { m: Intl.Collator; n: number }",
+      "export class Holder {",
+      "  c: Intl.Collator = new Intl.Collator();",
+      "  cmp(a: string, b: string): number { return this.c.compare(a, b); }",
+      "  plain(): number { return 1; }",
+      "}",
+      "export function useDead(d: Dead): number { return 1; }",
+      "export function takes(c: Intl.Collator, n: number): number { return n; }",
+      "export function calls(c: Intl.Collator): number { return takes(c, 1); }",
+      "export function ok(): number { return 2; }",
+      "export function must(s: string | undefined): string {",
+      "  if (!s) { return \"empty\"; }",
+      "  return s + \"!\";",
+      "}",
+    ].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const stubs = new Map(r.stubs.map((s) => [s.name, s.reason]));
+    expect(stubs.get("cmp")).toContain("no mapping");
+    expect(stubs.has("calls")).toBe(true);
+    expect(stubs.has("plain")).toBe(false);
+    expect(stubs.has("ok")).toBe(false);
+    // `if (!s) exit` on string | undefined: absent or empty exits, the rest reads the payload.
+    expect(stubs.has("must")).toBe(false);
+    expect(r.files.get("tsm_dead.milo")).toMatch(/let Option\.Some\((\w+)\) = s else \{[^}]*\}\n\s+if !\(jsLen\(\1\) != 0\) \{/);
+  });
+
+  const u = (t: string) => `"${[...t].map((c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}\\x00`).join("")}"`;
+  test("an optional in a ternary or `!` early exit, a literal union as text, and symbol-named literals compile and run", () => {
+    const { out, dir } = gen("tsm_optlit", [
+      "export type Op = \"&&\" | \"||\" | \"acq\";",
+      "export function pick(a: Op | undefined): string { return a ? \"op \" + a : \"none\"; }",
+      "export function num(n: number | undefined): number { return n ? n + 1 : -1; }",
+      "export function keep(s: string | undefined): string {",
+      "  if (s !== undefined) { return s; }",
+      "  return \"\";",
+      "}",
+      "export function tpl(a: Op): string { return `<${a}>`; }",
+    ].join("\n") + "\n");
+    expect(out).toContain("Op_value");
+    expect(out).toContain("pub enum Op { V26_26, V7c_7c, Acq }");
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_optlit\" import { Op, pick, num, keep, tpl }",
+      "fn main(): i32 {",
+      `    if pick(Option.Some(Op.Acq)) != ${u("op acq")} { return 1 }`,
+      `    if pick(Option.None) != ${u("none")} { return 2 }`,
+      "    if num(Option.Some(4)) != 5 || num(Option.None) != -1 || num(Option.Some(0)) != -1 { return 3 }",
+      `    if keep(Option.Some(${u("k")})) != ${u("k")} { return 5 }`,
+      `    if tpl(Op.V7c_7c) != ${u("<||>")} { return 6 }`,
+      "    return 0",
+      "}",
+      "",
+    ].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.slice(0, 400) }).toEqual({ status: 0, err: "" });
   });
 });
 

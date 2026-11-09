@@ -58,7 +58,7 @@ function isBool(t: ts.Type): boolean {
 }
 
 function isStringLike(t: ts.Type): boolean {
-  return (t.flags & ts.TypeFlags.StringLike) !== 0;
+  return (t.flags & ts.TypeFlags.StringLike) !== 0 || (t.isUnion() && t.types.every(isStringLike));
 }
 
 // Truthiness of a non-boolean value in a condition, for the types whose JS semantics Milo matches
@@ -74,7 +74,8 @@ export function truthyKind(t: ts.Type): Truthy | null {
   if (rest.every((x) => x.flags & F.BooleanLiteral)) return "optBool";
   if (rest.length === 1 && rest[0].flags & F.String) return "optStr";
   if (rest.length === 1 && rest[0].flags & F.Number) return "optNum";
-  return rest.every((x) => x.flags & F.Object) ? "opt" : null;
+  // A union of non-empty string literals is an enum in Milo: present means truthy.
+  return rest.every((x) => x.flags & F.Object || (x.isStringLiteral() && x.value !== "")) ? "opt" : null;
 }
 const outerParens = (n: ts.Node): ts.Node => { while (n.parent && ts.isParenthesizedExpression(n.parent)) n = n.parent; return n; };
 // The expression is the condition of an if, while or ternary, an operand of `!`, or an operand of
@@ -110,7 +111,10 @@ export function truthyHandled(checker: ts.TypeChecker, e: ts.Expression): Truthy
   if (ts.isBinaryExpression(u) && (u.operatorToken.kind === K.AmpersandAmpersandToken || u.operatorToken.kind === K.BarBarToken)) return null;
   const k = truthyKind(checker.getTypeAtLocation(e));
   if (!k) return null;
-  return (k === "str" || k === "num" ? inCondPos(e) : inIfGuard(e)) ? k : null;
+  if (k === "str" || k === "num") return inCondPos(e) ? k : null;
+  // An optional is narrowed by the test, which the emitter reproduces for an if guard and for a ternary's condition.
+  const c = outerParens(e);
+  return inIfGuard(e) || (!!c.parent && ts.isConditionalExpression(c.parent) && c.parent.condition === c) ? k : null;
 }
 
 // ---- `??`, `?.` and `switch` ----
