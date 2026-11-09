@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, calleeKey, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
+import { anonStructHandled, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, switchHandled, truthyHandled, violationsOf } from "./ts2milo/subset";
 import { buildAstModel, discriminantRead, emitAst, guardUnion, nestedUnionOf, registerUnions, taggedUnionOf, unionOfType } from "./ts2milo/ast-model";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -628,8 +628,10 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return parts.join(", ");
     };
 
+    let closureDepth = 0;
     const withTry = (call: ts.CallExpression, code: string): string => {
       const d = declOf(call);
+      if (closureDepth > 0 && d && throwing.has(d) && !isThrower(d)) fail(call, "closure (loop tier) calling a function that throws");
       if (d && throwing.has(d) && !isThrower(d)) { hit("call of a throwing function", "`?` on the Result"); return `${code}?`; }
       return code;
     };
@@ -650,9 +652,67 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return o;
     };
 
+    // Loop tier (subset.ts arrayClosureCall): xs.some(x => e) becomes jsSome(xs, (x: &T) => e), a runtime helper
+    // that loops with the exact JavaScript short-circuit and result rules. The arrow is a by-reference Milo closure.
+    const CLOSURE_HELPERS: Record<string, string> = { some: "jsSome", every: "jsEvery", map: "jsMap", filter: "jsFilter", find: "jsFind", findIndex: "jsFindIndex", forEach: "jsForEach", flatMap: "jsFlatMap", reduce: "jsReduce" };
+    const closureCall = (c: ts.CallExpression, cl: { method: string; arrow: ts.ArrowFunction; elem: ts.Type }): string => {
+      const { method, arrow, elem } = cl;
+      hit("closure in an array method", `${CLOSURE_HELPERS[method]}(xs, closure) loop helper`);
+      const helper = useRuntime(CLOSURE_HELPERS[method], c);
+      const recv = (c.expression as ts.PropertyAccessExpression).expression;
+      const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
+      const core = isOptionT(elem) ? checker.getNonNullableType(elem) : elem;
+      const boxed = onCycle(core);
+      const inner = boxed ? `Heap<${ty(core, c)}>` : ty(core, c);
+      const elemTy = `&${isOptionT(elem) ? `Option<${inner}>` : inner}`;
+      const savedFn = curFn;
+      curFn = arrow; closureDepth++; push();
+      try {
+        const ps = arrow.parameters.map((p, i) => {
+          const sym = symOf(p.name as ts.Identifier)!;
+          const nm = declareLocal(sym, (p.name as ts.Identifier).text);
+          if (method === "reduce" && i === 0) return `${nm}: ${ty(ret, p)}`;
+          if (boxed) elemBoxed.add(sym);
+          return `${nm}: ${elemTy}`;
+        });
+        const retTy = method === "forEach" ? "" : `: ${ty(ret, arrow)}`;
+        const mark = out.length;
+        ind++;
+        if (ts.isBlock(arrow.body)) block(arrow.body);
+        else if (method === "forEach") exprStmt(arrow.body);
+        else line(`return ${ownConv(arrow.body, ret)}`);
+        ind--;
+        const inside = out.splice(mark).join("\n");
+        const lit = `(${ps.join(", ")})${retTy} => {\n${inside}\n${"    ".repeat(ind)}}`;
+        const tail = method === "reduce" ? `, ${ownConv(c.arguments[1], ret)}` : "";
+        return `${helper}(${ex(recv)}, ${lit}${tail})`;
+      } finally { pop(); closureDepth--; curFn = savedFn; }
+    };
+
+    // A closure literal for an arrow whose parameters carry annotations.
+    const closureLit = (arrow: ts.ArrowFunction, params: { p: ts.ParameterDeclaration; ref: boolean }[]): string => {
+      const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
+      const savedFn = curFn;
+      curFn = arrow; closureDepth++; push();
+      try {
+        const ps = params.map(({ p, ref }) => `${declareLocal(symOf(p.name as ts.Identifier)!, (p.name as ts.Identifier).text)}: ${ref ? "&" : ""}${ty(checker.getTypeAtLocation(p), p)}`);
+        const isVoid = !!(ret.flags & ts.TypeFlags.Void);
+        const mark = out.length;
+        ind++;
+        if (ts.isBlock(arrow.body)) block(arrow.body);
+        else if (isVoid) exprStmt(arrow.body);
+        else line(`return ${ownConv(arrow.body, ret)}`);
+        ind--;
+        const inside = out.splice(mark).join("\n");
+        return `(${ps.join(", ")})${isVoid ? "" : `: ${ty(ret, arrow)}`} => {\n${inside}\n${"    ".repeat(ind)}}`;
+      } finally { pop(); closureDepth--; curFn = savedFn; }
+    };
+
     const callEx = (c: ts.CallExpression): string => {
       const key = calleeKey(program, checker, c);
       const a = c.arguments;
+      const cl = arrayClosureCall(program, checker, c);
+      if (cl !== null) return typeof cl === "string" ? fail(c, cl) : closureCall(c, cl);
       if (key !== null) {
         const recv = ts.isPropertyAccessExpression(c.expression) ? c.expression.expression : null;
         switch (key) {
@@ -698,7 +758,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         code = `${r.kind === ts.SyntaxKind.ThisKeyword ? "self" : ex(r)}.${safeId(c.expression.name.text)}(${argStr})`;
       } else {
         const id = c.expression as ts.Identifier;
-        code = `${useDeclared(id.text, symDeclFile(symOf(id)), c)}(${argStr})`;
+        const lsym = symOf(id);
+        const lname = lsym && lookupLocal(lsym);
+        code = lname ? `${lname}(${argStr})` : `${useDeclared(id.text, symDeclFile(symOf(id)), c)}(${argStr})`;
       }
       return withTry(c, code);
     };
@@ -869,6 +931,15 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           for (const d of (s as ts.VariableStatement).declarationList.declarations) {
             const sym = symOf(d.name as ts.Identifier)!;
             const t = checker.getTypeAtLocation(d.name);
+            const hoist = hoistedClosure(checker, d);
+            if (typeof hoist === "string") fail(d, hoist);
+            if (hoist) {
+              hit("hoisted const closure", "let f = (params) => closure literal; only called by name");
+              const nm = declareLocal(sym, (d.name as ts.Identifier).text);
+              const arrow = hoist as ts.ArrowFunction;
+              line(`let ${nm} = ${closureLit(arrow, arrow.parameters.map((p) => ({ p, ref: !isScalar(checker.getTypeAtLocation(p)) })))}`);
+              continue;
+            }
             const init = d.initializer ? ownConv(d.initializer, t) : defaultOf(t, d);
             const isVar = mutated.has(sym) || !d.initializer;
             hit("const/let", "let, or var when reassigned or mutated");
@@ -1069,7 +1140,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       }
       if (ts.isCallExpression(e)) {
         const d = declOf(e);
-        if (d && isThrower(d)) { line(`return Result.Err(${callEx(e)})`); return; }
+        if (d && isThrower(d)) { if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws"); line(`return Result.Err(${callEx(e)})`); return; }
         line(callEx(e));
         return;
       }

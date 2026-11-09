@@ -244,6 +244,91 @@ export function calleeKey(program: ts.Program, checker: ts.TypeChecker, call: ts
   return "?";
 }
 
+// Array methods whose callback is an arrow literal, lowered to the jsSome/jsMap/... runtime helpers (loop tier).
+const CLOSURE_METHODS = new Set(["some", "every", "map", "filter", "find", "findIndex", "forEach", "flatMap", "reduce"]);
+const BOOL_CLOSURE = new Set(["some", "every", "filter", "find", "findIndex"]);
+const isCopyScalar = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.Number | ts.TypeFlags.String | ts.TypeFlags.Boolean | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral));
+
+// The one predicate the gate and the emitter share for `xs.some(x => ...)`: null when the call is not such a method,
+// a refusal reason when it is but cannot be matched exactly, else the method and its arrow.
+export function arrayClosureCall(program: ts.Program, checker: ts.TypeChecker, c: ts.CallExpression): { method: string; arrow: ts.ArrowFunction; elem: ts.Type } | string | null {
+  const key = calleeKey(program, checker, c);
+  const m = key && /^(?:Readonly)?Array\.(\w+)$/.exec(key);
+  if (!m || !CLOSURE_METHODS.has(m[1]) || !ts.isPropertyAccessExpression(c.expression)) return null;
+  const method = m[1];
+  const why = (r: string) => `closure (loop tier) in Array.${method}: ${r}`;
+  const recvT = checker.getTypeAtLocation(c.expression.expression);
+  if (!checker.isArrayType(recvT)) return why("receiver is not an array");
+  const elem = checker.getTypeArguments(recvT as ts.TypeReference)[0];
+  const arrow = c.arguments[0];
+  if (!arrow || !ts.isArrowFunction(arrow)) return why("callback is not an arrow literal");
+  if (c.arguments.length !== (method === "reduce" ? 2 : 1)) return why(method === "reduce" ? "reduce without an initial value" : "thisArg");
+  if (arrow.modifiers || arrow.typeParameters) return why("async or generic arrow");
+  if (arrow.parameters.length > (method === "reduce" ? 2 : 1) || (method === "reduce" && arrow.parameters.length !== 2)) return why("callback names the index or array argument");
+  if (arrow.parameters.some((p) => !ts.isIdentifier(p.name) || p.initializer || p.dotDotDotToken || p.questionToken)) return why("destructured or defaulted parameter");
+  let thrown = false;
+  const scan = (n: ts.Node) => { if (ts.isThrowStatement(n)) thrown = true; ts.forEachChild(n, scan); };
+  scan(arrow.body);
+  if (thrown) return why("closure that throws");
+  const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
+  if (BOOL_CLOSURE.has(method) && !(ret.flags & ts.TypeFlags.Boolean)) return why("non-boolean result");
+  // filter/find copy elements out of a borrowed vector: only plain Copy values.
+  if ((method === "filter" || method === "find") && !isCopyScalar(elem)) return why("element is not a number, boolean or string");
+  if (method === "flatMap") {
+    const re = checker.isArrayType(ret) ? checker.getTypeArguments(ret as ts.TypeReference)[0] : null;
+    if (!re || !isCopyScalar(re)) return why("result is not an array of numbers, booleans or strings");
+  }
+  if (method === "reduce" && !isCopyScalar(ret)) return why("accumulator is not a number, boolean or string");
+  if (method === "map" && ret.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) return why("map to nothing");
+  return { method, arrow, elem };
+}
+
+// Hoist tier, the other shared predicate: `const f = (x: T): R => ...` that is only ever called by name and captures
+// nothing that is written or mutated in the enclosing function. Returns the arrow, a refusal reason, or null when d is no such declaration.
+export function hoistedClosure(checker: ts.TypeChecker, d: ts.VariableDeclaration): ts.ArrowFunction | string | null {
+  const arrow = d.initializer;
+  if (!arrow || !ts.isArrowFunction(arrow) || !ts.isIdentifier(d.name)) return null;
+  const why = (r: string) => `closure (hoist tier): ${r}`;
+  if (!(d.parent.flags & ts.NodeFlags.Const)) return why("not a const");
+  if (arrow.modifiers || arrow.typeParameters) return why("async or generic arrow");
+  if (arrow.parameters.some((p) => !ts.isIdentifier(p.name) || !p.type || p.initializer || p.dotDotDotToken || p.questionToken)) return why("parameter without a plain annotated name");
+  let fnScope: ts.Node = d;
+  while (fnScope.parent && !ts.isFunctionLike(fnScope)) fnScope = fnScope.parent;
+  const assigned = new Set<ts.Symbol>();
+  const root = (e: ts.Expression): ts.Expression => (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) ? root(e.expression) : e);
+  const markW = (e: ts.Expression) => { const r = root(e); if (ts.isIdentifier(r)) { const s = checker.getSymbolAtLocation(r); if (s) assigned.add(s); } };
+  const scanW = (n: ts.Node) => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= K.FirstAssignment && n.operatorToken.kind <= K.LastAssignment) markW(n.left);
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === K.PlusPlusToken || n.operator === K.MinusMinusToken)) markW(n.operand);
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) markW(n.expression.expression);
+    ts.forEachChild(n, scanW);
+  };
+  scanW(fnScope);
+  let bad: string | null = null;
+  const scan = (n: ts.Node) => {
+    if (ts.isThrowStatement(n)) bad = "closure that throws";
+    if (ts.isIdentifier(n)) {
+      const s = checker.getSymbolAtLocation(n);
+      const vd = s?.declarations?.[0];
+      const outside = !!vd && (ts.isVariableDeclaration(vd) || ts.isParameter(vd)) && !(vd.pos >= arrow.pos && vd.end <= arrow.end) && vd.getSourceFile() === d.getSourceFile();
+      if (s && outside && assigned.has(s)) bad = "closure that writes or mutates captured state";
+    }
+    ts.forEachChild(n, scan);
+  };
+  scan(arrow.body);
+  if (bad) return why(bad);
+  // Only called by name: never passed around.
+  const sym = checker.getSymbolAtLocation(d.name);
+  let escapes = false;
+  const refs = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && n !== d.name && checker.getSymbolAtLocation(n) === sym && !(ts.isCallExpression(n.parent) && n.parent.expression === n)) escapes = true;
+    ts.forEachChild(n, refs);
+  };
+  refs(fnScope);
+  if (escapes) return why("closure value passed around, not only called");
+  return arrow;
+}
+
 export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: ts.SourceFile): Violation[] {
   const out: Violation[] = [];
   registerUnions(program, checker);
@@ -400,7 +485,9 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         if (c.typeArguments) bad(n, "explicit type arguments");
         if (c.arguments.some(ts.isSpreadElement)) bad(n, "spread argument");
         const key = calleeKey(program, checker, c);
-        if (key !== null && !BUILTIN_CALLS.has(key)) bad(n, `library call ${key}`);
+        const cl = arrayClosureCall(program, checker, c);
+        if (cl !== null) { if (typeof cl === "string") bad(n, cl); }
+        else if (key !== null && !BUILTIN_CALLS.has(key)) bad(n, `library call ${key}`);
         else if (key === null && !ts.isIdentifier(c.expression) && !(ts.isPropertyAccessExpression(c.expression))) bad(n, "call of a computed callee");
         return;
       }
@@ -476,6 +563,15 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         const f = n as ts.ForOfStatement;
         const one = ts.isVariableDeclarationList(f.initializer) && f.initializer.declarations.length === 1 && ts.isIdentifier(f.initializer.declarations[0].name);
         if (!one || !isArr(checker.getTypeAtLocation(f.expression)) || f.awaitModifier) bad(n, "for-of other than `const x of array`");
+        return;
+      }
+      case K.ArrowFunction: {
+        const p = n.parent;
+        const cl = ts.isCallExpression(p) ? arrayClosureCall(program, checker, p) : null;
+        if (cl && typeof cl !== "string" && cl.arrow === n) return;
+        const h = ts.isVariableDeclaration(p) ? hoistedClosure(checker, p) : null;
+        if (h === n) return;
+        bad(n, typeof h === "string" ? h : typeof cl === "string" ? cl : "closure outside a direct array-method callback or a called const (param / this-cb tier)");
         return;
       }
       case K.SwitchStatement: if (!switchHandled(checker, n as ts.SwitchStatement)) bad(n, "switch outside the subset"); return;

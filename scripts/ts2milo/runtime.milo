@@ -389,3 +389,90 @@ pub fn optUnbox<T>(o: &Option<Heap<T>>): Option<T> {
 // the field fails to compile, which marks it; everything else in the class still translates.
 pub struct TsOpaque {
 }
+
+// ---- Array methods that take a closure (the transpiler passes an arrow literal) ----
+// The callback borrows each element, as `for x in v` does. JavaScript's index and array
+// callback arguments are not offered: the transpiler refuses a callback that names them.
+
+pub fn jsSome<T>(v: &Vec<T>, f: (&T) => bool): bool {
+    for e in v {
+        if f(e) {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn jsEvery<T>(v: &Vec<T>, f: (&T) => bool): bool {
+    for e in v {
+        if !f(e) {
+            return false
+        }
+    }
+    return true
+}
+
+pub fn jsForEach<T>(v: &Vec<T>, f: (&T) => void) {
+    for e in v {
+        f(e)
+    }
+}
+
+pub fn jsMap<T, U>(v: &Vec<T>, f: (&T) => U): Vec<U> {
+    var out: Vec<U> = Vec.new()
+    for e in v {
+        out.push(f(e))
+    }
+    return out
+}
+
+pub fn jsFindIndex<T>(v: &Vec<T>, f: (&T) => bool): i64 {
+    var i: i64 = 0
+    for e in v {
+        if f(e) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// filter / find / flatMap copy elements out of the borrowed vector, so they are only offered
+// for element types that are plain Copy values (number, boolean, string).
+pub fn jsFilter<T>(v: &Vec<T>, f: (&T) => bool): Vec<T> {
+    var out: Vec<T> = Vec.new()
+    for e in v {
+        if f(e) {
+            out.push(e.clone())
+        }
+    }
+    return out
+}
+
+pub fn jsFind<T>(v: &Vec<T>, f: (&T) => bool): Option<T> {
+    for e in v {
+        if f(e) {
+            return Option.Some(e.clone())
+        }
+    }
+    return Option.None
+}
+
+pub fn jsFlatMap<T, U>(v: &Vec<T>, f: (&T) => Vec<U>): Vec<U> {
+    var out: Vec<U> = Vec.new()
+    for e in v {
+        let part = f(e)
+        for u in part {
+            out.push(u.clone())
+        }
+    }
+    return out
+}
+
+pub fn jsReduce<T, A>(v: &Vec<T>, f: (A, &T) => A, init: A): A {
+    var acc = init
+    for e in v {
+        acc = f(acc, e)
+    }
+    return acc
+}

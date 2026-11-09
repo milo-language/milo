@@ -657,6 +657,57 @@ describe("several thrown classes", () => {
   });
 });
 
+describe("array methods with an arrow callback", () => {
+  const src = [
+    "export function someF(xs: number[]): number { let n = 0; const r = xs.some((x) => { n += 1; return x > 2; }); return (r ? 1000 : 0) + n; }",
+    "export function everyF(xs: number[]): number { let n = 0; const r = xs.every((x) => { n += 1; return x < 6; }); return (r ? 1000 : 0) + n; }",
+    "export function mapF(xs: number[]): number { const ys = xs.map((x) => x * 2); return ys.length * 100 + ys.reduce((a, b) => a + b, 7); }",
+    "export function filterF(xs: number[]): number { let t = 0; const ys = xs.filter((x) => x > 2); ys.forEach((y) => { t += y; }); return ys.length * 100 + t; }",
+    "export function findF(xs: number[]): number { const f = xs.find((x) => x > 2); if (f !== undefined) { return f; } return -1; }",
+    "export function findIndexF(xs: number[]): number { return xs.findIndex((x) => x > 2); }",
+    "export function flatMapF(xs: number[]): number { const ys = xs.flatMap((x) => [x, x + 1]); return ys.length * 100 + ys.reduce((a, b) => a * 2 + b, 0); }",
+    "export function hoistF(xs: number[]): number { const k = 3; const add = (a: number): number => { return a + k; }; let t = 0; for (const x of xs) { t += add(x); } return t; }",
+    "export function strF(xs: string[]): number { return xs.filter((s) => s.length > 1).length * 10 + xs.map((s) => s.length).length; }",
+  ];
+  const cases: number[][] = [[], [1], [1, 5, 9], [3, 3], [7, 1, 8]];
+
+  test("each method matches JavaScript (empty, no match, first match, short-circuit) when compiled and run", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const file = join(dir, "tsm_cl.ts");
+    writeFileSync(file, src.join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    const js = await import(file);
+    const names = ["someF", "everyF", "mapF", "filterF", "findF", "findIndexF", "flatMapF", "hoistF"];
+    const want: string[] = [];
+    const drv = ["from \"./tsm_cl\" import { " + [...names, "strF"].join(", ") + " }", "fn main(): i32 {"];
+    cases.forEach((xs, i) => {
+      drv.push(`    ${xs.length ? "var" : "let"} v${i}: Vec<i64> = Vec.new()`, ...xs.map((x) => `    v${i}.push(${x})`));
+      for (const n of names) { drv.push(`    print(${n}(v${i}))`); want.push(String(js[n](xs))); }
+    });
+    // "a" and "bb" as UTF-16LE.
+    drv.push("    var s: Vec<string> = Vec.new()", "    s.push(\"\\x61\\x00\")", "    s.push(\"\\x62\\x00\\x62\\x00\")", "    print(strF(s))", "    return 0", "}", "");
+    want.push(String(js.strF(["a", "bb"])));
+    writeFileSync(join(dir, "main.milo"), drv.join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    const err = run.stderr.replace(/\x1b\[[0-9;]*m/g, "");
+    expect({ status: run.status, err: err.slice(0, 800) }).toEqual({ status: 0, err: "" });
+    expect(run.stdout.trim().split("\n")).toEqual(want);
+  });
+
+  test("callbacks that cannot match JavaScript stay refused with the tier named", () => {
+    const { file, dir } = tmpTs("tsm_clbad.ts", [
+      "export function a(xs: number[]): number { return xs.reduce((s, x) => s + x); }",
+      "export function b(xs: number[]): number { return xs.map((x, i) => x + i).length; }",
+      "export function c(xs: number[]): number { const f = (x: number) => x; return f(1); }",
+    ].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
+    const why = r.stubs.map((s) => s.reason).join("\n");
+    expect(why).toContain("reduce without an initial value");
+    expect(why).toContain("index or array argument");
+  });
+});
+
 describe("ts-portable", () => {
   test("lexer and tokens stay inside the portable subset", () => {
     const res = countViolations(["src/lexer.ts", "src/tokens.ts"]);
