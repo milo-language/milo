@@ -14,7 +14,9 @@ export interface Violation {
 // Library members the transpiler maps to runtime calls, keyed "<Owner>.<member>".
 export const BUILTIN_CALLS = new Set([
   "String.charCodeAt", "String.slice", "StringConstructor.fromCharCode", "StringConstructor.fromCodePoint",
-  "Number.toString", "Array.push", "Set.has", "Set.add", "Map.get", "Map.set", "Map.has", "parseInt", "String()",
+  "Number.toString", "Array.push", "Set.has", "ReadonlySet.has", "Set.add", "Map.get", "Map.set", "Map.has", "parseInt", "String()",
+  "String.startsWith", "String.endsWith", "String.includes", "String.indexOf", "String.lastIndexOf", "String.split", "String.trim",
+  "String.charAt", "String.replace", "String.replaceAll", "Array.join",
 ]);
 
 const K = ts.SyntaxKind;
@@ -265,7 +267,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
     if (ts.isTypeReferenceNode(n)) {
       const t = checker.getTypeFromTypeNode(n);
       const name = n.typeName.getText();
-      if (name === "Array" || name === "Set" || name === "Map") { return; }
+      if (name === "Array" || name === "Set" || name === "ReadonlySet" || name === "Map") { return; }
       if (n.typeArguments) bad(n, `generic type ${name}`);
       else if (!isProjectSymbolType(t, (d) => ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d) || ts.isEnumDeclaration(d) || ts.isTypeAliasDeclaration(d))) {
         bad(n, `type ${name}`);
@@ -469,6 +471,8 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       case K.SwitchStatement: if (!switchHandled(checker, n as ts.SwitchStatement)) bad(n, "switch outside the subset"); return;
       case K.CaseBlock: return;
       case K.CaseClause: case K.DefaultClause: if (!switchHandled(checker, n.parent.parent as ts.SwitchStatement)) bad(n, K[n.kind]); return;
+      // Only as the pattern of s.replace(/x/g, "y"); ts2milo itself refuses any regex that is not a plain global literal.
+      case K.RegularExpressionLiteral: if (!(ts.isCallExpression(n.parent) && n.parent.arguments[0] === n && ts.isPropertyAccessExpression(n.parent.expression) && n.parent.expression.name.text === "replace")) bad(n, "RegularExpressionLiteral"); return;
       case K.IfStatement: needBool((n as ts.IfStatement).expression, "if condition"); return;
       case K.WhileStatement: needBool((n as ts.WhileStatement).expression, "while condition"); return;
       default:

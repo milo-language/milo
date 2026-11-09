@@ -430,6 +430,141 @@ describe("??, ?. and switch", () => {
   });
 });
 
+// Each library-method helper family is generated, compiled and run against the answer real
+// JavaScript gives for the same call, on empty, out-of-range and non-ASCII (BMP and surrogate pair) input.
+describe("string and array library helpers", () => {
+  const u16 = (s: string) => s.length === 0 ? `""` : `"${[...Array(s.length).keys()].map((i) => `\\x${(s.charCodeAt(i) & 255).toString(16).padStart(2, "0")}\\x${(s.charCodeAt(i) >> 8).toString(16).padStart(2, "0")}`).join("")}"`;
+  const runCases = (name: string, body: string, cases: { call: string; js: string | number | boolean }[], imports: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    writeFileSync(join(dir, `${name}.ts`), body);
+    const r = transpile([join(dir, `${name}.ts`)], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    const checks = cases.map((c, i) => {
+      const want = typeof c.js === "string" ? u16(c.js) : String(c.js);
+      return `    if ${c.call} != ${want} { return ${i + 1} }`;
+    });
+    writeFileSync(join(dir, "main.milo"), [`from "./${name}" import { ${imports} }`, "fn main(): i32 {", ...checks, "    return 0", "}", ""].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    return { status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600), failedCase: run.status ? cases[run.status - 1]?.call : undefined };
+  };
+  const words = ["", "a", "ab", "abab", "é", "aéb", "😀", "x😀y😀", "  a b \t\n", "\u00a0\u2003z\ufeff"];
+
+  test("startsWith, endsWith, includes, indexOf, lastIndexOf", () => {
+    const cases: { call: string; js: string | number | boolean }[] = [];
+    for (const s of words) for (const p of ["", "a", "ab", "b", "é", "😀", "\ud83d", "abab", "ababab"]) {
+      cases.push({ call: `sw(${u16(s)}, ${u16(p)})`, js: (s.startsWith(p) ? 1 : 0) + (s.endsWith(p) ? 2 : 0) + (s.includes(p) ? 4 : 0) });
+      cases.push({ call: `io(${u16(s)}, ${u16(p)})`, js: s.indexOf(p) * 1000 + s.lastIndexOf(p) });
+    }
+    const r = runCases("tsm_find", [
+      "export function sw(s: string, p: string): number { return (s.startsWith(p) ? 1 : 0) + (s.endsWith(p) ? 2 : 0) + (s.includes(p) ? 4 : 0); }",
+      "export function io(s: string, p: string): number { return s.indexOf(p) * 1000 + s.lastIndexOf(p); }",
+    ].join("\n") + "\n", cases, "sw, io");
+    expect(r).toEqual({ status: 0, err: "", failedCase: undefined });
+  });
+
+  test("trim and charAt", () => {
+    const cases: { call: string; js: string | number | boolean }[] = [];
+    for (const s of words) {
+      cases.push({ call: `tr(${u16(s)})`, js: s.trim() });
+      for (const i of [-1, 0, 1, 2, 3, 99]) cases.push({ call: `ch(${u16(s)}, ${i})`, js: s.charAt(i) });
+    }
+    const r = runCases("tsm_trim", [
+      "export function tr(s: string): string { return s.trim(); }",
+      "export function ch(s: string, i: number): string { return s.charAt(i); }",
+    ].join("\n") + "\n", cases, "tr, ch");
+    expect(r).toEqual({ status: 0, err: "", failedCase: undefined });
+  });
+
+  test("split, join and a global literal replace", () => {
+    const cases: { call: string; js: string | number | boolean }[] = [];
+    for (const s of ["", "a", "a\nb", "\n", "a\n\nb\n", "é\n😀", "abab"]) for (const sep of ["\n", "", "ab", "é", "zz"]) {
+      const parts = s.split(sep);
+      cases.push({ call: `spN(${u16(s)}, ${u16(sep)})`, js: parts.length });
+      for (const i of [0, 1, 2]) cases.push({ call: `spAt(${u16(s)}, ${u16(sep)}, ${i})`, js: parts[i] ?? "" });
+      cases.push({ call: `rt(${u16(s)}, ${u16(sep)})`, js: s.split(sep).join("-") });
+    }
+    for (const s of ["", "a\\b\\\\c", "\\", "no", "😀\\é"]) cases.push({ call: `bs(${u16(s)})`, js: s.replace(/\\/g, "/") });
+    for (const s of ["", "aaa", "abab", "xaay"]) { cases.push({ call: `aa(${u16(s)})`, js: s.replaceAll("aa", "Q") }); cases.push({ call: `dot(${u16(s)})`, js: s.replace(/a/g, "") }); }
+    cases.push({ call: "j0()", js: ["a", "", "é"].join() });
+    cases.push({ call: "j1()", js: [].join(",") });
+    const r = runCases("tsm_split", [
+      "export function spN(s: string, sep: string): number { return s.split(sep).length; }",
+      "export function spAt(s: string, sep: string, i: number): string { const p = s.split(sep); return i < p.length ? p[i] : \"\"; }",
+      "export function rt(s: string, sep: string): string { return s.split(sep).join(\"-\"); }",
+      "export function bs(s: string): string { return s.replace(/\\\\/g, \"/\"); }",
+      "export function aa(s: string): string { return s.replaceAll(\"aa\", \"Q\"); }",
+      "export function dot(s: string): string { return s.replace(/a/g, \"\"); }",
+      "export function j0(): string { const v = [\"a\", \"\", \"\\u00e9\"]; return v.join(); }",
+      "export function j1(): string { const v: string[] = []; return v.join(\",\"); }",
+    ].join("\n") + "\n", cases, "spN, spAt, rt, bs, aa, dot, j0, j1");
+    expect(r).toEqual({ status: 0, err: "", failedCase: undefined });
+  });
+
+  test("forms the helpers cannot match stay refused", () => {
+    const { file } = tmpTs("tsm_ref.ts", [
+      "export function a(s: string): boolean { return s.startsWith(\"a\", 1); }",
+      "export function b(s: string): string { return s.replace(/a+/g, \"b\"); }",
+      "export function c(s: string): string { return s.replace(\"a\", \"$&\"); }",
+      "export function d(s: string): boolean { return /a/.test(s); }",
+    ].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: "/nonexistent", lenient: true });
+    expect(r.stubs.length).toBe(4);
+    expect(r.stubs.map((s) => s.reason).filter((x) => x.includes("library call")).length).toBe(4);
+  });
+});
+
+describe("several thrown classes", () => {
+  const classes = [
+    "export class ParseErr { constructor(public message: string) {} }",
+    "export class CodeErr { constructor(public code: number) {} }",
+  ];
+  const fns = [
+    "export function a(n: number): number { if (n < 0) { throw new ParseErr(\"neg\"); } return n; }",
+    "export function b(n: number): number { if (n > 100) { throw new CodeErr(n); } return a(n) + 1; }",
+    "export function c(n: number): void { if (n === 50) { throw new CodeErr(7); } }",
+  ];
+
+  test("one thrown class keeps the plain Result and writes no enum", () => {
+    const { file, dir } = tmpTs("tsm_one.ts", [...classes.slice(0, 1), fns[0]].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none") });
+    expect(r.files.has("thrown.milo")).toBe(false);
+    expect(r.files.get("tsm_one.milo")).toContain("Result<i64, ParseErr>");
+    expect(r.files.get("tsm_one.milo")).toContain("return Result.Err(ParseErr.new(");
+  });
+
+  test("two classes become one enum that propagates through calls and runs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
+    const file = join(dir, "tsm_two.ts");
+    writeFileSync(file, [...classes, ...fns].join("\n") + "\n");
+    const r = transpile([file], { overridesDir: join(dir, "none") });
+    for (const [f, text] of r.files) writeFileSync(join(dir, f), text);
+    expect(r.files.get("thrown.milo")).toContain("pub enum Thrown {");
+    expect(r.files.get("tsm_two.milo")).toContain("Result<i64, Thrown>");
+    writeFileSync(join(dir, "main.milo"), [
+      "from \"./tsm_two\" import { a, b, c }",
+      "from \"./thrown\" import { Thrown }",
+      "fn main(): i32 {",
+      "    if let Result.Ok(v) = b(5) { if v != 6 { return 1 } } else { return 2 }",
+      "    if let Result.Err(e) = b(-1) {",
+      "        if let Thrown.ParseErr(p) = e { if p.message != \"\\x6e\\x00\\x65\\x00\\x67\\x00\" { return 3 } } else { return 4 }",
+      "    } else { return 5 }",
+      "    if let Result.Err(e) = b(500) {",
+      "        if let Thrown.CodeErr(k) = e { if k.code != 500 { return 6 } } else { return 7 }",
+      "    } else { return 8 }",
+      "    if let Result.Err(e) = c(50) {",
+      "        if let Thrown.CodeErr(k) = e { if k.code != 7 { return 9 } } else { return 10 }",
+      "    } else { return 11 }",
+      "    if let Result.Err(_e) = c(1) { return 12 }",
+      "    if let Result.Err(_e) = a(1) { return 13 }",
+      "    return 0",
+      "}",
+      "",
+    ].join("\n"));
+    const run = spawnSync("bun", [join(import.meta.dir, "..", "src/main.ts"), "run", join(dir, "main.milo")], { encoding: "utf-8", env: process.env });
+    expect({ status: run.status, err: run.stderr.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 600) }).toEqual({ status: 0, err: "" });
+  });
+});
+
 describe("ts-portable", () => {
   test("lexer and tokens stay inside the portable subset", () => {
     const res = countViolations(["src/lexer.ts", "src/tokens.ts"]);

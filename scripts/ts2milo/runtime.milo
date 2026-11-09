@@ -184,6 +184,136 @@ pub fn jsParseInt(s: &string, radix: i64): i64 {
     return if neg { 0 - v } else { v }
 }
 
+// ---- String / Array library methods (single-argument forms; the transpiler refuses the rest) ----
+
+fn unitsEqualAt(s: &string, p: &string, at: i64): bool {
+    let n = jsLen(p)
+    var k: i64 = 0
+    while k < n {
+        if unitAt(s, at + k) != unitAt(p, k) {
+            return false
+        }
+        k += 1
+    }
+    return true
+}
+
+pub fn jsStartsWith(s: &string, p: &string): bool {
+    return jsLen(p) <= jsLen(s) && unitsEqualAt(s, p, 0)
+}
+
+pub fn jsEndsWith(s: &string, p: &string): bool {
+    return jsLen(p) <= jsLen(s) && unitsEqualAt(s, p, jsLen(s) - jsLen(p))
+}
+
+// -1 when absent; "" is found at 0, as in JavaScript.
+pub fn jsIndexOf(s: &string, p: &string): i64 {
+    let last = jsLen(s) - jsLen(p)
+    var i: i64 = 0
+    while i <= last {
+        if unitsEqualAt(s, p, i) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// "" is found at s.length, as in JavaScript.
+pub fn jsLastIndexOf(s: &string, p: &string): i64 {
+    var i = jsLen(s) - jsLen(p)
+    while i >= 0 {
+        if unitsEqualAt(s, p, i) {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+pub fn jsIncludes(s: &string, p: &string): bool {
+    return jsIndexOf(s, p) >= 0
+}
+
+// ECMAScript WhiteSpace and LineTerminator.
+fn isJsSpace(u: i64): bool {
+    return (u >= 9 && u <= 13) || u == 32 || u == 160 || u == 5760 || (u >= 8192 && u <= 8202)
+    || u == 8232 || u == 8233 || u == 8239 || u == 8287 || u == 12288 || u == 65279
+}
+
+pub fn jsTrim(s: &string): string {
+    var a: i64 = 0
+    var b = jsLen(s)
+    while a < b && isJsSpace(unitAt(s, a)) {
+        a += 1
+    }
+    while b > a && isJsSpace(unitAt(s, b - 1)) {
+        b -= 1
+    }
+    return jsSlice(s, a, b)
+}
+
+// s.split(sep) for a string separator: "" splits into code units (so [] for an empty s), and a
+// non-empty sep on an empty s gives [""].
+pub fn jsSplit(s: &string, sep: &string): Vec<string> {
+    var out: Vec<string> = []
+    let n = jsLen(s)
+    let m = jsLen(sep)
+    if m == 0 {
+        var j: i64 = 0
+        while j < n {
+            out.push(jsAt(s, j))
+            j += 1
+        }
+        return out
+    }
+    var start: i64 = 0
+    var i: i64 = 0
+    while i + m <= n {
+        if unitsEqualAt(s, sep, i) {
+            out.push(jsSlice(s, start, i))
+            i += m
+            start = i
+        } else {
+            i += 1
+        }
+    }
+    out.push(jsSlice(s, start, n))
+    return out
+}
+
+pub fn jsJoin(v: &Vec<string>, sep: &string): string {
+    var out: string = ""
+    var i: i64 = 0
+    while i < v.len() {
+        if i > 0 {
+            out = out + sep
+        }
+        out = out + v[i]
+        i += 1
+    }
+    return out
+}
+
+// s.replace(/x/g, r) and s.replaceAll(x, r) for a non-empty literal x and an r with no `$`.
+pub fn jsReplaceAll(s: &string, pat: &string, rep: &string): string {
+    var out: string = ""
+    let n = jsLen(s)
+    let m = jsLen(pat)
+    var start: i64 = 0
+    var i: i64 = 0
+    while i + m <= n {
+        if unitsEqualAt(s, pat, i) {
+            out = out + jsSlice(s, start, i) + rep
+            i += m
+            start = i
+        } else {
+            i += 1
+        }
+    }
+    return out + jsSlice(s, start, n)
+}
+
 // ---- mirrors of src/ast.ts and src/diagnostics.ts ----
 
 pub enum Severity { Error, Warning, Hint }
@@ -226,6 +356,17 @@ impl ParseError {
         let code = diagnostic.code.clone() ?? jsFromUtf8("parse")
         let message = jsFromUtf8("error[") + code + jsFromUtf8("]: ") + loc + diagnostic.message
         return ParseError { diagnostic: diagnostic, source: source, filePath: filePath, message: message }
+    }
+}
+
+// The JavaScript Error (renamed: the prelude owns `Error`) the frontend throws for internal failures: only `message` is ever read.
+pub struct JsError {
+    message: string,
+}
+
+impl JsError {
+    fn new(message: string): JsError {
+        return JsError { message: message }
     }
 }
 

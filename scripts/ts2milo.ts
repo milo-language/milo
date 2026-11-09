@@ -11,7 +11,10 @@ import { buildAstModel, discriminantRead, emitAst, guardUnion, registerUnions, t
 const ROOT = resolve(import.meta.dir, "..");
 const RUNTIME_FILE = join(ROOT, "scripts/ts2milo/runtime.milo");
 const RUNTIME_MOD = "./ts2milo_runtime";
-const STD_MODULES: Record<string, string> = { HashSet: "std/set" };
+// JavaScript names the prelude already owns, mirrored under another name in the runtime.
+const RUNTIME_RENAMES: Record<string, string> = { Error: "JsError" };
+const THROWN_ENUM = "Thrown";
+const STD_MODULES: Record<string, string> = { HashSet: "std/set", [THROWN_ENUM]: "./thrown" };
 const RESERVED = new Set("fn extern let var return if else while true false struct enum match mut import from break continue as trait impl for in unsafe move null is type interface requires ensures invariant decreases self Self pub".split(" "));
 
 export interface Report {
@@ -110,22 +113,30 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
   const throwing = new Set<ts.Node>();
   // --lenient: functions a whole-program pass could not handle; emitFn stubs them with the reason.
   const forceStub = new Map<ts.Node, string>();
-  let errType = "";
+  // The thrown classes, in first-thrown order, with the file declaring each. One class is the Result's
+  // error type as is; several make one generated enum (THROWN_ENUM, one variant per class, carrying it).
+  const errTypes: string[] = [];
+  const errDecl = new Map<string, string | undefined>();
   const walkBody = (body: ts.Node, f: (n: ts.Node) => void) => { const w = (n: ts.Node) => { f(n); ts.forEachChild(n, w); }; w(body); };
   for (const fn of allFns) walkBody(fn.body!, (n) => {
     if (ts.isThrowStatement(n)) {
       throwing.add(fn);
-      const name = checker.getTypeAtLocation(n.expression).symbol?.name ?? "?";
-      if (errType && errType !== name) {
-        if (!opts.lenient) fail(n, "throw of two different error types");
+      const sym = checker.getTypeAtLocation(n.expression).symbol;
+      const name = sym?.name ?? "?";
+      if (name === "?" || name === "__type" || name === "__object") {
+        // A caught value rethrown: its class is only known to a `catch` + type test, and try/catch is not translated.
+        if (!opts.lenient) fail(n, "throw of a value without a class type");
         const sf = n.getSourceFile();
-        forceStub.set(fn, `${rel(sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: throw of a second error type (${name}, the program's is ${errType})`);
+        forceStub.set(fn, `${rel(sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: throw of a value without a class type (a rethrown catch variable; try/catch is not translated)`);
         throwing.delete(fn);
         return;
       }
-      errType = name;
+      if (!errTypes.includes(name)) { errTypes.push(name); errDecl.set(name, sym.declarations?.[0]?.getSourceFile().fileName); }
     }
   });
+  const thrownName = (s: ts.Symbol) => { const f = s.declarations?.[0]?.getSourceFile().fileName; return f && inputSet.has(f) ? s.name : RUNTIME_RENAMES[s.name] ?? s.name; };
+  const errType = errTypes[0] ?? "";
+  const multiErr = errTypes.length > 1;
   for (let changed = true; changed;) {
     changed = false;
     for (const fn of allFns) {
@@ -244,7 +255,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const useDeclared = (name: string, declFile: string | undefined, at: ts.Node) => {
       if (!declFile || declFile === file) return name;
       if (inputSet.has(declFile)) use(modOf(declFile), name);
-      else useRuntime(name, at);
+      else return useRuntime(RUNTIME_RENAMES[name] ?? name, at);
       return name;
     };
     const std = (name: string) => { use(STD_MODULES[name], name); return name; };
@@ -314,7 +325,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         const inner = onCycle(core) ? `Heap<${ty(core, at)}>` : ty(core, at);
         return `Vec<${isOptionT(el) ? `Option<${inner}>` : inner}>`;
       }
-      if (t.symbol?.name === "Set") return `${std("HashSet")}<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
+      if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet") return `${std("HashSet")}<${ty(checker.getTypeArguments(t as ts.TypeReference)[0], at)}>`;
       const d = t.symbol?.declarations?.[0];
       if (d && (ts.isClassDeclaration(d) || ts.isInterfaceDeclaration(d))) return useDeclared(d.name!.text, d.getSourceFile().fileName, at);
       return fail(at, `type ${checker.typeToString(t)}`);
@@ -369,7 +380,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       if (isCopyT(t)) return true;
       if (isOptionT(t)) return canClone(checker.getNonNullableType(t));
       if (checker.isArrayType(t)) return canClone(checker.getTypeArguments(t as ts.TypeReference)[0]);
-      if (t.symbol?.name === "Set" || t.symbol?.name === "Map") return true;
+      if (t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet" || t.symbol?.name === "Map") return true;
       const tu = unionOfType(checker, t);
       if (tu) return astModel.cloneable.has(tu.name);
       const d = t.symbol?.declarations?.[0];
@@ -523,6 +534,22 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return code;
     };
 
+    // The text a /x/g literal matches when x is plain characters (escaped punctuation allowed), or a non-empty string literal for replaceAll.
+    const replaceLiteral = (e: ts.Expression, isAll: boolean): string | null => {
+      if (isAll) return ts.isStringLiteral(e) && e.text.length > 0 ? e.text : null;
+      if (!ts.isRegularExpressionLiteral(e)) return null;
+      const m = /^\/(.+)\/g$/.exec(e.text);
+      if (!m) return null;
+      let o = "";
+      for (let i = 0; i < m[1].length; i++) {
+        const ch = m[1][i];
+        if (ch === "\\") { const nx = m[1][++i]; if (nx === undefined || /[a-zA-Z0-9]/.test(nx)) return null; o += nx; }
+        else if (/[\^$.*+?()[\]{}|\/]/.test(ch)) return null;
+        else o += ch;
+      }
+      return o;
+    };
+
     const callEx = (c: ts.CallExpression): string => {
       const key = calleeKey(program, checker, c);
       const a = c.arguments;
@@ -535,13 +562,32 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
           case "StringConstructor.fromCodePoint": return `${useRuntime("jsFromCodePoint", c)}(${ex(a[0])})`;
           case "Number.toString": return a.length ? `${useRuntime("jsNumRadix", c)}(${ex(recv!)}, ${ex(a[0])})` : `${useRuntime("jsNum", c)}(${ex(recv!)})`;
           case "Array.push": return `${ex(recv!)}.push(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
-          case "Set.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
+          case "Set.has": case "ReadonlySet.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
           case "Set.add": return `${ex(recv!)}.add(${ownConv(a[0], checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0])})`;
           case "Map.get": return `${ex(recv!)}.get(${ex(a[0])})`;
           case "Map.has": return `${ex(recv!)}.contains(${ex(a[0])})`;
           case "Map.set": { const [kt, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${ownConv(a[0], kt)}, ${ownConv(a[1], vt)})`; }
           case "parseInt": if (!a[1]) fail(c, "parseInt without a radix"); return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           case "String()": return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
+          // Only the single-argument forms the runtime helpers implement exactly; anything else (a position, a regex, a limit) stays refused.
+          case "String.startsWith": case "String.endsWith": case "String.includes": case "String.indexOf": case "String.lastIndexOf": case "String.split": {
+            if (a.length !== 1 || !isStr(a[0])) return fail(c, `library call ${key} with other than one string argument`);
+            const h = { "String.startsWith": "jsStartsWith", "String.endsWith": "jsEndsWith", "String.includes": "jsIncludes", "String.indexOf": "jsIndexOf", "String.lastIndexOf": "jsLastIndexOf", "String.split": "jsSplit" }[key];
+            return `${useRuntime(h, c)}(${ex(recv!)}, ${ex(a[0])})`;
+          }
+          case "String.trim": return `${useRuntime("jsTrim", c)}(${ex(recv!)})`;
+          case "String.charAt": if (a.length !== 1) return fail(c, "String.charAt without an index"); return `${useRuntime("jsAt", c)}(${ex(recv!)}, ${ex(a[0])})`;
+          case "Array.join": {
+            const el = checker.getTypeArguments(tOf(recv!) as ts.TypeReference)[0];
+            if (!(el.flags & ts.TypeFlags.String) || a.length > 1) return fail(c, "Array.join of other than strings with at most a separator");
+            return `${useRuntime("jsJoin", c)}(${ex(recv!)}, ${a.length ? ex(a[0]) : jsLit(",")})`;
+          }
+          case "String.replace": case "String.replaceAll": {
+            // A global replace of a literal with a literal: no regex engine, and no `$` patterns in the replacement.
+            const lit = replaceLiteral(a[0], key === "String.replaceAll");
+            if (lit === null || a.length !== 2 || !ts.isStringLiteral(a[1]) || a[1].text.includes("$")) return fail(c, `library call ${key}`);
+            return `${useRuntime("jsReplaceAll", c)}(${ex(recv!)}, ${jsLit(lit)}, ${ex(a[1])})`;
+          }
         }
         return fail(c, `library call ${key}`);
       }
@@ -828,7 +874,9 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
         case ts.SyntaxKind.ThrowStatement: {
           const t = s as ts.ThrowStatement;
           hit("throw", "Result.Err (a never-returning function returns the error itself)");
-          line(curFn && isThrower(curFn) ? `return ${ex(t.expression)}` : `return Result.Err(${ex(t.expression)})`);
+          // With several thrown classes the value is wrapped in its variant of the program-wide enum.
+          const thrown = multiErr ? `${std(THROWN_ENUM)}.${thrownName(checker.getTypeAtLocation(t.expression).symbol)}(${ex(t.expression)})` : ex(t.expression);
+          line(curFn && isThrower(curFn) ? `return ${thrown}` : `return Result.Err(${thrown})`);
           return;
         }
         case ts.SyntaxKind.ExpressionStatement: return exprStmt((s as ts.ExpressionStatement).expression);
@@ -930,6 +978,7 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
       return id ?? fail(fn, "cannot find the thrown class");
     };
     const errNameFor = (fn: ts.Node) => {
+      if (multiErr) return std(THROWN_ENUM);
       const id = findErrName(fn);
       errDeclFile = symDeclFile(checker.getSymbolAtLocation(id));
       return useDeclared(errType, errDeclFile, fn);
@@ -1160,6 +1209,24 @@ export function transpile(inputs: string[], opts: { overridesDir?: string; astRo
     const header = `// GENERATED by scripts/ts2milo.ts from ${rel(file)}. Do not edit; change the TypeScript.`;
     const impLines = [...imports.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, names]) => `from "${m}" import { ${[...names].sort().join(", ")} }`);
     report.files.set(basename(file).replace(/\.ts$/, ".milo"), [header, ...impLines, "", ...out, ""].join("\n"));
+  }
+  if (multiErr) {
+    // One variant per thrown class. Declared classes come from their own generated file, the rest from the runtime.
+    const byMod = new Map<string, string[]>();
+    const variants: string[] = [];
+    for (const n of errTypes) {
+      const f = errDecl.get(n);
+      const mod = f && inputSet.has(f) ? modOf(f) : RUNTIME_MOD;
+      const vn = mod === RUNTIME_MOD ? RUNTIME_RENAMES[n] ?? n : n;
+      variants.push(vn);
+      if (mod === RUNTIME_MOD && !runtimeNames.has(vn)) throw new Unsupported(`runtime has no '${vn}' (scripts/ts2milo/runtime.milo)`);
+      byMod.set(mod, [...(byMod.get(mod) ?? []), vn]);
+    }
+    const imps = [...byMod.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, ns]) => `from "${m}" import { ${[...ns].sort().join(", ")} }`);
+    report.files.set("thrown.milo", [
+      "// GENERATED by scripts/ts2milo.ts. Do not edit; one variant per class the TypeScript throws.",
+      ...imps, "", `pub enum ${THROWN_ENUM} {`, ...variants.map((n) => `    ${n}(${n}),`), "}", "",
+    ].join("\n"));
   }
   report.files.set("ts2milo_runtime.milo", runtimeSrc);
   return report;
