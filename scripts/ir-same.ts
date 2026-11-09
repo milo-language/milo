@@ -7,6 +7,8 @@
 //   bun scripts/ir-same.ts --filter hashmap      # only paths containing the substring
 //   bun scripts/ir-same.ts --jobs 2              # concurrency (default 4)
 //   bun scripts/ir-same.ts --flags "-g --target windows-x64"   # extra emit-ir args
+//   bun scripts/ir-same.ts --emit mlir           # compare `emit-mlir --all` (the milo dialect, before
+//                                                # milo-opt and LLVM can optimize a difference away)
 //
 // emit-ir's defaults never reach the codegen behind -g, --sanitize, --contract-checks,
 // --no-overflow-checks or a non-host target, so a full gate is one default pass plus the
@@ -51,6 +53,9 @@ function arg(name: string): string | undefined {
 const baseRef = arg("--base") ?? "main";
 const filter = arg("--filter");
 const flags = (arg("--flags") ?? "").split(/\s+/).filter(Boolean);
+const emitKind = arg("--emit") ?? "ir";
+if (emitKind !== "ir" && emitKind !== "mlir") { console.error("--emit takes ir or mlir"); process.exit(2); }
+const emitCmd = emitKind === "mlir" ? ["emit-mlir", "--all"] : ["emit-ir"];
 const jobs = Math.max(1, Number(arg("--jobs") ?? 4) || 4);
 // The largest example (examples/games/flight) peaks near 700MB alone and was footprint-killed
 // at 1536MB under parallel load, so the cap takes the whole per-job share of the budget.
@@ -81,7 +86,7 @@ if (!existsSync(MILO_OPT)) {
 // The ledger env vars change the IR the same way (emit-ir inherits this env), and so does
 // a rebuilt milo-opt (its mtime and size stand in for its identity).
 const optStat = statSync(MILO_OPT);
-const keyParts = [...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
+const keyParts = [...(emitKind === "mlir" ? ["emit=mlir"] : []), ...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`), `opt=${optStat.mtimeMs}:${optStat.size}`];
 const flagKey = keyParts.length ? "-" + Bun.hash(keyParts.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
 
@@ -147,7 +152,7 @@ async function emit(tree: string, rel: string): Promise<Emit> {
   delete env.MILO_ROOT;
   let r;
   for (let attempt = 1; ; attempt++) {
-    r = await guardedRun("bun", ["run", "src/main.ts", "emit-ir", ...flags, rel], { cwd: tree, env, memMb: MEM_MB, virtualMemMb: SPARSE_VM_MB, timeoutMs: TIMEOUT_MS });
+    r = await guardedRun("bun", ["run", "src/main.ts", ...emitCmd, ...flags, rel], { cwd: tree, env, memMb: MEM_MB, virtualMemMb: SPARSE_VM_MB, timeoutMs: TIMEOUT_MS });
     if (!r.guardKill) break;
     // A guard kill says nothing about the compiler, so it must not read as "fails on this
     // side" (which could match the other side's genuine failure and pass the gate).
