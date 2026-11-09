@@ -784,6 +784,15 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           return `${useRuntime("optUnbox", e)}<${ty(checker.getNonNullableType(tOf(e)), e)}>(${ex(e)})`;
         }
       }
+      // A parameter retyped to Option<Heap<T>> (heapOptParam) is unboxed the same way where it is
+      // handed on to something that wants the plain Option<T>.
+      if (want && isOptionT(want) && isOptionT(tOf(e)) && ts.isIdentifier(e)) {
+        const d = symOf(e)?.valueDeclaration;
+        if (d && ts.isParameter(d) && heapOptParam(d)) {
+          hit("boxed optional field", "Option<Heap<T>> parameter passed on as Option<T> through optUnbox<T>");
+          return `${useRuntime("optUnbox", e)}<${ty(checker.getNonNullableType(tOf(e)), e)}>(${ex(e)})`;
+        }
+      }
       if (want && isOptionT(want) && !isOptionT(tOf(e))) {
         if (isUndefinedId(e) || e.kind === ts.SyntaxKind.NullKeyword) return `${useRuntime("optNone", e)}<${ty(checker.getNonNullableType(want), e)}>()`;
         // Option.Some(x) takes x by value even where the argument itself is only borrowed.
