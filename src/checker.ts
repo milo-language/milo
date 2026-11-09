@@ -2262,7 +2262,7 @@ export class TypeChecker {
     }
   }
 
-  private vacuousSeen = new WeakSet<object>();
+  private vacuousSeen = new WeakSet<import("./ast").Contract>();
 
   // True only when the clause holds with NO assumption about its variables, found by
   // structure, not by the solver: a comparison of an expression with itself, `true`, a
@@ -4042,8 +4042,9 @@ export class TypeChecker {
     // exempt: it calls these on its own fields (AtomicI64._ptr) in ~70 places, and what
     // keeps a caller from steering one is tests/stdRawPointerApi.test.ts, which holds
     // every safe pub std fn to taking no raw pointer.
-    for (const sig of this.functions.values()) {
-      if (sig.params.some(p => p.type.tag === "ptr")) this.rawPtrBuiltinSigs.add(sig);
+    for (const name of this.functions.keys()) {
+      const builtin = this.functions.get(name);
+      if (builtin && builtin.params.some(p => p.type.tag === "ptr")) this.rawPtrBuiltinNames.add(name);
     }
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -4546,6 +4547,7 @@ export class TypeChecker {
       }
       // fn return types allowed — move closures heap-allocate and are safe to escape
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern, ...mustUseOf(fn) });
+      this.rawPtrBuiltinNames.delete(fn.name);
       // The call site needs the declaration for contracts and for `@unsafe`; recording it
       // only for contracts meant an `@unsafe fn` with no `requires` clause was declared
       // unsafe and called freely. A `@pure` extern is recorded for the extern-call rule, and
@@ -4666,11 +4668,7 @@ export class TypeChecker {
 
     // Any deferred-inference Vec that never saw a `push` couldn't have its element
     // resolved — fall back to the original "add an annotation" error.
-    for (const p of this.pendingInferVecs) {
-      if (this.inferVecElems.has(p.elem as object)) {
-        this.error(`cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'`, p.span);
-      }
-    }
+    if (this.pendingInferVecs.length > 0) this.reportUninferredVecs();
 
     // The infinite-size rejection above only covers structs that were WRITTEN with
     // concrete fields. A generic declaration cannot be walked: `A<T> { me: A<T> }`
@@ -7759,6 +7757,14 @@ export class TypeChecker {
   // return a Vec whose element is a placeholder to be resolved from the first
   // `x.push(...)` (see the push handler). Returns null for anything else, so the
   // normal (element-required) path — and its error — is untouched everywhere else.
+  private reportUninferredVecs(): void {
+    for (const p of this.pendingInferVecs) {
+      if (this.inferVecElems.has(p.elem as object)) {
+        this.error(`cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'`, p.span);
+      }
+    }
+  }
+
   private tryDeferVecInfer(value: Expr): TypeKind | null {
     // `Vec<T>.new()` spells its element; nothing to defer.
     if (value.kind !== "EnumLit" || value.enumName !== "Vec" || value.typeArgs?.length) return null;
@@ -7773,6 +7779,12 @@ export class TypeChecker {
     } else {
       return null;
     }
+    return this.makeDeferredVec(value);
+  }
+
+  // The placeholder element is an identity-keyed object resolved in place by the first push, which the
+  // generated Milo cannot express; kept apart so that only a program with an unannotated Vec.new() reaches it.
+  private makeDeferredVec(value: Expr): TypeKind {
     const elem: TypeKind = { tag: "unknown" };
     const vecTy: TypeKind = { tag: "vec", element: elem };
     this.inferVecElems.add(elem);
@@ -8052,8 +8064,8 @@ export class TypeChecker {
   private builtinFnNames = new Set<string>();
   // Builtins that read, write or call through a raw pointer argument (`_cstrToString`,
   // `_loadU8`, the atomics). Keyed by signature object, so a user fn that reuses one of
-  // the names is not caught by it.
-  private rawPtrBuiltinSigs = new WeakSet<object>();
+  // the names is not caught by it: registering a user fn removes its name.
+  private rawPtrBuiltinNames = new Set<string>();
   // Read by tests/stdBuiltinNames.test.ts: a std pub fn with one of these names would
   // replace the builtin for the whole program.
   get builtinNames(): ReadonlySet<string> { return this.builtinFnNames; }
@@ -11747,7 +11759,7 @@ export class TypeChecker {
     if (fnDecl) this.checkCallSiteContracts(fnDecl, expr.args, sp);
     if (fnDecl?.attributes) this.noteSqlCall(expr.func, fnDecl.attributes, fnDecl.params, expr.args, null, sig.ret, sp);
     this.requireUnsafeCall(fnDecl, expr.func, sp);
-    if (sig && this.rawPtrBuiltinSigs.has(sig) && !this.inStdFile(sp)) {
+    if (sig && this.rawPtrBuiltinNames.has(expr.func) && !this.inStdFile(sp)) {
       this.requireUnsafe(`calling '${expr.func}' requires an unsafe block`, sp,
         `'${expr.func}' reads or writes through the raw pointer it is given, which nothing checks`);
     }
