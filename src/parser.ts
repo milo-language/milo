@@ -539,7 +539,7 @@ export class Parser {
     const typeParams = this.parseTypeParams();
     this.expect(TokenKind.Eq);
     const type = this.parseType();
-    return { kind: "TypeAlias", name, ...(typeParams.length ? { typeParams } : {}), type, span: this.span(tok) };
+    return { kind: "TypeAlias", name, typeParams: typeParams.length ? typeParams : undefined, type, span: this.span(tok) };
   }
 
   // ── Struct ──
@@ -561,7 +561,7 @@ export class Parser {
       const fieldType = this.parseSpannedType();
       // `timeoutMs: i64 = 30000`: a literal may omit the field (checker: fillFieldDefaults).
       const fieldDefault = this.match(TokenKind.Eq) ? this.parseExpr() : undefined;
-      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}), ...(fieldDefault ? { default: fieldDefault } : {}) });
+      fields.push({ name: fieldName, type: fieldType, attributes: fieldAttrs ? fieldAttrs : undefined, default: fieldDefault ? fieldDefault : undefined });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
@@ -569,7 +569,7 @@ export class Parser {
     // relative to its signature. `decreases` is meaningless on a type; the checker rejects it
     // rather than the grammar, so the error names the clause instead of the token.
     const invariants = this.parseContracts();
-    return { kind: "StructDecl", name, typeParams, fields, span: this.span(start), ...(invariants.length > 0 && { invariants }) };
+    return { kind: "StructDecl", name, typeParams, fields, span: this.span(start), invariants: invariants.length > 0 ? invariants : undefined };
   }
 
   // ── Enum ──
@@ -603,11 +603,11 @@ export class Parser {
         const numTok = this.expect(TokenKind.Int);
         discriminant = (neg ? -1 : 1) * parseInt(numTok.value.replace(/_/g, ""), 10);
       }
-      variants.push({ name: variantName, fields, ...(discriminant !== undefined && { discriminant }) });
+      variants.push({ name: variantName, fields, discriminant });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "EnumDecl", name, typeParams, variants, ...(reprType && { reprType }), span: { line: nameTok.line, col: nameTok.col, file: this.filePath } };
+    return { kind: "EnumDecl", name, typeParams, variants, reprType: reprType ? reprType : undefined, span: { line: nameTok.line, col: nameTok.col, file: this.filePath } };
   }
 
   // ── Functions ──
@@ -704,7 +704,7 @@ export class Parser {
       const fieldType = this.parseSpannedType();
       // `timeoutMs: i64 = 30000`: a literal may omit the field (checker: fillFieldDefaults).
       const fieldDefault = this.match(TokenKind.Eq) ? this.parseExpr() : undefined;
-      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}), ...(fieldDefault ? { default: fieldDefault } : {}) });
+      fields.push({ name: fieldName, type: fieldType, attributes: fieldAttrs ? fieldAttrs : undefined, default: fieldDefault ? fieldDefault : undefined });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
@@ -845,7 +845,7 @@ export class Parser {
       }
       this.expect(TokenKind.RParen);
     }
-    return { name, args, argKinds, ...(inner && { inner: true }) };
+    return { name, args, argKinds, inner: inner ? true : undefined };
   }
 
   // A requirement token like `HLR-1` or `LLR-3.2` lexes as several tokens (ident, minus,
@@ -947,7 +947,7 @@ export class Parser {
       body = this.parseStmts();
       this.expect(TokenKind.RBrace);
     }
-    return { name, ...(typeParams.length > 0 && { typeParams }), params, retType, body, span: this.span(tok) };
+    return { name, typeParams: typeParams.length > 0 ? typeParams : undefined, params, retType, body, span: this.span(tok) };
   }
 
   private parseInterfaceDecl(): InterfaceDecl {
@@ -960,6 +960,10 @@ export class Parser {
     }
     this.expect(TokenKind.RBrace);
     return { kind: "InterfaceDecl", name, methods, span: this.span(tok) };
+  }
+
+  private identExpr(name: string, tok: Token): Expr {
+    return { kind: "Ident", name, span: this.span(tok) };
   }
 
   private parseImplDecl(isUnsafe = false): ImplDecl {
@@ -1145,7 +1149,7 @@ export class Parser {
     // always `IDENT =` or `IDENT :`; an enum pattern is `IDENT . Variant` or, with the
     // enum name elided (`let Some(b) = …`), `IDENT (`, so the token after the first
     // ident disambiguates without lookahead ambiguity.
-    const afterIdent = this.tokens[this.pos + 1]?.kind;
+    const afterIdent = this.pos + 1 < this.tokens.length ? this.tokens[this.pos + 1].kind : TokenKind.Eof;
     if (this.at(TokenKind.Ident) && (afterIdent === TokenKind.Dot || afterIdent === TokenKind.LParen)) {
       const pattern = this.parsePattern();
       this.expect(TokenKind.Eq);
@@ -1416,7 +1420,7 @@ export class Parser {
       if (mutRef) this.error(`'for ${varName} in &mut' iterates a Vec, array or slice; code points are computed values with nothing to write back to`, this.tokens[this.pos - 1]);
       return this.desugarCodePointsLoop(varName, varName2, iterable.object, body, s, invariants);
     }
-    return { kind: "ForInStmt", varName, varName2, iterable, invariants, body, ...(mutRef && { mutRef }), span: s };
+    return { kind: "ForInStmt", varName, varName2, iterable, invariants, body, mutRef: mutRef ? mutRef : undefined, span: s };
   }
 
   // `for cp in s.codePoints() { .. }` → a byte-cursor while loop over
@@ -2095,12 +2099,12 @@ export class Parser {
       // hover/goto-definition resolve the local.
       const value = this.match(TokenKind.Colon)
         ? this.parseExpr()
-        : { kind: "Ident", name: fieldName, span: this.span(nameTok) } as Expr;
+        : this.identExpr(fieldName, nameTok);
       fields.push({ name: fieldName, value });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructLit", name, fields, ...(typeArgs && { typeArgs }), ...(base && { base }), span };
+    return { kind: "StructLit", name, fields, typeArgs: typeArgs ? typeArgs : undefined, base: base ? base : undefined, span };
   }
 
   private parseCall(name: string, span: Span): Expr {

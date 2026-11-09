@@ -42,14 +42,14 @@ describe("ts2milo", () => {
       "export function lit(): P { return { a: 1 }; }",
       "export function spread(o: { x: number }): { x: number } { return { ...o }; }",
       "export function walk(m: Map<string, number>): number { let n = 0; for (const [k, v] of m) { n += v; } return n; }",
-      "export function pi(s: string): number { return parseFloat(s); }",
+      "export function pi(s: string): number { return Math.hypot(1, 2); }",
       "export function str(s: string): string { return s as string; }",
     ].join("\n") + "\n";
     const { file, dir } = tmpTs("tsm_odd.ts", src);
     const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });
     const reasons = r.stubs.map((s) => s.reason);
     expect(reasons.filter((x) => x.includes("transpiler crash"))).toEqual([]);
-    expect(reasons.some((x) => x.includes("library call parseFloat"))).toBe(true);
+    expect(reasons.some((x) => x.includes("library call Math.hypot"))).toBe(true);
     expect(reasons.some((x) => x.includes("for-of"))).toBe(true);
   });
 

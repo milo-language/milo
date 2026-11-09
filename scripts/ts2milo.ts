@@ -202,12 +202,16 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
   const forceStub = new Map<ts.Node, string>();
   // The thrown classes, in first-thrown order, with the file declaring each. One class is the Result's
   // error type as is; several make one generated enum (THROWN_ENUM, one variant per class, carrying it).
+  // `catch (e)`: e holds the error the try body failed with, so `throw e` rethrows it and `e instanceof C` tests its class.
+  const catchVarOf = (e: ts.Expression) => { const d = ts.isIdentifier(e) ? checker.getSymbolAtLocation(e)?.declarations?.[0] : undefined; return d && ts.isVariableDeclaration(d) && ts.isCatchClause(d.parent) ? d : undefined; };
+  const isCatchVar = (e: ts.Expression) => !!catchVarOf(e);
   const errTypes: string[] = [];
   const errDecl = new Map<string, string | undefined>();
   const walkBody = (body: ts.Node, f: (n: ts.Node) => void) => { const w = (n: ts.Node) => { f(n); ts.forEachChild(n, w); }; w(body); };
   for (const fn of allFns) walkBody(fn.body!, (n) => {
     if (ts.isThrowStatement(n)) {
       throwing.add(fn);
+      if (isCatchVar(n.expression)) return;
       const sym = checker.getTypeAtLocation(n.expression).symbol;
       const name = sym?.name ?? "?";
       if (name === "?" || name === "__type" || name === "__object") {
@@ -361,6 +365,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     // frontend (--lenient over every file) parses source and never decodes a dump, and its decoder would have to
     // tell apart same-named types of different passes (two BodyTask), which the name-keyed model cannot.
     if (!opts.lenient) report.files.set("ast_decode.milo", em.decoder);
+    else report.files.set("ast_encode.milo", em.encoder);
     report.ast = { types: em.typeNames.length, dropped: em.dropped, sizeBoxed: em.sizeBoxed };
   }
 
@@ -866,6 +871,9 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     let closureDepth = 0;
     // The failure flags of the enclosing `try` blocks, innermost last: inside one, an error sets the flag and leaves the block.
     const tryFlags: string[] = [];
+    // Parallel to tryFlags: the variable holding the try's error when its catch binds one, else "".
+    const tryErr: string[] = [];
+    const recordErr = (v: string) => (tryErr[tryErr.length - 1] ? `${tryErr[tryErr.length - 1]} = Option.Some(${v}); ` : "");
     // A failure inside a loop within a try only left that loop: leave the enclosing ones too.
     const afterLoop = () => { if (tryFlags.length) { line(`if ${tryFlags[tryFlags.length - 1]} {`); line("    break"); line("}"); } };
     const withTry = (call: ts.CallExpression, code: string): string => {
@@ -874,7 +882,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (d && throwing.has(d) && !isThrower(d) && tryFlags.length) {
         hit("call of a throwing function in try", "match on the Result, the Err arm sets the try's flag and breaks out");
         const v = fresh("ok");
-        return `(match ${code} { Result.Ok(${v}) => ${v}, Result.Err(_) => { ${tryFlags[tryFlags.length - 1]} = true; break } })`;
+        return `(match ${code} { Result.Ok(${v}) => ${v}, Result.Err(${tryErr[tryErr.length - 1] ? "ev" : "_"}) => { ${recordErr("ev")}${tryFlags[tryFlags.length - 1]} = true; break } })`;
       }
       if (d && throwing.has(d) && !isThrower(d)) { hit("call of a throwing function", "`?` on the Result"); return `${code}?`; }
       return code;
@@ -983,6 +991,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           case "Map.get": case "ReadonlyMap.get": case "WeakMap.get": return `${ex(recv!)}.get(${keyEx(recv!, a[0])})`;
           case "Map.has": case "ReadonlyMap.has": case "WeakMap.has": return `${ex(recv!)}.contains(${keyEx(recv!, a[0])})`;
           case "Map.set": case "WeakMap.set": { const [, vt] = checker.getTypeArguments(tOf(recv!) as ts.TypeReference); return `${ex(recv!)}.insert(${keyEx(recv!, a[0], true)}, ${ownConv(a[1], vt)})`; }
+          // The generated AST holds every `number` as i64, so a float literal keeps its integer part only (a known parser-diff gap until the AST has an f64).
+          case "Number": case "parseFloat": return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, 10)`;
           case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
           // A bigint is its decimal string in the Milo AST. BigInt of a string is that string (the lexer's decimal digits are already canonical).
           case "BigInt": if (a.length !== 1 || !(isStr(a[0]) || isNum(a[0]))) return fail(c, "BigInt of other than one string or number"); return isNum(a[0]) ? `${useRuntime("jsNum", c)}(${ex(a[0])})` : ex(a[0]);
@@ -1239,6 +1249,12 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const text = b.operatorToken.getText();
           if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) fail(b, `assignment ${text} used as a value`);
           if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
+          if (op === ts.SyntaxKind.InstanceOfKeyword && isCatchVar(b.left)) {
+            const cls = checker.getSymbolAtLocation(b.right);
+            if (!cls) fail(b, "instanceof of an unresolved class");
+            hit("catch variable instanceof", "match on the Thrown variant");
+            return multiErr ? `(match ${ex(b.left)} { ${std(THROWN_ENUM)}.${thrownName(cls!)}(_) => true, _ => false })` : "true";
+          }
           if ((op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) && isChainMember(unparen(b.left)) && chainCompareHandled(checker, b)) {
             // Absent compares unequal to any value, so `!==` is true there.
             const eq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
@@ -1561,19 +1577,31 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const t = s as ts.TryStatement;
           if (t.finallyBlock) fail(t, "try with finally");
           if (!t.catchClause) fail(t, "try without catch");
-          if (t.catchClause!.variableDeclaration) fail(t, "catch with a binding");
+          const bound = t.catchClause!.variableDeclaration;
+          if (bound && !ts.isIdentifier(bound.name)) fail(t, "catch with a destructured binding");
           hit("try/catch", "one-shot while loop, failure flag, catch body under if flag");
           const flag = fresh("failed");
           line(`var ${flag}: bool = false`);
+          const errVar = bound ? fresh("caught") : "";
+          if (bound) line(`var ${errVar}: Option<${errNameFor(curFn!)}> = Option.None`);
           line("while true {");
           ind++;
           tryFlags.push(flag);
-          try { body(t.tryBlock); } finally { tryFlags.pop(); }
+          tryErr.push(errVar);
+          try { body(t.tryBlock); } finally { tryFlags.pop(); tryErr.pop(); }
           line("break");
           ind--;
           line("}");
           line(`if ${flag} {`);
-          ind++; body(t.catchClause!.block); ind--;
+          ind++;
+          if (bound) {
+            scopes.push(new Map()); usedNames.push(new Set());
+            const en = declareLocal(symOf(bound.name as ts.Identifier)!, (bound.name as ts.Identifier).text);
+            line(`let ${en} = match ${errVar} { Option.Some(v) => v, Option.None => panic("catch without an error") }`);
+            body(t.catchClause!.block);
+            scopes.pop(); usedNames.pop();
+          } else body(t.catchClause!.block);
+          ind--;
           line("}");
           return;
         }
@@ -1588,8 +1616,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const t = s as ts.ThrowStatement;
           hit("throw", "Result.Err (a never-returning function returns the error itself)");
           // With several thrown classes the value is wrapped in its variant of the program-wide enum.
-          const thrown = multiErr ? `${std(THROWN_ENUM)}.${thrownName(checker.getTypeAtLocation(t.expression).symbol)}(${ex(t.expression)})` : ex(t.expression);
-          if (tryFlags.length) { line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
+          const thrown = multiErr && !isCatchVar(t.expression) ? `${std(THROWN_ENUM)}.${thrownName(checker.getTypeAtLocation(t.expression).symbol)}(${ex(t.expression)})` : ex(t.expression);
+          if (tryFlags.length) { if (tryErr[tryErr.length - 1]) line(recordErr(thrown).trim().replace(/;$/, "")); line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
           line(curFn && isThrower(curFn) ? `return ${thrown}` : `return Result.Err(${thrown})`);
           return;
         }
@@ -1750,7 +1778,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         const d = declOf(e);
         if (d && isThrower(d)) {
           if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws");
-          if (tryFlags.length) { line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
+          if (tryFlags.length) { if (tryErr[tryErr.length - 1]) line(recordErr(callEx(e)).trim().replace(/;$/, "")); line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
           line(`return Result.Err(${callEx(e)})`);
           return;
         }

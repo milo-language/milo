@@ -132,6 +132,29 @@ pub fn jsToUtf8(s: &string): string {
     return out
 }
 
+// Appends s as a JSON string literal (UTF-8) to out: the generated AST encoder's string case.
+pub fn jsonQuote(s: &string, out: &mut string) {
+    let u = jsToUtf8(s)
+    let hex = "0123456789abcdef"
+    out.push(34)
+    var i: i64 = 0
+    while i < u.len {
+        let b = u[i] as i64
+        if b == 34 || b == 92 {
+            out.push(92)
+            out.push(b as u8)
+        } else if b < 32 {
+            out.pushStr("\\u00")
+            out.push(hex[b / 16])
+            out.push(hex[b % 16])
+        } else {
+            out.push(b as u8)
+        }
+        i += 1
+    }
+    out.push(34)
+}
+
 pub fn jsNum(n: i64): string {
     return jsFromUtf8(n.toString())
 }
