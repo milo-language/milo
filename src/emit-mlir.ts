@@ -559,22 +559,41 @@ function quote(s: string): string {
  * to U+F7FF), which is the one raw byte NN.
  */
 function literalBytes(s: string): Uint8Array {
-  const out: number[] = [];
-  for (const ch of s) {
-    const c = ch.codePointAt(0)!;
-    if (c >= 0xF780 && c <= 0xF7FF) out.push(c - 0xF700);
-    else out.push(...Buffer.from(ch, "utf-8"));
+  // Filled by index into one buffer sized for the worst case (3 bytes per UTF-16 unit): an
+  // @embedFile literal is tens of megabytes, and a number[] grown by a Buffer per character
+  // held over a gigabyte for it.
+  const out = new Uint8Array(s.length * 3);
+  let k = 0;
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c < 0x80) { out[k++] = c; continue; }
+    if (c >= 0xF780 && c <= 0xF7FF) { out[k++] = c - 0xF700; continue; }
+    if (c >= 0xD800 && c <= 0xDFFF) {
+      const lo = c <= 0xDBFF && i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (lo >= 0xDC00 && lo <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00); i++; }
+      else c = 0xFFFD; // a lone surrogate encodes as U+FFFD, as Buffer.from does
+    }
+    if (c < 0x800) { out[k++] = 0xC0 | (c >> 6); out[k++] = 0x80 | (c & 0x3F); }
+    else if (c < 0x10000) { out[k++] = 0xE0 | (c >> 12); out[k++] = 0x80 | ((c >> 6) & 0x3F); out[k++] = 0x80 | (c & 0x3F); }
+    else { out[k++] = 0xF0 | (c >> 18); out[k++] = 0x80 | ((c >> 12) & 0x3F); out[k++] = 0x80 | ((c >> 6) & 0x3F); out[k++] = 0x80 | (c & 0x3F); }
   }
-  return Uint8Array.from(out);
+  return out.slice(0, k);
 }
 
+const HEX_DIGITS = Buffer.from("0123456789abcdef", "latin1");
+
 function quoteBytes(bytes: Uint8Array): string {
-  let out = "";
-  for (const ch of bytes) {
-    if (ch === 0x22 || ch === 0x5c || ch < 0x20 || ch >= 0x7f) out += `\\${ch.toString(16).padStart(2, "0")}`;
-    else out += String.fromCharCode(ch);
+  // One buffer, decoded once: `+=` per byte made a rope of 30 million pieces for an embedded asset.
+  const out = Buffer.allocUnsafe(bytes.length * 3 + 2);
+  let k = 0;
+  out[k++] = 0x22;
+  for (let i = 0; i < bytes.length; i++) {
+    const ch = bytes[i];
+    if (ch === 0x22 || ch === 0x5c || ch < 0x20 || ch >= 0x7f) { out[k++] = 0x5c; out[k++] = HEX_DIGITS[ch >> 4]; out[k++] = HEX_DIGITS[ch & 15]; }
+    else out[k++] = ch;
   }
-  return `"${out}"`;
+  out[k++] = 0x22;
+  return out.latin1Slice(0, k);
 }
 
 // Bit-exact float literals: NaN payloads and -0 survive, f32 is rounded the way
