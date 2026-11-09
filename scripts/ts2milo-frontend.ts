@@ -55,7 +55,12 @@ if (top) {
   for (const [m, n] of [...byMsg].sort((a, b) => b[1] - a[1]).slice(0, top)) console.log(`${String(n).padStart(5)}  ${m}`);
 }
 if (argv.includes("--run")) {
-  if (seen.size) { console.error("--run needs 0 compile errors"); process.exit(1); }
-  console.error("--run: the generated driver does not exist yet");
-  process.exit(2);
+  // Builds only what the driver imports, so a stage that compiles can run before the whole tree does.
+  const prog = argv[argv.indexOf("--run") + 1];
+  await Bun.write(join(OUT, "frontend-driver.milo"), Bun.file(join(ROOT, "scripts/ts2milo/frontend-driver.milo")));
+  const bin = join(OUT, "frontend");
+  const b = Bun.spawnSync(["bun", join(ROOT, "src/main.ts"), "build", join(OUT, "frontend-driver.milo"), "-o", bin], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  if (b.exitCode) { console.error("build failed:\n" + b.stderr.toString().split("\n").filter((l) => /error/.test(l)).slice(0, 8).join("\n")); process.exit(1); }
+  const run = Bun.spawnSync([bin, prog], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
+  process.exit(run.exitCode ?? 1);
 }

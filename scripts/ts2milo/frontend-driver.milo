@@ -1,0 +1,32 @@
+// The generated Milo frontend run on one program: the tracer bullet for self-hosting. Stage 1 is
+// lex + parse; each later stage (resolve, check, emit-mlir) is added here as it compiles. A stub
+// the program reaches prints "ts2milo stub: <where>: <why>" and exits 70: that is the next thing
+// to translate. Built and run by `bun scripts/ts2milo-frontend.ts --run <file.milo>`.
+from "std/args" import { args }
+from "std/fs" import { readFile }
+from "./lexer" import { Lexer }
+from "./parser" import { Parser }
+from "./ts2milo_runtime" import { jsFromUtf8 }
+
+fn main() {
+    let path = args() [1].clone()
+    let src = jsFromUtf8(readFile(path)!)
+    var lx = Lexer.new(src.clone(), false)
+    match lx.tokenize() {
+        Result.Ok(tokens) => {
+            print("lexed " + tokens.len.toString() + " tokens")
+            var p = Parser.new(tokens, Option.Some(src.clone()), Option.Some(jsFromUtf8(path.clone())))
+            match p.parse() {
+                Result.Ok(prog) => {
+                    print("parsed " + prog.functions.len.toString() + " functions")
+                }
+                Result.Err(_) => {
+                    print("parse error")
+                }
+            }
+        }
+        Result.Err(_) => {
+            print("lex error")
+        }
+    }
+}
