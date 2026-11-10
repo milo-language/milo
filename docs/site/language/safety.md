@@ -142,7 +142,7 @@ verification: 2 conditions
   proven: 1  failed: 1  unknown: 0  errors: 0
 
   ✓ [postcondition] sqrt: proven
-  ✗ [precondition] scale: failed — counterexample exists
+  ✗ [precondition] scale: failed — counterexample: raw = -1
 $ echo $?
 1
 ```

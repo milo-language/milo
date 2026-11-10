@@ -1,0 +1,52 @@
+// @proven: 3
+// @failed: 4
+// A refuted contract names the values that refute it, so the report can be checked by
+// hand (and by tests/proveCounterexample.test.ts, which plugs them back in).
+
+// The README's example: the second branch returns x where it should return hi.
+fn clamp(x: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if x < lo { return lo }
+    if x >= hi { return x }
+    return x
+}
+
+struct Acc { total: i64 }
+
+// `a` itself is only a placeholder in the query (its fields carry the values), so it must
+// not be listed.
+fn bump(a: &mut Acc, d: i64): void
+requires d >= 0
+ensures a.total >= old(a.total) + 1
+{
+    a.total = a.total + d
+}
+
+// Refuted through a loop: the witness includes the value the loop leaves in `i`.
+fn countUp(n: i64): i64
+requires n >= 0
+ensures result == n + 1
+{
+    var i: i64 = 0
+    while i < n
+    invariant i >= 0 && i <= n
+    {
+        i = i + 1
+    }
+    return i
+}
+
+// A real-valued witness.
+fn area(w: f64, h: f64): f64
+requires w > 0.0 && h > 0.0
+ensures result > 1.0
+{
+    return w * h
+}
+
+fn main(): i32 {
+    print(clamp(5, 0, 3))
+    return 0
+}

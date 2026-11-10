@@ -162,7 +162,11 @@ stays a hint.
 ### `milo prove --json` (schema 1)
 
 `proven` / `failed` / `unknown` / `errors` counts, `ok` (no failures and no errors), and an
-`obligations` array of `{ fn, kind, description, status, detail?, assumes?, assumesInvariants? }`.
+`obligations` array of `{ fn, kind, description, status, detail?, counterexample?, assumes?, assumesInvariants? }`.
+On a `failed` obligation, `counterexample` maps each source-level value in the solver's
+witness to its value as text (an i64 does not fit a JSON number; a real may be a ratio
+such as `1.0/3.0`). A value a loop or a call leaves behind is keyed `x (after the loop)` /
+`x (after the call)`.
 **`unknown` is not `failed`** — the prover could not decide, which is a different fact
 about the program, and a consumer that collapses the two reports an undecided proof as a
 broken one. The SMT-LIB text is deliberately absent: it is large and it is a translator
