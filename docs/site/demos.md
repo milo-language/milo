@@ -3,7 +3,7 @@ system: demos-showcase
 purpose: showcase page listing runnable Milo demos (emulators, debugger, TUIs, servers)
 key-files: examples/, examples/cli-tools, docs/site/.vitepress/config.mts
 update-when: a demo is added/removed or its capabilities change
-last-verified: 2026-07-15
+last-verified: 2026-11-09 (emulator screenshots of commercial games removed; the rest not re-read)
 -->
 
 # Built with Milo
@@ -32,19 +32,13 @@ Three retro-console cores, each a native binary on desktop with SDL video, audio
 
 Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
 
-![Super Mario Bros. 3 running on the Milo NES emulator](/showcase/nes.png)
-
 ### [Genesis / Mega Drive](https://github.com/milo-language/milo-emulators/tree/main/genesis)
 
 Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG audio. Preset homebrew: **Headship**, **Astro Perdido**, **Gravity Pig**, **Dragon's Castle**. Accepts `.md` / `.bin` / `.gen` / `.smd` ROMs.
 
-![Sonic the Hedgehog running on the Milo Genesis emulator](/showcase/genesis.png)
-
 ### [SNES](https://github.com/milo-language/milo-emulators/tree/main/snes)
 
 65C816 CPU plus the SNES PPU, including a Super FX (GSU) coprocessor core. Plays Super Mario World and Donkey Kong Country; Star Fox boots with GSU-rendered 3D. Preset homebrew: **UWOL: Quest for Money**, **Super Boss Gaiden**, **BLT**, **Bucket**, **Mega Family Bros**, **Hilda**. Load your own `.sfc` / `.smc` ROM to play anything else.
-
-![Super Mario World running on the Milo SNES emulator](/showcase/snes.png)
 
 > All three live in [milo-language/emulators](https://github.com/milo-language/milo-emulators): `./arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`retro/`](https://github.com/milo-language/milo-emulators/tree/main/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 

@@ -204,8 +204,7 @@
 }
 
 .showcase {
-  /* wide enough for four 220px tiles in one row — the sim and terminal
-     categories have four, and 960px left the fourth stranded on its own row */
+  /* wide enough for four 220px tiles in one row: the grid is eight tiles, two rows of four */
   max-width: 1100px;
   margin: 0 auto 3rem;
   padding: 0 24px;
@@ -228,29 +227,6 @@
   font-size: 1.1rem;
   line-height: 1.6;
 }
-.cat { margin: 0 0 2.2rem; }
-.cat:last-of-type { margin-bottom: 0; }
-.cat-head {
-  margin: 0 0 0.85rem;
-  padding: 0 0 0.4rem;
-  border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--cat) 30%, transparent);
-  font-family: var(--milo-display);
-  font-weight: 400;
-  font-size: 0.9rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--cat);
-}
-/* category accent hues — tuned to read on both light and dark backgrounds */
-.cat-game { --cat: #f59e0b; }
-.cat-emu  { --cat: #a855f7; }
-.cat-lang { --cat: #c07d22; }
-.cat-dev  { --cat: #3b82f6; }
-.cat-web  { --cat: #0d9488; }
-.cat-term { --cat: #ec4899; }
-.cat-crypto { --cat: #16a34a; }
-.cat-sim  { --cat: #ef4444; }
 .tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -347,45 +323,19 @@
   border-color: var(--cat, var(--vp-c-brand-1));
   border-style: solid;
 }
-.tile-play {
-  position: absolute;
-  top: 0.6rem;
-  right: 0.6rem;
-  font-family: var(--milo-display);
-  font-size: 0.62rem;
-  color: var(--cat, var(--vp-c-brand-1));
-  letter-spacing: 0.05em;
-}
 @media (prefers-reduced-motion: reduce) {
   .tile, .tile::after, .tile p { transition: none; }
 }
-.showcase-cta {
+/* The trace matrix is a table in monospace: wrapping breaks its columns, so on a wide screen it
+   grows past the prose column, and on a narrow one it scrolls. */
+@media (min-width: 900px) {
+  .whatis .wide-output { margin: 0 -76px; }
+}
+.showcase-more {
+  margin: 1.5rem auto 0;
   text-align: center;
-  margin: 2.5rem auto 0;
-}
-.showcase-cta-btn {
-  display: inline-block;
-  padding: 0.95rem 2.25rem;
-  border-radius: 999px;
-  background: var(--vp-c-brand-1);
-  color: var(--vp-c-white, #fff) !important;
-  font-size: 1.2rem;
-  font-weight: 700;
-  text-decoration: none !important;
-  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
-  box-shadow: 0 8px 24px -6px var(--vp-c-brand-soft);
-}
-.showcase-cta-btn:hover {
-  transform: translateY(-2px);
-  background: var(--vp-c-brand-2, var(--vp-c-brand-1));
-  box-shadow: 0 12px 32px -6px var(--vp-c-brand-soft);
-}
-.showcase-cta-sub {
-  margin: 1rem auto 0;
-  max-width: 640px;
   color: var(--vp-c-text-2);
-  font-size: 0.95rem;
-  line-height: 1.6;
+  font-size: 1rem;
 }
 @media (max-width: 720px) {
   .tile-grid { gap: 0.7rem; }
