@@ -27,7 +27,7 @@ export default {
     return lessons.map((l) => ({
       title: l.title,
       file: l.file,
-      cmd: `milo run ${l.debug ? '--debug ' : ''}${l.file}`,
+      cmd: `milo ${l.prove ? 'prove' : 'run'} ${l.file}`,
       descHtml: md.renderInline(l.desc),
       takeHtml: md.renderInline(l.take),
       codeHtml: md.render('```milo\n' + l.code + '\n```\n'),

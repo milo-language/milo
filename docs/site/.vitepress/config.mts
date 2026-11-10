@@ -61,7 +61,7 @@ const docsSidebar = [
     items: [
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Your first program', link: '/getting-started/quickstart' },
-      { text: 'Tour (13 lessons)', link: '/tour' },
+      { text: 'Tour (14 lessons)', link: '/tour' },
       { text: 'Editor setup', link: '/getting-started/ide-setup' },
     ]
   },

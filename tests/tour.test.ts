@@ -20,12 +20,15 @@ for (const [i, l] of lessons.entries()) {
       writeFileSync(join(dir, l.file), l.code + "\n");
       // Run from the lesson's directory with a bare filename so diagnostics print
       // `ownership.milo:4:11`, the same path the page shows.
-      const args = ["bun", "run", MAIN, "run", ...(l.debug ? ["--debug"] : []), l.file];
+      const args = ["bun", "run", MAIN, l.prove ? "prove" : "run", l.file];
       const p = Bun.spawn(args, { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
       const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
       const lines = (out + err).replace(ANSI, "").split("\n").map((s) => s.trimEnd());
       while (lines.length && lines[lines.length - 1] === "") lines.pop();
-      expect(lines).toEqual(l.out);
+      // A counterexample is any witness the solver likes: z3 4.x and 5.x return different
+      // numbers for the same failed clause. Names, order and the verdict still have to match.
+      const shape = (ls: string[]) => (l.prove ? ls.map((s) => s.replace(/= -?\d+/g, "= N")) : ls);
+      expect(shape(lines)).toEqual(shape(l.out));
       if (l.fails) expect(code).not.toBe(0);
       else expect(code).toBe(0);
     } finally {

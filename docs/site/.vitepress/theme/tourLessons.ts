@@ -9,8 +9,9 @@ export interface Lesson {
   take: string
   code: string
   out: string[]
-  // Run as `milo run --debug`, where contracts are checked.
-  debug?: boolean
+  // Run as `milo prove` instead of `milo run`. The solver may pick any witness, so the
+  // numbers in a counterexample differ between z3 versions and the test compares their shape.
+  prove?: boolean
   // The lesson demonstrates a rejected program: nonzero exit, `out` is the diagnostic.
   fails?: boolean
 }
@@ -241,9 +242,9 @@ fn main(): i32 {
 }`,
   },
   {
-    title: 'Contracts, checked or proven', file: 'clamp.milo', debug: true, fails: true,
-    desc: '`requires` states what the caller must guarantee and `ensures` what the function promises back, in ordinary Milo. This `clamp` has an easy bug: the low branch returns `value` instead of `lo`. In a debug build the first call passes, but `clamp(-5, 0, 10)` returns `-5`, which breaks `ensures`, and the check stops the program.',
-    take: 'A plain `milo run` skips contract checks; a debug build (or `--contract-checks`) runs them. `milo prove` checks the same conditions for every input at compile time, with the solver in the standard library, and reports a counterexample for this `clamp` before anything runs.',
+    title: 'Contracts, checked at run time', file: 'clamp.milo', fails: true,
+    desc: '`requires` states what the caller must guarantee and `ensures` what the function promises back, in ordinary Milo. This `clamp` has an easy bug: the low branch returns `value` instead of `lo`. The first call passes, but `clamp(-5, 0, 10)` returns `-5`, which breaks `ensures`, and the check stops the program.',
+    take: 'Every build checks `requires` and `ensures` at the call, so a broken contract stops the run instead of handing back a wrong value. `--no-contract-checks` removes the checks, and is meant for code whose contracts are proven. That is the next lesson.',
     out: ['10', 'runtime error: ensures clause violated at clamp.milo:3'],
     code: `fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
@@ -259,6 +260,26 @@ fn main(): i32 {
     print(clamp(42, 0, 10))  // 10, fine
     print(clamp(-5, 0, 10))  // breaks ensures
     return 0
+}`,
+  },
+  {
+    title: 'Contracts, proven for every input', file: 'clamp.milo', prove: true, fails: true,
+    desc: 'The run-time check caught that bug only because `main` happened to call `clamp(-5, 0, 10)`. `milo prove` needs no caller. It hands each `ensures` to an SMT solver (z3), which either proves it for every input that meets `requires` or returns an input that breaks it. Here it finds one without running anything.',
+    take: 'Change the low branch to `return lo` and the line reads `✓ [postcondition] clamp: proven`: the clause holds on every run, not only the ones somebody tested. What "proven" promises is itself machine-checked, by a [Lean proof](https://github.com/milo-language/milo/tree/main/proofs) that the contract rules are sound. A clause the solver cannot settle stays checked at run time.',
+    out: [
+      'verification: 1 conditions',
+      '  proven: 0  failed: 1  unknown: 0  errors: 0',
+      '',
+      '  ✗ [postcondition] clamp: failed — counterexample: value = -1, lo = 0, hi = 0, result = -1',
+    ],
+    code: `fn clamp(value: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    // bug: should return lo
+    if value < lo { return value }
+    if value > hi { return hi }
+    return value
 }`,
   },
   {
