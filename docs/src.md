@@ -167,6 +167,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/track-caller.ts` | @trackCaller: a panic inside the attributed fn reports its caller's file:line, like Rust's #[track_caller]. |
 | `src/types.ts` | Internal type representations: the TypeKind tagged union every later stage speaks. |
 | `src/upgrade.ts` | `milo upgrade`: replace the running compiler binary with a newer release. |
+| `src/verify-model.ts` | Reads z3 models back into source-level values: the counterexample `milo prove` prints for a failed obligation. |
 | `src/verify.ts` | Verification condition generator — produces SMT-LIB2 from contract annotations and symbolically executes function bodies to prove postconditions. |
 | `src/version.ts` | Compiler version, reported by `milo --version`. |
 | `src/visibility.ts` | File-level visibility enforcement for `pub`. |

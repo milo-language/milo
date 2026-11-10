@@ -1,9 +1,9 @@
 {
   "src/checker.ts": 15921,
-  "src/emit-mlir.ts": 5939,
-  "src/interp.ts": 1511,
+  "src/emit-mlir.ts": 5943,
+  "src/interp.ts": 1513,
   "src/lsp.ts": 2412,
-  "src/main.ts": 2596,
+  "src/main.ts": 2607,
   "src/parser.ts": 2357,
-  "src/verify.ts": 3680
+  "src/verify.ts": 3688
 }
