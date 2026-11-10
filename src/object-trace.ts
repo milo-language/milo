@@ -85,7 +85,7 @@ export interface ObjectTrace {
 // The most an assembler pads a function to the next boundary.
 const MAX_PADDING = 15;
 
-interface Insn { addr: number; call?: string }
+interface Insn { addr: number; call?: string; nop?: boolean }
 interface CodeFn { name: string; start: number; end: number; insns: Insn[] }
 interface Row { addr: number; line: number; file: string; end: boolean }
 
@@ -123,6 +123,7 @@ function disassemble(path: string): CodeFn[] {
     if (!ins) continue;
     const [, a, mnem, ops] = ins;
     const insn: Insn = { addr: parseInt(a!, 16) };
+    if (/^nop[wl]?$/.test(mnem!)) insn.nop = true;
     if (/^(bl|blx|call\w*|b|b\.\w+|jmp\w*|j\w+)$/.test(mnem!)) {
       const t = /(0x[0-9a-f]+)\s*<([^>]+)>/.exec(ops!);
       if (t) insn.call = norm(stubs.get(parseInt(t[1]!, 16)) ?? t[2]!.replace(/\+0x[0-9a-f]+$/, ""), macho);
@@ -231,6 +232,11 @@ export function traceObject(binary: string, sites: FnSite[]): ObjectTrace {
       return r < 0 || seq[r]!.end ? -1 : r;
     };
     const rows = f.insns.map(i => rowOf(i.addr));
+    // A Mach-O function has its own sequence, and its symbol runs on to the next one, so the nops
+    // that align the next function sit past this one's end_sequence. Nothing reaches them.
+    let padFrom = f.insns.length;
+    while (padFrom > 0 && f.insns[padFrom - 1]!.nop && rows[padFrom - 1] === -1) padFrom--;
+    if (!seq || padFrom === 0) padFrom = f.insns.length;
     // An instruction outside every row tags only itself, never the other rowless ones.
     const rowKey = (k: number) => (rows[k]! >= 0 ? rows[k]! : -1 - k);
     const rulesOfRow = new Map<number, Set<string>>();
@@ -242,7 +248,8 @@ export function traceObject(binary: string, sites: FnSite[]): ObjectTrace {
       const next = f.insns[k + 1]?.addr ?? f.end;
       const r = rows[k]!;
       const row = r >= 0 ? seq![r]! : undefined;
-      // Alignment padding after the sequence's last row is not code.
+      if (k >= padFrom) return;
+      // An ELF sequence spans the section: only the padding after its last row has no row.
       if (seq && !macho && i.addr >= seq[seq.length - 1]!.addr && f.end - seq[seq.length - 1]!.addr <= MAX_PADDING) return;
       const rules = [...(rulesOfRow.get(rowKey(k)) ?? [])].sort();
       let file = row?.file ?? "";

@@ -80,6 +80,19 @@ describe("trace-object", () => {
     for (const f of glue) expect(f.ranges.every((x: any) => x.line > 0 && x.file.endsWith("prelude.milo"))).toBe(true);
   });
 
+  test("an optimized host build is fully covered: the nops aligning the next function are not code", () => {
+    // At -O2 functions are aligned, and on Mach-O the padding lies inside the previous symbol but
+    // past its end_sequence. It was reported as untraced, which fails --strict for no reason.
+    const bin = join(dir, "pid-host-opt");
+    expect(milo(["build", join(ROOT, "examples", "assured", "pid", "pid.milo"), "-g", "-o", bin]).code).toBe(0);
+    const r = milo(["trace-object", bin, "--strict", "--json"]);
+    const t = JSON.parse(r.out);
+    expect(t.untraced).toEqual([]);
+    expect(r.code).toBe(0);
+    expect(t.coveredBytes).toBe(t.totalBytes);
+    expect(t.functions.some((f: any) => f.ranges.some((x: any) => x.rules.includes("MILO-O-contractCheck")))).toBe(true);
+  });
+
   test("`milo trace --object` lists the address ranges under each requirement", () => {
     const bin = join(dir, "table-trace.elf");
     expect(milo(["build", SRC, "--target=cortex-m3", "-g", "--debug", "-o", bin]).code).toBe(0);
