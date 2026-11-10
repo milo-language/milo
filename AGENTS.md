@@ -226,13 +226,13 @@ Three traps in the paths above:
 
 ### Marketing copy lives in five places
 
-The tagline is **"A memory-safe systems language with second-class references: no
-lifetimes, no GC, one owner per value."** Changing it means changing all four places that carry it. Note the last entry is
+The tagline is **"A memory-safe systems language for code you can audit, whoever wrote
+it: requirements traced to object code and back, no lifetimes, no GC."** Changing it means changing all four places that carry it. Note the last entry is
 GitHub metadata, not a file, so grep will never find it:
 
 1. `README.md` (this repo)
 2. `docs/site/index.md` — hero `text:`, plus the intro paragraph. The hero `tagline:` field
-   below it carries the verification pitch, not the tagline.
+   below it spells out the tracing, the contracts and the ownership model.
 3. `docs/site/.vitepress/config.mts` — `description:` (drives SEO + social cards)
 4. `profile/README.md` in the `.github` repo (org homepage) — deliberately minimal: tagline
    plus a docs link, nothing else. GitHub already lists the org's repos below it, so a repo

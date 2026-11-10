@@ -3,7 +3,7 @@ system: design-insights
 purpose: durable arguments and framings for external writing about Milo (talks, posts, README)
 key-files: docs/ownership-model.md, docs/memory-safety-vs-rust.md, docs/concurrency-safety.md, src/checker.ts
 update-when: a design argument is validated or falsified by shipped work, or a claim here goes stale
-last-verified: 2026-11-09 (proven-or-checked entry added; earlier entries not re-checked)
+last-verified: 2026-11-09 (proven-or-checked and process-is-the-product entries added; earlier entries not re-checked)
 -->
 
 # Design Insights
