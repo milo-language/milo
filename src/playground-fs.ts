@@ -14,6 +14,11 @@ export const readdirSync = (_p: string): string[] => [];
 export function writeFileSync(p: string, _data: string): never {
   throw Object.assign(new Error(`EROFS: the playground filesystem is read-only: ${p}`), { code: "EROFS" });
 }
+// Only the AST write oracle appends, and only to a log path the environment names
+// (ast-oracle.ts); the playground has no environment to name one.
+export function appendFileSync(p: string, _data: string): never {
+  throw Object.assign(new Error(`EROFS: the playground filesystem is read-only: ${p}`), { code: "EROFS" });
+}
 export function statSync(p: string): never {
   throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
 }
