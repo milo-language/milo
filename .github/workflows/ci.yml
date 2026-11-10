@@ -104,6 +104,20 @@ jobs:
           bun run fuzz:generic-drop --seed=${{ github.run_number }}
           bun run fuzz:drops --cases 40 --jobs 3 --seed ${{ github.run_number }} --reduce-probes 0
 
+  # The Lean proofs in proofs/ (contract soundness for Mini-Milo). tests/proofs.test.ts checks
+  # the files for sorry and unaudited theorems on every runner, but only Lean can check a proof,
+  # and no other runner has it. Cold build is seconds: no Mathlib.
+  proofs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lean (version pinned by proofs/lean-toolchain)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Check the proofs
+        run: cd proofs && lake build
+
   # Nothing has ever executed std/*.linux.milo — epoll, eventfd, the glibc paths — because
   # the suite above runs on macOS only. This job is the first thing that does.
   #

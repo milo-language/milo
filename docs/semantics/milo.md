@@ -176,8 +176,10 @@ For (3): every `box(ℓ)` has exactly one owning slot at any time. E-MOVE transf
 the source `moved`, and T-NO-MOVE-OUT means a reference never takes it. So [S-SCOPE-END] and
 S-ASSIGN drop each box from its single owner, once.
 
-Status: stated, not yet proved. The plan is a paper proof for the core, then Lean when a
-customer, a paper or the certificate-checker work needs it.
+Status: stated, not yet proved. The plan is a paper proof for the core, then Lean. The Lean
+project exists ([proofs/](../../proofs/README.md)) and so far proves the contract rules of
+section 5 over integer state; this theorem needs frames, moves and references added to that
+model and is the next target for it.
 
 ## 5. Extensions to the core
 
@@ -298,6 +300,12 @@ as unsupported, never run wrongly.
 
 Struct `invariant` clauses are proved statically and have no runtime check in a compiled binary, so the
 interpreter does not check them either.
+
+These rules have a machine-checked soundness proof for the integer core of the language
+([proofs/](../../proofs/README.md), Lean): a program whose verification conditions hold never reaches
+R-CONTRACT-FAIL at any check level and runs the same with the checks off, and with entry and exit
+checks on, a call returns only when its `requires` and `ensures` held, proven or not. The proof covers
+the rules as stated here, not the verifier that implements them.
 
 ### Raw memory
 
