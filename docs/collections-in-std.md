@@ -588,8 +588,8 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   the needle auto-borrowed as `&string`). The find family wraps the same raw helpers the
   builtin called (strIndexOfFrom, strLastIndexOf) in `strFound`, so the semantics are
   those helpers': byte offsets, an empty needle found at `from` even past the end, a
-  negative `from` finding nothing in a release build (and failing strIndexOfFrom's
-  `requires` in a debug build, as before). substr is `@inline @trackCaller`: a std/string
+  negative `from` failing strIndexOfFrom's `requires` (and finding nothing only where
+  `--no-contract-checks` dropped it). substr is `@inline @trackCaller`: a std/string
   only intrinsic `_strRangeCheck(s, a, b)` emits emitStringRangeCheck, so the panic text
   and caller's line:col are the builtin's (`runtime-errors/substrRangeFail` unchanged;
   with @trackCaller dropped it names std/string.milo:838); the copy is a

@@ -618,7 +618,7 @@ fn strIsEmpty(s: &string): bool {
 // The character that starts at byte `idx`, as a string of one to four bytes. `idx`
 // is a byte offset, so `"aéb".charAt(1)` is "é" and `.charAt(2)`, the middle of the
 // é, aborts rather than answering half a character. An `if` and not an `assert`:
-// contracts compile out at -O2 and this must hold in every build. Requires
+// `--no-contract-checks` compiles contracts out and this must hold in every build. Requires
 // 0 <= idx < s.len. Bytes that are not text go through `s[idx]`, which is a byte.
 fn strCharAt(s: &string, idx: i64): string
 requires idx >= 0 && idx < s.len
