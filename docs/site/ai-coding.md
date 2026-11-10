@@ -3,7 +3,7 @@ system: ai-coding
 purpose: how Milo's guarantees map onto the failure modes of machine-generated code
 key-files: docs/site/language/safety.md, docs/language-reference.md, docs/json-api.md
 update-when: a safety guarantee changes, the list of covered failure modes moves, or the agent tooling (skill, api, lang, check, explain) changes
-last-verified: 2026-09-22
+last-verified: 2026-11-09 (contracts section added; the rest not re-read)
 -->
 
 # AI-Assisted Development
@@ -77,6 +77,19 @@ model writes the code and a person audits it, though a design that is easier to 
 is not automatically easier to *generate*. See
 [Effects and capabilities](https://github.com/milo-language/milo/blob/main/docs/effects-and-capabilities.md)
 for what is shipped and what is only proposed.
+
+## Contracts: the part a person reviews
+
+When a model writes the body, the contract is what a person reads. `requires` and `ensures`
+are a few lines of spec on the signature. `milo prove --json` reports each clause as proven,
+unknown, or failed with a counterexample as named values, and the agent loops on that until
+nothing fails. A concrete input that breaks the clause is a better prompt than a red test.
+
+What the solver leaves unproven still asserts at run time in every build, so an unfinished
+proof stops the program instead of returning a wrong value. `milo spec --diff` closes the
+other way out: a weakened clause fails until a person signs it off, so the agent cannot pass
+by editing the spec. [How Milo is checked](/language/assurance) has the whole chain, from
+requirement to object code.
 
 ## Tooling an agent can read
 

@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: site-assurance
-purpose: the public page on how Milo is checked: written semantics, reference interpreter, MLIR backend, contracts and proofs, runtime-error proofs; built vs planned stated plainly
-key-files: docs/semantics/milo.md, src/interp.ts, src/verify.ts, docs/verification-roadmap.md, docs/plans/parallelism.md
+purpose: the public page on how Milo is checked: written semantics, reference interpreter, MLIR backend, contracts and proofs, the Lean proof, tracing to object code, runtime-error proofs; built vs planned stated plainly
+key-files: docs/semantics/milo.md, src/interp.ts, src/verify.ts, src/object-trace.ts, proofs/README.md, docs/verification-roadmap.md, docs/plans/parallelism.md
 update-when: a layer below ships, a number changes, or a planned item moves to built
-last-verified: 2026-11-04
+last-verified: 2026-11-09
 -->
 
 # How Milo is checked
@@ -58,11 +58,11 @@ impossible to write in safe code. Values move between tasks, references can't cr
 boundary, and a task can't read a global another one writes, so there are no data races to
 find. See [memory safety vs Rust](/language/vs-rust).
 
-### Contracts, proved for every input
+### Contracts, proven or checked
 
 `requires`, `ensures`, loop and struct `invariant`, and `decreases` are part of the language.
-`milo prove` checks them for every input, not just the ones you tested, and prints a
-counterexample when one fails:
+`milo prove` hands each clause to z3, which proves it for every input, not just the ones you
+tested, or returns the input that breaks it:
 
 ```milo
 fn clamp(x: i64, lo: i64, hi: i64): i64
@@ -70,10 +70,37 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
     ensures result >= lo && result <= hi
 {
     if x < lo { return lo }
-    if x > hi { return hi }
+    if x >= hi { return x }    // bug: should return hi
     return x
 }
 ```
+
+```
+$ milo prove clamp.milo
+  ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
+```
+
+A clause that is not proven is still enforced. Every build, release included, asserts
+`requires` and `ensures` at the call, and a failure stops the run. Debug builds check loop
+invariants too. `--no-contract-checks` removes the checks, and is safe exactly when the
+clauses are proven. Struct invariants are proved by `milo prove` but have no run-time check.
+
+### A Lean proof of what "proven" means
+
+The word "proven" is a claim about the contract rules, so the rules are modelled in Lean 4 and
+the claim is checked by Lean, in
+[proofs/](https://github.com/milo-language/milo/blob/main/proofs/README.md). Three theorems
+carry it:
+
+- `sound`: a program whose obligations all hold never fails a contract clause, on any run.
+- `level_irrelevant`: such a program has exactly the same runs with the checks on or off, so
+  dropping them changes nothing.
+- `checked_call`: in any program, proven or not, the default build only returns from a call
+  whose `requires` and `ensures` both held.
+
+The build fails on a `sorry` or a new axiom, and CI runs it on every push. The proof covers the
+rules for integers, loops and calls. It does not cover the compiler's code, z3's answers, or
+memory safety, whose theorem is written down but not yet proved.
 
 ### Requirements traceability
 
@@ -88,11 +115,24 @@ existing codebase adopt a profile. A `verification` claim the tool cannot check 
 
 `milo trace --refinement` also checks the requirements themselves, with no function bodies: for each `ensures` clause of a parent requirement, Z3 asks whether the fn's `requires` plus the `ensures` clauses of its descendants on the same fn imply it (a counterexample when not), and whether each fn's `requires` and `ensures` can be satisfied at all. It reaches only requirements with a formal clause: a parent clause with no child clause on the same fn is reported NOT COMPARABLE, never as a pass. Under `--strict`, NOT REFINED and unsatisfiable contracts fail.
 
+### Requirements traced to object code
+
+`milo trace <entry> --object <binary>` adds the last link: under each requirement, the address
+ranges its functions became in the binary, read from the DWARF line table, including the
+copies inlined into their callers. `milo trace-object <binary> --strict` goes the other
+way and fails on any instruction that maps to no source line and no language rule (bounds
+check, overflow trap, contract check, panic, drop). The
+[PID controller demo](https://github.com/milo-language/milo/blob/main/examples/assured/pid/README.md)
+runs both. This shows that every byte has a reason to exist. It does not show the bytes are the
+right ones: that is translation validation, which is planned.
+
 ### Runtime-error proofs, with no annotations
 
 `milo prove --rte` generates its own proof obligations for every overflow, index and division,
 so it proves that a function can't trap, without any contracts written. Across `std` and the
-examples it proves 909 sites today. Where it can't, it points at the assumption the code relies
+embedded examples it proves about a third of the sites today, which is why it is opt-in; the
+[verification roadmap](https://github.com/milo-language/milo/blob/main/docs/verification-roadmap.md)
+has the census. Where it can't, it points at the assumption the code relies
 on but never states, which is the contract worth writing. See [contracts & proofs](/language/safety).
 
 ### A spec lock for agent-written code
@@ -124,6 +164,11 @@ These are designed, and written up in the repository, but not built:
   invariants proved by induction over critical sections.
 - **Check Z3's proof output:** the prover asks Z3 for a proof, and a tiny independent
   checker verifies it, so trust rests on that checker rather than on the solver.
+- **The memory-safety theorem in Lean:** the safety theorem of the written semantics, proved
+  in the same Lean project as the contract rules.
+- **Coverage and validation at the object level:** MC/DC measured on the object code, and
+  translation validation that the binary computes what the MLIR says. No Milo tool is a
+  qualified tool under DO-330.
 
 The plans live in
 [docs/verification-roadmap.md](https://github.com/milo-language/milo/blob/main/docs/verification-roadmap.md)

@@ -5,7 +5,7 @@ titleTemplate: false
 hero:
   name: Milo
   text: "A memory-safe systems language with second-class references."
-  tagline: "No lifetimes, no garbage collector, and every mutation visible at the call site."
+  tagline: "No lifetimes, no garbage collector. Contracts proven or checked. Requirements traced to object code."
   image:
     src: /logo.svg
     alt: Milo
@@ -22,7 +22,7 @@ system: site-landing
 purpose: the milo-language.github.io home page: pitch, code carousel, what it is and is not, showcase
 key-files: docs/site/.vitepress/config.mts, docs/site/.vitepress/theme
 update-when: the pitch changes, a showcase project is added or retired, or the carousel snippets change
-last-verified: 2026-09-22 (trimmed: one statement of the rule, 10 showcase tiles, the rest on /demos)
+last-verified: 2026-11-09 (pitch: proven or checked, requirement to object code; 14-lesson tour)
 -->
 
 <div class="install-line">
@@ -41,7 +41,7 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
     'A borrow lasts one call. Reads are implicit; a mutation is spelled &mut at the call site, so the line that can change v is the one that says so.',
     'A reference cannot be stored or returned. Nothing outside a function can hold a pointer into its values, which is why the function you are reading is the whole story.',
     'Two requests in flight on green tasks. Each task owns its data, so there is no mutex and no Send/Sync to write.',
-    'requires and ensures are part of the language. milo prove checks clamp for every input, not just the ones you tested.',
+    'requires and ensures are part of the language. milo prove proves clamp for every input, and a clause it cannot prove is checked at run time in every build.',
   ]"
 >
 
@@ -143,7 +143,7 @@ fn main(): void {
 }
 ```
 
-**What you get:** no lifetime annotations, no GC or RC, concurrency without `Send`/`Sync`, `requires`/`ensures` contracts checked by `milo prove`.
+**What you get:** no lifetime annotations, no GC or RC, concurrency without `Send`/`Sync`, and `requires`/`ensures` contracts that are proven by `milo prove` or checked at run time.
 
 **What you give up:** returning or storing a view. Use an index, a `Span`, an owned copy, or an [arena handle](/stdlib/arena). The tie between a stored offset and its buffer becomes a named runtime check where Rust's lifetime is a compile error ([why that trade](/language/why-no-lifetimes)).
 
@@ -159,6 +159,57 @@ fn main(): void {
 | Two owners of one buffer | two pointers, good luck | lifetimes, or `clone` / `Arc` | `.clone()`, or `seal` it and share a read-only copy. |
 
 Same memory-safety guarantees as Rust wherever both languages can express the program. 250k+ lines of Milo so far; nearly every `unsafe` block is the C boundary, and none exist because the ownership model said no ([the full matrix](/language/vs-rust)).
+
+## Proven or checked
+
+A contract is ordinary Milo on the function's signature. `milo prove` hands it to an SMT solver, which proves it for every input or returns the input that breaks it:
+
+```milo
+fn clamp(x: i64, lo: i64, hi: i64): i64
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { return lo }
+    if x >= hi { return x }    // bug: should return hi
+    return x
+}
+```
+
+<div class="wrap-output">
+
+```
+$ milo prove clamp.milo
+  ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
+```
+
+</div>
+
+A clause that is not proven is still enforced: `requires` and `ensures` assert at run time in every build, release included. What "proven" means is itself machine-checked. A [Lean proof](https://github.com/milo-language/milo/tree/main/proofs) of the contract rules shows that a proven program never fails a contract clause, and that removing the run-time checks from one changes nothing.
+
+Proof is practical here because of the reference rule: nothing outside a function can point into its values, so a call changes only what its `&mut` arguments name, and the verifier needs no aliasing annotations.
+
+## From requirement to object code
+
+Tag a function `@req(LLR-1)` and `milo trace` follows the requirement to its code, its proof, its tests and the bytes it became:
+
+```
+$ milo trace pid.milo --strict --object pid
+LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
+  implemented   pid.milo:27 clampI32
+  implemented   pid.milo:44 pidStep
+  object        0x100000680-0x1000006b0 (48 B) clampI32  lines 28-32
+  object        0x1000006c0-0x100000848 (392 B) pidStep  lines 32-68
+  object        0x1000008b4-0x1000008d8 (36 B) nextIntegral  lines 32-32
+  object        0x100000900-0x100000918 (24 B) clampInput  lines 32-32
+  object        0x10000097c-0x100000998 (28 B) controlTick  lines 32-32
+  formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
+  formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
+  verified      PROOF     2 formalizing clauses PROVEN
+  verified      PASS      pid_test.milo:7 testClampKeepsValueInRange
+  verified      PASS      pid_test.milo:15 testStepOutputWithinRange
+```
+
+`milo trace-object --strict` goes the other way: it fails on any instruction in the binary that maps to no source line and no language rule (bounds check, overflow trap, contract check, drop). Not built yet: MC/DC measured on the object code, and translation validation of the compiler. [How Milo is checked](/language/assurance) lists every layer, built and planned.
 
 </div>
 
@@ -307,7 +358,7 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
 ### Take Milo for a walk
 
 <div class="cta-buttons">
-  <a class="cta-primary" href="/milo/tour">Learn the basics · 13 lessons</a>
+  <a class="cta-primary" href="/milo/tour">Learn the basics · 14 lessons</a>
   <a class="cta-secondary" href="/milo/language/variables">Learn Milo</a>
   <a class="cta-secondary" href="/milo/stdlib/">Standard library</a>
   <a class="cta-secondary" href="/milo/getting-started/installation">Get Started</a>

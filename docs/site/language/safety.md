@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: contracts-safety-guide
 purpose: how-to guide to contracts, proof, loop invariants and runtime checks (safety profiles live in safety-profiles.md)
-key-files: src/verify.ts, src/codegen.ts
+key-files: src/verify.ts, src/emit-mlir.ts, proofs/README.md
 update-when: contract semantics, proof obligations, runtime checks, or the solver change
-last-verified: 2026-07-24
+last-verified: 2026-11-09 (check levels, solver, Lean pointer, trace flags; the walkthrough outputs were not re-run)
 -->
 
 # Contracts & proofs
@@ -337,6 +337,10 @@ ensures result >= 0.0 && result <= 5.0
 
 A recursive function *is* modelled — the self-call is handled by induction, assuming the function's own `ensures` — but that assumption is only sound if the recursion terminates, which is what `decreases` above is for. Whether the resulting obligation is decided is a separate question: Z3 answers `unknown` on some it cannot settle.
 
+### What "proven" means
+
+That a proven clause holds on every run is a theorem about the contract rules, and Lean checks it: [proofs/](https://github.com/milo-language/milo/blob/main/proofs/README.md) models `requires`, `ensures`, loop invariants and calls, and proves that a program whose obligations all hold never fails a clause, that removing the run-time checks from such a program changes nothing, and that the default build never returns from a call whose contract was broken. The proof is about the rules. That the verifier implements them is checked by tests, and Z3's answers are trusted.
+
 
 ## Requirements
 
@@ -378,7 +382,7 @@ Without a profile the matrix is a report. With `--strict`, or `--safety=` a prof
 verification (DO-333: a low-level requirement needs a fully `PROVEN` set of clauses or a passing test;
 a high-level one, or one with no clause, needs a passing test of its own), a failing `@req` test, and a
 formalizing clause that is `FAILED` or `UNKNOWN`. A law has to be `PROVEN`, covered by a passing `@req`
-test, or `@assume`d. `milo trace` runs the tests (`--no-run` skips them); line coverage is not measured yet.
+test, or `@assume`d. `milo trace` runs the tests (`--no-run` skips them). `--coverage` adds line coverage of each implementing fn by those tests (statement coverage only), and `--object <binary>` adds the address ranges each requirement became in the binary ([how Milo is checked](/language/assurance#requirements-traced-to-object-code)).
 
 A clause that proves itself (`ensures result == result`) would trace a requirement to
 nothing, so the [`vacuous-contract`](/language/warnings-and-errors#vacuous-contract) warning
