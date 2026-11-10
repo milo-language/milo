@@ -104,6 +104,7 @@ class ExploreCo extends InterpCo {
 function runOnce(program: Program, checked: CheckResult, ex: ExploreOptions, chooser: Chooser, schedule: number[]): Run {
   const it = new ExploreCo(program, checked, chooser);
   it.contractChecks = true;
+  it.loopInvariantChecks = true;
   it.entryFile = ex.entryFile;
   it.sysOptions = ex.sys;
   let kind: Run["kind"] = "ok";

@@ -484,7 +484,7 @@ fn main() {
   expect(bad.code).toBe(134);
   expect(bad.out).toBe("");
   expect(bad.err).toMatch(/^runtime error: requires clause violated at \S*t\d*\.milo:3\n$/);
-  // off by default, as in a release build
+  // off unless asked: the library default. `milo interp` asks (interpOptions).
   expect(runTasks(src("bump(&mut x, lo)")).out).toBe("ok 0\n");
 });
 

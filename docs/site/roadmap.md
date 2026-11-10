@@ -30,7 +30,7 @@ Primitive types, let/var bindings, if/else, while/for loops, functions, structs,
 
 ### Contracts & Proving
 
-`requires` / `ensures` / `invariant` / `decreases`, checked at runtime in debug builds and proved for every input by `milo prove`. See [Contracts & proofs](/language/safety).
+`requires` / `ensures` / `invariant` / `decreases`, checked at runtime (`requires`/`ensures` in every build, loop invariants in debug builds) and proved for every input by `milo prove`. See [Contracts & proofs](/language/safety).
 
 ### Safety Profiles, WCET, Bare Metal
 

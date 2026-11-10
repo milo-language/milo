@@ -525,7 +525,7 @@ fn main() {
 
 _Off by default — enable with `--deny=unchecked-ffi-contract` or `--expect=unchecked-ffi-contract`._
 
-A `requires` clause is checked under `--debug` and compiled out at `-O2`. On a function whose body enters `unsafe`, that contract is the last guard before the value reaches C, and nothing in the body repeats the check, so an optimized build hands C a value nobody validated.
+A `requires` clause is a runtime assert, and `--no-contract-checks` (or `--fast`) compiles it out. On a function whose body enters `unsafe`, that contract is the last guard before the value reaches C, and nothing in the body repeats the check, so a build without contract checks hands C a value nobody validated.
 
 ```milo
 extern fn abs(x: i32): i32

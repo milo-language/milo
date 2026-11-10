@@ -388,7 +388,7 @@ impl Child {
 // naming the stream, never a stream silently left on the parent's terminal.
 //
 // Reading a stream that is not a pipe is a contract violation: `writeStdin`,
-// `readStdout` and `stdout()` require their fd, checked in debug builds.
+// `readStdout` and `stdout()` require their fd, checked at runtime.
 pub enum Stdio {
     // A pipe the parent holds the other end of: Child.writeStdin / stdout() / stderr().
     Pipe,

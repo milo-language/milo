@@ -465,7 +465,7 @@ fn makeInheritable(fd: i32): void {
 // Where one of a child's standard streams comes from, or goes to.
 //
 // Reading a stream that is not a pipe is a contract violation: `writeStdin`,
-// `readStdout` and `stdout()` require their fd, checked in debug builds.
+// `readStdout` and `stdout()` require their fd, checked at runtime.
 pub enum Stdio {
     // A pipe the parent holds the other end of: Child.writeStdin / stdout() / stderr().
     Pipe,

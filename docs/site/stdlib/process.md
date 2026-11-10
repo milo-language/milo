@@ -421,7 +421,7 @@ Three of these are direction-specific and a spawn that mixes them up is a hard e
 naming the stream, never a stream silently left on the parent's terminal.
 
 Reading a stream that is not a pipe is a contract violation: `writeStdin`,
-`readStdout` and `stdout()` require their fd, checked in debug builds.
+`readStdout` and `stdout()` require their fd, checked at runtime.
 
 Variants:
 

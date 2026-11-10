@@ -40,7 +40,7 @@ const check = (path: string) => {
   return result.diagnostics.some((d) => d.severity === "error") ? null : { program, result };
 };
 const lower = (c: { program: any; result: any }, path: string) =>
-  new MlirPlan(backendProgram(c.program, c.result, dirname(resolve(path)), target.os, target.arch), target, { filePath: path, trapOnOverflow: false, emitDebug: false, contractChecks: false, stripPanicLocations: false, sanitize: false }).moduleText();
+  new MlirPlan(backendProgram(c.program, c.result, dirname(resolve(path)), target.os, target.arch), target, { filePath: path, trapOnOverflow: false, emitDebug: false, contractChecks: "none", stripPanicLocations: false, sanitize: false }).moduleText();
 
 let same = 0, rejected = 0, bytes = 0;
 const failures: string[] = [];

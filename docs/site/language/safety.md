@@ -93,27 +93,19 @@ pub fn main(): i32 {
 }
 ```
 
-This compiles and runs. Let's see what happens on a debug build:
-```
-$ milo build sqrt.milo --debug -o sqrt && ./sqrt
-runtime error: requires clause violated at sqrt.milo:5
-$ echo $?
-1
-```
-
-In a debug build, every `requires`, `ensures`, and `invariant` becomes a runtime assert. If it fails, it names the clause that failed and its line.
-
-Now let's see what happens on a release build:
-
+This compiles and runs. About half the time the number drawn is negative, and then:
 ```
 $ milo build sqrt.milo -o sqrt && ./sqrt
-0
+runtime error: requires clause violated at sqrt.milo:5
 $ echo $?
-0
+134
 ```
-Whoops, the sqrt returned 0 and continued on. Nothing asserted or aborted. If you don't like this potentially violation of the contract, see the next option.
 
-`--contract-checks` turns those same asserts on at any optimization level, if you want them in a release build. It is its own switch — `--overflow-checks` covers arithmetic, not contracts.
+Every build asserts `requires` at function entry and `ensures` at every return, release builds included. A failed one names the clause and its line, and the program stops there instead of carrying a wrong value forward. So a contract you have not proven is still checked.
+
+Loop `invariant`s are the exception: they run once per iteration, in the hottest code a program has, so they assert only in a debug build (`--debug`). `--contract-checks` turns them on at any optimization level.
+
+`--no-contract-checks` drops every contract assert, for a build whose contracts you have proven or that cannot afford the checks. These are their own switches: `--overflow-checks` covers arithmetic, not contracts.
 
 ### 3. `milo prove` — proven for every input, before you run it
 

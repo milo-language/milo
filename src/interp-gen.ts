@@ -119,7 +119,7 @@ export class InterpGen extends Interp {
     } finally { this.frame.scopes.pop(); }
   }
   *checkInvariants$g(invs: Contract[] | undefined): Gen {
-    if (!this.contractChecks) return;
+    if (!this.loopInvariantChecks) return;
     for (const c of invs ?? []) if (c.kind === "invariant") (yield* this.checkClause$g(c));
   }
   *checkClause$g(c: Contract): Gen {

@@ -101,7 +101,7 @@ export const KEYWORD_DOCS: Record<string, string> = {
 export const CONTRACT_WORD_DOCS: Record<string, string> = {
   result: "```milo\nfn abs(x: i64): i64\nensures result >= 0\n```\nThe value the function returns. The checker binds this name only for the `ensures` clauses of a non-`void` function — it does not exist in the body, and a clause sees the parameters and nothing else of the function's internals.\n\nFor what a parameter held *before* the call, use `old(e)`.",
 
-  old: "```milo\nold(e): <type of e>\n```\nThe value `e` held at function entry. Legal only inside `ensures`, and only for a scalar (integer, float, bool) — a debug build snapshots it on entry, and copying a Vec or struct there would either alias or clone on every call.\n\nThis is what lets a contract describe a `&mut` parameter:\n```milo\nfn bump(n: &mut i64): void\nensures n == old(n) + 100\n```\nWithout it, `ensures` can only talk about `result`, so a mutating function has no expressible specification — and a caller learns nothing from it.",
+  old: "```milo\nold(e): <type of e>\n```\nThe value `e` held at function entry. Legal only inside `ensures`, and only for a scalar (integer, float, bool) — a build that checks contracts snapshots it on entry, and copying a Vec or struct there would either alias or clone on every call.\n\nThis is what lets a contract describe a `&mut` parameter:\n```milo\nfn bump(n: &mut i64): void\nensures n == old(n) + 100\n```\nWithout it, `ensures` can only talk about `result`, so a mutating function has no expressible specification — and a caller learns nothing from it.",
 };
 
 // One line per operator and punctuation token, keyed by its TokenKind member name, for the

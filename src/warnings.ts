@@ -400,13 +400,13 @@ fn main() {
 }
 `,
   },
-  // A `requires` on an `unsafe`-bodied fn is the last guard before C, and `-O2` drops
-  // it: an AES key length and a pool block size both reached C unchecked this way
+  // A `requires` on an `unsafe`-bodied fn is the last guard before C, and `--no-contract-checks`
+  // drops it (until 2026-11 every `-O2` build did): an AES key length and a pool block size both reached C unchecked this way
   // (backlog #27). Off by default; `--deny=unchecked-ffi-contract` audits the set.
   {
     name: "unchecked-ffi-contract",
     offByDefault: true,
-    doc: "A `requires` clause is checked under `--debug` and compiled out at `-O2`. On a function whose body enters `unsafe`, that contract is the last guard before the value reaches C, and nothing in the body repeats the check, so an optimized build hands C a value nobody validated.",
+    doc: "A `requires` clause is a runtime assert, and `--no-contract-checks` (or `--fast`) compiles it out. On a function whose body enters `unsafe`, that contract is the last guard before the value reaches C, and nothing in the body repeats the check, so a build without contract checks hands C a value nobody validated.",
     fix: "Check the condition in the body as well (return an `Err`, or assert), or pass `--allow=unchecked-ffi-contract`.",
     example: `extern fn abs(x: i32): i32
 

@@ -459,7 +459,7 @@
     },
     {
       "id": "R-CONTRACT-ENTRY",
-      "text": "With contract checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order.",
+      "text": "With contract checks on (the default for `milo interp`, as in a build; `--no-contract-checks` turns them off), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order.",
       "parent": "SEM-12",
       "source": "docs/semantics/milo.md §Contracts"
     },
@@ -471,7 +471,7 @@
     },
     {
       "id": "R-CONTRACT-LOOP",
-      "text": "A `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only.",
+      "text": "With loop invariant checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only.",
       "parent": "SEM-12",
       "source": "docs/semantics/milo.md §Contracts"
     },

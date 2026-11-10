@@ -249,12 +249,14 @@ export class InterpCo extends InterpGen {
  * shows exactly what a run with tasks from the start would.
  */
 // schedule: replay these choices (R-EXPLORE-REPLAY); it runs under the task interpreter from the start
-export interface RunOptions { contractChecks?: boolean; entryFile?: string; sys?: SysOptions; schedule?: number[] }
+// loopInvariantChecks follows contractChecks when not given
+export interface RunOptions { contractChecks?: boolean; loopInvariantChecks?: boolean; entryFile?: string; sys?: SysOptions; schedule?: number[] }
 // R-TASK-MAIN
 export function runChecked(program: Program, checked: CheckResult, opts: RunOptions = {}): { it: Interp; result: RunResult } {
   const make = (c: new (p: Program, r: CheckResult) => Interp): Interp => {
     const i = new c(program, checked);
     i.contractChecks = !!opts.contractChecks;
+    i.loopInvariantChecks = !!(opts.loopInvariantChecks ?? opts.contractChecks);
     i.entryFile = opts.entryFile ?? "";
     i.sysOptions = opts.sys ?? {};
     return i;

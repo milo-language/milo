@@ -1,0 +1,41 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: what a default build
+// checks. requires/ensures assert at every -O; a loop invariant does not (that takes -O0 or
+// --contract-checks), so the broken invariant in `sum` goes unnoticed and the run reaches
+// the broken ensures in `lies`.
+
+fn sum(n: i64): i64 {
+    var s = 0
+    var i = 0
+    while i < n
+    invariant s < 0 {
+        s = s + i
+        i = i + 1
+    }
+    for k in 0..n
+    invariant k < 0 {
+        s = s + k
+    }
+    return s
+}
+
+fn half(n: i64): i64
+requires n >= 0
+ensures result * 2 <= n
+{
+    return n / 2
+}
+
+fn lies(n: i64): i64
+ensures result > n
+{
+    if n > 3 {
+        return n
+    }
+    return n + 1
+}
+
+fn main() {
+    print(sum(5), " ", half(9))
+    print(lies(2))
+    print(lies(5))
+}

@@ -16,6 +16,27 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `requires` and `ensures` assert in every build (2026-11-09)
+
+A violated `requires` or `ensures` used to abort only under `--debug`; a default or
+`--release` build compiled the clause out and ran on. Now both assert at every `-O`, so a
+contract nobody ran `milo prove` on is still checked in the binary that ships. Loop
+invariants are unchanged (`--debug`, or `--contract-checks` at any `-O`), because they are
+per-iteration work.
+
+| was | now |
+|---|---|
+| a violated `requires`/`ensures` in a default build: nothing happens | `runtime error: requires clause violated at file:line`, exit status 134 |
+| `--contract-checks`: assert all three kinds at any `-O` | the same; without it, `requires`/`ensures` still assert |
+| `--no-contract-checks` in a `--debug` build | the same flag, now also the way to get the old default in a release build |
+| `Pool.new`, `Bump.new`, `bump.alloc`, `Channel.new`, the four AES-GCM calls: a size, count, capacity or key/IV/tag length stated as a `requires` AND returned as an `Err` | only the `Err`. An asserted `requires` aborts before the body can report anything, and these values can come from input |
+
+**Failure mode if you miss one.** A program with a contract that was never true for some
+input aborts where it used to continue. The message names the clause's file and line.
+`milo prove` finds these before a run does; `--no-contract-checks` restores the old build.
+
+**Why no shim.** The old default is the shim, behind its flag.
+
 ## `std/smt` is removed; z3 is the only solver (2026-11-04)
 
 `import "std/smt"` no longer resolves, and `milo prove --solver native` is gone. The module was

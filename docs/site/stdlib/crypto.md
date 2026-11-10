@@ -82,8 +82,8 @@ fn Crypto.aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &str
 
 Encrypt with AES-256-GCM. The key is 32 bytes and the IV is 12 bytes.
 
-`aad` is additional authenticated data; pass "" if unused. The key and IV lengths
-are preconditions (`requires`), not runtime errors.
+`aad` is additional authenticated data; pass "" if unused. A key or IV of
+another length is an `Err`.
 
 #### `Crypto.md5`
 

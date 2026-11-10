@@ -358,11 +358,8 @@ impl Sync for Channel<T> {
 
 impl Channel<T> {
     // A channel holding at most `capacity` values.
-    fn new(capacity: i64): Result<Channel<T>>
-    requires
-    capacity > 0
-    {
-        // Checked at every -O, not only by the contract: a non-positive capacity mallocs
+    fn new(capacity: i64): Result<Channel<T>> {
+        // An `Err` and not a `requires` (which aborts): a non-positive capacity mallocs
         // nothing and `send` then writes through it (a negative one never sees the buffer
         // as full).
         if capacity <= 0 {

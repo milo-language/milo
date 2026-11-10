@@ -83,15 +83,13 @@ fn rethread(p: &mut Pool): void {
 // Create a pool of `count` blocks, each `size` bytes.
 // The product is bounded (1 GB) because `size >= 1, count > 0` alone promises that
 // `Pool.new(i64::MAX, 1)` works, and it exhausts memory instead (found by
-// `milo test --contracts`). Clause order matters: the division relies on `size >= 1`.
+// `milo test --contracts`). Check order matters: the division relies on `size >= 1`.
 // The count is also bounded by i32 max because a handle stores its index as i32.
 fn poolNew(size: i64, count: i64): Result<Pool>
-requires size >= 1
-requires count > 0
-requires size <= 1073741824 && count <= 1073741824 / size
 {
-    // Checked at runtime as well as by the `requires`, because the contract is dropped
-    // at the default -O2 and this body is unsafe (see docs/backlog.md #27).
+    // Each an `Err` and not a `requires`: a failed `requires` aborts, and a size or count can
+    // be computed from input. This body is unsafe, so nothing after these checks them
+    // (docs/backlog.md #27).
     if size < 1 {
         return Result.Err("pool: block size must be positive, got " + size.toString())
     }
@@ -222,9 +220,6 @@ impl Pool {
     // A pool of `count` blocks of `size` bytes, from one malloc. Errs on a
     // non-positive size or count, or a total above 1 GB.
     fn new(size: i64, count: i64): Result<Pool>
-    requires size >= 1
-    requires count > 0
-    requires size <= 1073741824 && count <= 1073741824 / size
     {
         return poolNew(size, count)
     }

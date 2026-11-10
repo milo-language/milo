@@ -841,7 +841,7 @@ function externCallNote(ret: string): string {
 }
 
 // Keyword hovers. `milo prove` discharges the contract clauses statically; a
-// `--contract-checks` build (the default for `--debug`) also asserts them at runtime.
+// build also asserts requires/ensures at runtime (loop invariants at -O0 or with `--contract-checks`).
 // The prose lives in src/keyword-docs.ts so `milo lang --json` serves the same text.
 //
 // A hard keyword lexes to its own TokenKind, so the token stream proves the hovered

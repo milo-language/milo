@@ -20,6 +20,10 @@ import { MlirGlue } from "./mlir-glue";
 import { PUSH_SCALAR_FN } from "./runtime-ir";
 import { MAIN_BODY_FN as MAIN_BODY, PROCESS_INIT_FN } from "./startup";
 
+// Which contract clauses assert at runtime: none, requires/ensures only ("boundary"), or
+// those plus loop invariants ("all").
+export type ContractChecks = "none" | "boundary" | "all";
+
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
   /** The checker's facts and the emitter's own nodes (src/emit-forms.ts). */
@@ -32,8 +36,8 @@ export interface MlirEmitCtx {
   readonly emitDebug: boolean;
   // std/replay is in the program, so replay-engine fns count their depth (milo.replay.enter).
   replayScope: boolean;
-  // requires/ensures/invariant become runtime checks only when on (-O0 by default).
-  contractChecks: boolean;
+  // The default is "boundary" at every -O and "all" at -O0 (contractLevel in main.ts).
+  contractChecks: ContractChecks;
   checkLocation(span?: Span): { file: string; line: number; col: number } | null;
   isBuiltinName(name: string): boolean;
   fnSigs: Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>;
@@ -890,7 +894,7 @@ class FnEmitter {
     const contracts = (fn.ast?.contracts ?? []).filter(c => c.kind === "requires" || c.kind === "ensures");
     if (entryGuards(contracts, this.cx.lazyGlobals).length) throw new MlirUnsupported("lazy global guard");
     const snapshots = this.oldSnapshots(contracts);
-    if (this.cx.contractChecks && contracts.length) {
+    if (this.cx.contractChecks !== "none" && contracts.length) {
       if (this.stmts(snapshots)) throw new MlirUnsupported("old() snapshot that jumps");
       for (const c of contracts) if (c.kind === "requires") this.contractCheck(c.kind, c.expr, c.span);
       this.ensures = contracts.filter(c => c.kind === "ensures");
@@ -1923,7 +1927,7 @@ class FnEmitter {
 
   /** A loop body: its invariants checked first in a contract-checking build, then its statements. */
   private loopBody(body: Stmt[], invariants: Contract[]): boolean {
-    if (this.cx.contractChecks) for (const inv of invariants) if (inv.kind === "invariant") this.contractCheck("invariant", inv.expr, inv.span);
+    if (this.cx.contractChecks === "all") for (const inv of invariants) if (inv.kind === "invariant") this.contractCheck("invariant", inv.expr, inv.span);
     return this.stmts(body);
   }
 
@@ -1948,7 +1952,7 @@ class FnEmitter {
       }
       case "WhileStmt": {
         // A while's invariants are checked with its condition, so they hold on exit too.
-        const invs = this.cx.contractChecks ? s.invariants.filter(c => c.kind === "invariant") : [];
+        const invs = this.cx.contractChecks === "all" ? s.invariants.filter(c => c.kind === "invariant") : [];
         this.loops++; this.loopBase.push(this.pending.length);
         const checkInvs = () => { for (const inv of invs) this.contractCheck("invariant", inv.expr, inv.span); };
         const cond = this.f(s.cond);

@@ -9,7 +9,7 @@ import type { FormOf } from "./emit-forms";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { TargetInfo } from "./target";
-import type { MlirEmitCtx } from "./emit-mlir";
+import type { ContractChecks, MlirEmitCtx } from "./emit-mlir";
 import { Layout, HASHMAP_FIELDS } from "./layout";
 import { Ownership } from "./owned-temp";
 import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
@@ -25,7 +25,7 @@ export interface BuildOptions {
   filePath?: string;
   trapOnOverflow: boolean;
   emitDebug: boolean;
-  contractChecks: boolean;
+  contractChecks: ContractChecks;
   // Blank the source path out of every runtime panic message. In a binary shipped to people
   // who will never hold the source, the path describes the build machine's filesystem and
   // nothing else. Line numbers stay: alone they identify nothing, and they are all that is

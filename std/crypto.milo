@@ -60,11 +60,9 @@ fn aesGcmSplit(raw: string): AesGcmResult {
 
 // Encrypt with AES-256-GCM. Key must be 32 bytes, IV should be 12 bytes.
 fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-requires key.len == 32
-requires iv.len == 12
 {
-    // Checked at RUNTIME, not only by the `requires` above: contracts are asserted in
-    // --debug and dropped at the default -O2, and these lengths are passed to the C
+    // An `Err` and not a `requires`: a failed `requires` aborts, and a length can arrive
+    // from outside the program (a tag off the wire). Checked here because these lengths are passed to the C
     // API as CONSTANTS (32, 12, 16) regardless of what arrived. A short key therefore
     // read past the end of the caller's buffer in an ordinary build — an out-of-bounds
     // read reachable from safe Milo — and "encrypted" with whatever followed it.
@@ -80,12 +78,9 @@ requires iv.len == 12
 
 // Decrypt with AES-256-GCM. Key must be 32 bytes, IV 12 bytes, tag 16 bytes.
 fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-requires key.len == 32
-requires iv.len == 12
-requires tag.len == 16
 {
-    // Checked at RUNTIME, not only by the `requires` above: contracts are asserted in
-    // --debug and dropped at the default -O2, and these lengths are passed to the C
+    // An `Err` and not a `requires`: a failed `requires` aborts, and a length can arrive
+    // from outside the program (a tag off the wire). Checked here because these lengths are passed to the C
     // API as CONSTANTS (32, 12, 16) regardless of what arrived. A short key therefore
     // read past the end of the caller's buffer in an ordinary build — an out-of-bounds
     // read reachable from safe Milo — and "encrypted" with whatever followed it.
@@ -103,11 +98,9 @@ requires tag.len == 16
 
 // Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
 fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-requires key.len == 16
-requires iv.len == 12
 {
-    // Checked at RUNTIME, not only by the `requires` above: contracts are asserted in
-    // --debug and dropped at the default -O2, and these lengths are passed to the C
+    // An `Err` and not a `requires`: a failed `requires` aborts, and a length can arrive
+    // from outside the program (a tag off the wire). Checked here because these lengths are passed to the C
     // API as CONSTANTS (32, 12, 16) regardless of what arrived. A short key therefore
     // read past the end of the caller's buffer in an ordinary build — an out-of-bounds
     // read reachable from safe Milo — and "encrypted" with whatever followed it.
@@ -123,12 +116,9 @@ requires iv.len == 12
 
 // Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
 fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-requires key.len == 16
-requires iv.len == 12
-requires tag.len == 16
 {
-    // Checked at RUNTIME, not only by the `requires` above: contracts are asserted in
-    // --debug and dropped at the default -O2, and these lengths are passed to the C
+    // An `Err` and not a `requires`: a failed `requires` aborts, and a length can arrive
+    // from outside the program (a tag off the wire). Checked here because these lengths are passed to the C
     // API as CONSTANTS (32, 12, 16) regardless of what arrived. A short key therefore
     // read past the end of the caller's buffer in an ordinary build — an out-of-bounds
     // read reachable from safe Milo — and "encrypted" with whatever followed it.
@@ -167,11 +157,9 @@ impl Crypto {
     }
     // Encrypt with AES-256-GCM. The key is 32 bytes and the IV is 12 bytes.
     //
-    // `aad` is additional authenticated data; pass "" if unused. The key and IV lengths
-    // are preconditions (`requires`), not runtime errors.
+    // `aad` is additional authenticated data; pass "" if unused. A key or IV of
+    // another length is an `Err`.
     fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-    requires key.len == 32
-    requires iv.len == 12
     {
         return aesGcmEncrypt(key, iv, plaintext, aad)
     }
@@ -179,9 +167,6 @@ impl Crypto {
     // 16-byte `tag` from encryption. A tag that does not verify is an `Err`, never
     // corrupted plaintext.
     fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-    requires key.len == 32
-    requires iv.len == 12
-    requires tag.len == 16
     {
         return aesGcmDecrypt(key, iv, ciphertext, tag, aad)
     }
@@ -189,17 +174,12 @@ impl Crypto {
     //
     // `aad` is additional authenticated data; pass "" if unused.
     fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-    requires key.len == 16
-    requires iv.len == 12
     {
         return aesGcm128Encrypt(key, iv, plaintext, aad)
     }
     // Decrypt and authenticate with AES-128-GCM: 16-byte key, 12-byte IV, 16-byte
     // `tag`. A tag that does not verify is an `Err`.
     fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-    requires key.len == 16
-    requires iv.len == 12
-    requires tag.len == 16
     {
         return aesGcm128Decrypt(key, iv, ciphertext, tag, aad)
     }

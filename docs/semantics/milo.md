@@ -290,9 +290,9 @@ as unsupported, never run wrongly.
 
 | Rule | Statement |
 |---|---|
-| R-CONTRACT-ENTRY | With contract checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order. |
+| R-CONTRACT-ENTRY | With contract checks on (the default for `milo interp`, as in a build; `--no-contract-checks` turns them off), a call first snapshots every `old(e)` of its `ensures` clauses, then checks each `requires` clause in order. |
 | R-CONTRACT-EXIT | At every return, with `result` naming the value returned and before the frame's variables drop, each `ensures` clause is checked. |
-| R-CONTRACT-LOOP | A `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only. |
+| R-CONTRACT-LOOP | With loop invariant checks on (`milo interp --contract-checks` or `--debug`; off by default, as in a release build), a `while` loop's `invariant` clauses are checked before its condition each time, so also when it exits; a `for` loop's at the top of each iteration. `decreases` is static only. |
 | R-CONTRACT-FAIL | A failed clause is a panic that prints `runtime error: <kind> clause violated at file:line` (the clause's own line, the path relative to the working directory) and aborts like any panic. |
 | R-CONTRACT-IMPLIES | `a ==> b` (contracts and `assert` only) evaluates `a`; when it is false the result is true and `b` is not evaluated, otherwise the result is `b`. It is `!a \|\| b`. |
 

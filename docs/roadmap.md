@@ -74,7 +74,7 @@ See [safety-roadmap.md](safety-roadmap.md) for the enforced-vs-remaining breakdo
 
 ### Contracts & Proving
 
-- `requires` / `ensures` on functions, `invariant` on `while` **and** `for in` loops and on structs, `decreases` termination measures, and `old(e)` for a parameter's entry value; runtime asserts at `--debug`, forced either way with `--contract-checks` / `--no-contract-checks` (`decreases` is static-only — there is nothing for a runtime check to assert)
+- `requires` / `ensures` on functions, `invariant` on `while` **and** `for in` loops and on structs, `decreases` termination measures, and `old(e)` for a parameter's entry value; runtime asserts for `requires`/`ensures` in every build and for loop invariants at `--debug` (2026-11-09; before that all three asserted at `--debug` only), forced either way with `--contract-checks` / `--no-contract-checks` (`decreases` is static-only — there is nothing for a runtime check to assert)
 - The compiler rejects violations it can see statically
 - **`milo prove`** discharges obligations with **z3**, the only solver (a runtime requirement: `brew install z3` / `apt install z3`); `--emit-smt` prints SMT-LIB2 instead of solving; `--all` includes imported stdlib
 - Loop invariants proved by induction, on both loop forms. A `for` loop needs no invariant about its own index: the range supplies `lo <= i < hi` inside the body and the invariant is carried to the final index on exit

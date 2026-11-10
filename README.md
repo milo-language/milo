@@ -84,7 +84,7 @@ $ milo prove clamp.milo
   ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
 ```
 
-Fix the line and the same command reports `✓ [postcondition] clamp: proven`. The vocabulary is close to SPARK's: `requires`, `ensures`, loop and struct `invariant`, `decreases` for termination, `old(e)`. It's discharged by z3 (a runtime requirement of `milo prove`: `brew install z3` / `apt install z3`).
+Fix the line and the same command reports `✓ [postcondition] clamp: proven`. The vocabulary is close to SPARK's: `requires`, `ensures`, loop and struct `invariant`, `decreases` for termination, `old(e)`. It's discharged by z3 (a runtime requirement of `milo prove`: `brew install z3` / `apt install z3`). A contract you have not proven is still checked: `requires` and `ensures` assert at runtime in every build, release included (`--no-contract-checks` opts out).
 
 Proof is practical here because of the reference rule above. Proving a function correct is hard in C and C++ because any pointer might alias any other. In Milo nothing outside a function can point into its values, so a call can change only what its `&mut` arguments name. The verifier needs no separation logic and no aliasing annotations. This is the same reason SPARK proofs scale, and it comes from the memory model rather than a verification dialect bolted on top.
 

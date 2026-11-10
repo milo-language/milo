@@ -546,7 +546,7 @@ Functions can declare preconditions (`requires`), postconditions (`ensures`), lo
 
 Contracts and `assert` conditions also take the implication operator `a ==> b` ("if `a` then `b`"): true when `a` is false, otherwise `b`. It binds looser than every other boolean operator and is right-associative, so `a && b ==> c ==> d` is `(a && b) ==> (c ==> d)`. Both sides are `bool`. It short-circuits like `!a || b`, so `b` is not evaluated when `a` is false (`requires n != 0 ==> 10 / n > 1` never divides by zero), and the prover reads it as SMT `=>`. In code outside a contract or `assert` it is an error: use `if` or `!a || b`.
 
-In debug builds (`--debug`), contracts are asserted at runtime: `requires` at function entry, `ensures` at every return, and `invariant` at each iteration (for a `while` loop that is the condition block, so entry, every iteration, and exit; a `for` loop checks the top of each iteration). `decreases` has no runtime meaning — it is discharged statically. A violation prints `runtime error: <kind> clause violated at file:line` and exits with code 1. Release builds compile contracts out entirely. Call-site `requires` violations with compile-time-constant arguments are still rejected at compile time.
+Contracts are asserted at runtime. `requires` at function entry and `ensures` at every return assert in every build, release included. A loop `invariant` is per-iteration work, so it asserts only in debug builds (`--debug`): at each iteration (for a `while` loop that is the condition block, so entry, every iteration, and exit; a `for` loop checks the top of each iteration). `decreases` has no runtime meaning — it is discharged statically. A violation prints `runtime error: <kind> clause violated at file:line` and aborts (exit status 134). `--contract-checks` asserts loop invariants at any optimization level; `--no-contract-checks` compiles every contract assert out. Call-site `requires` violations with compile-time-constant arguments are still rejected at compile time.
 
 ```milo
 fn clamp(value: i64, lo: i64, hi: i64): i64
@@ -714,14 +714,14 @@ constructor that builds a short `prg` is refuted; a mutator that could break the
 cannot be shown not to is reported as unknown, and every proof that leaned on the invariant
 is then marked conditional.
 
-Use `milo prove file.milo` to discharge contracts with z3 (required at runtime: `brew install z3` / `apt install z3`; `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). Contracts are not emitted at `-O1`+; `--debug` and `--contract-checks` turn them into runtime asserts.
+Use `milo prove file.milo` to discharge contracts with z3 (required at runtime: `brew install z3` / `apt install z3`; `--emit-smt` to print the raw SMT-LIB2 conditions instead of solving them). A contract `milo prove` has not discharged is still a runtime assert: `requires`/`ensures` at every `-O`, loop invariants under `--debug` or `--contract-checks`.
 
-That makes a `requires` on a function whose body enters `unsafe` a guard that the
-default build removes, and past `unsafe` there is nothing else: an out-of-contract length
-reaches C as-is. The rule the standard library follows is that such a function checks the
-same values in its body too, returning an `Err` when the value could come from outside the
-program (a peer's tag length) and asserting when it could not (a handle the caller
-minted). `--deny=unchecked-ffi-contract` promotes an off-by-default warning that lists
+`--no-contract-checks` removes those asserts, so a `requires` on a function whose body enters `unsafe` is a guard that
+not every build has, and past `unsafe` there is nothing else: an out-of-contract length
+reaches C as-is. The rule the standard library follows: a value that could come from outside the
+program (a peer's tag length) is not a `requires` at all, because a failed `requires` aborts;
+the function checks it and returns an `Err`. A `requires` is for what only a bug in the caller
+can break (a handle the caller minted), and such a function asserts the same values in its body too. `--deny=unchecked-ffi-contract` promotes an off-by-default warning that lists
 every `unsafe`-bodied function whose `requires` names parameters no `if` or `assert` in
 the body mentions; `std/crypto` and `std/pool` each carried one before it existed. Use `milo safety file.milo --safety=do178c-a` to check against domain-specific safety profiles (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304).
 

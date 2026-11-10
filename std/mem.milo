@@ -204,7 +204,6 @@ var nextBumpId: i64 = 1
 
 // Create a new bump allocator with the given capacity in bytes.
 fn bumpNew(capacity: i64): Result<Bump>
-requires capacity > 0
 {
     if capacity <= 0 {
         return Result.Err("bump: capacity must be positive, got " + capacity.toString())
@@ -224,7 +223,6 @@ requires capacity > 0
 // Allocate size bytes from the bump allocator (8-byte aligned), zeroed.
 // Returns Err if it doesn't have enough space.
 fn bumpAlloc(a: &mut Bump, size: i64): Result<BumpSpan>
-requires size > 0
 // The invariant the overflow broke, and the one `a._used <= a._cap` cannot catch on its
 // own: a wrapped-negative `used` is still <= cap. Reported `unknown` rather than proven
 // because `aligned` is computed with a bitwise mask, which the solver does not model.
@@ -296,14 +294,12 @@ impl Bump {
     // Create a bump allocator over `capacity` bytes of heap. The whole region is freed
     // when the Bump drops.
     fn new(capacity: i64): Result<Bump>
-    requires capacity > 0
     {
         return bumpNew(capacity)
     }
     // Bump-allocate `size` zeroed bytes (8-byte aligned) and return the span naming
     // them. Errs when the region is full.
     fn alloc(self: &mut Self, size: i64): Result<BumpSpan>
-    requires size > 0
     {
         return bumpAlloc(&mut self, size)
     }

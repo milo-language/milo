@@ -20,6 +20,7 @@ import { TypeChecker, type CheckResult } from "./checker";
 import { armAstOracle } from "./ast-oracle";
 import { applyRewrites } from "./apply-rewrites";
 import { MlirPlan, mlirClang, sanitizerKind } from "./mlir-backend";
+import type { ContractChecks } from "./emit-mlir";
 import { backendProgram } from "./backend-program";
 import { decodeChecked, encodeChecked } from "./checked-dump";
 import { runInterp, interpOptions } from "./interp-run";
@@ -318,7 +319,17 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
   console.log(`${filePath}: ok`);
 }
 
-function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): string {
+// What a build asserts when neither --contract-checks nor --no-contract-checks is given.
+// requires/ensures assert at every -O: a contract nobody ran `milo prove` on would otherwise
+// be a comment in the binary that ships. Loop invariants are per-iteration work in the
+// hottest code a program has, so they assert at -O0 only (a violated one that matters
+// surfaces as a violated ensures).
+function contractLevel(force: boolean | null, optFlag: string): ContractChecks {
+  if (force !== null) return force ? "all" : "none";
+  return optFlag === "-O0" ? "all" : "boundary";
+}
+
+function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks: ContractChecks = "none", stripPanicLocations = false, sanitize = false): string {
   return compileWithGuards(source, target, filePath, warningConfig, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize).ir;
 }
 
@@ -533,7 +544,7 @@ function parseAndCheck(src: string, target: TargetInfo, filePath: string, warnin
 // `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
 // neither), see ModuleCtx.cDeclGuards. It rides alongside the IR because only the layout
 // that built the module knows the field offsets and return widths it asserts.
-function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
+function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks: ContractChecks = "none", stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const prog = frontendToProgram(source, target, filePath, warningConfig);
   const plan = new MlirPlan(prog, target, { filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize });
   const ir = phase("mlir", () => plan.compile());
@@ -704,7 +715,7 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
   }
 }
 
-function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false) {
+function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks: ContractChecks = "none", stripPanicLocations = false, sanitize = false) {
   const source = readFileSync(sourcePath, "utf-8");
   const ir = compile(source, target, sourcePath, warningConfig, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
   if (outputPath) {
@@ -780,7 +791,7 @@ function emitMlir(sourcePath: string, outputPath: string | null, target: TargetI
     applyRewrites(c.result);
     prog = backendProgram(c.program, c.result, dirname(resolve(sourcePath)), target.os, target.arch);
   } else prog = frontendToProgram(source, target, sourcePath, warningConfig);
-  const plan = new MlirPlan(prog, target, { filePath: sourcePath, trapOnOverflow: false, emitDebug: false, contractChecks: false, stripPanicLocations: false, sanitize: false });
+  const plan = new MlirPlan(prog, target, { filePath: sourcePath, trapOnOverflow: false, emitDebug: false, contractChecks: "none", stripPanicLocations: false, sanitize: false });
   if (all) { emitText(plan.moduleText(), outputPath); return; }
   // Entry-file functions are stamped with the entry path by the resolver; injected libc
   // externs carry no stamp, so require an exact match.
@@ -1178,7 +1189,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
 function compileToObj(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, noEntry = false, forceOverflowChecks: boolean | null = null, forceContractChecks: boolean | null = null): string {
   const source = readFileSync(sourcePath, "utf-8");
   const trapOnOverflow = forceOverflowChecks ?? true;
-  const contractChecks = forceContractChecks ?? (optFlag === "-O0");
+  const contractChecks = contractLevel(forceContractChecks, optFlag);
   const { ir, cGuards, linkLibs, nonConstGlobals } = compileWithGuards(source, target, sourcePath, warningConfig, trapOnOverflow, false, contractChecks);
   // `--no-entry` strips `@main`, and `@main` is the only caller of the generated
   // `@__milo.global_init`, which fills the globals nothing reads (a global something
@@ -1458,7 +1469,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   // what the machine does to your arithmetic, a contract is a claim you wrote down. A
   // release build that keeps its `requires` checks is a normal thing to want, and so is
   // an -O0 build that skips them while you chase an overflow.
-  const contractChecks = forceContractChecks ?? (optFlag === "-O0");
+  const contractChecks = contractLevel(forceContractChecks, optFlag);
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
@@ -1900,12 +1911,12 @@ async function hotCommand(sourcePath: string, args: string[], target: TargetInfo
   const tc = detectToolchain();
   cguOverride = 1;
   const trap = overflowChecks ?? true;
-  const contracts = contractChecks ?? true;
+  const contracts: ContractChecks = contractChecks === false ? "none" : "all";
   const frontendOk = <T>(fn: () => T): T | null => {
     try { return withThrowingDiagnostics(fn); } catch (e) { if (e instanceof CompileFailure) return null; throw e; }
   };
   return runHot(args, {
-    buildHost: (outBin) => frontendOk(() => compileToBinary(sourcePath, outBin, target, "-O0", warningConfig, [], false, false, null, trap, false, contracts, false, true)) !== null,
+    buildHost: (outBin) => frontendOk(() => compileToBinary(sourcePath, outBin, target, "-O0", warningConfig, [], false, false, null, trap, false, contracts !== "none", false, true)) !== null,
     compileIR: () => frontendOk(() => compile(readFileSync(sourcePath, "utf-8"), target, sourcePath, warningConfig, trap, false, contracts)),
     files: () => lastResolvedFiles,
     cc: tc.path,
@@ -2570,7 +2581,7 @@ async function main() {
     process.exit(code);
   } else if (cmd === "emit-ir") {
     const trapOnOverflow = overflowChecks ?? true;
-    const emitContractChecks = contractChecks ?? (optFlag === "-O0");
+    const emitContractChecks = contractLevel(contractChecks, optFlag);
     compileToIr(source!, output, target, warningConfig, trapOnOverflow, emitDebug, emitContractChecks, stripPanicLocations, sanitize);
   } else if (cmd === "emit-obj") {
     const t0 = Date.now();

@@ -210,11 +210,11 @@ gave each a constructor in its own module (`WsConn.view`, `Task.raw`, `AtomicBoo
 
 ## Contract Verification Gaps
 
-Contracts (`requires`/`ensures`/`invariant`) are parsed, type-checked, enforced at call sites for compile-time-constant args, and asserted at runtime in debug builds: `requires` at entry, `ensures` at every return (`result` bound), `invariant` at the loop header (entry, every back-edge, exit). Violations print `runtime error: <kind> clause violated at file:line` and exit 1. Release builds compile contracts out.
+Contracts (`requires`/`ensures`/`invariant`) are parsed, type-checked, enforced at call sites for compile-time-constant args, and asserted at runtime: `requires` at entry, `ensures` at every return (`result` bound), `invariant` at the loop header (entry, every back-edge, exit). Violations print `runtime error: <kind> clause violated at file:line` and abort (exit status 134). Release builds keep the `requires`/`ensures` asserts and drop the loop-invariant ones; `--contract-checks` / `--no-contract-checks` force all or none.
 
 `milo prove` now discharges a bounded linear-integer fragment through SMT, and constant-argument precondition violations are ordinary compile errors. Remaining gaps:
 
-- **Unknown proofs leave release builds unprotected.** Nonlinear/bitwise expressions, collection lengths reached through builders, and richer struct invariants report `unknown`; debug builds still assert them, while release compiles contracts out.
+- **Unknown proofs fall back to runtime checks, except loop invariants in release builds.** Nonlinear/bitwise expressions, collection lengths reached through builders, and richer struct invariants report `unknown`; every build still asserts the `requires`/`ensures` among them; a loop invariant asserts only under `--debug` or `--contract-checks`.
 - **Loop/heap reasoning is bounded.** Rich inductive invariants, aliasing heap state, and general functional correctness remain outside the prover's supported fragment.
 - **No opt-in release assertion mode.** An explicit `--contracts=on` mode would preserve unknown clauses in production when policy requires it.
 

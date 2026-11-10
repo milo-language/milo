@@ -34,8 +34,11 @@ export function interpOptions(args: string[], source: string, contractChecks: bo
   const schedule = sched === undefined ? undefined : sched.split(",").filter(x => x !== "").map(x => Number(x));
   if (schedule && schedule.some(n => !Number.isInteger(n) || n < 0)) { console.error("error: --schedule needs comma-separated non-negative integers"); process.exit(1); }
   return {
-    // exploring and replaying check contracts like a debug build, so a finding reproduces with the command it prints
-    contractChecks: contractChecks ?? (args.includes("--debug") || explore || !!schedule),
+    // The same defaults as a build (contractLevel in main.ts), so the interpreter stays the oracle for
+    // a default build: requires/ensures always, loop invariants as at -O0. Exploring and replaying check
+    // everything, so a finding reproduces with the command it prints.
+    contractChecks: contractChecks ?? true,
+    loopInvariantChecks: contractChecks ?? (args.includes("--debug") || args.includes("-O0") || explore || !!schedule),
     entryFile: source,
     hostFs: args.includes("--host-fs"),
     schedule,

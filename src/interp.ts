@@ -550,7 +550,7 @@ export class Interp {
   }
   // R-CONTRACT-LOOP: a while loop's invariants are checked before its condition each time (so on exit too); a for loop's at the top of each iteration.
   checkInvariants(invs: Contract[] | undefined): void {
-    if (!this.contractChecks) return;
+    if (!this.loopInvariantChecks) return;
     for (const c of invs ?? []) if (c.kind === "invariant") this.checkClause(c);
   }
   // R-CONTRACT-FAIL
@@ -1196,8 +1196,10 @@ export class Interp {
     return step.value;
   }
   coMode = false;
-  // R-CONTRACT-ENTRY: requires / ensures / loop invariants are checked only when asked, as a debug build checks them
+  // R-CONTRACT-ENTRY: requires / ensures are checked only when asked (`milo interp` asks by default, as a build does)
   contractChecks = false;
+  // R-CONTRACT-LOOP: loop invariants are their own switch, on where a build has them on (-O0 or --contract-checks)
+  loopInvariantChecks = false;
   entryFile = "";
 
   methodCall(e: MethodE): Value {

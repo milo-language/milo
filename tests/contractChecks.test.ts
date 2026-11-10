@@ -1,11 +1,13 @@
-// `--contract-checks`: requires/ensures/invariant assert at ANY optimization level,
-// independently of `--overflow-checks`.
+// Which contract clauses assert at runtime. requires/ensures assert in every build; loop
+// invariants at -O0 only; `--contract-checks` forces all of them at any optimization level
+// and `--no-contract-checks` none, both independently of `--overflow-checks`.
 //
 // The two used to be one switch, so `--overflow-checks` silently turned contract asserts
 // on and `--no-overflow-checks` silently turned them off. They answer different questions
-// — what the machine does to your arithmetic vs a claim you wrote down — so the pairing
+// (what the machine does to your arithmetic vs a claim you wrote down), so the pairing
 // is asserted in BOTH directions here: a release build with only `--overflow-checks` must
-// NOT assert contracts, and a debug build with `--no-overflow-checks` must still do so.
+// NOT assert loop invariants, and a debug build with `--no-overflow-checks` must still
+// assert contracts.
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
@@ -111,10 +113,33 @@ function run(bin: string): { out: string; code: number } {
   }
 }
 
-test("release build drops contract asserts by default", () => {
+test("release build asserts requires by default", () => {
   build("rel", ["--release"]);
   const r = run("rel");
+  expect(r.code).not.toBe(0);
+  expect(r.out).toContain("requires clause violated");
+}, 120000);
+
+test("--no-contract-checks drops the asserts in a release build", () => {
+  build("relUnchecked", ["--release", "--no-contract-checks"]);
+  const r = run("relUnchecked");
   expect(r.code).toBe(0);
+}, 120000);
+
+// The loop runs 3 or 4 times and its invariant fails on the third, so a clean exit can only
+// mean the invariant was not asserted.
+test("release build does not assert a loop invariant by default", () => {
+  build("forinRel", ["--release"], "forin.milo");
+  const r = run("forinRel");
+  expect(r.code).toBe(0);
+  expect(r.out).toMatch(/^[34]\n$/);
+}, 120000);
+
+test("--contract-checks asserts a loop invariant in a release build", () => {
+  build("forinRelChecked", ["--release", "--contract-checks"], "forin.milo");
+  const r = run("forinRelChecked");
+  expect(r.code).not.toBe(0);
+  expect(r.out).toContain("invariant clause violated");
 }, 120000);
 
 test("--contract-checks asserts in a release build", () => {
@@ -130,8 +155,8 @@ test("--no-contract-checks drops the asserts in a debug build", () => {
   expect(r.code).toBe(0);
 }, 120000);
 
-test("--overflow-checks alone does not turn contract asserts on", () => {
-  build("relOvf", ["--release", "--overflow-checks"]);
+test("--overflow-checks alone does not turn loop invariant asserts on", () => {
+  build("relOvf", ["--release", "--overflow-checks"], "forin.milo");
   const r = run("relOvf");
   expect(r.code).toBe(0);
 }, 120000);
@@ -159,8 +184,8 @@ test("emit-ir honors explicit overflow-check settings", () => {
   expect(unchecked).not.toContain("llvm.smul.with.overflow.i64");
 }, 120000);
 
-test("old() snapshots the entry value in a contract-checking build", () => {
-  build("oldChecked", ["--debug"], "old.milo");
+test("old() snapshots the entry value, release builds included", () => {
+  build("oldChecked", ["--release"], "old.milo");
   const r = run("oldChecked");
   // `drift` adds one more than it promised, so the FIRST ensures passes and the second
   // aborts — proving the snapshot is a real pre-state and not just the current value
@@ -171,10 +196,10 @@ test("old() snapshots the entry value in a contract-checking build", () => {
 }, 120000);
 
 test("old() costs nothing when contracts are not checked", () => {
-  build("oldRelease", ["--release"], "old.milo");
+  build("oldRelease", ["--release", "--no-contract-checks"], "old.milo");
   const r = run("oldRelease");
   expect(r.code).toBe(0);
-  const ir = execFileSync("bun", ["run", MAIN, "emit-ir", join(dir, "old.milo"), "--release"],
+  const ir = execFileSync("bun", ["run", MAIN, "emit-ir", join(dir, "old.milo"), "--release", "--no-contract-checks"],
     { cwd: ROOT, encoding: "utf-8", maxBuffer: IR_BUF, stdio: ["pipe", "pipe", "pipe"] });
   expect(ir).not.toContain("contract_kind_ensures");
 }, 120000);
