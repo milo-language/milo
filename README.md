@@ -4,6 +4,11 @@
 
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
+- **Safe without lifetimes.** References are parameters only, so there is nothing to annotate and nothing to collect. [Why that works](#second-class-references)
+- **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
+- **Traced to the binary.** A requirement ID follows a function to its proof, its tests and the address ranges it became in the object file. [How](#from-requirement-to-object-code)
+- **Fast.** Trades wins with Rust across five benchmarks, with overflow checks left on. [Numbers](#performance)
+
 ```milo
 from "std/http" import { Context, Response, Router, serveRouter }
 
@@ -64,9 +69,9 @@ The ownership checker settles everything inside one function. It never consults 
 
 Same memory-safety guarantees as Rust wherever both languages can express the program, plus concurrency without `Send` / `Sync` (a value that cannot hold a borrow moves to another task as is).
 
-## Proved, not just tested
+## Proven or checked
 
-Contracts are part of the language, and `milo prove` checks them for every input, not the ones you thought to test:
+Contracts are part of the language, and every one is either proven or checked. `milo prove` settles a contract for every input, not the ones you thought to test:
 
 ```milo
 fn clamp(x: i64, lo: i64, hi: i64): i64
@@ -92,7 +97,9 @@ Proof is practical here because of the reference rule above. Proving a function 
 
 It also fits agent-written code. Write the contract, and let the agent loop on `milo prove --json` until every condition is proven. You review a few lines of spec instead of the whole implementation, and a counterexample is a concrete input it can fix against.
 
-For safety-critical work, `milo safety --safety=do178c-a` (also ISO 26262, IEC 61508/62304, NASA profiles) checks the source against a certification profile, and `milo wcet` emits loop-bound flow facts for OTAWA timing analysis.
+Not there yet, said plainly: overflow, out-of-bounds indexing and division by zero are trapped at runtime, and `milo prove --rte` proves them absent site by site, but today that covers about a third of the sites in the standard library and embedded examples, so it is opt-in. There are no quantifiers, so "this Vec is sorted" can't be stated yet. Both are next on the [verification roadmap](docs/verification-roadmap.md).
+
+## From requirement to object code
 
 Requirements trace all the way to object code. Tag a function `@req(LLR-1)` and `milo trace` reports, per requirement, the function, whether its contract is proven, the tests that cover it, and the address ranges it became in the binary:
 
@@ -115,7 +122,7 @@ LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step
 
 `milo trace-object --strict` goes the other way and fails on any instruction that maps to no source line and no language rule (bounds check, overflow trap, contract check, drop). The [PID controller demo](examples/assured/pid/README.md) is the worked example. Not built yet: MC/DC measured on the object code, and translation validation of the compiler itself.
 
-Not there yet, said plainly: overflow, out-of-bounds indexing and division by zero are trapped at runtime, and `milo prove --rte` proves them absent site by site, but today that covers about a third of the sites in the standard library and embedded examples, so it is opt-in. There are no quantifiers, so "this Vec is sorted" can't be stated yet. Both are next on the [verification roadmap](docs/verification-roadmap.md).
+For certification work, `milo safety --safety=do178c-a` (also ISO 26262, IEC 61508/62304, NASA profiles) checks the source against a profile, and `milo wcet` emits loop-bound flow facts for OTAWA timing analysis. The tools produce evidence; none of them is a qualified tool under DO-330.
 
 ## What you give up
 

@@ -3,7 +3,7 @@ system: design-insights
 purpose: durable arguments and framings for external writing about Milo (talks, posts, README)
 key-files: docs/ownership-model.md, docs/memory-safety-vs-rust.md, docs/concurrency-safety.md, src/checker.ts
 update-when: a design argument is validated or falsified by shipped work, or a claim here goes stale
-last-verified: 2026-10-08
+last-verified: 2026-11-09 (proven-or-checked entry added; earlier entries not re-checked)
 -->
 
 # Design Insights
@@ -73,3 +73,23 @@ assumes least. `checkThreadBoundary` deliberately stops at a `@synchronized` bou
 than modelling what `Once` does internally. Modelling the primitive would be more precise
 and would break the first time a primitive changed. Stopping at a declared boundary is
 weaker, and it means a new synchronization type only has to declare itself.
+
+## Proven or checked: a contract has no third state
+
+The pitch for contracts is not "Milo has a prover". It is that a clause on a signature is
+never decoration. `milo prove` either proves it for every input or returns the input that
+breaks it, and a clause it has not proven asserts at the call in every build, release
+included. So a reader of a signature knows the clause held on every call that returned,
+whether or not anyone ran the prover.
+
+This is what makes the proof worth having rather than a second opinion: once a clause is
+proven the check can go, and the Lean model in `proofs/` shows that removing it changes no
+run (`level_irrelevant`). Without the default checks, an unproven `ensures` would be a
+comment that happens to parse, and "contracts" would mean whatever the last debug build
+exercised.
+
+Falsifiers: a default build that returns from a call whose `ensures` was false
+(`mlir/test/programs/contractsDefault.milo` is the program that would show it), or a rule
+the verifier uses that the Lean model does not have. Known hole, stated wherever this is
+pitched: struct `invariant` clauses are proved but have no run-time check, and overflow and
+bounds are trapped, not proven, on about two thirds of sites.
