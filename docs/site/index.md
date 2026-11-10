@@ -4,8 +4,8 @@ title: The Milo Programming Language
 titleTemplate: false
 hero:
   name: Milo
-  text: "A systems language for code you can audit, whoever wrote it."
-  tagline: "Memory-safe with no lifetimes and no GC. Contracts proven or checked. Requirements traced to object code, and back."
+  text: "An auditable systems language."
+  tagline: "Requirements traceable through source, tests and object code. Contracts proven or checked. Memory-safe, with no lifetimes and no GC."
   image:
     src: /logo.svg
     alt: Milo
@@ -19,10 +19,10 @@ hero:
 ---
 <!-- doc-meta
 system: site-landing
-purpose: the milo-language.github.io home page: pitch (the assurance process as compiler commands), the language, showcase
+purpose: the milo-language.github.io home page: pitch (requirements traceability built into the compiler), the language, showcase
 key-files: docs/site/.vitepress/config.mts, docs/site/.vitepress/theme
 update-when: the pitch changes, a showcase project is added or retired, or the carousel snippets change
-last-verified: 2026-11-09 (pitch: audit whoever wrote it, process table; showcase cut to one grid of original work)
+last-verified: 2026-11-09 (pitch: auditable systems language, requirements traceability, separate-tools contrast, HLR and LLR shown; one showcase grid)
 -->
 
 <div class="install-line">
@@ -35,21 +35,37 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
 
 <div class="whatis">
 
-## Who checks the code?
+## Requirements traceability
 
-Agents write code faster than anyone can review it, and you can't take their word that it is right. Flight software has never run on trust in the author. DO-178C asks for evidence instead: requirements, code that traces to them, tests written from them, and a binary with nothing in it that traces to neither.
+A requirement is a statement of what the software must do, written so that it can be tested. Bidirectional traceability means every requirement links to the code and tests that satisfy it, and every function, test and instruction in the binary links back to a requirement. Nothing required is missing, and nothing is there without a reason.
 
-Done by hand, that process is slow and expensive. In Milo each step is a compiler command, so it runs on every change, whoever or whatever wrote it. A requirement is one line of `requirements.json`:
+Safety-critical software is built this way, to standards such as DO-178C in avionics. The process is robust because no single person is a single point of failure. Requirements, code and tests are written and reviewed independently and checked against each other, so a mistake in one is caught by another.
 
-<div class="wrap-output">
+On most projects each part of the trace lives in a different tool. Requirements are in a requirements database such as DOORS. The link to source is a requirement ID in a comment or a docstring. Tests and coverage come from other tools, and object code is analysed separately. None of this is part of the language, so every team writes its own scripts to connect the tools and keep them in sync.
+
+Milo makes the whole trace part of the language and the compiler: requirements, source, proofs, tests and object code, in both directions. It works the same for code written by a person or by an AI agent.
+
+Requirements are entries in `requirements.json`. A high-level requirement (HLR) says what the system must do. A low-level requirement (LLR) says how the software does it, and names the high-level requirement it comes from as its `parent`:
+
+<div class="wide-output">
 
 ```json
-{ "id": "LLR-1", "parent": "HLR-1", "text": "Every command is clamped to [outLo, outHi] on its way out of the PID step." }
+[
+  {
+    "id": "HLR-1",
+    "text": "The actuator command shall always lie within the configured output range."
+  },
+  {
+    "id": "LLR-1",
+    "parent": "HLR-1",
+    "text": "Every command is clamped to [outLo, outHi] on its way out of the PID step."
+  }
+]
 ```
 
 </div>
 
-The code names the requirement it implements, and states it as a contract:
+A function is tagged with the requirement it implements. A contract states the requirement formally:
 
 ```milo
 @req(LLR-1)
@@ -64,48 +80,53 @@ ensures result >= lo && result <= hi
 }
 ```
 
-`milo trace` follows the requirement down to its code, the bytes that code became, its proof and its tests:
+`milo trace` prints the trace for each requirement: source, object code, proofs and tests. Low-level requirements are listed under the high-level requirement they come from. This is HLR-1 and LLR-1 (HLR-1 has a second low-level requirement, LLR-3, not shown):
 
 <div class="wide-output">
 
 ```
 $ milo trace pid.milo --strict --object pid
-LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
-  implemented   pid.milo:27 clampI32
-  implemented   pid.milo:44 pidStep
-  object        0x100000680-0x1000006b0 (48 B) clampI32  lines 28-32
-  object        0x1000006c0-0x100000848 (392 B) pidStep  lines 32-68
-  object        0x1000008b4-0x1000008d8 (36 B) nextIntegral  lines 32-32
-  object        0x100000900-0x100000918 (24 B) clampInput  lines 32-32
-  object        0x10000097c-0x100000998 (28 B) controlTick  lines 32-32
-  formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
-  formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
-  verified      PROOF     2 formalizing clauses PROVEN
-  verified      PASS      pid_test.milo:7 testClampKeepsValueInRange
+HLR-1  The actuator command shall always lie within the configured output range.
+  implemented   (through LLR-1, LLR-3)
+  formalized    PROVEN   pid.milo:97 ensures result >= 0 && result <= 16711680  [controlTick]
   verified      PASS      pid_test.milo:15 testStepOutputWithinRange
+
+  LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
+    implemented   pid.milo:27 clampI32
+    implemented   pid.milo:44 pidStep
+    object        0x100000680-0x1000006b0 (48 B) clampI32  lines 28-32
+    object        0x1000006c0-0x100000848 (392 B) pidStep  lines 32-68
+    object        0x1000008b4-0x1000008d8 (36 B) nextIntegral  lines 32-32
+    object        0x100000900-0x100000918 (24 B) clampInput  lines 32-32
+    object        0x10000097c-0x100000998 (28 B) controlTick  lines 32-32
+    formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
+    formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
+    verified      PROOF     2 formalizing clauses PROVEN
+    verified      PASS      pid_test.milo:7 testClampKeepsValueInRange
+    verified      PASS      pid_test.milo:15 testStepOutputWithinRange
 ```
 
 </div>
 
-`milo trace-object --strict` goes back up: it fails on any instruction in the binary that maps to no source line and no language rule (bounds check, overflow trap, contract check, drop).
+`milo trace-object --strict` checks the other direction. Every instruction in the binary must map to a source line or to a language rule (bounds check, overflow trap, contract check, drop).
 
-## The process, as commands
+## Commands for each activity
 
-| The process asks for | In Milo |
+| Activity | Command |
 |---|---|
-| Requirements under change control | `milo spec --diff` fails when a requirement or a contract is weakened, until a person signs it off. An agent can't pass by editing the spec. |
-| Code that traces to a requirement | `@req` on the function. `milo trace --strict` fails on a function that traces to none. |
-| Every requirement verified | A contract `milo prove` proves for every input, or a passing test tagged with the requirement. |
-| Tests written from the requirement | `milo spec --packet` writes signatures and contracts with no bodies, for a test author who never sees the code. |
-| Tests that reach the code | `milo trace --coverage` measures line coverage of the implementing code. |
-| Object code that traces to source | `milo trace --object` down, `milo trace-object --strict` back up. |
-| What a tool can't check | `milo evidence` records a review or a bench run, and marks it stale when the requirement or its code changes. |
+| Requirements change control | `milo spec --diff` fails when a requirement or contract is weakened, until a person signs off the change. |
+| Source traces to requirements | `milo trace --strict` fails on a function with no `@req`. |
+| Requirements verification | `milo prove` proves the contract for all inputs, or a test tagged with the requirement passes. |
+| Requirements-based tests | `milo spec --packet` exports signatures and contracts without function bodies, so tests can be written without seeing the implementation. |
+| Structural coverage | `milo trace --coverage` reports line coverage of the implementing code. |
+| Source to object code traceability | `milo trace --object` and `milo trace-object --strict`. |
+| Reviews and manual tests | `milo evidence` records the result and marks it stale when the requirement or its code changes. |
 
-Not built: branch and MC/DC coverage, and translation validation of the compiler. No Milo tool is qualified under DO-330, so this is evidence for a certification effort and not a certificate. [How Milo is checked](/language/assurance) lists every layer, built and planned.
+Not built yet: branch and MC/DC coverage, and translation validation of the compiler. The tools are not qualified under DO-330. [How Milo is checked](/language/assurance) lists what is built and what is planned.
 
 ## Proven or checked
 
-`milo prove` hands a contract to an SMT solver, which proves it for every input or returns the input that breaks it:
+`milo prove` checks a contract with an SMT solver. It either proves the contract for all inputs or prints a counterexample:
 
 ```milo
 fn clamp(x: i64, lo: i64, hi: i64): i64
@@ -127,17 +148,17 @@ $ milo prove clamp.milo
 
 </div>
 
-A clause that is not proven is still enforced: `requires` and `ensures` assert at run time in every build, release included. What "proven" means is itself machine-checked: a [Lean proof](https://github.com/milo-language/milo/tree/main/proofs) of the contract rules shows that a proven program never fails a contract clause, and that removing its run-time checks changes nothing.
+Contracts that are not proven are checked at run time: `requires` and `ensures` assert in every build, including release. The proof rules have a [Lean proof](https://github.com/milo-language/milo/tree/main/proofs) of soundness: a proven program never fails a contract check, so the checks can be removed from it.
 
-## Why it takes a new language
+## Second-class references
 
-References in Milo are *second-class*: `&T` and `&mut T` exist only as function parameters. You can't return one, store one in a struct, or keep one past the call.
+References in Milo are *second-class*: `&T` and `&mut T` can only be function parameters. A reference can't be returned, stored in a struct, or kept after the call.
 
-A reference that only travels down the call stack can't outlive its owner, so there are no lifetime annotations and no garbage collector. Nothing outside a function can point into its values, so `&mut x` at a call site is the full blast radius of a mutation. That is why the prover needs no aliasing annotations, and why a reviewer needs one function and the signatures it calls, not the rest of the program.
+A reference therefore can't outlive the value it points to, so Milo needs no lifetime annotations and no garbage collector. A function can only modify what is passed to it as `&mut`, and that is visible at the call site: `f(&mut x)`. This makes proofs simpler, because the prover needs no aliasing annotations, and it makes review simpler, because a function can be read without the rest of the program.
 
-**What you give up:** returning or storing a view. Use an index, a `Span`, an owned copy, or an [arena handle](/stdlib/arena). The tie between a stored offset and its buffer becomes a named runtime check where Rust's lifetime is a compile error ([why that trade](/language/why-no-lifetimes)).
+**The cost:** a function can't return or store a view into someone else's data. Use an index, a `Span`, an owned copy, or an [arena handle](/stdlib/arena) instead. Some mistakes that Rust rejects at compile time, such as using a stale offset into a buffer, are run-time checks in Milo ([details](/language/why-no-lifetimes)).
 
-Same memory-safety guarantees as Rust wherever both languages can express the program. 250k+ lines of Milo so far; nearly every `unsafe` block is the C boundary, and none exist because the ownership model said no ([the full matrix](/language/vs-rust)).
+Memory safety matches Rust for programs both languages can express ([comparison](/language/vs-rust)). There are 250k+ lines of Milo so far, and almost all `unsafe` blocks in them are calls into C.
 
 </div>
 
@@ -218,7 +239,7 @@ fn main() {
 <div class="showcase">
   <div class="showcase-head">
     <h2>Built with Milo</h2>
-    <p>Milo is young, still a puppy 🐶, and every program below is real. Building them is how we find what needs fixing.</p>
+    <p>Milo is young, still a puppy 🐶. These programs are how we test it.</p>
   </div>
   <div class="tile-grid">
       <a class="tile" href="https://github.com/milo-language/milo/tree/main/examples/games/plink">
@@ -278,7 +299,7 @@ fn main() {
         <span class="tile-copy" role="button" tabindex="0" data-cmd="milo run examples/net/weather/app.milo" title="milo run examples/net/weather/app.milo">⧉ copy run command</span>
       </a>
   </div>
-  <p class="showcase-more">Also in Milo: <a href="https://github.com/milo-language/milo-emulators">NES, SNES and Genesis emulators</a>, a <a href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">debugger for the JVM</a>, and <a href="/milo/demos">everything else</a>.</p>
+  <p class="showcase-more">Also in Milo: <a href="https://github.com/milo-language/milo-emulators">NES, SNES and Genesis emulators</a>, a <a href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">debugger for the JVM</a>, and <a href="/milo/demos">more demos</a>.</p>
 </div>
 
 <div class="section-break"></div>

@@ -329,7 +329,7 @@
 /* The trace matrix is a table in monospace: wrapping breaks its columns, so on a wide screen it
    grows past the prose column, and on a narrow one it scrolls. */
 @media (min-width: 900px) {
-  .whatis .wide-output { margin: 0 -76px; }
+  .whatis .wide-output { margin: 0 -84px; }
 }
 .showcase-more {
   margin: 1.5rem auto 0;

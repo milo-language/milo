@@ -226,8 +226,8 @@ Three traps in the paths above:
 
 ### Marketing copy lives in five places
 
-The tagline is **"A memory-safe systems language for code you can audit, whoever wrote
-it: requirements traced to object code and back, no lifetimes, no GC."** Changing it means changing all four places that carry it. Note the last entry is
+The tagline is **"An auditable, memory-safe systems language with requirements traceable
+through source, tests and object code. No lifetimes, no GC."** Changing it means changing all four places that carry it. Note the last entry is
 GitHub metadata, not a file, so grep will never find it:
 
 1. `README.md` (this repo)

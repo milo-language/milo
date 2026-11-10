@@ -1,12 +1,12 @@
 # Milo
 
-**A memory-safe systems language for code you can audit, whoever wrote it: requirements traced to object code and back, no lifetimes, no GC.**
+**An auditable, memory-safe systems language with requirements traceable through source, tests and object code. No lifetimes, no GC.**
 
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
-Agents write code faster than anyone can review it. Flight software has never run on trust in the author: DO-178C asks for requirements, code that traces to them, tests written from them, and a binary with nothing in it that traces to neither. Milo makes each of those steps a compiler command ([the process, as commands](https://milo-language.github.io/milo/#the-process-as-commands)).
+Safety-critical software is built with bidirectional traceability: every requirement links to its source, tests and object code, and everything in the binary links back to a requirement. On most projects each part lives in a different tool (a requirements database, requirement IDs in comments, separate test and coverage tools) and scripts hold them together. Milo makes the whole trace part of the language and the compiler. It works the same for code written by a person or by an AI agent. The site lists the [command for each activity](https://milo-language.github.io/milo/#commands-for-each-activity).
 
-- **Traced both ways.** A requirement ID follows a function to its proof, its tests and the address ranges it became in the object file, and every instruction in the binary maps back to a source line or a language rule. [How](#from-requirement-to-object-code)
+- **Requirements traceability.** `milo trace` links each requirement to its source, proofs, tests and object-code address ranges. `milo trace-object` checks that every instruction in the binary maps to a source line or a language rule. [How](#from-requirement-to-object-code)
 - **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
 - **Safe without lifetimes.** References are parameters only, so there is nothing to annotate and nothing to collect, and a proof needs no aliasing annotations. [Why that works](#second-class-references)
 - **Fast.** Trades wins with Rust across five benchmarks, with overflow checks left on. [Numbers](#performance)

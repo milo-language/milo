@@ -3,7 +3,7 @@ system: design-insights
 purpose: durable arguments and framings for external writing about Milo (talks, posts, README)
 key-files: docs/ownership-model.md, docs/memory-safety-vs-rust.md, docs/concurrency-safety.md, src/checker.ts
 update-when: a design argument is validated or falsified by shipped work, or a claim here goes stale
-last-verified: 2026-11-09 (proven-or-checked and process-is-the-product entries added; earlier entries not re-checked)
+last-verified: 2026-11-09 (proven-or-checked and requirements-traceability entries added; earlier entries not re-checked)
 -->
 
 # Design Insights
@@ -93,3 +93,28 @@ Falsifiers: a default build that returns from a call whose `ensures` was false
 the verifier uses that the Lean model does not have. Known hole, stated wherever this is
 pitched: struct `invariant` clauses are proved but have no run-time check, and overflow and
 bounds are trapped, not proven, on about two thirds of sites.
+
+## Lead with requirements traceability
+
+The lead pitch is "an auditable systems language", not "Rust without lifetimes".
+Safety-critical software is built to a process (DO-178C in avionics): requirements, source
+that traces to them, requirements-based tests, and object code that traces to source. The
+process does not depend on who wrote the code, so it also fits code written by AI agents.
+On most projects each part of the trace is a different tool (a requirements database,
+requirement IDs in comments or docstrings, separate test, coverage and object-code tools)
+and none of it is part of the language, so teams write scripts to connect them.
+
+Milo has a command for each activity, and each one can fail a build: `milo spec --diff`
+(requirements change control), `milo trace --strict` (source to requirements, and every
+requirement verified), `milo prove` or a tagged test (verification), `milo spec --packet`
+(requirements-based tests), `milo trace --object` and `milo trace-object --strict` (source
+to object code, in both directions). Second-class references are how this is practical: a
+proof needs no aliasing annotations, and a function can be reviewed without the rest of
+the program.
+
+Falsifiers: a function with no `@req` that `milo trace --strict` accepts; a weakened
+`ensures` that passes `milo trace --strict --spec-base <ref>` with no sign-off; an
+instruction `milo trace-object --strict` accepts that has neither a source line nor a
+language rule. Limits to state wherever this is pitched: coverage is line coverage only,
+branch and MC/DC are not built, the compiler is not validated, and the tools are not
+qualified under DO-330.

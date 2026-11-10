@@ -300,7 +300,7 @@ const stdlibSidebar = [
 
 export default defineConfig({
   title: 'Milo',
-  description: 'A memory-safe systems language for code you can audit, whoever wrote it: requirements traced to object code and back, no lifetimes, no GC',
+  description: 'An auditable, memory-safe systems language with requirements traceable through source, tests and object code. No lifetimes, no GC',
 
   base: '/milo/',
   appearance: 'dark',
