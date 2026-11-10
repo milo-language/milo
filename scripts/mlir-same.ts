@@ -162,7 +162,7 @@ async function ownership(name: string, mlirBin: string, ref: Ref): Promise<strin
     // No count from a program that exits normally means the counter was not loaded.
     if (lh.o2 === null && ref.code === 0) return "live blocks: scripts/livecount.c did not load";
     if (lh.o2 !== null && !/^-?\d+$/.test(lh.o2)) return `live blocks: scripts/livecount.c counted nothing (${lh.o2})`;
-    // -O0 (`--fast`: checks as at -O2) decides. At -O2 LLVM deletes a malloc whose block is
+    // -O0 (`--fast`: no overflow or contract checks) decides. At -O2 LLVM deletes a malloc whose block is
     // never freed and never escapes, and whether it can see that depends on inlining, which
     // differs per backend: the recorded run inlined string formatting, MLIR calls a helper. So the
     // -O2 counts can differ with identical drops (exitDivergesMoves: a string still owned at
@@ -191,7 +191,10 @@ async function interpRef(name: string): Promise<Oracle | string> {
   if (why) return why[0].replace(/^interp: /, "");
   if (r.code === 1 && !r.stdout && /error/.test(r.stderr) && !/live blocks/.test(r.stderr)) return `frontend: ${r.stderr.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n")[0]}`;
   if (r.guardKill || r.signal === "SIGKILL") return "interpreter killed (too slow or too big)";
-  const live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
+  let live = /interp: live blocks (\S+)/.exec(r.stderr)?.[1] ?? null;
+  // An aborted run has no count (S-PANIC-ABORT) and the interpreter prints "unknown" for it;
+  // from a run that exits normally "unknown" stays a finding.
+  if (live === "unknown" && r.code !== 0) live = null;
   return { code: r.code, signal: null, stdout: r.stdout, live: live === null ? undefined : { o0: live, o2: live } };
 }
 const noOracle: { name: string; why: string }[] = [];
