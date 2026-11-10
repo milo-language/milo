@@ -3,7 +3,7 @@ system: verification
 purpose: the path from sealed safety to SMT-discharged contracts, and what each stage buys
 key-files: src/checker.ts, src/verify.ts
 update-when: a verification stage ships, a discharge strategy changes, or the solver story moves
-last-verified: 2026-11-04 (z3 is the only solver; std/smt removed)
+last-verified: 2026-11-09 (rte census rerun; contract rules proved sound in proofs/)
 -->
 
 # Verification Roadmap: From Sealed Safety to Provable Properties
@@ -37,17 +37,22 @@ That set is, near enough, SPARK's — `Pre`, `Post`, `Loop_Invariant`, `Type_Inv
 overflow in fixed-width `+ - *` (not under `@wrapping`), no zero divisor and no MIN / -1 in
 integer `/ %`, and `0 <= i < len` on every index of a Vec, string or array. Each is a
 `overflow` / `division` / `bounds` condition under the path conditions that reach it. Not yet
-covered: unwrap, shifts, casts, unary minus, and any expression whose integer type is not known
-(never guessed). Silver means all of these proven, and we are not there: `bun scripts/rte-census.ts`
+covered: shifts, casts, unary minus, and any expression whose integer type is not known
+(never guessed). An `unwrap` gets a condition but there is no `Option` model yet, so it is
+always reported unknown. Silver means all of these proven, and we are not there: `bun scripts/rte-census.ts`
 (z3, `examples/embedded` + `std`, each source site counted once at its worst verdict) measured
-2026-11-03:
+2026-11-09:
 
 | kind | proven | failed | unknown |
 |---|---|---|---|
-| overflow | 165 | 361 | 1720 |
-| bounds | 166 | 280 | 1330 |
-| division | 15 | 21 | 61 |
-| total | 346 | 662 | 3111 |
+| overflow | 904 | 282 | 1054 |
+| bounds | 497 | 218 | 1015 |
+| division | 18 | 17 | 51 |
+| total | 1419 | 517 | 2120 |
+
+That is 35% of 4056 sites proven, up from 8% (346 of 4119) on 2026-11-03. A site that is not
+proven is still safe at run time: it keeps its trap. What a proof buys is knowing the trap
+cannot fire.
 
 Most unknowns are callees with no `ensures` (the result is unmodelled) and `IndexAccess` values,
 not the conditions themselves; most failures are real missing `requires`, since nothing in std
@@ -172,8 +177,8 @@ Refinement discharge is undecidable in general; SMT solvers (Z3) are the proven 
 
 The order, each step building on the last:
 
-1. **Silver, default on.** `--rte` already generates overflow, bounds, division and unwrap
-   obligations (909 proven sites across std and examples). It becomes the default once its
+1. **Silver, default on.** `--rte` already generates overflow, bounds and division
+   obligations (the census above has the proven count; unwrap waits on an `Option` model). It becomes the default once its
    unknowns stop dominating the report. Triage of the first run on real code is in
    [plans/rte-triage-2026-11.md](plans/rte-triage-2026-11.md).
 2. **Check z3's proof output.** An `unsat` verdict is currently taken on z3's word. Ask z3 for

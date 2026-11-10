@@ -86,13 +86,36 @@ $ milo prove clamp.milo
 
 Fix the line and the same command reports `✓ [postcondition] clamp: proven`. The vocabulary is close to SPARK's: `requires`, `ensures`, loop and struct `invariant`, `decreases` for termination, `old(e)`. It's discharged by z3 (a runtime requirement of `milo prove`: `brew install z3` / `apt install z3`). A contract you have not proven is still checked: `requires` and `ensures` assert at runtime in every build, release included (`--no-contract-checks` opts out).
 
+What "proven" means is itself machine-checked. [proofs/](proofs/README.md) models the contract rules in Lean and proves three things: a proven program never fails a contract clause, dropping the runtime checks from a proven program changes nothing, and in any program the default build only returns from a call whose `requires` and `ensures` held. The proof is about the rules, not the compiler's code or z3, and it does not yet cover memory safety.
+
 Proof is practical here because of the reference rule above. Proving a function correct is hard in C and C++ because any pointer might alias any other. In Milo nothing outside a function can point into its values, so a call can change only what its `&mut` arguments name. The verifier needs no separation logic and no aliasing annotations. This is the same reason SPARK proofs scale, and it comes from the memory model rather than a verification dialect bolted on top.
 
 It also fits agent-written code. Write the contract, and let the agent loop on `milo prove --json` until every condition is proven. You review a few lines of spec instead of the whole implementation, and a counterexample is a concrete input it can fix against.
 
 For safety-critical work, `milo safety --safety=do178c-a` (also ISO 26262, IEC 61508/62304, NASA profiles) checks the source against a certification profile, and `milo wcet` emits loop-bound flow facts for OTAWA timing analysis.
 
-Not there yet, said plainly: overflow, out-of-bounds indexing and division by zero are trapped at runtime but not yet proven absent. There are no quantifiers, so "this Vec is sorted" can't be stated yet. Both are next on the [verification roadmap](docs/verification-roadmap.md).
+Requirements trace all the way to object code. Tag a function `@req(LLR-1)` and `milo trace` reports, per requirement, the function, whether its contract is proven, the tests that cover it, and the address ranges it became in the binary:
+
+```
+$ milo trace pid.milo --strict --object pid
+LLR-1  Every command is clamped to [outLo, outHi] on its way out of the PID step.
+  implemented   pid.milo:27 clampI32
+  implemented   pid.milo:44 pidStep
+  object        0x100000680-0x1000006b0 (48 B) clampI32  lines 28-32
+  object        0x1000006c0-0x100000848 (392 B) pidStep  lines 32-68
+  object        0x1000008b4-0x1000008d8 (36 B) nextIntegral  lines 32-32
+  object        0x100000900-0x100000918 (24 B) clampInput  lines 32-32
+  object        0x10000097c-0x100000998 (28 B) controlTick  lines 32-32
+  formalized    PROVEN   pid.milo:30 ensures result >= lo && result <= hi  [clampI32]
+  formalized    PROVEN   pid.milo:57 ensures result >= outLo && result <= outHi  [pidStep]
+  verified      PROOF     2 formalizing clauses PROVEN
+  verified      PASS      pid_test.milo:7 testClampKeepsValueInRange
+  verified      PASS      pid_test.milo:15 testStepOutputWithinRange
+```
+
+`milo trace-object --strict` goes the other way and fails on any instruction that maps to no source line and no language rule (bounds check, overflow trap, contract check, drop). The [PID controller demo](examples/assured/pid/README.md) is the worked example. Not built yet: MC/DC measured on the object code, and translation validation of the compiler itself.
+
+Not there yet, said plainly: overflow, out-of-bounds indexing and division by zero are trapped at runtime, and `milo prove --rte` proves them absent site by site, but today that covers about a third of the sites in the standard library and embedded examples, so it is opt-in. There are no quantifiers, so "this Vec is sorted" can't be stated yet. Both are next on the [verification roadmap](docs/verification-roadmap.md).
 
 ## What you give up
 
