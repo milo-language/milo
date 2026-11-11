@@ -10,7 +10,7 @@ Contracts are proven for every input with an SMT solver, or checked at run time.
 
 - **Memory-safe, no lifetimes.** References are function parameters only, so they can't dangle. Nothing to annotate and nothing to collect. [Why that works](#second-class-references)
 - **Fast.** On par with C and Rust. Beats Rust on 3 of 5 benchmarks and is within 7% on the other two, with overflow checks left on. [Numbers](#performance)
-- **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
+- **Formally verified.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#formally-verified)
 - **Simple concurrency.** No value has two owners, so tasks never share mutable data. Spread work across tasks and cores with no locks, no data races and no `async` to thread through your code. [Concurrency](https://milo-language.github.io/milo/features/concurrency)
 - **Standard library.** HTTP server and client, TLS, JSON, SQLite, regex, arenas and more. C is one `extern` away. [Stdlib](https://milo-language.github.io/milo/stdlib/)
 - **Requirements traceability.** Tag a function with the requirement it implements, and `milo trace` links it to its source, proofs, tests and object-code address ranges. [How](#from-requirement-to-object-code)
@@ -77,7 +77,7 @@ This is the design Rust's creator, Graydon Hoare, [says he wanted](https://grayd
 
 Same memory-safety guarantees as Rust wherever both languages can express the program, plus concurrency without `Send` / `Sync` (a value that cannot hold a borrow moves to another task as is).
 
-## Proven or checked
+## Formally verified
 
 Contracts are part of the language, and every one is either proven or checked. `milo prove` settles a contract for every input, not the ones you thought to test:
 

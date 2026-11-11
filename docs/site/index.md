@@ -54,8 +54,8 @@ Contracts are proven for every input with an SMT solver, or checked at run time.
     <p>On par with C and Rust. Beats Rust on 3 of 5 benchmarks and is within 7% on the other two, with overflow checks left on.</p>
   </a>
   <a class="attr" href="/milo/language/safety">
-    <h3>Proven or checked</h3>
-    <p><code>requires</code> and <code>ensures</code> are part of the language. <code>milo prove</code> proves them for every input or prints a counterexample.</p>
+    <h3>Formally verified</h3>
+    <p><code>requires</code> and <code>ensures</code> are part of the language. <code>milo prove</code> proves them for every input with an SMT solver, or prints a counterexample.</p>
   </a>
   <a class="attr" href="/milo/features/concurrency">
     <h3>Simple concurrency</h3>
@@ -221,7 +221,7 @@ fn main() {
 
 This is the design Rust's creator, Graydon Hoare, [says he wanted](https://graydon2.dreamwidth.org/307291.html) for Rust. Fernando Borretti makes the case for it in [Second-Class References](https://borretti.me/article/second-class-references). The cost: where you would return a view, you return an index, a `Span`, an owned copy or an [arena handle](/stdlib/arena) instead. More: [why there are no lifetimes](/language/why-no-lifetimes), [memory safety vs Rust](/language/vs-rust).
 
-## Proven or checked
+## Formally verified
 
 `milo prove` checks a contract with an SMT solver. It either proves the contract for all inputs or prints a counterexample:
 
