@@ -36,6 +36,12 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
 
 </div>
 
+<div class="intro">
+
+Milo is a systems language for code you need to trust. You write ordinary code with structs, enums, traits and closures, and get a fast native binary with no garbage collector. Memory safety comes from one rule, so there are no lifetimes to annotate. Contracts are proven for every input with an SMT solver, or checked at run time. Requirements trace from source to tests to object code, so every function, whether a person or an AI agent wrote it, can be checked against the high-level goals it is meant to meet.
+
+</div>
+
 <div class="attr-grid">
   <a class="attr" href="/milo/language/why-no-lifetimes">
     <h3>Memory-safe, no lifetimes</h3>
@@ -141,13 +147,9 @@ fn main() {
 
 ## Second-class references
 
-References in Milo are *second-class*: `&T` and `&mut T` can only be function parameters. A reference can't be returned, stored in a struct, or kept after the call.
+`&T` and `&mut T` can only be function parameters: never returned, stored in a struct, or kept after the call. A reference therefore can't outlive what it points to, so Milo needs no lifetime annotations and no garbage collector. Every mutation is visible at the call site, `f(&mut x)`, which keeps both review and proofs local to one function.
 
-A reference therefore can't outlive the value it points to, so Milo needs no lifetime annotations and no garbage collector. A function can only modify what is passed to it as `&mut`, and that is visible at the call site: `f(&mut x)`. This makes proofs simpler, because the prover needs no aliasing annotations, and it makes review simpler, because a function can be read without the rest of the program.
-
-**The cost:** a function can't return or store a view into someone else's data. Use an index, a `Span`, an owned copy, or an [arena handle](/stdlib/arena) instead. Some mistakes that Rust rejects at compile time, such as using a stale offset into a buffer, are run-time checks in Milo ([details](/language/why-no-lifetimes)).
-
-Memory safety matches Rust for programs both languages can express ([comparison](/language/vs-rust)). There are 250k+ lines of Milo so far, and almost all `unsafe` blocks in them are calls into C.
+This is the design Rust's creator, Graydon Hoare, [says he wanted](https://graydon2.dreamwidth.org/307291.html) for Rust. Fernando Borretti makes the case for it in [Second-Class References](https://borretti.me/article/second-class-references). The cost: where you would return a view, you return an index, a `Span`, an owned copy or an [arena handle](/stdlib/arena) instead. More: [why there are no lifetimes](/language/why-no-lifetimes), [memory safety vs Rust](/language/vs-rust).
 
 ## Proven or checked
 

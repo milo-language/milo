@@ -433,3 +433,23 @@
   font-size: 0.95rem;
   line-height: 1.55;
 }
+
+/* phone: the default 320px logo box pushes the pitch below the fold */
+@media (max-width: 639px) {
+  .VPHero .image-container { width: 140px; height: 140px; }
+  .VPHero .image-src { max-width: 112px; max-height: 112px; }
+  .VPHero .text { font-size: 30px; line-height: 38px; }
+}
+
+.intro {
+  max-width: 720px;
+  margin: 0 auto 2.5rem;
+  padding: 0 24px;
+  font-size: 1.1rem;
+  line-height: 1.7;
+  color: var(--vp-c-text-2);
+}
+@media (max-width: 639px) {
+  /* default hero image margins are negative, which tucks the name under a small logo */
+  .VPHero .image { margin: -24px auto 0; }
+}

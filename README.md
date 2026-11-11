@@ -4,6 +4,8 @@
 
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
+Milo is a systems language for code you need to trust. You write ordinary code with structs, enums, traits and closures, and get a fast native binary with no garbage collector. Memory safety comes from one rule, so there are no lifetimes to annotate. Contracts are proven for every input with an SMT solver, or checked at run time. Requirements trace from source to tests to object code, so every function, whether a person or an AI agent wrote it, can be checked against the high-level goals it is meant to meet.
+
 - **Memory-safe, no lifetimes.** References are function parameters only, so they can't dangle. Nothing to annotate and nothing to collect. [Why that works](#second-class-references)
 - **Fast.** On par with C and Rust. Beats Rust on 3 of 5 benchmarks and is within 7% on the other two, with overflow checks left on. [Numbers](#performance)
 - **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
@@ -57,6 +59,8 @@ fn main(): void {
 ```
 
 The ownership checker settles everything inside one function. It never consults a lifetime on a signature three modules away, and neither do you.
+
+This is the design Rust's creator, Graydon Hoare, [says he wanted](https://graydon2.dreamwidth.org/307291.html) for Rust. Fernando Borretti makes the case for it in [Second-Class References](https://borretti.me/article/second-class-references).
 
 ## In C, in Rust, in Milo
 
