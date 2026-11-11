@@ -436,9 +436,14 @@
 
 /* phone: the default 320px logo box pushes the pitch below the fold */
 @media (max-width: 639px) {
-  .VPHero .image-container { width: 140px; height: 140px; }
-  .VPHero .image-src { max-width: 112px; max-height: 112px; }
+  .VPHero { padding-top: calc(var(--vp-nav-height) + 12px) !important; }
+  /* default hero image margins are negative, which tucks the name under a small logo */
+  .VPHero .image { margin: 0 auto 4px !important; }
+  .VPHero .image-container { width: 88px !important; height: 88px !important; }
+  .VPHero .image-src { width: 88px !important; height: 88px !important; max-width: none !important; }
   .VPHero .text { font-size: 30px; line-height: 38px; }
+  .attr-grid { gap: 0.6rem; margin-bottom: 2rem; }
+  .attr { padding: 0.9rem 1rem; }
 }
 
 .intro {
@@ -448,8 +453,4 @@
   font-size: 1.1rem;
   line-height: 1.7;
   color: var(--vp-c-text-2);
-}
-@media (max-width: 639px) {
-  /* default hero image margins are negative, which tucks the name under a small logo */
-  .VPHero .image { margin: -24px auto 0; }
 }

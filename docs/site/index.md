@@ -38,7 +38,9 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
 
 <div class="intro">
 
-Milo is a systems language for code you need to trust. You write ordinary code with structs, enums, traits and closures, and get a fast native binary with no garbage collector. Memory safety comes from one rule, so there are no lifetimes to annotate. Contracts are proven for every input with an SMT solver, or checked at run time. Requirements trace from source to tests to object code, so every function, whether a person or an AI agent wrote it, can be checked against the high-level goals it is meant to meet.
+Milo is a systems language for code you need to trust. You write ordinary code with structs, enums, traits and closures, and get a fast native binary with no garbage collector. A reference can be passed into a function but never stored or returned, so it can never point at freed memory, and there are no lifetime annotations to write.
+
+Contracts are proven for every input with an SMT solver, or checked at run time. Requirements trace from source to tests to object code, so every function, whether a person or an AI agent wrote it, can be checked against the high-level goals it is meant to meet.
 
 </div>
 
