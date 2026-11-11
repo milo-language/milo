@@ -43,7 +43,7 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
   </a>
   <a class="attr" href="/milo/benchmarks">
     <h3>Fast</h3>
-    <p>Compiles through LLVM to a static binary. Trades wins with Rust on five benchmarks, with overflow checks left on.</p>
+    <p>On par with C and Rust. Beats Rust on 3 of 5 benchmarks and is within 7% on the other two, with overflow checks left on.</p>
   </a>
   <a class="attr" href="/milo/language/safety">
     <h3>Proven or checked</h3>
@@ -51,7 +51,7 @@ git clone https://github.com/milo-language/milo && cd milo && ./milo run example
   </a>
   <a class="attr" href="/milo/features/concurrency">
     <h3>Simple concurrency</h3>
-    <p>Green tasks and promises. Each task owns its data, so there is no <code>Send</code> or <code>Sync</code> to write.</p>
+    <p>No value has two owners, so tasks never share mutable data. Spread work across tasks and cores with no locks, no data races and no <code>async</code> to thread through your code.</p>
   </a>
   <a class="attr" href="/milo/stdlib/">
     <h3>Standard library</h3>

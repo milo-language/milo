@@ -5,9 +5,9 @@
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
 - **Memory-safe, no lifetimes.** References are function parameters only, so they can't dangle. Nothing to annotate and nothing to collect. [Why that works](#second-class-references)
-- **Fast.** Compiles through LLVM to a static binary. Trades wins with Rust across five benchmarks, with overflow checks left on. [Numbers](#performance)
+- **Fast.** On par with C and Rust. Beats Rust on 3 of 5 benchmarks and is within 7% on the other two, with overflow checks left on. [Numbers](#performance)
 - **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
-- **Simple concurrency.** Green tasks and promises. Each task owns its data, so there is no `Send` or `Sync` to write. [Concurrency](https://milo-language.github.io/milo/features/concurrency)
+- **Simple concurrency.** No value has two owners, so tasks never share mutable data. Spread work across tasks and cores with no locks, no data races and no `async` to thread through your code. [Concurrency](https://milo-language.github.io/milo/features/concurrency)
 - **Standard library.** HTTP server and client, TLS, JSON, SQLite, regex, arenas and more. C is one `extern` away. [Stdlib](https://milo-language.github.io/milo/stdlib/)
 - **Requirements traceability.** Tag a function with the requirement it implements, and `milo trace` links it to its source, proofs, tests and object-code address ranges. [How](#from-requirement-to-object-code)
 
