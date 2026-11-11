@@ -1,15 +1,15 @@
 # Milo
 
-**An auditable, memory-safe systems language with requirements traceable through source, tests and object code. No lifetimes, no GC.**
+**A memory-safe systems language. Fast native binaries with no lifetimes and no garbage collector. Contracts a solver can prove, and requirements traced from source to object code.**
 
-[Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
+[Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
-Safety-critical software is built with bidirectional traceability: every requirement links to its source, tests and object code, and everything in the binary links back to a requirement. On most projects each part lives in a different tool (a requirements database, requirement IDs in comments, separate test and coverage tools) and scripts hold them together. Milo makes the whole trace part of the language and the compiler. It works the same for code written by a person or by an AI agent. The site lists the [command for each activity](https://milo-language.github.io/milo/#commands-for-each-activity).
-
-- **Requirements traceability.** `milo trace` links each requirement to its source, proofs, tests and object-code address ranges. `milo trace-object` checks that every instruction in the binary maps to a source line or a language rule. [How](#from-requirement-to-object-code)
+- **Memory-safe, no lifetimes.** References are function parameters only, so they can't dangle. Nothing to annotate and nothing to collect. [Why that works](#second-class-references)
+- **Fast.** Compiles through LLVM to a static binary. Trades wins with Rust across five benchmarks, with overflow checks left on. [Numbers](#performance)
 - **Proven or checked.** `requires` and `ensures` are part of the language. `milo prove` proves a contract for every input or hands back the input that breaks it, and what is not proven asserts at run time in every build. [How](#proven-or-checked)
-- **Safe without lifetimes.** References are parameters only, so there is nothing to annotate and nothing to collect, and a proof needs no aliasing annotations. [Why that works](#second-class-references)
-- **Fast.** Trades wins with Rust across five benchmarks, with overflow checks left on. [Numbers](#performance)
+- **Simple concurrency.** Green tasks and promises. Each task owns its data, so there is no `Send` or `Sync` to write. [Concurrency](https://milo-language.github.io/milo/features/concurrency)
+- **Standard library.** HTTP server and client, TLS, JSON, SQLite, regex, arenas and more. C is one `extern` away. [Stdlib](https://milo-language.github.io/milo/stdlib/)
+- **Requirements traceability.** Tag a function with the requirement it implements, and `milo trace` links it to its source, proofs, tests and object-code address ranges. [How](#from-requirement-to-object-code)
 
 ```milo
 from "std/http" import { Context, Response, Router, serveRouter }
@@ -103,7 +103,9 @@ Not there yet, said plainly: overflow, out-of-bounds indexing and division by ze
 
 ## From requirement to object code
 
-Requirements trace all the way to object code. Tag a function `@req(LLR-1)` and `milo trace` reports, per requirement, the function, whether its contract is proven, the tests that cover it, and the address ranges it became in the binary:
+Safety-critical software is built with bidirectional traceability: every requirement links to its source, tests and object code, and everything in the binary links back to a requirement. On most projects each link lives in a different tool (a requirements database, requirement IDs in comments, separate test and coverage tools) and scripts hold them together. Milo makes the whole trace part of the language and the compiler, the same for code written by a person or by an AI agent. The site has the [full walkthrough](https://milo-language.github.io/milo/language/traceability), with a command for each certification activity.
+
+Tag a function `@req(LLR-1)` and `milo trace` reports, per requirement, the function, whether its contract is proven, the tests that cover it, and the address ranges it became in the binary:
 
 ```
 $ milo trace pid.milo --strict --object pid

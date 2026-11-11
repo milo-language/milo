@@ -90,6 +90,7 @@ const docsSidebar = [
       { text: 'Call C (FFI)', link: '/features/ffi' },
       { text: 'Contracts & proofs', link: '/language/safety' },
       { text: 'Safety profiles', link: '/language/safety-profiles' },
+      { text: 'Requirements traceability', link: '/language/traceability' },
       { text: 'Debugging', link: '/getting-started/debugging' },
       { text: 'Coding with AI agents', link: '/ai-coding' },
     ]
