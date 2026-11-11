@@ -5,7 +5,7 @@ titleTemplate: false
 hero:
   name: Milo
   text: "A memory-safe systems language."
-  tagline: "Fast native binaries with no lifetimes and no garbage collector. Contracts a solver can prove, and requirements traced from source to object code."
+  tagline: "Fast native binaries with no lifetimes and no garbage collector, and contracts a solver can prove."
   image:
     src: /logo.svg
     alt: Milo
@@ -143,65 +143,6 @@ fn main() {
 
 <div class="section-break"></div>
 
-<div class="whatis">
-
-## Second-class references
-
-`&T` and `&mut T` can only be function parameters: never returned, stored in a struct, or kept after the call. A reference therefore can't outlive what it points to, so Milo needs no lifetime annotations and no garbage collector. Every mutation is visible at the call site, `f(&mut x)`, which keeps both review and proofs local to one function.
-
-This is the design Rust's creator, Graydon Hoare, [says he wanted](https://graydon2.dreamwidth.org/307291.html) for Rust. Fernando Borretti makes the case for it in [Second-Class References](https://borretti.me/article/second-class-references). The cost: where you would return a view, you return an index, a `Span`, an owned copy or an [arena handle](/stdlib/arena) instead. More: [why there are no lifetimes](/language/why-no-lifetimes), [memory safety vs Rust](/language/vs-rust).
-
-## Proven or checked
-
-`milo prove` checks a contract with an SMT solver. It either proves the contract for all inputs or prints a counterexample:
-
-```milo
-fn clamp(x: i64, lo: i64, hi: i64): i64
-    requires lo <= hi
-    ensures result >= lo && result <= hi
-{
-    if x < lo { return lo }
-    if x >= hi { return x }    // bug: should return hi
-    return x
-}
-```
-
-<div class="wrap-output">
-
-```
-$ milo prove clamp.milo
-  ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
-```
-
-</div>
-
-Contracts that are not proven are checked at run time: `requires` and `ensures` assert in every build, including release. The proof rules have a [Lean proof](https://github.com/milo-language/milo/tree/main/proofs) of soundness: a proven program never fails a contract check, so the checks can be removed from it.
-
-## Requirements traceability
-
-Safety-critical software, such as avionics built to DO-178C, links every requirement to the code and tests that satisfy it, and everything in the binary back to a requirement. Usually each link lives in a different tool, held together by scripts. In Milo it is part of the language and the compiler.
-
-Tag a function with the requirement it implements:
-
-```milo
-@req(LLR-1)
-pub fn clampI32(v: i32, lo: i32, hi: i32): i32
-requires lo <= hi
-@req(LLR-1)
-ensures result >= lo && result <= hi
-{
-    if v < lo { return lo }
-    if v > hi { return hi }
-    return v
-}
-```
-
-`milo trace` reports, for each requirement, the functions that implement it, whether their contracts are proven, the tests that cover it, and the address ranges it became in the binary. `milo trace-object --strict` checks the other direction: every instruction must map to a source line or a language rule. [The full walkthrough](/language/traceability) covers requirements files, the trace output and a command for each certification activity.
-
-</div>
-
-<div class="section-break"></div>
-
 <div class="showcase">
   <div class="showcase-head">
     <h2>Built with Milo</h2>
@@ -266,6 +207,65 @@ ensures result >= lo && result <= hi
       </a>
   </div>
   <p class="showcase-more">Also in Milo: <a href="https://github.com/milo-language/milo-emulators">NES, SNES and Genesis emulators</a>, a <a href="https://github.com/milo-language/milo/tree/main/examples/tools/java-dap">debugger for the JVM</a>, and <a href="/milo/demos">more demos</a>.</p>
+</div>
+
+<div class="section-break"></div>
+
+<div class="whatis">
+
+## Second-class references
+
+`&T` and `&mut T` can only be function parameters: never returned, stored in a struct, or kept after the call. A reference therefore can't outlive what it points to, so Milo needs no lifetime annotations and no garbage collector. Every mutation is visible at the call site, `f(&mut x)`, which keeps both review and proofs local to one function.
+
+This is the design Rust's creator, Graydon Hoare, [says he wanted](https://graydon2.dreamwidth.org/307291.html) for Rust. Fernando Borretti makes the case for it in [Second-Class References](https://borretti.me/article/second-class-references). The cost: where you would return a view, you return an index, a `Span`, an owned copy or an [arena handle](/stdlib/arena) instead. More: [why there are no lifetimes](/language/why-no-lifetimes), [memory safety vs Rust](/language/vs-rust).
+
+## Proven or checked
+
+`milo prove` checks a contract with an SMT solver. It either proves the contract for all inputs or prints a counterexample:
+
+```milo
+fn clamp(x: i64, lo: i64, hi: i64): i64
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { return lo }
+    if x >= hi { return x }    // bug: should return hi
+    return x
+}
+```
+
+<div class="wrap-output">
+
+```
+$ milo prove clamp.milo
+  ✗ [postcondition] clamp: failed — counterexample: x = 0, lo = -1, hi = -1, result = 0
+```
+
+</div>
+
+Contracts that are not proven are still checked at run time, in every build.
+
+## Requirements traceability
+
+Safety-critical software, such as avionics built to DO-178C, links every requirement to the code and tests that satisfy it, and everything in the binary back to a requirement. Usually each link lives in a different tool, held together by scripts. In Milo it is part of the language and the compiler.
+
+Tag a function with the requirement it implements:
+
+```milo
+@req(LLR-1)
+pub fn clampI32(v: i32, lo: i32, hi: i32): i32
+requires lo <= hi
+@req(LLR-1)
+ensures result >= lo && result <= hi
+{
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+```
+
+`milo trace` reports, for each requirement, the functions that implement it, whether their contracts are proven, the tests that cover it, and the address ranges it became in the binary. `milo trace-object --strict` checks the other direction: every instruction must map to a source line or a language rule. [The full walkthrough](/language/traceability) covers requirements files, the trace output and a command for each certification activity.
+
 </div>
 
 <div class="section-break"></div>

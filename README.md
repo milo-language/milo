@@ -1,6 +1,6 @@
 # Milo
 
-**A memory-safe systems language. Fast native binaries with no lifetimes and no garbage collector. Contracts a solver can prove, and requirements traced from source to object code.**
+**A memory-safe systems language. Fast native binaries with no lifetimes and no garbage collector, and contracts a solver can prove.**
 
 [Docs](https://milo-language.github.io/milo/) · [Tour](https://milo-language.github.io/milo/tour) · [Playground](https://milo-language.github.io/milo/playground) · [Stdlib](https://milo-language.github.io/milo/stdlib/)
 
