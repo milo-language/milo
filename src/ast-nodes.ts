@@ -7,82 +7,82 @@ export const EXPR_KINDS = new Set<string>(["IntLit", "FloatLit", "BoolLit", "Str
 export function collectExpr(x0: Expr, out: AnyNode[]): void {
   out.push(x0);
   if (x0.kind === "BinOp") {
-    if (x0.left) { collectExpr(x0.left, out); }
-    if (x0.right) { collectExpr(x0.right, out); }
+    collectExpr(x0.left, out);
+    collectExpr(x0.right, out);
   }
   if (x0.kind === "UnaryOp") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
+    collectExpr(x0.operand, out);
   }
   if (x0.kind === "Call") {
-    if (x0.args) for (const x of x0.args) if (x) { collectExpr(x, out);
+    for (const x of x0.args) { collectExpr(x, out);
     }
   }
   if (x0.kind === "StructLit") {
-    if (x0.fields) for (const x of x0.fields) if (x) {
-      if (x.value) collectExpr(x.value, out);
+    for (const x of x0.fields) {
+      collectExpr(x.value, out);
     }
     if (x0.base) { collectExpr(x0.base, out); }
   }
   if (x0.kind === "FieldAccess") {
-    if (x0.object) { collectExpr(x0.object, out); }
+    collectExpr(x0.object, out);
   }
   if (x0.kind === "ArrayLit") {
-    if (x0.elements) for (const x of x0.elements) if (x) { collectExpr(x, out);
+    for (const x of x0.elements) { collectExpr(x, out);
     }
   }
   if (x0.kind === "ArrayRepeat") {
-    if (x0.value) { collectExpr(x0.value, out); }
+    collectExpr(x0.value, out);
   }
   if (x0.kind === "IndexAccess") {
-    if (x0.object) { collectExpr(x0.object, out); }
-    if (x0.index) { collectExpr(x0.index, out); }
+    collectExpr(x0.object, out);
+    collectExpr(x0.index, out);
   }
   if (x0.kind === "EnumLit") {
-    if (x0.args) for (const x of x0.args) if (x) { collectExpr(x, out);
+    for (const x of x0.args) { collectExpr(x, out);
     }
   }
   if (x0.kind === "Unwrap") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
+    collectExpr(x0.operand, out);
   }
   if (x0.kind === "Propagate") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
+    collectExpr(x0.operand, out);
   }
   if (x0.kind === "DefaultValue") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
-    if (x0.default) { collectExpr(x0.default, out); }
+    collectExpr(x0.operand, out);
+    collectExpr(x0.default, out);
   }
   if (x0.kind === "CastExpr") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
+    collectExpr(x0.operand, out);
   }
   if (x0.kind === "MethodCall") {
-    if (x0.object) { collectExpr(x0.object, out); }
-    if (x0.args) for (const x of x0.args) if (x) { collectExpr(x, out);
+    collectExpr(x0.object, out);
+    for (const x of x0.args) { collectExpr(x, out);
     }
   }
   if (x0.kind === "Closure") {
-    if (x0.body) for (const x of x0.body) if (x) { collectStmt(x, out);
+    for (const x of x0.body) { collectStmt(x, out);
     }
   }
   if (x0.kind === "RangeExpr") {
-    if (x0.start) { collectExpr(x0.start, out); }
-    if (x0.end) { collectExpr(x0.end, out); }
+    collectExpr(x0.start, out);
+    collectExpr(x0.end, out);
   }
   if (x0.kind === "IsExpr") {
-    if (x0.operand) { collectExpr(x0.operand, out); }
-    if (x0.pattern) { collectPattern(x0.pattern, out); }
+    collectExpr(x0.operand, out);
+    collectPattern(x0.pattern, out);
   }
   if (x0.kind === "IfExpr") {
-    if (x0.cond) { collectExpr(x0.cond, out); }
-    if (x0.thenBody) for (const x of x0.thenBody) if (x) { collectStmt(x, out);
+    collectExpr(x0.cond, out);
+    for (const x of x0.thenBody) { collectStmt(x, out);
     }
-    if (x0.elseBody) for (const x of x0.elseBody) if (x) { collectStmt(x, out);
+    for (const x of x0.elseBody) { collectStmt(x, out);
     }
   }
   if (x0.kind === "MatchExpr") {
-    if (x0.subject) { collectExpr(x0.subject, out); }
-    if (x0.arms) for (const x of x0.arms) if (x) {
-      if (x.pattern) collectPattern(x.pattern, out);
-      if (x.body) for (const y of x.body) collectStmt(y, out);
+    collectExpr(x0.subject, out);
+    for (const x of x0.arms) {
+      collectPattern(x.pattern, out);
+      for (const y of x.body) collectStmt(y, out);
     }
   }
 }
@@ -90,73 +90,73 @@ export function collectExpr(x0: Expr, out: AnyNode[]): void {
 export function collectStmt(x0: Stmt, out: AnyNode[]): void {
   out.push(x0);
   if (x0.kind === "LetDecl") {
-    if (x0.value) { collectExpr(x0.value, out); }
+    collectExpr(x0.value, out);
   }
   if (x0.kind === "VarDecl") {
-    if (x0.value) { collectExpr(x0.value, out); }
+    collectExpr(x0.value, out);
   }
   if (x0.kind === "Assign") {
-    if (x0.target) { collectExpr(x0.target, out); }
-    if (x0.value) { collectExpr(x0.value, out); }
+    collectExpr(x0.target, out);
+    collectExpr(x0.value, out);
   }
   if (x0.kind === "Return") {
     if (x0.value) { collectExpr(x0.value, out); }
   }
   if (x0.kind === "IfStmt") {
-    if (x0.cond) { collectExpr(x0.cond, out); }
-    if (x0.thenBody) for (const x of x0.thenBody) if (x) { collectStmt(x, out);
+    collectExpr(x0.cond, out);
+    for (const x of x0.thenBody) { collectStmt(x, out);
     }
-    if (x0.elseBody) for (const x of x0.elseBody) if (x) { collectStmt(x, out);
+    if (x0.elseBody) for (const x of x0.elseBody) { collectStmt(x, out);
     }
   }
   if (x0.kind === "WhileStmt") {
-    if (x0.cond) { collectExpr(x0.cond, out); }
-    if (x0.invariants) for (const x of x0.invariants) if (x) { collectContract(x, out);
+    collectExpr(x0.cond, out);
+    for (const x of x0.invariants) { collectContract(x, out);
     }
-    if (x0.body) for (const x of x0.body) if (x) { collectStmt(x, out);
+    for (const x of x0.body) { collectStmt(x, out);
     }
   }
   if (x0.kind === "ExprStmt") {
-    if (x0.expr) { collectExpr(x0.expr, out); }
+    collectExpr(x0.expr, out);
   }
   if (x0.kind === "MatchStmt") {
-    if (x0.subject) { collectExpr(x0.subject, out); }
-    if (x0.arms) for (const x of x0.arms) if (x) {
-      if (x.pattern) collectPattern(x.pattern, out);
-      if (x.body) for (const y of x.body) collectStmt(y, out);
+    collectExpr(x0.subject, out);
+    for (const x of x0.arms) {
+      collectPattern(x.pattern, out);
+      for (const y of x.body) collectStmt(y, out);
     }
   }
   if (x0.kind === "IfLetStmt") {
-    if (x0.pattern) { collectPattern(x0.pattern, out); }
-    if (x0.subject) { collectExpr(x0.subject, out); }
-    if (x0.thenBody) for (const x of x0.thenBody) if (x) { collectStmt(x, out);
+    collectPattern(x0.pattern, out);
+    collectExpr(x0.subject, out);
+    for (const x of x0.thenBody) { collectStmt(x, out);
     }
-    if (x0.elseBody) for (const x of x0.elseBody) if (x) { collectStmt(x, out);
+    if (x0.elseBody) for (const x of x0.elseBody) { collectStmt(x, out);
     }
   }
   if (x0.kind === "IfChainStmt") {
-    if (x0.clauses) for (const x of x0.clauses) if (x) { collectChainClause(x, out);
+    for (const x of x0.clauses) { collectChainClause(x, out);
     }
-    if (x0.thenBody) for (const x of x0.thenBody) if (x) { collectStmt(x, out);
+    for (const x of x0.thenBody) { collectStmt(x, out);
     }
-    if (x0.elseBody) for (const x of x0.elseBody) if (x) { collectStmt(x, out);
+    if (x0.elseBody) for (const x of x0.elseBody) { collectStmt(x, out);
     }
   }
   if (x0.kind === "LetElseStmt") {
-    if (x0.pattern) { collectPattern(x0.pattern, out); }
-    if (x0.value) { collectExpr(x0.value, out); }
-    if (x0.elseBody) for (const x of x0.elseBody) if (x) { collectStmt(x, out);
+    collectPattern(x0.pattern, out);
+    collectExpr(x0.value, out);
+    for (const x of x0.elseBody) { collectStmt(x, out);
     }
   }
   if (x0.kind === "UnsafeBlock") {
-    if (x0.body) for (const x of x0.body) if (x) { collectStmt(x, out);
+    for (const x of x0.body) { collectStmt(x, out);
     }
   }
   if (x0.kind === "ForInStmt") {
-    if (x0.iterable) { collectExpr(x0.iterable, out); }
-    if (x0.invariants) for (const x of x0.invariants) if (x) { collectContract(x, out);
+    collectExpr(x0.iterable, out);
+    for (const x of x0.invariants) { collectContract(x, out);
     }
-    if (x0.body) for (const x of x0.body) if (x) { collectStmt(x, out);
+    for (const x of x0.body) { collectStmt(x, out);
     }
   }
 }
@@ -172,19 +172,17 @@ export function collectPattern(x0: Pattern, out: AnyNode[]): void {
 export function collectChainClause(x0: ChainClause, out: AnyNode[]): void {
   out.push(x0);
   if (x0.kind === "LetClause") {
-    if (x0.pattern) { collectPattern(x0.pattern, out); }
-    if (x0.subject) { collectExpr(x0.subject, out); }
+    collectPattern(x0.pattern, out);
+    collectExpr(x0.subject, out);
   }
   if (x0.kind === "CondClause") {
-    if (x0.cond) { collectExpr(x0.cond, out); }
+    collectExpr(x0.cond, out);
   }
 }
 
 export function collectContract(x0: Contract, out: AnyNode[]): void {
   out.push(x0);
-  {
-    if (x0.expr) { collectExpr(x0.expr, out); }
-  }
+  collectExpr(x0.expr, out);
 }
 
 export function collectStmts(list: Stmt[], out: AnyNode[]): void {

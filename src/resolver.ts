@@ -1021,7 +1021,6 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // that declares `@records` or `@externalLinkage` on its own `extern fn getpid` keeps it
   // when std (pulled in by an import, or by record/replay's wrappers) declares getpid too.
   {
-    const sigOf = externSigOf;
     const kept = new Map<string, (typeof functions)[number]>();
     for (const f of functions) if (f.isExtern) kept.set(f.name, f);
     // STDLIB_DIR is the directory holding std/ (the repo root in a checkout).
@@ -1032,7 +1031,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       // A program's own declaration the merge drops is still the program's to get right:
       // the checker validates it as written (droppedExterns).
       if (!isStd(f)) droppedExterns.push(f);
-      if (!f.attributes?.length || sigOf(f) !== sigOf(k)) continue;
+      if (!f.attributes?.length || externSigOf(f) !== externSigOf(k)) continue;
       // The program's own attribute wins over std's of the same name: it is the one
       // the program wrote and the one a diagnostic should be about.
       const mine = !isStd(f);

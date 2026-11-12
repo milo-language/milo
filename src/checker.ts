@@ -5410,10 +5410,7 @@ export class TypeChecker {
       // expression has no root. Total over the expression grammar via the place walker,
       // where the old inline loops knew only FieldAccess and IndexAccess: `G!.x = v` and
       // `G.slice(a, b)[i]` (a view into G) now root at `G` too, the fail-closed direction.
-      rootOf: (e) => {
-        if (!e || typeof e !== "object" || typeof (e as { kind?: unknown }).kind !== "string") return undefined;
-        return this.rootNameOf(e as Expr) ?? undefined;
-      },
+      rootOf: (e) => this.rootNameOf(e) ?? undefined,
       // display() FIRST: this reads `$` as the method separator and turns it into a dot,
       // which would otherwise turn a module prefix into `gfx.tone`, a name the diagnostic
       // post-pass can no longer recognise.

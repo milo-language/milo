@@ -543,15 +543,14 @@ export class DeriveSynth {
     if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Table)\n${src}\n`);
     let parsed: Program;
     try {
-      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Table for ${s.name}>`).parse();
+      // The generated SQL is checked against the schema like any other; a mismatch (a field
+      // with no column, a missing table) is the struct's to fix, so every node is placed there.
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Table for ${s.name}>`, s.span).parseGenerated();
     } catch (e) {
       return fail(`internal error: generated helpers did not parse: ${e instanceof Error ? e.message : String(e)}`);
     }
     const impl = parsed.impls[0];
     if (!impl) return fail("internal error: generated helpers produced no impl");
-    // The generated SQL is checked against the schema like any other; a mismatch (a field
-    // with no column, a missing table) is the struct's to fix, so it is reported there.
-    restampSpans(impl, s.span);
     return this.stampOrigin(impl, s, true);
   }
 
@@ -573,7 +572,7 @@ export class DeriveSynth {
     if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Row)\n${src}\n`);
     let parsed: Program;
     try {
-      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Row for ${s.name}>`).parse();
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Row for ${s.name}>`).parseGenerated();
     } catch (e) {
       this.host.error(`internal error: generated Row reader for '${s.name}' did not parse: ${e instanceof Error ? e.message : String(e)}`, s.span);
       return null;
@@ -643,7 +642,7 @@ export class DeriveSynth {
     if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Json)\n${src}\n`);
     let parsed: Program;
     try {
-      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Json for ${s.name}>`).parse();
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Json for ${s.name}>`).parseGenerated();
     } catch (e) {
       this.host.error(`internal error: generated Json codec for '${s.name}' did not parse: ${e instanceof Error ? e.message : String(e)}`, s.span);
       return null;
@@ -713,12 +712,4 @@ export class DeriveSynth {
       methods: [eqFn],
     }, s);
   }
-}
-
-function restampSpans(node: unknown, span: Span | undefined): void {
-  if (Array.isArray(node)) { for (const c of node) restampSpans(c, span); return; }
-  if (!node || typeof node !== "object") return;
-  const rec = node as Record<string, unknown>;
-  if ("span" in rec || typeof rec.kind === "string") rec.span = span;
-  for (const k of Object.keys(rec)) if (k !== "span") restampSpans(rec[k], span);
 }

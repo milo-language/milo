@@ -11,19 +11,6 @@ import { spawnSync } from "child_process";
 import { Unsupported, summary, transpile } from "../scripts/ts2milo";
 import { countViolations, frontendFiles } from "../scripts/ts-portable";
 
-// The whole frontend through ts2milo, once for every test that inspects it: it is the slowest step
-// in this file (28 s on the Linux CI runners), so each test that asks gets WHOLE_FRONTEND_MS.
-const WHOLE_FRONTEND_MS = 120_000;
-let wholeFrontendResult: ReturnType<typeof transpile> | undefined;
-function wholeFrontend(): ReturnType<typeof transpile> {
-  if (!wholeFrontendResult) {
-    const root = join(import.meta.dir, "..");
-    const files = ["src/ast.ts", ...frontendFiles().filter((x) => x !== "src/ast.ts")];
-    wholeFrontendResult = transpile(files.map((x) => join(root, x)), { astRoots: ["Program"], lenient: true });
-  }
-  return wholeFrontendResult;
-}
-
 function tmpTs(name: string, body: string): { file: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "ts2milo-"));
   const file = join(dir, name);
@@ -325,6 +312,33 @@ describe("tagged unions", () => {
     expect(refusal("parser.ts", "checker.ts")).toBe("");
     expect(refusal("checker.ts", "parser.ts")).toContain("mutated afterwards");
     expect(refusal("helpers.ts", "checker.ts")).toContain("mutated afterwards");
+  });
+
+  // A parse-phase write reaches a checker copy only along a call edge. These pin the two edges
+  // that used to be invented: a same-named method of an unrelated class, and a callback taken
+  // by a phase-less helper (written-props.ts overrideCalls, revDirect).
+  const pickIn = (cls: string) => `import type { Holder } from "./use";\nimport { val } from "./use";\nexport class ${cls} {\n  pick(h: Holder, b: boolean): number {\n    let x = h.e;\n    if (b) { x = h.f; }\n    return val(x);\n  }\n}\n`;
+  const proofRefusal = (files: Record<string, string>, fn: string): string => {
+    const dir = holderSrc("");
+    for (const [f, text] of Object.entries(files)) writeFileSync(join(dir, f), text);
+    const r = transpile([join(dir, "ast.ts"), join(dir, "use.ts"), ...Object.keys(files).map((f) => join(dir, f))], { astRoots: ["Expr"], overridesDir: join(dir, "none"), lenient: true });
+    return r.stubs.filter((st) => st.name === fn).map((st) => st.reason).join("");
+  };
+  test("a call to a method reaches overrides in subclasses only, never a same-named method elsewhere", () => {
+    const parser = "import type { Num, Expr } from \"./ast\";\nimport type { Holder } from \"./use\";\nexport class P {\n  pick(h: Holder, b: boolean): number { return 0; }\n  run(n: Num, h: Holder): number { n.n = 0; return this.pick(h, true); }\n}\n";
+    expect(proofRefusal({ "parser.ts": parser, "checker.ts": pickIn("C") }, "pick")).toBe("");
+    // D overrides C.pick and writes: a call through C may run it.
+    const sub = pickIn("C") + "import type { Num } from \"./ast\";\nexport class D extends C {\n  pick(h: Holder, b: boolean): number { if (h.e.kind === \"Num\") { h.e.n = 0; } return 0; }\n}\nexport function go(c: C, h: Holder): number { return c.pick(h, true); }\n";
+    expect(proofRefusal({ "checker.ts": sub }, "pick")).toContain("mutated afterwards");
+  });
+  test("a phase-less helper that only calls back into a checker copy does not make the copy's phase any phase", () => {
+    const parser = "import type { Num } from \"./ast\";\nexport function poke(n: Num): void {\n  n.n = 0;\n}\n";
+    const pick = "import type { Holder } from \"./use\";\nimport { val } from \"./use\";\nimport { apply } from \"./helpers\";\nexport function pick(h: Holder): number {\n  let x = h.e;\n  if (h.e.kind === \"Num\") { x = h.f; }\n  return val(x);\n}\nexport function go(h: Holder): number { return apply(pick, h); }\n";
+    const callback = "import type { Holder } from \"./use\";\nexport function apply(f: (h: Holder) => number, h: Holder): number { return f(h); }\n";
+    expect(proofRefusal({ "parser.ts": parser, "checker.ts": pick, "helpers.ts": callback }, "pick")).toBe("");
+    // A direct call from the helper: the driver may enter it during the parse.
+    const direct = callback.replace("{ return f(h); }", "{ return f(h); }\nexport function viaName(h: Holder): number { return pick(h); }").replace("export function apply", "import { pick } from \"./checker\";\nexport function apply");
+    expect(proofRefusal({ "parser.ts": parser, "checker.ts": pick, "helpers.ts": direct }, "pick")).toContain("mutated afterwards");
   });
 
   // A copy borrowed only for one call dies with it: a write elsewhere in the program cannot be seen through it.
@@ -1339,16 +1353,6 @@ describe("optional chain narrowing", () => {
     expect(reasons.some((x) => x.startsWith("g:") && x.includes("captured by a closure"))).toBe(true);
     expect(reasons.some((x) => x.startsWith("h:") && x.includes("'as' from"))).toBe(true);
   });
-
-  test("the stamp walker: optional children go through &mut Option<Heap<T>> params, boxed Vec fields by index, spans through set_span", () => {
-    const r = wholeFrontend();
-    const walk = r.files.get("ast-walk-stamp.milo")!;
-    const stamp = r.files.get("parser-stamp.milo")!;
-    expect(r.stubs.map((x) => x.name)).not.toContain("walkExpr");
-    expect(walk).toMatch(/fn walkOptExpr\(v: &mut StampScan, o: &mut Option<Heap<Expr>>/);
-    expect(walk).toContain("_at: i64 = -1");
-    expect(stamp).toContain("Expr_set_span(&mut e,");
-  }, WHOLE_FRONTEND_MS);
 
   test("a ctor param moves at its last use, @consumesThis takes returned fields, process.env and Map.size translate", () => {
     const { file, dir } = tmpTs("tsm_cc.ts", [

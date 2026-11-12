@@ -193,7 +193,7 @@ export function expandDeriveTemplate(tpl: DeriveTemplate, s: StructDecl, span?: 
     tok(TokenKind.LBrace, "{", at), ...inner, tok(TokenKind.RBrace, "}", at),
     tok(TokenKind.Eof, "", at),
   ];
-  const prog = new Parser(tokens, undefined, span?.file).parse();
+  const prog = new Parser(tokens, undefined, span?.file).parseGenerated();
   const impl = prog.impls[0];
   if (!impl || prog.impls.length !== 1) {
     throw new DeriveTemplateError(

@@ -21,7 +21,7 @@ export interface ProgramView {
   calleeOf(e: Expr): string | undefined;
   // The binding a place expression roots at (`G`, `G.f`, `G[i]`, `G!.f` all give `G`),
   // or undefined for a non-expression or a place with no single named root.
-  rootOf(e: unknown): string | undefined;
+  rootOf(e: Expr): string | undefined;
   // A mangled name as the user wrote it, for diagnostics.
   pretty(name: string): string;
   // Globals whose initializer runs code, by name, to the synthetic fn in `fns` whose body
@@ -171,10 +171,10 @@ export function globalWriteSummary(host: ProgramPassHost, program: Program, view
       implicit.enter(n, scope);
       const note = (r: string | undefined) => { if (r && mutableGlobals.has(r) && !bound.has(r)) for (const s of sinks) s.w.add(r); };
       const call = (t: string) => { for (const s of sinks) s.c.add(t); };
-      if (n.kind === "Assign") note(rootOf(n.target));
+      if (n.kind === "Assign") note(rootOf(n.target as Expr));
       if (n.kind === "MethodCall" && mutatesReceiver(host, n as unknown as Expr)) {
         // `G.push(x)` never appears as an Assign but reallocs G's buffer.
-        note(rootOf(n.object));
+        note(rootOf(n.object as Expr));
       }
       if (n.kind === "Call" || n.kind === "EnumLit" || n.kind === "MethodCall") {
         const t = implicit.isIndirect(n) ? undefined : target(n as unknown as Expr);
@@ -637,7 +637,7 @@ export function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, p
     const mark = new Map<number, string>();
     held.set(name, mark);
     const hold = (p: number, sp: unknown, what: string) => { if (!mark.has(p)) mark.set(p, at(sp, what)); };
-    const pIdx = (e: unknown) => { const r = rootOf(e); return r !== undefined ? idxOf.get(r) : undefined; };
+    const pIdx = (e: Expr) => { const r = rootOf(e); return r !== undefined ? idxOf.get(r) : undefined; };
     const walk = (node: unknown) => {
       if (!node || typeof node !== "object") return;
       if (Array.isArray(node)) {
@@ -655,7 +655,7 @@ export function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, p
       }
       const n = node as Record<string, unknown> & { kind?: string };
       if (n.kind === "ForInStmt") {
-        const p = pIdx(n.iterable);
+        const p = pIdx(n.iterable as Expr);
         if (p !== undefined && containsPark(n.body)) hold(p, n.span, "a for-in over it parks inside the loop");
       }
       if (n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") {
@@ -663,8 +663,8 @@ export function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, p
         const t = calleeOf(n as unknown as Expr);
         const callee = t ? fns.get(t) : undefined;
         const off = !callee ? -1 : callee.params.length === args.length ? 0 : callee.params.length === args.length + 1 ? 1 : -1;
-        const pairs: [number, unknown][] = args.map((a, i) => [i + off, a]);
-        if (n.kind === "MethodCall" && off === 1) pairs.unshift([0, n.object]);
+        const pairs: [number, Expr][] = args.map((a, i) => [i + off, a]);
+        if (n.kind === "MethodCall" && off === 1) pairs.unshift([0, n.object as Expr]);
         for (const [j, a] of pairs) {
           const p = pIdx(a);
           if (p === undefined) continue;

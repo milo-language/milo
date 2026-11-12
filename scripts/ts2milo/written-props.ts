@@ -13,7 +13,9 @@
 // lives outside the translated files; the one thing assumed of it is that it calls translated functions in
 // non-decreasing phase order of their files (PHASES: lex, parse, resolve, check, emit). So a site whose earliest
 // possible entry is in phase p also gets every write reachable from a function of phase >= p, and from every function
-// in a file with no phase (ast.ts, types.ts: callable at any time). Only writes of strictly earlier phases are dropped:
+// in a file with no phase (ast.ts, types.ts: callable at any time). One more assumption of the driver: it passes no
+// translated function as a value, so a phase-less helper the driver enters reaches a site only along direct calls,
+// never through a callback edge (typeName's demangle). Only writes of strictly earlier phases are dropped:
 // the parser filling in a node cannot be seen through a copy the checker makes afterwards.
 // A write `o.p = v` to a fresh local object (isConstruction) is no write: no alias of o exists yet.
 import ts from "typescript";
@@ -57,6 +59,9 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
   const unresolved: { from: string; type: ts.Type }[] = [];
   const methodsByName = new Map<string, Set<string>>();
   const bySignatureName: { from: string; name: string }[] = [];
+  // A call to a class method may run an override, but only one declared in a translated subclass of that class.
+  const overrideCalls: { from: string; cls: ts.Node; name: string }[] = [];
+  const subclasses = new Map<ts.Node, ts.ClassDeclaration[]>();
 
   const collectEdges = (n: ts.Node, from: string): void => {
     if (!ts.isIdentifier(n)) return;
@@ -73,7 +78,7 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
         if (!fileSet.has(body.getSourceFile().fileName)) continue;
         addEdge(from, keyOf(body));
         // A call through a base type may run a same-named override.
-        if (ts.isMethodDeclaration(body)) bySignatureName.push({ from, name: body.name.getText() });
+        if (ts.isMethodDeclaration(body)) overrideCalls.push({ from, cls: body.parent, name: body.name.getText() });
         if (!isCall) { const k = keyOf(body); let s = addressTaken.get(k); if (!s) addressTaken.set(k, (s = new Set())); s.add(body); }
       } else if (ts.isClassDeclaration(d)) {
         addEdge(from, classKey(d));
@@ -217,6 +222,10 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
       if (!w) writesOf.set(k, (w = { decls: new Set(), opaque: false }));
       cur = w;
       collectEdges(n, k);
+      if (ts.isClassDeclaration(n)) for (const h of n.heritageClauses ?? []) for (const t of h.types) {
+        const base = checker.getTypeAtLocation(t.expression).symbol?.declarations?.find(ts.isClassDeclaration);
+        if (base) { let l = subclasses.get(base); if (!l) subclasses.set(base, (l = [])); l.push(n); }
+      }
       if (ts.isMethodDeclaration(n) && n.name) { const nm = n.name.getText(); let s = methodsByName.get(nm); if (!s) methodsByName.set(nm, (s = new Set())); s.add(keyOf(n)); }
       if (ts.isBinaryExpression(n) && assignOps.has(n.operatorToken.kind)) taint(n.left);
       else if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) taint(n.operand);
@@ -236,6 +245,13 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
 
   const resolveCalls = (): void => {
     for (const { from, name } of bySignatureName.splice(0)) for (const t of methodsByName.get(name) ?? []) addEdge(from, t);
+    for (const { from, cls, name } of overrideCalls.splice(0)) {
+      const work = [...(subclasses.get(cls) ?? [])];
+      for (let c = work.pop(); c; c = work.pop()) {
+        for (const m of c.members) if (ts.isMethodDeclaration(m) && m.body && m.name.getText() === name) addEdge(from, keyOf(m));
+        work.push(...(subclasses.get(c) ?? []));
+      }
+    }
     for (const { from, type } of unresolved.splice(0)) {
       let targets = fitCache.get(type);
       if (!targets) {
@@ -243,14 +259,21 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
         for (const [k, nodes] of addressTaken) for (const f of nodes) if (checker.isTypeAssignableTo(checker.getTypeAtLocation(f), type)) { targets.push(k); break; }
         fitCache.set(type, targets);
       }
-      for (const t of targets) addEdge(from, t);
+      for (const t of targets) { if (!edges.get(from)?.has(t)) callbackEdges.add(`${from}>${t}`); addEdge(from, t); }
     }
   };
   const fitCache = new Map<ts.Type, string[]>();
+  // Edges added for a call through a function value: the driver passes no translated function as one, so these
+  // carry a call only when translated code made the value (see the phase rule in reach).
+  const callbackEdges = new Set<string>();
   resolveCalls();
 
   const rev = new Map<string, Set<string>>();
-  for (const [a, bs] of edges) for (const b of bs) { let s = rev.get(b); if (!s) rev.set(b, (s = new Set())); s.add(a); }
+  const revDirect = new Map<string, Set<string>>();
+  for (const [a, bs] of edges) for (const b of bs) {
+    let s = rev.get(b); if (!s) rev.set(b, (s = new Set())); s.add(a);
+    if (!callbackEdges.has(`${a}>${b}`)) { let d = revDirect.get(b); if (!d) revDirect.set(b, (d = new Set())); d.add(a); }
+  }
   const closure = (start: Iterable<string>, g: Map<string, Set<string>>): Set<string> => {
     const seen = new Set<string>(start);
     const work = [...seen];
@@ -288,8 +311,11 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
     if (!r) {
       const callers = closure([k], rev);
       // Any transitive caller may be the function the driver entered; one with no phase could be entered at any time.
+      // Except through a callback edge: a phase-less function the driver enters directly calls only the function
+      // values the driver gave it, never a translated one, so it reaches k only along direct calls (revDirect).
+      const direct = closure([k], revDirect);
       let p = Infinity;
-      for (const c of callers) if (c !== MODULE) p = Math.min(p, phaseOfKey(c) ?? -1);
+      for (const c of callers) if (c !== MODULE) { const q = phaseOfKey(c); if (q !== undefined) p = Math.min(p, q); else if (direct.has(c)) p = -1; }
       reachCache.set(k, (r = unionWrites(closure([...callers, ...(k === MODULE ? [] : laterEntries(p))], edges), reachCache.size)));
     }
     return r;

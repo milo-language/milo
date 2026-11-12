@@ -10,7 +10,7 @@ import { makeProgram, violationsOf, type Violation } from "./ts2milo/subset";
 
 const ROOT = resolve(import.meta.dir, "..");
 const BASELINE = join(ROOT, "scripts/ts-portable-baseline.json");
-const FRONTEND = /^(lexer|tokens|ast|ast-walk.*|ast-nodes|mutability-scan|types|parser|parser-stamp|resolver|checker.*|emit-mlir|emit-forms|backend-program|scaffold|mlir-.*)\.ts$/;
+const FRONTEND = /^(lexer|tokens|ast|ast-walk.*|ast-nodes|mutability-scan|types|parser|resolver|checker.*|emit-mlir|emit-forms|backend-program|scaffold|mlir-.*)\.ts$/;
 
 export function frontendFiles(): string[] {
   return readdirSync(join(ROOT, "src")).filter((f) => FRONTEND.test(f)).sort().map((f) => `src/${f}`);

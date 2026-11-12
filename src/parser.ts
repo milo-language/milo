@@ -3,9 +3,6 @@ import type { Token } from "./tokens";
 import { TokenKind } from "./tokens";
 import { Lexer, FSTRING_LBRACE, FSTRING_RBRACE } from "./lexer";
 import { ParseError } from "./diagnostics";
-import type { Diagnostic } from "./diagnostics";
-import { StampScan } from "./parser-stamp";
-import { walkExpr } from "./ast-walk-stamp";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, ChainClause, Span, ImportDecl,
@@ -89,7 +86,10 @@ export class Parser {
   // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
   // so the CLI renders the offending file's source line + caret (essential for errors
   // inside imported files, which would otherwise render against the entry file).
-  constructor(private tokens: Token[], private source?: string, private filePath?: string) {}
+  // `pinned`: text the user never wrote at these positions (an f-string fragment, a derive's
+  // generated source) gives every node, and a parse error, this one span. Tokens keep their own
+  // positions, which the grammar reads (`>>` is two adjacent `>`).
+  constructor(private tokens: Token[], private source?: string, private filePath?: string, private pinned?: Span) {}
 
   private cloneExpr(e: Expr): Expr { return structuredClone(e); }
   // Clamped to the EOF sentinel. A truncated file (`struct P{x:`) lets some
@@ -117,7 +117,10 @@ export class Parser {
     if (this.pos < this.tokens.length - 1) this.pos++;
     return tok;
   }
-  private span(tok: Token): Span { return { line: tok.line, col: tok.col, file: this.filePath }; }
+  private span(tok: Token): Span {
+    if (this.pinned) return { line: this.pinned.line, col: this.pinned.col, file: this.pinned.file };
+    return { line: tok.line, col: tok.col, file: this.filePath };
+  }
 
   private at(kind: TokenKind): boolean { return this.peek().kind === kind; }
 
@@ -178,7 +181,7 @@ export class Parser {
     }
     throw new ParseError({
       severity: "error",
-      span: { line: tok.line, col: tok.col, file: this.filePath },
+      span: this.span(tok),
       message: msg,
       hint,
       code: "parse",
@@ -193,6 +196,21 @@ export class Parser {
   }
 
   parse(): Program {
+    const program = this.parseDecls();
+    this.applyModuleDirectives(program);
+    return program;
+  }
+
+  // Code the compiler wrote itself (a derive's generated source): parsed like a file, but a
+  // module directive is refused, so nothing is stamped onto the tree after it is built. That
+  // keeps the stamping below reachable only from the parse phase (the checker parses derives).
+  parseGenerated(): Program {
+    const program = this.parseDecls();
+    if (this.moduleReqs.length > 0 || this.moduleWrapping || this.moduleReplayHooked) this.error("generated code cannot carry a module directive", this.peek());
+    return program;
+  }
+
+  private parseDecls(): Program {
     const structs: StructDecl[] = [];
     const enums: EnumDecl[] = [];
     const functions: Function[] = [];
@@ -309,29 +327,31 @@ export class Parser {
     if (this.codePointLoopCounter > 0 && !imports.some(i => i.path === "std/unicode")) {
       imports.push({ kind: "ImportDecl", path: "std/unicode", names: ["CodePoint", "decodeCodepoint"] });
     }
+    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates };
+  }
+
+  private applyModuleDirectives(program: Program): void {
     // A file-level `@!wrapping` stamps every one of this module's own (non-extern) fns so it
     // lowers as modular. Kept off `attributes` so the formatter reprints the directive once,
     // not `@wrapping` on every fn. Per-file: only fns parsed here, never imported ones.
     if (this.moduleWrapping) {
-      for (const f of functions) if (!f.isExtern) f.fromWrappingModule = true;
+      for (const f of program.functions) if (!f.isExtern) f.fromWrappingModule = true;
     }
     // `@!replayHooked`: every fn and method of this file records its own extern calls
     // (std/replay and the runtime under it), so the compiler must not redirect them.
     if (this.moduleReplayHooked) {
-      for (const f of functions) if (!f.isExtern) f.fromReplayHookedModule = true;
-      for (const im of impls) for (const m of im.methods) m.fromReplayHookedModule = true;
+      for (const f of program.functions) if (!f.isExtern) f.fromReplayHookedModule = true;
+      for (const im of program.impls) for (const m of im.methods) m.fromReplayHookedModule = true;
     }
     // `@!req(ID)` says the whole module implements ID, so stamp it on each decl as an ordinary
     // `@req` (marked inner so tooling can tell it was inherited). Per-file, like @!wrapping.
     if (this.moduleReqs.length > 0) {
-      for (const f of functions) if (!f.isExtern) f.attributes = this.withModuleReqs(f.attributes);
-      for (const im of impls) for (const m of im.methods) m.attributes = this.withModuleReqs(m.attributes);
-      for (const s of structs) if (!s.isExtern) s.attributes = this.withModuleReqs(s.attributes);
+      for (const f of program.functions) if (!f.isExtern) f.attributes = this.withModuleReqs(f.attributes);
+      for (const im of program.impls) for (const m of im.methods) m.attributes = this.withModuleReqs(m.attributes);
+      for (const s of program.structs) if (!s.isExtern) s.attributes = this.withModuleReqs(s.attributes);
     }
-    const program: Program = { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates };
     if (this.moduleWrapping) program.moduleWrapping = true;
     if (this.moduleReplayHooked) program.moduleReplayHooked = true;
-    return program;
   }
 
   private parseImport(): ImportDecl {
@@ -357,7 +377,7 @@ export class Parser {
         this.match(TokenKind.Comma);
       }
       this.expect(TokenKind.RBrace);
-      return { kind: "ImportDecl", path: pathTok.value, names, aliases: anyAlias ? aliases : undefined, span: { line: tok.line, col: tok.col, file: this.filePath } };
+      return { kind: "ImportDecl", path: pathTok.value, names, aliases: anyAlias ? aliases : undefined, span: this.span(tok) };
     }
     // bare import "path" → error with hint
     if (this.at(TokenKind.Import)) {
@@ -610,7 +630,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "EnumDecl", name, typeParams, variants, reprType: reprType ? reprType : undefined, span: { line: nameTok.line, col: nameTok.col, file: this.filePath } };
+    return { kind: "EnumDecl", name, typeParams, variants, reprType: reprType ? reprType : undefined, span: this.span(nameTok) };
   }
 
   // ── Functions ──
@@ -909,7 +929,7 @@ export class Parser {
     }
     return {
       kind: "DeriveTemplate", name: nameTok.value, body,
-      span: { line: kw.line, col: kw.col, file: this.filePath },
+      span: this.span(kw),
     };
   }
 
@@ -1273,24 +1293,6 @@ export class Parser {
   private parseColonType(): MiloType | null {
     if (this.match(TokenKind.Colon)) return this.parseType();
     return null;
-  }
-
-  // Parses one f-string interpolation; a failure is re-anchored to the f-string's span (see the call site).
-  private parseFragment(tokens: Token[], span: Span): Expr {
-    try {
-      return new Parser(tokens).parseExpr();
-    } catch (e) {
-      if (!(e instanceof ParseError)) throw e;
-      // Every field of the original with its span replaced (a field the original lacks stays absent).
-      const orig = e.diagnostic;
-      const d: Diagnostic = { severity: orig.severity, message: orig.message, span };
-      if (orig.len !== undefined) d.len = orig.len;
-      if (orig.hint !== undefined) d.hint = orig.hint;
-      if (orig.code !== undefined) d.code = orig.code;
-      const hasNotes = orig.notes !== undefined;
-      if (hasNotes) d.notes = orig.notes!;
-      throw new ParseError(d, this.source, this.filePath);
-    }
   }
 
   private parseIfExpr(s: Span): Expr {
@@ -2330,21 +2332,11 @@ export class Parser {
         }
         const fragLexer = new Lexer(exprStr);
         const tokens = fragLexer.tokenize();
-        // Same restamping problem as the spans below, one step earlier: a sub-parse that
-        // THROWS carries the fragment's own 1:col, which points at the first line of the
-        // file and a column past the end of it. That is a diagnostic the reader cannot
-        // act on and what the frontend fuzzer's bad-span check reports. Re-anchor to the
-        // f-string before it leaves this frame.
-        const expr: Expr = this.parseFragment(tokens, span);
-        // The sub-parser lexes a bare fragment, so every span in it starts over
-        // at 1:1 — any later error on an interpolated expression pointed at the
-        // first line of the FILE. Restamp to the f-string's own span. Columns
-        // within the fragment aren't recoverable here (the lexer already
-        // resolved escapes, so offsets into `raw` don't map back to source
-        // columns), but the line and the statement are now right.
-        const stamp = new StampScan(span);
-        walkExpr(stamp, expr,{ kind: "None", id: -1, op: "" }, "root", -1);
-        args.push(expr);
+        // A bare fragment lexes from 1:1, so its spans (and a parse error's) would point at
+        // the first line of the FILE: they are pinned to the f-string instead. Columns within
+        // the fragment are not recoverable (the lexer already resolved escapes, so offsets into
+        // `raw` do not map back to source columns), but line and statement are.
+        args.push(new Parser(tokens, this.source, this.filePath, span).parseExpr());
       } else {
         lit += raw[i];
         i++;
