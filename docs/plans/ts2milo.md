@@ -280,6 +280,15 @@ remains the compiler, and this plan records why):
    diff on reading it.
 4. The generated pass is more than 3x slower than the TypeScript, or runs out of memory (6 GB guard)
    on the largest corpus program.
+5. Progress (added 2026-11-12): three working sessions after 2026-11-12, the checker is still above
+   50% stubbed lines, or the generated checker has not finished one well-typed program. Baseline that
+   day: checker 74.0% stubbed (13,521 of 18,285 lines), 190 compile errors.
+
+**Finish line** (decided 2026-11-09): the generated lexer, parser and checker drive the TypeScript
+`emit-mlir` to byte-identical milo dialect on every test program (checker result dumped by the
+generated side, read back with `milo emit-mlir --from-checked`). The resolver and emit stay
+TypeScript. Measured by `bun scripts/ts2milo-frontend.ts` (stubbed lines per stage, compile errors);
+`--reasons checker` is the worklist, biggest first.
 
 Gates for every step: `bun scripts/ir-same.ts --emit mlir` (byte-identical milo dialect; the base is
 cached, so a rerun only re-emits the working tree) on the fixtures a change can reach, the

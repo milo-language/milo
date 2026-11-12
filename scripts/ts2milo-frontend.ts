@@ -5,6 +5,7 @@
 // real program hits first (--run).
 //   bun scripts/ts2milo-frontend.ts            regenerate + check: errors per file and total
 //   bun scripts/ts2milo-frontend.ts --top 15   also the most common error messages
+//   bun scripts/ts2milo-frontend.ts --reasons checker   that stage's stubs grouped by reason, weighted by TS lines
 //   bun scripts/ts2milo-frontend.ts --stub-errors      also stub every function that holds a compile error
 //                                                   (its reason is the error), round after round until
 //                                                   the tree compiles: the stubs are the worklist
@@ -117,13 +118,35 @@ for (const f of files) {
   }
 }
 const stageOf = (f: string) => (/checker/.test(f) ? "checker" : /resolver/.test(f) ? "resolver" : /emit-|mlir-|backend-program|scaffold/.test(f) ? "emit" : "lexparse");
-const stubKeys = r.stubs.map((s) => `${s.file}::${s.name}`);
-const stubbedSizes = new Set<string>();
-for (const k of sizes.keys()) if (stubKeys.some((s) => s === k || (!sizes.has(s) && k.startsWith(s.split("::")[0] + "::") && k.endsWith("." + s.split("::")[1])))) stubbedSizes.add(k);
+// The sized keys a stub covers: its own key, or for a bare method name every `Class.name` in its file.
+const sizedKeysOf = (stubKey: string): string[] => {
+  if (sizes.has(stubKey)) return [stubKey];
+  const [file, name] = stubKey.split("::");
+  return [...sizes.keys()].filter((k) => k.startsWith(file + "::") && k.endsWith("." + name));
+};
+const stubbedSizes = new Set(r.stubs.flatMap((s) => sizedKeysOf(`${s.file}::${s.name}`)));
 for (const stage of ["lexparse", "checker", "resolver", "emit"]) {
   let total = 0, stubbedLines = 0;
   for (const [k, n] of sizes) if (stageOf(k.split("::")[0]) === stage) { total += n; if (stubbedSizes.has(k)) stubbedLines += n; }
   console.log(`${stage}: stubbed lines ${stubbedLines} of ${total} (${total ? ((100 * stubbedLines) / total).toFixed(1) : "0.0"}%)`);
+}
+// --reasons <stage>: the stage's stubs grouped by reason (location and names stripped), biggest by TS lines first:
+// the worklist for un-stubbing that stage.
+if (argv.includes("--reasons")) {
+  const stage = argv[argv.indexOf("--reasons") + 1];
+  const groups = new Map<string, { lines: number; fns: string[] }>();
+  for (const s of r.stubs) {
+    if (stageOf(s.file) !== stage) continue;
+    const reason = s.reason.replace(/^\S+:\d+: /, "").replace(/'[^']*'/g, "_").slice(0, 120);
+    const lines = sizedKeysOf(`${s.file}::${s.name}`).reduce((n, k) => n + sizes.get(k)!, 0);
+    const g = groups.get(reason) ?? { lines: 0, fns: [] };
+    g.lines += lines;
+    g.fns.push(`${s.name}(${lines})`);
+    groups.set(reason, g);
+  }
+  for (const [reason, g] of [...groups].sort((a, b) => b[1].lines - a[1].lines).slice(0, top || 25)) {
+    console.log(`${String(g.lines).padStart(6)} lines ${String(g.fns.length).padStart(4)} fns  ${reason}\n        ${g.fns.slice(0, 10).join(" ")}`);
+  }
 }
 if (process.env.DUMP_ERRORS) await Bun.write(process.env.DUMP_ERRORS, [...seen.keys()].sort().join("\n"));
 console.log(`COMPILE ERRORS: ${seen.size}`);
