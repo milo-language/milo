@@ -86,7 +86,8 @@ describe("ts2milo", () => {
       "export type P = { a: number } | { b: number };",
       "export function lit(): P { return { a: 1 }; }",
       "export function spread(o: { x: number }): { x: number } { return { ...o }; }",
-      "export function walk(m: Map<string, number>): number { let n = 0; for (const [k, v] of m) { n += v; } return n; }",
+      // a Map [k, v] head is lowered now (cd617e11); a non-declaration head is still refused
+      "export function walk(a: number[]): number { let n = 0; let x = 0; for (x of a) { n += x; } return n; }",
       "export function pi(s: string): number { return Math.hypot(1, 2); }",
       "export function str(s: string): string { return s as string; }",
     ].join("\n") + "\n";
@@ -1372,18 +1373,6 @@ describe("optional chain narrowing", () => {
     expect(out).toContain("self.seen.len()");
     expect(out).toContain("jsEnv(");
   });
-});
-
-describe("replaceNode intrinsic", () => {
-  test("a node rewrite through replaceNode is an assignment through the &mut place that keeps the hidden id", () => {
-    const r = wholeFrontend();
-    const out = r.files.get("checker.milo")!;
-    const fn = out.slice(out.indexOf("fn canonicalizePreludeVariant("));
-    const body = fn.slice(0, fn.indexOf("\n    fn ", 10));
-    expect(body).toContain("expr: &mut Expr");
-    expect(body).toMatch(/let id = Expr_id\(expr\)\n\s+expr = \w+\n\s+Expr_set_id\(&mut expr, id\)/);
-    expect(r.functions.some((f) => f.name === "replaceNode")).toBe(false);
-  }, WHOLE_FRONTEND_MS);
 });
 
 describe("destructuring declarations", () => {

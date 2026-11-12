@@ -809,20 +809,10 @@ function applyWarningDefaults(config: WarningConfig): void {
 }
 
 
-// The name an identifier expression spells, else null. A function that rewrites its argument calls this
-// instead of narrowing the argument, so the argument stays the whole Expr for `replaceNode`.
+// The name an identifier expression spells, else null.
 function identNameOf(e: Expr): string | null {
   // ident-ok: reads the NAME of a bare identifier, the rewrite emits a call by name
   return e.kind === "Ident" ? e.name : null;
-}
-
-// Whole-value replacement of an AST node through the place that owns it (identity, and so every map keyed by
-// the node, is kept). ts2milo emits `*target = next` plus the node's hidden id; this body is not translated.
-// An absent optional field stays absent (`typeArgs: undefined` is dropped), as the old spread did.
-export function replaceNode(target: Expr, next: Expr): void {
-  const t = target as unknown as Record<string, unknown>;
-  for (const k of Object.keys(t)) delete t[k];
-  for (const [k, v] of Object.entries(next)) if (v !== undefined) t[k] = v;
 }
 
 export class TypeChecker {
@@ -12540,6 +12530,9 @@ export class TypeChecker {
   // every type first), so it applies these afterwards against the monomorphized one.
   private matchCallArg(slot: Expr, argType: TypeKind, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
     const arg = rewritten(this.rewrites, slot);
+    // The `&mut` marker was keyed by the node the wrapper held; checking the argument
+    // may have replaced it (static-on-variable to member), so the marker follows.
+    if (arg !== slot && this.explicitMutArgs.has(slot)) this.explicitMutArgs.add(arg);
     if (paramType.tag === "ref") {
       this.enforceArgRange(arg, argType, paramType, arg.span);
       if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {

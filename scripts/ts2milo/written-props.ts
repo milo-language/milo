@@ -221,7 +221,6 @@ export function buildImmutability(program: ts.Program, checker: ts.TypeChecker, 
       if (ts.isBinaryExpression(n) && assignOps.has(n.operatorToken.kind)) taint(n.left);
       else if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) taint(n.operand);
       else if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) taint(n.initializer);
-      else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "replaceNode" && n.arguments.length === 2) writeAllProps(n.arguments[0]);
       else if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
         const c = n.expression;
         if (MUTATORS.has(c.name.text)) taint(c.expression);
