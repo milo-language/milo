@@ -126,6 +126,7 @@ export class Layout {
       changed = false;
       for (const [name, layout] of this.enumLayouts) {
         if (this.droppableEnums.has(name)) continue;
+        if (this.dropImpls.has(name)) { this.droppableEnums.add(name); changed = true; continue; }
         for (const [, variant] of layout.variants) {
           if (variant.fieldTypeKinds.some(f => this.needsDropCg(f) || (f.tag === "enum" && f.name === name))) {
             this.droppableEnums.add(name);

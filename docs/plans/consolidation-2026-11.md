@@ -20,6 +20,11 @@ A brief that needs either is marked **BLOCKED**. Unblocked briefs come first in 
 
 ### BUG-1. A user `Drop` on an enum never runs in the compiled binary (run)
 
+FIXED 2026-11-12: the enum arm of `dropAt` calls the user drop, unguarded (moves end a
+binding statically, so no moved-out enum reaches it). A match on an owned Drop enum now
+borrows it (Rust's E0509); moving a payload out of an rvalue Drop enum is an error.
+Fixtures `tests/fixtures/enumUserDrop.milo`, `tests/errors/dropEnumMoveOutRvalue.milo`.
+
 ```milo
 enum Tok { A(string), B }
 impl Drop for Tok { fn drop(self: &mut Self): void { print("drop tok") } }
@@ -42,6 +47,9 @@ fn main() {
 - Fix: brief D1 (unblocked).
 
 ### BUG-2. An enum with all-Copy payloads and a `Drop` impl is treated as Copy by the checker (run)
+
+FIXED 2026-11-12: `isAllCopyEnum` returns false for a Drop type before its cache, as
+`isAllCopyStruct` does. Covered by `second()` in `tests/fixtures/enumUserDrop.milo`.
 
 ```milo
 enum Tok { A(i64), B }

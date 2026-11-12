@@ -520,6 +520,15 @@ class GlueFn {
         const layout = this.cx.mlirEnumLayout(t.name);
         if (!layout) throw new MlirUnsupported(`drop of enum ${t.name}`);
         const ety = this.placeTy(t);
+        // The user's drop runs on every variant, before the payloads, as on a struct. It is
+        // unguarded: moves end a binding statically, so a moved-out enum is never visited
+        // here, and a zeroed one reads as a live first variant, so no zero test could tell.
+        if (this.cx.dropImpls.has(t.name) && !structural) {
+          const fnTy = `(!milo.ref<${ety}>) -> ()`;
+          const fn = `${t.name}$Drop$drop`;
+          this.glue.callees.set(fn, fnTy);
+          this.emit(`func.call @${glueHelpers.quote(fn)}(${this.def(`milo.ptr.lend ${p} -> !milo.ref<${ety}>`)}) : ${fnTy}`);
+        }
         const owning = layout.variants.filter(v => v.fields.some(f => this.cx.needsDropCg(f)));
         if (owning.length === 0) return;
         const tag = this.def(`milo.enum.tag ${this.def(`milo.ptr.load ${p} : ${ety}`)} : ${ety}`);

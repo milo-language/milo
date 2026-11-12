@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 602 distinct messages across 771 programs the compiler must reject.
+Every error message the test suite pins: 603 distinct messages across 772 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -286,6 +286,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move 'u.name' out of the borrowed 'u'`](#cannot-move-u-name-out-of-the-borrowed-u)
 - [`cannot move 'u.tags' out of the borrowed 'u'`](#cannot-move-u-tags-out-of-the-borrowed-u)
 - [`cannot move 'x.tags' out of the borrowed 'x'`](#cannot-move-x-tags-out-of-the-borrowed-x)
+- [`cannot move a payload out of 'Tok', which implements Drop`](#cannot-move-a-payload-out-of-tok-which-implements-drop)
 - [`cannot move out of global`](#cannot-move-out-of-global)
 - [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
@@ -7098,6 +7099,19 @@ fn main() {
 ```
 
 <sub>[tests/errors/keyExtractorNestedClosureMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorNestedClosureMove.milo)</sub>
+
+## `cannot move a payload out of 'Tok', which implements Drop` {#cannot-move-a-payload-out-of-tok-which-implements-drop}
+
+```milo skip
+enum Tok { A(string), B }
+impl Drop for Tok { fn drop(self: &mut Self): void { print("drop tok") } }
+fn make(): Tok { return Tok.A("m".repeat(2)) }
+fn main() {
+    match make() { Tok.A(s) => print(s), Tok.B => print("b") }
+}
+```
+
+<sub>[tests/errors/dropEnumMoveOutRvalue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropEnumMoveOutRvalue.milo)</sub>
 
 ## `cannot move out of global` {#cannot-move-out-of-global}
 

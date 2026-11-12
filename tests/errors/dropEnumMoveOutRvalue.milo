@@ -1,0 +1,7 @@
+// @error: cannot move a payload out of 'Tok', which implements Drop
+enum Tok { A(string), B }
+impl Drop for Tok { fn drop(self: &mut Self): void { print("drop tok") } }
+fn make(): Tok { return Tok.A("m".repeat(2)) }
+fn main() {
+    match make() { Tok.A(s) => print(s), Tok.B => print("b") }
+}

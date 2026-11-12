@@ -8212,6 +8212,9 @@ export class TypeChecker {
 
   private allCopyEnumCache = new Map<string, boolean>();
   private isAllCopyEnum(name: string): boolean {
+    // Before the cache, as in isAllCopyStruct: Drop impls register after the first
+    // copy-ness query may have cached `true`, and a Drop type is never Copy.
+    if (this.dropImpls.has(name)) return false;
     const cached = this.allCopyEnumCache.get(name);
     if (cached !== undefined) return cached;
     const info = this.enums.get(name);
@@ -14934,6 +14937,25 @@ export class TypeChecker {
   private ownedInspectOnly(subject: Expr, subjType: TypeKind, patterns: (Pattern | undefined)[]): boolean {
     // ident-ok: the rule is about a NAMED owned local, not any expression of enum type
     if (subject.kind !== "Ident" || subjType.tag !== "enum") return false;
+    // A Drop impl runs against the whole value, so a match never takes one apart (Rust's
+    // E0509): the subject is borrowed and its non-Copy payloads bind as views. Consuming
+    // it instead left the binary skipping the drop and the interpreter dropping a value
+    // whose payload had been moved out.
+    if (this.dropImpls.has(subjType.name)) return true;
+    return this.bindsOnlyCopy(subjType, patterns);
+  }
+
+  // An rvalue subject has no place to borrow from, so moving a payload out of a Drop
+  // enum there is refused rather than leaving the drop to see an emptied value.
+  private refuseDropEnumMoveOut(subject: Expr, subjType: TypeKind, subjBorrows: boolean, patterns: (Pattern | undefined)[]): void {
+    if (subjBorrows || subjType.tag !== "enum" || !this.dropImpls.has(subjType.name)) return;
+    if (this.bindsOnlyCopy(subjType, patterns)) return;
+    this.error(`cannot move a payload out of '${subjType.name}', which implements Drop`, subject.span,
+      `a Drop impl runs against the whole value; bind it first (\`let t = ...\`) and match on \`t\`, whose payloads bind as views`);
+  }
+
+  private bindsOnlyCopy(subjType: TypeKind, patterns: (Pattern | undefined)[]): boolean {
+    if (subjType.tag !== "enum") return false;
     const einfo = this.enums.get(subjType.name);
     if (!einfo) return false;
     return patterns.every(pattern => {
@@ -15086,6 +15108,7 @@ export class TypeChecker {
     const subjIsPlace = !subjIsRef && subjType.tag === "enum" && this.isBorrowedMatchPlace(subject);
     const subjBorrows = subjIsRef || subjIsPlace ||
       (!subjIsRef && this.ownedInspectOnly(subject, subjType, patterns));
+    this.refuseDropEnumMoveOut(subject, subjType, subjBorrows, patterns);
     if (subjBorrows) this.matchSubjectRef.add(subject);
     return { subjType, subjBorrows, subjIsMut };
   }
@@ -15516,6 +15539,7 @@ export class TypeChecker {
       subjIsOwnedInspect = this.ownedInspectOnly(subject, subjType, arms.map(a => a.pattern));
     }
     const subjBorrows = subjIsRef || subjIsPlace || subjIsOwnedInspect;
+    this.refuseDropEnumMoveOut(subject, subjType, subjBorrows, arms.map(a => a.pattern));
     if (subjBorrows) this.matchSubjectRef.add(subject);
     const isEnum = subjType.tag === "enum";
     const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";

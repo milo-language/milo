@@ -1,0 +1,64 @@
+// @expect: start
+// @expect: took
+// @expect: drop tok
+// @expect: b
+// @expect: drop tok
+// @expect: reassigned
+// @expect: took
+// @expect: drop tok
+// @expect: end
+// @expect: 4
+// @expect: some
+// @expect: drop tok
+// @expect: second end
+// @expect: drop n
+// @expect: drop tok
+// @expect: drop tok
+// @expect: drop tok
+// @expect: drop tok
+// @expect: drop tok
+// impl Drop on an enum runs in the binary as in the interpreter, once per live value,
+// never on a moved-out one.
+enum Tok { A(string), B }
+
+impl Drop for Tok { fn drop(self: &mut Self): void { print("drop tok") } }
+
+struct Holder { t: Tok }
+
+fn take(_t: Tok): void { print("took") }
+
+fn make(): Tok { return Tok.A("m".repeat(2)) }
+
+fn main() {
+    let t = Tok.A("x".repeat(3))
+    let u = Tok.B
+    print("start")
+    take(t)
+    let c = u
+    match c { Tok.A(s) => print(s), Tok.B => print("b") }
+    var _w = make()
+    _w = Tok.B
+    print("reassigned")
+    var v: Vec<Tok> = Vec.new()
+    v.push(Tok.A("v".repeat(1)))
+    v.push(Tok.B)
+    let _h = Holder { t: Tok.B }
+    let r = make()
+    if true { take(r) }
+    print("end")
+    second()
+}
+
+// An all-scalar payload with Drop is moved, not copied: one drop for n and m together.
+enum N { X(i64), Y }
+
+impl Drop for N { fn drop(self: &mut Self): void { print("drop n") } }
+
+fn second() {
+    let n = N.X(4)
+    let m = n
+    match m { N.X(k) => print(k), N.Y => print("y") }
+    let o: Option<Tok> = Some(Tok.B)
+    if let Some(_t) = o { print("some") }
+    print("second end")
+}
