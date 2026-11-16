@@ -66,6 +66,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/fuzz-hashmap.ts` | Differential falsifier for the built-in HASHMAP — the open-addressing table codegen-map.ts emits, not a .milo file. |
 | `scripts/fuzz-int.ts` | Differential falsifier for INTEGER arithmetic across every width. |
 | `scripts/fuzz-jpeg.ts` | Crash fuzzer for std/jpeg's decoder: mutated and truncated JPEGs must come back as Ok or Err, never a trap, a hang or a runaway allocation. |
+| `scripts/fuzz-json.ts` | Falsifier for std/json and @derive(Json): the two paths a JSON API server leans on (derived toJson for every response, Json.parse + doc.strAt/curField for every upstream feed). |
 | `scripts/fuzz-ownership.ts` | Differential falsifier for the OWNERSHIP checker. |
 | `scripts/fuzz-scan.ts` | Raw lexical splitter used by the frontend fuzzer for mutation and reduction. |
 | `scripts/fuzz-shared-string.ts` | Differential falsifier for shared (reference-counted, copy-on-write) strings. |
