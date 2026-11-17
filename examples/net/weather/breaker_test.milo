@@ -1,0 +1,25 @@
+// The upstream circuit breaker: junk-input statuses never open it, an outage does.
+from "std/testing" import { assertEq }
+from "./app" import { breakerOpen, breakerRecord, tripsBreaker }
+
+fn testJunkInputStatusesNeverTrip(): void {
+    assertEq(tripsBreaker(400), false)
+    assertEq(tripsBreaker(404), false)
+    assertEq(tripsBreaker(500), false)
+    for i in 0..10 {
+        breakerRecord("junk", tripsBreaker(500))
+    }
+    assertEq(breakerOpen("junk"), false)
+}
+
+fn testOpensAfterThreeFailuresAndASuccessCloses(): void {
+    assertEq(tripsBreaker(403), true)
+    breakerRecord("nws", true)
+    breakerRecord("nws", true)
+    assertEq(breakerOpen("nws"), false)
+    breakerRecord("nws", true)
+    assertEq(breakerOpen("nws"), true)
+    assertEq(breakerOpen("om"), false)
+    breakerRecord("nws", false)
+    assertEq(breakerOpen("nws"), false)
+}

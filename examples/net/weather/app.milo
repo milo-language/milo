@@ -479,6 +479,72 @@ fn inFlightDrop(key: &string): void {
     }
 }
 
+// Per-provider circuit breaker. weather.gov sits behind Akamai, which blocks the
+// whole server IP once it sees too many requests, and the block outlives the outage
+// that caused it. The cache alone does not stop that: a failed refresh is not
+// remembered, so during an outage every viewer request is another upstream call.
+// After BREAKER_TRIP_FAILS consecutive failures (403, 429, 502-504, or no answer at
+// all), nothing goes to that provider for 60 s, doubling to 10 min while it keeps
+// failing; a success closes it. Other statuses never count: weather.gov answers
+// junk input with 400/404/500, and if one junk query could open the breaker, any
+// viewer could take the app down for everyone.
+let BREAKER_TRIP_FAILS: i64 = 3
+let BREAKER_MIN_MS: i64 = 60000
+let BREAKER_MAX_MS: i64 = 600000
+
+pub var breakerHost: Vec<string> = []
+
+pub var breakerUntilMs: Vec<i64> = []
+
+pub var breakerDelayMs: Vec<i64> = []
+
+pub var breakerFails: Vec<i64> = []
+
+fn breakerSlot(host: &string): i64 {
+    for i in 0..breakerHost.len {
+        if breakerHost[i] == host {
+            return i
+        }
+    }
+    breakerHost.push(host.clone())
+    breakerUntilMs.push(0)
+    breakerDelayMs.push(0)
+    breakerFails.push(0)
+    return breakerHost.len - 1
+}
+
+pub fn breakerOpen(host: &string): bool {
+    return epochMillis() < breakerUntilMs[breakerSlot(host)]
+}
+
+pub fn breakerRecord(host: &string, failed: bool): void {
+    let i = breakerSlot(host)
+    if !failed {
+        breakerDelayMs[i] = 0
+        breakerUntilMs[i] = 0
+        breakerFails[i] = 0
+        return
+    }
+    breakerFails[i] += 1
+    if breakerFails[i] < BREAKER_TRIP_FAILS {
+        return
+    }
+    var delay = breakerDelayMs[i] * 2
+    if delay < BREAKER_MIN_MS {
+        delay = BREAKER_MIN_MS
+    }
+    if delay > BREAKER_MAX_MS {
+        delay = BREAKER_MAX_MS
+    }
+    breakerDelayMs[i] = delay
+    breakerUntilMs[i] = epochMillis() + delay
+    eprint($"upstream {host} failing, backing off {delay / 1000} s")
+}
+
+pub fn tripsBreaker(status: i32): bool {
+    return status == 403 || status == 429 || status == 502 || status == 503 || status == 504
+}
+
 // GET /api/up?h=<host key>&q=<path>
 //
 // `q` arrives percent-encoded and is decoded by the query parser, so the
@@ -515,6 +581,18 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         // The leader failed or timed out; fall through and try it ourselves.
     }
 
+    if breakerOpen(hostKey) {
+        let at = cacheFind(key)
+        if at >= 0 {
+            ctx.setHeader("Cache-Control", "public, max-age=60")
+            ctx.setHeader("X-Cache", "stale")
+            return Response.Status(apiCache[at].status, apiCache[at].contentType, apiCache[at].body)
+        }
+        ctx.setStatus(503)
+        ctx.setHeader("Retry-After", "60")
+        return ctx.json("{\"error\":\"upstream backing off\"}")
+    }
+
     inFlightAdd(key)
     var body = ""
     var contentType = ""
@@ -530,6 +608,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     }
     match fetchWith(base + path, opts) {
         Ok(resp) => {
+            breakerRecord(hostKey, tripsBreaker(resp.status))
             upstreamStatus = resp.status
             if resp.status >= 200 && resp.status < 300 {
                 body = resp.body
@@ -539,6 +618,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
             }
         }
         Err(_) => {
+            breakerRecord(hostKey, true)
         }
     }
     // Before any return below: a key left marked in-flight would make every
