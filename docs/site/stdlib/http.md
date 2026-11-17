@@ -322,6 +322,19 @@ TimeoutStopSec=15
 `systemctl restart app` then starts the new binary on the same socket while the old one
 drains. Keep `TimeoutStopSec` above `drainMs`.
 
+State a server keeps only in memory, such as a queue of rows it writes in batches, is
+lost at that exit unless it is saved first. `onDrain(hook)` registers a `move` closure
+that runs when the drain ends, after every request in flight has finished (or been cut
+off at `drainMs`) and just before the process exits; hooks run once, in the order added:
+
+```
+onDrain(move (): void => flushQueue())
+```
+
+A sequential server (`serve`, `serveRouterSerialOn`) idle in `accept()` when the signal
+arrives exits inside the signal handler, where no Milo code can run, so its hooks do not
+run then.
+
 `serveRouterWith(host, port, router, ServeOptions { maxConn: 512, drainMs: 10000 })`
 sets the limits. At `maxConn` connections in flight the server stops calling `accept()`
 until one finishes, so the excess waits in the kernel's listen backlog (1024, capped by

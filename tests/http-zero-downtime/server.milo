@@ -1,15 +1,18 @@
 // Test server for the zero-downtime restart gate (tests/httpZeroDowntime.test.ts).
 // Env: MAXCONN (default 512), DRAINMS (default 10000), SLOWMS (default 2000), PORT (own bind),
-// IDLEMS (idleTimeoutMs, default 5000), NOACTIVATION=1 (do not opt in to socket activation: an activated start must then refuse).
+// IDLEMS (idleTimeoutMs, default 5000), NOACTIVATION=1 (do not opt in to socket activation: an activated start must then refuse),
+// HOOKFILE (an onDrain hook writes "slow_done=<n>" there: how many /slow handlers had finished when it ran).
 // /events is a stream parked in waitClosed. / answers "ok"; /slow sleeps SLOWMS then answers "slow"; /max reports the highest
 // concurrency the handlers saw.
-from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterWith }
+from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterWith, onDrain }
+from "std/fs" import { writeFile }
 from "std/env" import { Env }
 from "std/time" import { sleepMs }
 from "std/strconv" import { parseInt }
 
 var active: i64 = 0
 var maxSeen: i64 = 0
+var slowDone: i64 = 0
 
 fn envInt(name: string, dflt: i64): i64 {
     let v = Env.get(name)
@@ -33,6 +36,7 @@ fn main(): i32 {
         }
         sleepMs(slowMs)
         active -= 1
+        slowDone += 1
         return c.text("slow")
     })
     // A long-lived connection: parked in waitClosed until the client leaves or the drain starts.
@@ -47,6 +51,12 @@ fn main(): i32 {
     router.get("/max", (c: &mut Context) => {
         return c.text(maxSeen.toString())
     })
+    let hookFile = Env.get("HOOKFILE") ?? ""
+    if hookFile.len > 0 {
+        onDrain(move(): void => {
+            let _w = writeFile(hookFile, $"slow_done={slowDone}")
+        })
+    }
     let port = envInt("PORT", 0)
     var p: u16? = null
     if port > 0 {

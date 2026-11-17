@@ -1226,6 +1226,27 @@ fn installDrain(broadcast: bool): void {
     }
 }
 
+// Run in the order added when a SIGTERM drain ends, clean or cut at drainMs, just before
+// the process exits: for what a server holds only in memory (a write queue, a batch of
+// analytics rows) and must save first. A hook runs once, after every request in flight has
+// finished or been cut off, so it sees their last writes. Not run when a sequential server
+// (serve, serveRouter) is idle in accept() at the signal: that one exits in the signal
+// handler itself, where no Milo code can run.
+var gDrainHooks: Vec<move () => void> = []
+
+pub fn onDrain(hook: move () => void): void {
+    gDrainHooks.push(hook)
+}
+
+fn drainExit(code: i32): void {
+    // each hook is taken out of the list as it runs, so the list gives up its owner
+    while gDrainHooks.len > 0 {
+        let hook = gDrainHooks.remove(0)
+        hook()
+    }
+    exit(code)
+}
+
 fn terminated(): bool {
     // gTerm is one of the globals the SIGTERM handler (a C signal handler) writes; a handler cannot hold a Milo reference, so they are plain statics.
     unsafe { return gTerm == 1 }
@@ -1404,7 +1425,7 @@ fn acceptIdle(listenFd: i32): i32 {
         // Raised first, then checked: a SIGTERM before the flag is seen here, one after it
         // exits in the handler.
         if gTerm == 1 {
-            exit(0)
+            drainExit(0)
         }
     }
     let fd = acceptPeer(listenFd)
@@ -1430,7 +1451,7 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
         serveHandlerExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, defaults.writeTimeoutMs), handler)
         closeFd(clientFd)
         if terminated() {
-            exit(0)
+            drainExit(0)
         }
     }
     return Result.Err("server exited")
@@ -1829,7 +1850,7 @@ pub fn serveRouterSerialOn(host: &string, port: u16?, router: &Router): Result<U
         serveRouterExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, defaults.writeTimeoutMs), router)
         closeFd(clientFd)
         if terminated() {
-            exit(0)
+            drainExit(0)
         }
     }
     return Result.Err("server exited")
@@ -2671,7 +2692,7 @@ fn acceptLoop(listenFd: i32, ownsListener: bool, fds: &Channel<i32>, serve: (i32
                 // Exit 1: a supervisor must be able to tell a drain that cut requests off
                 // from a clean one.
                 eprint($"drain timeout: exiting with {s.live()} connections still open")
-                exit(1)
+                drainExit(1)
             }
             sleepMs(5)
         }
@@ -2757,7 +2778,7 @@ pub fn serveConns(listenFd: i32, opts: &ServeOptions, serve: (i32) => void): Res
         s.spawn(() => acceptLoop(listenFd, true, fds, serve, maxConn, drainMs))
     })
     if terminated() {
-        exit(0)
+        drainExit(0)
     }
     return Result.Err("server exited")
 }
@@ -2913,12 +2934,12 @@ pub fn serveRouterFactory(host: &string, port: u16?, make: () => Router, opts: &
     while workersLive() > 0 {
         if unrecordedEpochMillis() >= deadline {
             eprint("drain timeout: exiting with workers still draining")
-            exit(1)
+            drainExit(1)
         }
         sleepMs(5)
     }
     if terminated() {
-        exit(0)
+        drainExit(0)
     }
     return Result.Err("server exited")
 }

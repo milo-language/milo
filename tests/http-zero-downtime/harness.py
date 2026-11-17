@@ -15,6 +15,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -232,6 +233,37 @@ def mode_drain(binary):
     finish("drain", problems)
 
 
+def mode_hook(binary):
+    # An onDrain hook runs once, after the request in flight finished, before the exit.
+    path = os.path.join(tempfile.mkdtemp(prefix="zd-hook-"), "hook")
+    L = Launcher(binary, {"DRAINMS": "5000", "SLOWMS": "1000", "HOOKFILE": path})
+    L.spawn()
+    wait_listening(L.port)
+    res = []
+    t = threading.Thread(target=lambda: res.append(get(L.port, "/slow")))
+    t.start()
+    time.sleep(0.3)
+    L.stop()
+    code, secs = L.reap()[0]
+    t.join()
+    problems = []
+    got = open(path).read() if os.path.exists(path) else None
+    check(code == 0, f"exit code {code}, a clean drain exits 0", problems)
+    check(res and res[0][0] == "slow", f"in-flight request: {res}", problems)
+    check(got == "slow_done=1", f"hook wrote {got!r}, want slow_done=1 (it must run after the request finished)", problems)
+    # an idle server runs it too
+    path2 = path + "2"
+    L2 = Launcher(binary, {"HOOKFILE": path2})
+    L2.spawn()
+    wait_listening(L2.port)
+    L2.stop()
+    code2, _ = L2.reap()[0]
+    got2 = open(path2).read() if os.path.exists(path2) else None
+    check(code2 == 0 and got2 == "slow_done=0", f"idle server: code {code2}, hook wrote {got2!r}", problems)
+    print(f"hook: exit_code={code} seconds_after_sigterm={secs:.2f} hook_file={got!r} idle_hook_file={got2!r}")
+    finish("hook", problems)
+
+
 def mode_stream(binary):
     # A stream parked in waitClosed must be closed when the drain starts, not at the cap.
     L = Launcher(binary, {"DRAINMS": "6000"})
@@ -386,7 +418,7 @@ def mode_keepalive(binary):
 
 if __name__ == "__main__":
     modes = {"restart": mode_restart, "cap": mode_cap, "drain": mode_drain, "stream": mode_stream, "plain": mode_plain,
-             "explicit": mode_explicit, "keepalive": mode_keepalive}
+             "explicit": mode_explicit, "keepalive": mode_keepalive, "hook": mode_hook}
     if len(sys.argv) != 3 or sys.argv[1] not in modes:
         sys.exit(__doc__)
     modes[sys.argv[1]](os.path.abspath(sys.argv[2]))
