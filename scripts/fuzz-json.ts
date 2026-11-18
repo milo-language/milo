@@ -23,7 +23,7 @@
 //
 // Usage: bun scripts/fuzz-json.ts [--mode rt|parse|both] [--cases N] [--batch N] [--seed N]
 //          [--parse-cases N] [--keep] [--verbose]
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";

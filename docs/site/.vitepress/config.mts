@@ -152,6 +152,7 @@ const stdlibSidebar = [
       { text: 'std/mime', link: '/stdlib/mime' },
       { text: 'std/multipart', link: '/stdlib/multipart' },
       { text: 'std/url', link: '/stdlib/url' },
+      { text: 'std/email', link: '/stdlib/email' },
       { text: 'std/fetch', link: '/stdlib/fetch' },
       { text: 'std/tls', link: '/stdlib/tls' },
       { text: 'std/https', link: '/stdlib/https' },

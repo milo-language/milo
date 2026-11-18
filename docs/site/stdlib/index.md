@@ -101,6 +101,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/migrate`](migrate) | Versioned SQLite migrations — `Migration`, `dbMigrate`, adopting a pre-migration database, `dbBackup` |
 | [`std/dbpool`](dbpool) | SQLite connection pool on dedicated OS threads, `DbPool`, `dbPoolRun`: queries stop blocking the scheduler |
 | [`std/url`](url) | URL parsing — `Url.parse`, then `u.queryGet`, `u.toString` |
+| [`std/email`](email) | `isValidEmail`, `canonicalEmail`: the HTML standard's address grammar, what `<input type=email>` accepts |
 
 ## Strings & Formatting
 

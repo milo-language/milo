@@ -906,6 +906,12 @@ pub fn headOnly(wire: string): string
 
 Rendered response bytes cut after the header block.
 
+#### `onDrain`
+
+```milo
+pub fn onDrain(hook: move () => void): void
+```
+
 #### `parseRequest`
 
 ```milo
