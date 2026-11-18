@@ -32,7 +32,7 @@ const PLAIN = new Set<ts.SyntaxKind>([
   K.VariableDeclarationList, K.ImportDeclaration, K.ImportClause, K.NamedImports, K.ImportSpecifier,
   K.ParenthesizedExpression, K.Identifier, K.ThisKeyword, K.TrueKeyword, K.FalseKeyword, K.StringLiteral,
   K.NoSubstitutionTemplateLiteral, K.TemplateExpression, K.TemplateHead, K.TemplateMiddle, K.TemplateTail,
-  K.TemplateSpan, K.PropertyAssignment, K.ShorthandPropertyAssignment, K.EnumMember, K.PropertySignature,
+  K.TemplateSpan, K.PropertyAssignment, K.ShorthandPropertyAssignment, K.SpreadAssignment, K.EnumMember, K.PropertySignature,
   K.ExportKeyword, K.PrivateKeyword, K.PublicKeyword, K.ProtectedKeyword, K.ReadonlyKeyword, K.ConditionalExpression,
   K.NumberKeyword, K.StringKeyword, K.BooleanKeyword, K.VoidKeyword, K.NeverKeyword, K.UndefinedKeyword,
   K.ArrayType, K.LiteralType, K.ParenthesizedType, K.PrefixUnaryExpression, K.PostfixUnaryExpression,
@@ -194,6 +194,17 @@ export function nullishHandled(checker: ts.TypeChecker, b: ts.BinaryExpression):
   }
   if (checker.typeToString(rt) !== checker.typeToString(lt) || !chainOk) return null;
   return isChainMember(l) || (isPlaceE(l) && sideEffectFree(l)) ? "opt" : null;
+}
+// `a || b` where every non-nullish member of a's type is an object: objects are always truthy,
+// so it is `a ?? b` and takes the same paths (`map.get(k) || []`).
+export function orIsNullish(checker: ts.TypeChecker, b: ts.BinaryExpression): boolean {
+  if (b.operatorToken.kind !== K.BarBarToken || inCondPos(b)) return false;
+  const lt = checker.getTypeAtLocation(b.left);
+  if (!isOptionalType(lt)) return false;
+  const nn = checker.getNonNullableType(lt);
+  const parts = nn.isUnion() ? nn.types : [nn];
+  if (!parts.every((p) => !!(p.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)))) return false;
+  return nullishHandled(checker, b) !== null;
 }
 // `chain === k` / `chain !== k`: k is a side-effect-free non-nullish value (JS evaluates it even
 // when the chain short-circuits).
@@ -568,6 +579,9 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         if (op === K.QuestionQuestionToken) { if (!nullishHandled(checker, b)) bad(n, "operator ??"); return; }
         if (!BINARY_OK.has(op)) { bad(n, `operator ${b.operatorToken.getText()}`); return; }
         if (ASSIGN_OPS.has(op) && !ts.isExpressionStatement(b.parent)) bad(n, "assignment as expression");
+        if (orIsNullish(checker, b)) return;
+        // `...(c && { k })`: the object is not a value, its members become fields of the outer literal.
+        if (op === K.AmpersandAmpersandToken && ts.isSpreadAssignment(ts.walkUpParenthesizedExpressions(b.parent)) && ts.isObjectLiteralExpression(ts.skipParentheses(b.right))) return;
         if (op === K.AmpersandAmpersandToken || op === K.BarBarToken) { needBool(b.left, "operand of &&/||"); needBool(b.right, "operand of &&/||"); }
         if (op === K.PlusToken) {
           const l = checker.getTypeAtLocation(b.left), r = checker.getTypeAtLocation(b.right);
@@ -599,13 +613,17 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       }
       case K.ObjectLiteralExpression: {
         const o = n as ts.ObjectLiteralExpression;
+        // The object of a conditional spread (`...(c ? { k } : {})`, `...(c && { k })`) is not built: its members become fields of the outer literal.
+        let up: ts.Node = o.parent;
+        while (ts.isParenthesizedExpression(up)) up = up.parent;
+        if ((ts.isConditionalExpression(up) || (ts.isBinaryExpression(up) && up.operatorToken.kind === K.AmpersandAmpersandToken)) && ts.isSpreadAssignment(ts.walkUpParenthesizedExpressions(up.parent))) return;
         const ctx = checker.getContextualType(o);
         // With no annotation the literal's own inferred type is what gets a synthesized struct.
         const t = checker.getNonNullableType(ctx ?? checker.getTypeAtLocation(o));
         // A tagged union's variant is picked by a literal discriminant property.
         const unionLit = !!t && !!unionOfType(checker, t) && o.properties.some((p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(stripConst(p.initializer)) && p.name.getText() === unionOfType(checker, t)!.field);
         if (!(unionLit || isProjectSymbolType(t, (d) => ts.isInterfaceDeclaration(d) || ts.isObjectLiteralExpression(d) || (ts.isTypeLiteralNode(d) && anonStructHandled(checker, d))))) bad(n, "object literal without an interface type");
-        for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p)) bad(p, "object literal member");
+        for (const p of o.properties) if (!ts.isPropertyAssignment(p) && !ts.isShorthandPropertyAssignment(p) && !ts.isSpreadAssignment(p)) bad(p, "object literal member");
         return;
       }
       case K.ArrayLiteralExpression: {

@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, orIsNullish, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { desugarDestructuring, destructureRefusal } from "./ts2milo/destructure";
 import { buildImmutability } from "./ts2milo/written-props";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
@@ -908,7 +908,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
         if (i) walkBody(i, (n) => { if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression)) { const s = symOf(n.expression); if (s) readsThrough.add(s); } });
       }
       const rank = (m: ts.PropertySignature) => {
-        const p = o.properties.find((q) => (q.name as ts.Identifier).text === (m.name as ts.Identifier).text);
+        const p = o.properties.find((q) => !!q.name && (q.name as ts.Identifier).text === (m.name as ts.Identifier).text);
         const i = p && init(p);
         const s = i && ts.isIdentifier(i) ? (ts.isShorthandPropertyAssignment(i.parent) ? checker.getShorthandAssignmentValueSymbol(i.parent) : symOf(i)) : undefined;
         return s && readsThrough.has(s) ? 1 : 0;
@@ -1483,7 +1483,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const text = b.operatorToken.getText();
           if (op === ts.SyntaxKind.CommaToken) fail(b, "comma operator");
           if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) fail(b, `assignment ${text} used as a value`);
-          if (op === ts.SyntaxKind.QuestionQuestionToken) return nullish(b);
+          if (op === ts.SyntaxKind.QuestionQuestionToken || orIsNullish(checker, b)) return nullish(b);
           if (op === ts.SyntaxKind.InstanceOfKeyword && isCatchVar(b.left)) {
             const cls = checker.getSymbolAtLocation(b.right);
             if (!cls) fail(b, "instanceof of an unresolved class");
@@ -1619,6 +1619,59 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             if (t.flags & ts.TypeFlags.BooleanLike) return `${useRuntime("JsPrim", e)}.Bool(${ex(init)})`;
             return fail(init, "primitive-union value (bigint | number | string | boolean) whose variant is not known from its expression");
           };
+          // Spread members. `...base` as the first member, of the literal's own struct type, is Milo's struct
+          // update `S { listed, ..base }` (TS evaluates the spread first and later members override it, which is
+          // exactly what `..base` means). `...(c ? { k: v } : {})` and `...(c && { k })` give an optional k that
+          // nothing else in the literal sets: `k: if c { Some(v) } else { None }`. `...f(x)` of a one-property
+          // type whose property nothing else sets reads that field of the call. Anything else is refused.
+          type Spreads = { base?: ts.Expression; cond: Map<string, { c: ts.Expression; v: ts.Expression }>; call: Map<string, ts.Expression> };
+          const spreadPlan = (sameType: (t: ts.Type) => boolean, optional: (k: string) => boolean): Spreads => {
+            const plan: Spreads = { cond: new Map(), call: new Map() };
+            const explicit = new Set(o.properties.filter((p) => !ts.isSpreadAssignment(p)).map((p) => p.name?.getText() ?? ""));
+            const claim = (k: string, at: ts.Node) => {
+              if (explicit.has(k) || plan.cond.has(k) || plan.call.has(k)) fail(at, `spread of ${k}, which another member of the literal also sets`);
+              if (plan.base) fail(at, `spread of ${k} after a ...base spread: when it adds nothing, the base's ${k} would have to stay`);
+              if (!optional(k)) fail(at, `spread of ${k}, which is not optional in the literal's type`);
+            };
+            o.properties.forEach((p, i) => {
+              if (!ts.isSpreadAssignment(p)) return;
+              const se = unparen(p.expression);
+              const st = tOf(p.expression);
+              if (i === 0 && !isOptionT(st) && sameType(st)) { plan.base = p.expression; return; }
+              let c: ts.Expression | undefined, lit: ts.Expression | undefined;
+              if (ts.isConditionalExpression(se) && ts.isObjectLiteralExpression(unparen(se.whenFalse)) && (unparen(se.whenFalse) as ts.ObjectLiteralExpression).properties.length === 0) { c = se.condition; lit = unparen(se.whenTrue); }
+              else if (ts.isBinaryExpression(se) && se.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) { c = se.left; lit = unparen(se.right); }
+              if (c && lit && ts.isObjectLiteralExpression(lit)) {
+                const props = lit.properties;
+                if (!props.every((q) => (ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)) && ts.isIdentifier(q.name))) fail(p, "conditional spread whose object has members other than name: value and shorthand");
+                // Each field re-tests c, so c must not run anything.
+                if (props.length > 1 && !sideEffectFree(c)) fail(p, "conditional spread of several fields under a condition with side effects");
+                for (const q of props as readonly (ts.PropertyAssignment | ts.ShorthandPropertyAssignment)[]) {
+                  const k = (q.name as ts.Identifier).text;
+                  claim(k, q);
+                  plan.cond.set(k, { c, v: ts.isShorthandPropertyAssignment(q) ? q.name : q.initializer });
+                }
+                return;
+              }
+              if (ts.isCallExpression(se) && !isOptionT(st)) {
+                const ps = checker.getPropertiesOfType(st);
+                if (ps.length !== 1 || !(ps[0].flags & ts.SymbolFlags.Optional)) fail(p, "spread of a call whose type is not a single optional property");
+                claim(ps[0].name, p);
+                plan.call.set(ps[0].name, se);
+                return;
+              }
+              fail(p, "object literal with spread or method members");
+            });
+            return plan;
+          };
+          // The value of a field a spread supplies (undefined when none does).
+          const spreadField = (plan: Spreads, k: string, pt: ts.Type): string | undefined => {
+            const cv = plan.cond.get(k);
+            if (cv) return `(if ${cond(cv.c)} { Option.Some(${ownConv(cv.v, checker.getNonNullableType(pt))}) } else { Option.None })`;
+            const call = plan.call.get(k);
+            if (call) return `(${ex(call)}).${safeId(k)}`;
+            return undefined;
+          };
           const ctxT = checker.getContextualType(o);
           // No annotation to take the type from: the literal's own inferred type is a synthesized struct.
           const ownT = checker.getNonNullableType(ctxT ?? tOf(o));
@@ -1627,10 +1680,13 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             if (!ts.findAncestor(o, ts.isFunctionLike)) fail(o, "inferred object literal outside a function");
             const sname = ty(ownT, e);
             const keyOf = (q: ts.ObjectLiteralElementLike) => (q.name ? q.name.getText() : "");
-            for (const p of o.properties) if (!(ts.isShorthandPropertyAssignment(p) || ts.isPropertyAssignment(p)) || ts.isComputedPropertyName(p.name)) fail(p, `object literal member ${p.getText().slice(0, 30)}: only plain name: value and shorthand members are supported`);
+            for (const p of o.properties) if (!ts.isSpreadAssignment(p) && (!(ts.isShorthandPropertyAssignment(p) || ts.isPropertyAssignment(p)) || ts.isComputedPropertyName(p.name))) fail(p, `object literal member ${p.getText().slice(0, 30)}: only plain name: value and shorthand members are supported`);
+            const aplan = spreadPlan(() => false, (k) => !!(checker.getPropertyOfType(ownT, k)!.flags & ts.SymbolFlags.Optional));
             const vals = checker.getPropertiesOfType(ownT).map((p) => {
               const prop = o.properties.find((q) => keyOf(q) === p.name) as ts.ShorthandPropertyAssignment | ts.PropertyAssignment | undefined;
               const pt = checker.getTypeOfSymbolAtLocation(p, e);
+              const fromSpread = prop ? undefined : spreadField(aplan, p.name, pt);
+              if (fromSpread) return { name: p.name, v: fromSpread };
               if (!prop) { if (p.flags & ts.SymbolFlags.Optional) return { name: p.name, v: "Option.None" }; return fail(o, `object literal without property '${p.name}'`); }
               return { name: p.name, v: ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv(prop.initializer, pt) };
             });
@@ -1639,9 +1695,10 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           }
           if (!ctxT) fail(o, "object literal without a contextual type");
           const t = checker.getNonNullableType(ctxT!);
-          if (!o.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p))) fail(o, "object literal with spread or method members");
-          if (!o.properties.every((p) => ts.isIdentifier(p.name!))) fail(o, "object literal with a non-identifier key");
+          if (!o.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p))) fail(o, "object literal with spread or method members");
+          if (!o.properties.every((p) => ts.isSpreadAssignment(p) || ts.isIdentifier(p.name!))) fail(o, "object literal with a non-identifier key");
           const lu = unionOfType(checker, t);
+          if (lu && o.properties.some(ts.isSpreadAssignment)) fail(o, "object literal with spread or method members");
           if (lu) {
             // The variant is picked by the literal discriminant property (`{ tag: "ptr", inner }`).
             const dp = o.properties.find((p) => ts.isPropertyAssignment(p) && (p.name as ts.Identifier).text === lu.field) as ts.PropertyAssignment | undefined;
@@ -1681,11 +1738,18 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           // A literal member with no property signature behind it (an interface method such as `error(msg) {..}` supplied as a
           // callback) has no struct field: dropping it silently would lose behavior.
           const sigNames = new Set(d!.members.filter(ts.isPropertySignature).map((m) => (m.name as ts.Identifier).text));
-          for (const p of o.properties) if (!p.name || !sigNames.has((p.name as ts.Identifier).text)) fail(p, `object literal member ${p.name?.getText() ?? "(spread)"} has no field in ${name}: an interface method or callback member would be silently dropped`);
-          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).sort(moveOrder(o)).map((m) => {
+          for (const p of o.properties) if (!ts.isSpreadAssignment(p) && (!p.name || !sigNames.has((p.name as ts.Identifier).text))) fail(p, `object literal member ${p.name?.getText() ?? "(spread)"} has no field in ${name}: an interface method or callback member would be silently dropped`);
+          const sameDecl = (x: ts.Type) => checker.getNonNullableType(x).symbol?.declarations?.[0] === d;
+          const plan = spreadPlan(sameDecl, (k) => { const m = d!.members.find((q) => ts.isPropertySignature(q) && (q.name as ts.Identifier).text === k); return !!m && !!(m as ts.PropertySignature).questionToken; });
+          const fields = d!.members.filter(ts.isPropertySignature).filter((m) => !tagOnly(m) && !dropped(m)).sort(moveOrder(o)).flatMap((m) => {
             const fname = (m.name as ts.Identifier).text;
-            const prop = o.properties.find((p) => (p.name as ts.Identifier).text === fname);
+            const prop = o.properties.find((p) => !ts.isSpreadAssignment(p) && (p.name as ts.Identifier).text === fname);
             const pt = checker.getTypeOfSymbol(checker.getPropertyOfType(t, fname)!);
+            if (!prop) {
+              const sv = spreadField(plan, fname, pt);
+              if (sv !== undefined) { if (astModel.boxed.has(m)) fail(o, `spread into the boxed AST field ${fname}`); return [`${safeId(fname)}: ${sv}`]; }
+              if (plan.base) return [];
+            }
             let v = !prop ? "Option.None" : m.type && isPrimUnion(m.type) ? primConv(ts.isShorthandPropertyAssignment(prop) ? prop.name : (prop as ts.PropertyAssignment).initializer) : ts.isShorthandPropertyAssignment(prop) ? ownConv(prop.name, pt) : ownConv((prop as ts.PropertyAssignment).initializer, pt);
             // A boxed AST field stores a Heap: Option<Heap<T>> for an optional one.
             if (prop && ts.isInterfaceDeclaration(d!) && astModel.boxed.has(m)) {
@@ -1698,6 +1762,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
             return `${safeId(fname)}: ${v}`;
           });
           if (ts.isInterfaceDeclaration(d!) && ((astModel.identity.has(d.name.text) && inputSet.has(d.getSourceFile().fileName)) || RUNTIME_OWNED.has(d.name.text))) fields.unshift(`${ID_FIELD}: ${useRuntime("ts2miloNextId", e)}()`);
+          // `..base` moves the fields not listed; a borrowed base goes through the usual clone (and its copy proof).
+          if (plan.base) fields.push(`..${ownConv(plan.base, t)}`);
           return `${name} { ${fields.join(", ")} }`;
         }
         case ts.SyntaxKind.ArrayLiteralExpression: {

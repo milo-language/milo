@@ -652,6 +652,49 @@ describe("??, ?. and switch", () => {
     expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
   });
 
+  test("|| with an object-or-undefined left side is ??; a number left side is refused", () => {
+    // Objects are always truthy, so `a || d` picks d only when a is absent. 0 and "" are falsy, so
+    // a number or string left side would differ from ?? and stays outside the subset.
+    const r = gen("tsm_or", [
+      "export interface Box { v: number }",
+      "export function orBox(a: Box | undefined, d: Box): number { return (a || d).v; }",
+    ].join("\n"), [
+      "from \"./tsm_or\" import { Box, orBox }",
+      "fn main(): i32 {",
+      "    if orBox(Option.Some(Box { v: 1 }), Box { v: 2 }) != 1 { return 1 }",
+      "    if orBox(Option.None, Box { v: 2 }) != 2 { return 2 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain(" ?? ");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+    rejects("export function orNum(a: number | undefined, d: number): number { return a || d; }");
+  });
+
+  test("object spread: ...base is struct update, conditional and one-field call spreads fill optionals", () => {
+    const r = gen("tsm_sp", [
+      "export interface T { a: number; b: number; c?: number; d?: string }",
+      "function only(x: number): { c?: number } { return x > 0 ? { c: x } : {}; }",
+      "export function upd(t: T, b: number): T { return { ...t, b }; }",
+      "export function condT(n: number, on: boolean): T { return { a: n, b: 0, ...(on ? { c: n } : {}), ...(on && { d: \"y\" }) }; }",
+      "export function viaCall(x: number): T { return { a: 1, b: 2, ...only(x) }; }",
+      "export function sum(t: T): number { return t.a * 100 + t.b * 10 + (t.c ?? 0) + (t.d ?? \"\").length * 1000; }",
+    ].join("\n"), [
+      "from \"./tsm_sp\" import { T, upd, condT, viaCall, sum }",
+      "fn main(): i32 {",
+      "    let t = T { a: 1, b: 2, c: Option.Some(3), d: Option.None }",
+      "    if sum(upd(t, 5)) != 153 { return 1 }",
+      "    if sum(condT(4, true)) != 1404 || sum(condT(4, false)) != 400 { return 2 }",
+      "    if sum(viaCall(7)) != 127 || sum(viaCall(-1)) != 120 { return 3 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("..");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+    // A spread after the field it would override: when it adds nothing, TS keeps the earlier value.
+    rejects("export interface T { a: number; c?: number }\nexport function f(on: boolean): T { return { a: 1, c: 2, ...(on ? { c: 3 } : {}) }; }", "another member");
+  });
+
   test("?. reads a field through an optional, chains, flattens and composes", () => {
     const r = gen("tsm_oc", [
       "export interface Inner { n: number; t: string | undefined }",

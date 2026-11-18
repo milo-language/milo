@@ -470,12 +470,15 @@ export class Lexer {
     while (true) {
       const tok = this.nextToken();
       if (pendingLeading.length > 0) tok.leadingTrivia = pendingLeading;
-      // Trailing trivia is attached before the push: the port copies a token into the
-      // array, so it must not be changed afterwards.
-      if (tok.kind === TokenKind.Eof) { tokens.push(tok); break; }
-      const trailing = this.readTrailingTrivia();
-      if (trailing.length > 0) tok.trailingTrivia = trailing;
+      // Trailing trivia is attached before the one push: the port copies a token into the
+      // array, so it must not be changed afterwards, and the copy proof (ts2milo
+      // written-props) only sees `tok` as unshared while no use of it precedes the write.
+      if (tok.kind !== TokenKind.Eof) {
+        const trailing = this.readTrailingTrivia();
+        if (trailing.length > 0) tok.trailingTrivia = trailing;
+      }
       tokens.push(tok);
+      if (tok.kind === TokenKind.Eof) break;
       pendingLeading = this.readLeadingTrivia();
     }
     return tokens;
