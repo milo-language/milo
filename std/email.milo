@@ -1,0 +1,102 @@
+// std/email — email addresses as a browser reads them: the "valid email address"
+// grammar of the HTML standard (what <input type=email> accepts), so the server and
+// the form agree on exactly one definition instead of each guessing with a regex.
+//
+//   local  = 1*( ALPHA / DIGIT / "." / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+"
+//                / "/" / "=" / "?" / "^" / "_" / "`" / "{" / "|" / "}" / "~" / "-" )
+//   domain = label *( "." label )
+//   label  = ALPHA/DIGIT, optionally then up to 61 ALPHA/DIGIT/"-" and an ALPHA/DIGIT
+//
+// No quoted local parts, comments, IP literals or non-ASCII: none of them can appear
+// in such a form, so nothing here has to interpret them. Because neither part can hold
+// whitespace, "<", ">", ",", ";", ":", quotes or control bytes, an accepted address is
+// safe as one SMTP command argument or header value.
+
+fn isAlnum(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+fn isLocalByte(c: u8): bool {
+    if isAlnum(c) {
+        return true
+    }
+    for p in ".!#$%&'*+/=?^_`{|}~-" {
+        if c == p {
+            return true
+        }
+    }
+    return false
+}
+
+fn validLabel(s: &string, from: i64, to: i64): bool {
+    let n = to - from
+    if n < 1 || n > 63 || !isAlnum(s[from]) || !isAlnum(s[to - 1]) {
+        return false
+    }
+    for i in from..to {
+        if !isAlnum(s[i]) && s[i] != '-' {
+            return false
+        }
+    }
+    return true
+}
+
+// Whether `s` is a valid email address per the HTML standard, within SMTP's limits
+// (RFC 5321: a 64-byte local part, 254 bytes in all).
+pub fn isValidEmail(s: &string): bool {
+    if s.len > 254 {
+        return false
+    }
+    let Some(at) = s.indexOf("@") else {
+        return false
+    }
+    if at < 1 || at > 64 {
+        return false
+    }
+    for i in 0..at {
+        if !isLocalByte(s[i]) {
+            return false
+        }
+    }
+    var start = at + 1
+    for i in (at + 1)..(s.len + 1) {
+        if i == s.len || s[i] == '.' {
+            if !validLabel(s, start, i) {
+                return false
+            }
+            start = i + 1
+        }
+    }
+    return true
+}
+
+fn isAsciiSpace(c: u8): bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\x0C' || c == '\r'
+}
+
+// The address as a browser would submit it from <input type=email>: newlines removed
+// and surrounding whitespace trimmed (the HTML value sanitization), then validated.
+// The domain is lowercased, since domains are case-insensitive; the local part keeps
+// its case (RFC 5321 leaves it to the receiving server). None if not valid.
+pub fn canonicalEmail(raw: &string): Option<string> {
+    var s: string = ""
+    for c in raw {
+        if c != '\n' && c != '\r' {
+            s.push(c)
+        }
+    }
+    var a: i64 = 0
+    var b = s.len
+    while a < b && isAsciiSpace(s[a]) {
+        a += 1
+    }
+    while b > a && isAsciiSpace(s[b - 1]) {
+        b -= 1
+    }
+    let t = s.substr(a, b)
+    if !isValidEmail(t) {
+        return None
+    }
+    let at = t.indexOf("@") ?? 0
+    return Some(t.substr(0, at + 1) + t.substr(at + 1, t.len).toLower())
+}

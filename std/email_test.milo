@@ -1,0 +1,34 @@
+// std/email against the HTML standard's valid-email grammar.
+from "std/testing" import { assertTrue, assertEq }
+from "std/email" import { isValidEmail, canonicalEmail }
+
+fn testAcceptsWhatBrowsersAccept(): void {
+    for e in ["a@b", "first.last@example.com", "x+tag@sub.example.co.uk", "o'brien@ex.com", "!#$%&'*+/=?^_`{|}~-@x.io", "a@x-y.z9"] {
+        assertTrue(isValidEmail(e))
+    }
+}
+
+fn testRejectsWhatBrowsersReject(): void {
+    for e in ["", "@x.com", "a@", "a@@x.com", "a b@x.com", "\"a\"@x.com", "a@x..com", "a@-x.com", "a@x-.com", "a@x.com.", "a@[1.2.3.4]", "a<b>@x.com", "a,b@x.com", "a;b@x.com", "a@x.com\r\nRCPT TO:<v@y.com>", "é@x.com", "a@exämple.com", "a@x_y.com"] {
+        assertTrue(!isValidEmail(e))
+    }
+}
+
+fn testSmtpLengthLimits(): void {
+    var local: string = ""
+    for _i in 0..65 {
+        local.push('a')
+    }
+    assertTrue(!isValidEmail(local + "@x.com"))
+    var label: string = ""
+    for _i in 0..64 {
+        label.push('a')
+    }
+    assertTrue(!isValidEmail("a@" + label + ".com"))
+}
+
+fn testCanonicalTrimsLikeTheFormAndLowersTheDomain(): void {
+    assertEq(canonicalEmail("  Bob.Smith@Example.COM \n") ?? "<none>", "Bob.Smith@example.com")
+    assertEq(canonicalEmail("bo\nb@x.com") ?? "<none>", "bob@x.com")
+    assertEq(canonicalEmail("a b@x.com") ?? "<none>", "<none>")
+}
