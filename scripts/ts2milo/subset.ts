@@ -13,7 +13,7 @@ export interface Violation {
 
 // Library members the transpiler maps to runtime calls, keyed "<Owner>.<member>".
 export const BUILTIN_CALLS = new Set([
-  "String.charCodeAt", "String.slice", "StringConstructor.fromCharCode", "StringConstructor.fromCodePoint",
+  "String.charCodeAt", "String.slice", "StringConstructor.fromCharCode", "NumberConstructor.isInteger", "StringConstructor.fromCodePoint",
   "Number.toString", "Array.push", "Set.has", "ReadonlySet.has", "Set.add", "Map.get", "Map.set", "Map.has",
   "Map.values", "ReadonlyMap.values", "Set.delete", "Map.delete", "ReadonlyMap.get", "ReadonlyMap.has", "WeakMap.get", "WeakMap.set", "WeakMap.has", "WeakMap.delete", "WeakSet.has", "WeakSet.add", "WeakSet.delete", "parseInt", "String()",
   "String.startsWith", "String.endsWith", "String.includes", "String.indexOf", "String.lastIndexOf", "String.split", "String.trim",
@@ -32,7 +32,7 @@ const PLAIN = new Set<ts.SyntaxKind>([
   K.VariableDeclarationList, K.ImportDeclaration, K.ImportClause, K.NamedImports, K.ImportSpecifier,
   K.ParenthesizedExpression, K.Identifier, K.ThisKeyword, K.TrueKeyword, K.FalseKeyword, K.StringLiteral,
   K.NoSubstitutionTemplateLiteral, K.TemplateExpression, K.TemplateHead, K.TemplateMiddle, K.TemplateTail,
-  K.TemplateSpan, K.PropertyAssignment, K.ShorthandPropertyAssignment, K.SpreadAssignment, K.EnumMember, K.PropertySignature,
+  K.TemplateSpan, K.PropertyAssignment, K.ShorthandPropertyAssignment, K.SpreadAssignment, K.SpreadElement, K.EnumMember, K.PropertySignature,
   K.ExportKeyword, K.PrivateKeyword, K.PublicKeyword, K.ProtectedKeyword, K.ReadonlyKeyword, K.ConditionalExpression,
   K.NumberKeyword, K.StringKeyword, K.BooleanKeyword, K.VoidKeyword, K.NeverKeyword, K.UndefinedKeyword,
   K.ArrayType, K.LiteralType, K.ParenthesizedType, K.PrefixUnaryExpression, K.PostfixUnaryExpression,
@@ -310,8 +310,22 @@ export function optClosureCallHandled(program: ts.Program, checker: ts.TypeCheck
   }
   return inCondPos(c) ? "false" : null;
 }
+// `[...X].some(cb)`: the receiver is not built, the helper walks X (an array; a Map's keys()/values() or a Set
+// only for some/every, which do not depend on its slot order). Mirrors closureCall's spreadRecv in ts2milo.ts.
+export function spreadReceiverHandled(program: ts.Program, checker: ts.TypeChecker, a: ts.ArrayLiteralExpression): boolean {
+  if (a.elements.length !== 1 || !ts.isSpreadElement(a.elements[0])) return false;
+  const pa = parenUp(a.parent);
+  if (!ts.isPropertyAccessExpression(pa) || !ts.isCallExpression(pa.parent) || pa.parent.expression !== pa) return false;
+  const cl = arrayClosureCall(program, checker, pa.parent);
+  if (!cl || typeof cl === "string") return false;
+  const x = a.elements[0].expression, st = checker.getTypeAtLocation(x);
+  if (checker.isArrayType(st)) return true;
+  if (cl.method !== "some" && cl.method !== "every") return false;
+  return !!mapValuesRecv(checker, x) || !!mapValuesRecv(checker, x, "keys") || st.symbol?.name === "Set" || st.symbol?.name === "ReadonlySet";
+}
 // Array methods whose callback is an arrow literal, lowered to the jsSome/jsMap/... runtime helpers (loop tier).
 const CLOSURE_METHODS = new Set(["some", "every", "map", "filter", "find", "findIndex", "forEach", "flatMap", "reduce"]);
+export const INDEXED_METHODS = new Set(["some", "every", "map", "forEach", "findIndex"]);
 const BOOL_CLOSURE = new Set(["some", "every", "filter", "find", "findIndex"]);
 const isCopyScalar = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.Number | ts.TypeFlags.String | ts.TypeFlags.Boolean | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral));
 
@@ -332,7 +346,9 @@ export function arrayClosureCall(program: ts.Program, checker: ts.TypeChecker, c
   if (!arrow || !ts.isArrowFunction(arrow)) return why("callback is not an arrow literal");
   if (c.arguments.length !== (method === "reduce" ? 2 : 1)) return why(method === "reduce" ? "reduce without an initial value" : "thisArg");
   if (arrow.modifiers || arrow.typeParameters) return why("async or generic arrow");
-  if (arrow.parameters.length > (method === "reduce" ? 2 : 1) || (method === "reduce" && arrow.parameters.length !== 2)) return why("callback names the index or array argument");
+  // The index argument (`(x, i) =>`) has indexed helpers for these; the array argument has none.
+  const maxParams = method === "reduce" ? 2 : INDEXED_METHODS.has(method) ? 2 : 1;
+  if (arrow.parameters.length > maxParams || (method === "reduce" && arrow.parameters.length !== 2)) return why("callback names the index or array argument");
   if (arrow.parameters.some((p) => !ts.isIdentifier(p.name) || p.initializer || p.dotDotDotToken || p.questionToken)) return why("destructured or defaulted parameter");
   let thrown = false;
   const scan = (n: ts.Node) => { if (ts.isThrowStatement(n)) thrown = true; ts.forEachChild(n, scan); };
@@ -648,6 +664,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         return;
       }
       case K.ArrayLiteralExpression: {
+        if (spreadReceiverHandled(program, checker, n as ts.ArrayLiteralExpression)) return;
         for (const e of (n as ts.ArrayLiteralExpression).elements) if (ts.isSpreadElement(e) || ts.isOmittedExpression(e)) bad(e, "array literal spread or hole");
         return;
       }

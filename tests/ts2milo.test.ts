@@ -744,6 +744,59 @@ describe("??, ?. and switch", () => {
     expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
   });
 
+  test("a callback naming the index argument uses the indexed helpers", () => {
+    const r = gen("tsm_ix", [
+      "export function weighted(xs: number[]): number { let t = 0; xs.forEach((x, i) => { t += x * i; }); return t; }",
+      "export function scaled(xs: number[]): number[] { return xs.map((x, i) => x + i * 10); }",
+      "export function firstAt(xs: number[], k: number): number { return xs.findIndex((x, i) => i >= k && x > 0); }",
+    ].join("\n"), [
+      "from \"./tsm_ix\" import { weighted, scaled, firstAt }",
+      "fn main(): i32 {",
+      "    if weighted([5, 6, 7]) != 20 { return 1 }",
+      "    let v = scaled([1, 1])",
+      "    if v[0] != 1 || v[1] != 11 { return 2 }",
+      "    if firstAt([3, 0, 4], 1) != 2 || firstAt([3], 1) != -1 { return 3 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("jsForEachI(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("Number.isInteger is true: every generated number is an i64", () => {
+    const r = gen("tsm_ni", [
+      "export function inRange(n: number): boolean { return Number.isInteger(n) && n >= 0; }",
+    ].join("\n"), [
+      "from \"./tsm_ni\" import { inRange }",
+      "fn main(): i32 {",
+      "    if !inRange(3) || inRange(-1) { return 1 }",
+      "    return 0",
+      "}",
+    ]);
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
+  test("[...m.values()].some(cb) and [...xs].every(cb) walk the source without a copy", () => {
+    const r = gen("tsm_sv", [
+      "export interface V { n: number }",
+      "export function anyNeg(m: Map<string, V>): boolean { return [...m.values()].some(v => v.n < 0); }",
+      "export function allPos(xs: V[]): boolean { return [...xs].every(v => v.n > 0); }",
+    ].join("\n"), [
+      "from \"./tsm_sv\" import { V, anyNeg, allPos }",
+      "fn main(): i32 {",
+      "    var m: HashMap<string, V> = HashMap.new()",
+      "    m.insert(\"a\", V { n: 1 })",
+      "    if anyNeg(m) { return 1 }",
+      "    m.insert(\"b\", V { n: -1 })",
+      "    if !anyNeg(m) { return 2 }",
+      "    if !allPos([V { n: 1 }]) || allPos([V { n: 1 }, V { n: 0 }]) { return 3 }",
+      "    return 0",
+      "}",
+    ]);
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+    rejects("export interface V { n: number }\nexport function f(m: Map<string, V>): number[] { return [...m.values()].map(v => v.n); }", "array literal spread");
+  });
+
   test("?. reads a field through an optional, chains, flattens and composes", () => {
     const r = gen("tsm_oc", [
       "export interface Inner { n: number; t: string | undefined }",
@@ -1132,7 +1185,7 @@ describe("array methods with an arrow callback", () => {
   test("callbacks that cannot match JavaScript stay refused with the tier named", () => {
     const { file, dir } = tmpTs("tsm_clbad.ts", [
       "export function a(xs: number[]): number { return xs.reduce((s, x) => s + x); }",
-      "export function b(xs: number[]): number { return xs.map((x, i) => x + i).length; }",
+      "export function b(xs: number[]): number { return xs.map((x, i, all) => x + i + all.length).length; }",
       "export function c(xs: number[]): number { const f = (x: number) => x; return f(1); }",
     ].join("\n") + "\n");
     const r = transpile([file], { overridesDir: join(dir, "none"), lenient: true });

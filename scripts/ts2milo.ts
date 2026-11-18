@@ -622,7 +622,6 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       else if (ts.isCallExpression(u0)) { const sg = checker.getResolvedSignature(u0); declT = sg && checker.getReturnTypeOfSignature(sg); }
       if (!declT || !litsOf(checker.getNonNullableType(declT))) return ex(x);
       const u = resolveUnion(t, x);
-      if (u.file === astFile) return fail(x, `text of ${u.name}, a union of ast.ts`);
       return `${useDeclared(`${u.name}_value`, u.file, x)}(${ex(x)})`;
     };
     // JS truthiness of a non-boolean (subset.ts truthyHandled). The value is evaluated once.
@@ -1146,14 +1145,29 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       hit("closure in an array method", `${CLOSURE_HELPERS[method]}(xs, closure) loop helper`);
       const recv = (c.expression as ts.PropertyAccessExpression).expression;
       const owned = method === "filter" && !(elem.flags & (ts.TypeFlags.Number | ts.TypeFlags.String | ts.TypeFlags.Boolean | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral));
-      const helper = useRuntime(owned ? "jsFilterOwned" : CLOSURE_HELPERS[method] + (throwsInside ? "Try" : ""), c);
+      const indexed = method !== "reduce" && arrow.parameters.length === 2;
+      const helper = useRuntime(owned ? "jsFilterOwned" : CLOSURE_HELPERS[method] + (indexed ? "I" : "") + (throwsInside ? "Try" : ""), c);
       const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
       const core = isOptionT(elem) ? checker.getNonNullableType(elem) : elem;
       const boxed = onCycle(core);
       const inner = boxed ? `Heap<${ty(core, c)}>` : ty(core, c);
       const elemTy = `&${isOptionT(elem) ? `Option<${inner}>` : inner}`;
       // The receiver is evaluated by the caller, outside the closure: a `?` in it propagates from the enclosing function.
-      const recvCode = ex(recv);
+      // `[...X].m(cb)` only reads X's elements, so the helper walks X itself: an array as is, a Map's keys()/values() or a
+      // Set as their Vec (slot order, not insertion order, so only for some/every, whose result does not depend on it).
+      const spreadRecv = (): string | null => {
+        const ur = unparen(recv);
+        if (!ts.isArrayLiteralExpression(ur) || ur.elements.length !== 1 || !ts.isSpreadElement(ur.elements[0])) return null;
+        const x = ur.elements[0].expression, st = tOf(x);
+        if (checker.isArrayType(st)) return ex(x);
+        const unordered = method === "some" || method === "every";
+        const mk = mapValuesRecv(checker, x, "keys");
+        const mv = mapValuesRecv(checker, x) ?? mk;
+        if (mv && unordered) return `${ex(mv)}.${mk ? "keys" : "values"}()`;
+        if (st.symbol && (st.symbol.name === "Set" || st.symbol.name === "ReadonlySet") && unordered) return `${ex(x)}.toVec()`;
+        return fail(recv, `closure (loop tier) in Array.${method} over a spread of something other than an array${unordered ? ", a Set or Map.keys()/values()" : " (a Map or Set is read in slot order)"}`);
+      };
+      const recvCode = spreadRecv() ?? ex(recv);
       const savedFn = curFn;
       curFn = arrow; closureDepth++; push();
       try {
@@ -1161,6 +1175,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           const sym = symOf(bindingId(p.name))!;
           const nm = declareLocal(sym, bindingId(p.name).text);
           if (method === "reduce" && i === 0) return `${nm}: ${ty(ret, p)}`;
+          if (i === 1 && method !== "reduce") return `${nm}: i64`;
           if (boxed) elemBoxed.add(sym);
           return `${nm}: ${elemTy}`;
         });
@@ -1243,6 +1258,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           // A deep copy sharing nothing, which is what a derived Clone is (heap fields cloned). The copy is
           // a fresh owned value, so unlike a place copied out of a borrow it needs no read-only destination.
           case "structuredClone": if (a.length !== 1 || !canClone(tOf(a[0]))) return fail(c, "structuredClone of a value with no derived Clone"); return `${ex(a[0])}.clone()`;
+          // Every number in the generated code is an i64 (float literals and `/` are refused), so each is an integer.
+          case "NumberConstructor.isInteger": if (a.length !== 1 || !isNum(a[0]) || !sideEffectFree(a[0])) return fail(c, "Number.isInteger of other than one side-effect-free number"); return "true";
           case "parseFloat": if (a.length !== 1 || !isStr(a[0])) return fail(c, "parseFloat of other than one string"); return `${useRuntime("jsParseFloat", c)}(${ex(a[0])})`;
           case "Number": return fail(c, "Number/parseFloat on a value that may not be an integer (no f64 numbers in the generated code yet)");
           case "parseInt": if (!a[1]) return `${useRuntime("jsParseIntAuto", c)}(${ex(a[0])})`; return `${useRuntime("jsParseInt", c)}(${ex(a[0])}, ${ex(a[1])})`;
