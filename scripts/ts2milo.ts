@@ -1101,7 +1101,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const afterLoop = () => { if (tryFlags.length) { line(`if ${tryFlags[tryFlags.length - 1]} {`); line("    break"); line("}"); } };
     const withTry = (call: ts.CallExpression, code: string): string => {
       const d = declOf(call);
-      if (closureDepth > 0 && d && throwing.has(d) && !isThrower(d)) fail(call, "closure (loop tier) calling a function that throws");
+      if (closureDepth > 0 && d && throwing.has(d) && !isThrower(d) && !(curFn && tryArrows.has(curFn))) fail(call, "closure (loop tier) calling a function that throws");
       if (d && throwing.has(d) && !isThrower(d) && tryFlags.length) {
         hit("call of a throwing function in try", "match on the Result, the Err arm sets the try's flag and breaks out");
         const v = fresh("ok");
@@ -1130,12 +1130,23 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     // Loop tier (subset.ts arrayClosureCall): xs.some(x => e) becomes jsSome(xs, (x: &T) => e), a runtime helper
     // that loops with the exact JavaScript short-circuit and result rules. The arrow is a by-reference Milo closure.
     const CLOSURE_HELPERS: Record<string, string> = { some: "jsSome", every: "jsEvery", map: "jsMap", filter: "jsFilter", find: "jsFind", findIndex: "jsFindIndex", forEach: "jsForEach", flatMap: "jsFlatMap", reduce: "jsReduce" };
+    // Loop-tier closures whose body calls a throwing function: each returns a Result, the *Try helper stops at the
+    // first Err and hands it back, and the call site passes it on with `?` (as JS unwinds out of the callback).
+    const tryArrows = new Set<ts.Node>();
+    const TRY_METHODS = new Set(["some", "every", "map", "forEach", "findIndex"]);
     const closureCall = (c: ts.CallExpression, cl: { method: string; arrow: ts.ArrowFunction; elem: ts.Type }): string => {
       const { method, arrow, elem } = cl;
+      let throwsInside = false;
+      walkBody(arrow.body, (n) => { if (ts.isCallExpression(n)) { const d = declOf(n); if (d && throwing.has(d)) throwsInside = true; } });
+      if (throwsInside) {
+        if (!TRY_METHODS.has(method)) return fail(c, `closure (loop tier) in Array.${method} calling a function that throws`);
+        if (tryFlags.length) return fail(c, "closure (loop tier) calling a function that throws, inside a try");
+        tryArrows.add(arrow);
+      }
       hit("closure in an array method", `${CLOSURE_HELPERS[method]}(xs, closure) loop helper`);
       const recv = (c.expression as ts.PropertyAccessExpression).expression;
       const owned = method === "filter" && !(elem.flags & (ts.TypeFlags.Number | ts.TypeFlags.String | ts.TypeFlags.Boolean | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral));
-      const helper = useRuntime(owned ? "jsFilterOwned" : CLOSURE_HELPERS[method], c);
+      const helper = useRuntime(owned ? "jsFilterOwned" : CLOSURE_HELPERS[method] + (throwsInside ? "Try" : ""), c);
       const ret = checker.getSignatureFromDeclaration(arrow)!.getReturnType();
       const core = isOptionT(elem) ? checker.getNonNullableType(elem) : elem;
       const boxed = onCycle(core);
@@ -1153,17 +1164,19 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
           if (boxed) elemBoxed.add(sym);
           return `${nm}: ${elemTy}`;
         });
-        const retTy = method === "forEach" ? "" : `: ${ty(ret, arrow)}`;
+        const errName = throwsInside ? errNameFor(ts.findAncestor(c, (n) => throwing.has(n))!) : "";
+        const retTy = throwsInside ? `: Result<${method === "forEach" ? "bool" : ty(ret, arrow)}, ${errName}>` : method === "forEach" ? "" : `: ${ty(ret, arrow)}`;
         const mark = out.length;
         ind++;
         if (ts.isBlock(arrow.body)) block(arrow.body);
         else if (method === "forEach") exprStmt(arrow.body);
-        else line(`return ${ownConv(arrow.body, ret)}`);
+        else line(throwsInside ? `return Result.Ok(${ownConv(arrow.body, ret)})` : `return ${ownConv(arrow.body, ret)}`);
+        if (throwsInside && method === "forEach") line("return Result.Ok(true)");
         ind--;
         const inside = out.splice(mark).join("\n");
         const lit = `(${ps.join(", ")})${retTy} => {\n${inside}\n${"    ".repeat(ind)}}`;
         const tail = method === "reduce" ? `, ${ownConv(c.arguments[1], ret)}` : "";
-        return `${helper}(${recvCode}, ${lit}${tail})`;
+        return `${helper}(${recvCode}, ${lit}${tail})${throwsInside ? "?" : ""}`;
       } finally { pop(); closureDepth--; curFn = savedFn; }
     };
 
@@ -1817,7 +1830,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     };
 
     // ---- statements ----
-    const retWrap = (fn: ts.FunctionLikeDeclaration) => throwing.has(fn) && !isThrower(fn);
+    const retWrap = (fn: ts.FunctionLikeDeclaration) => (throwing.has(fn) || tryArrows.has(fn)) && !isThrower(fn);
     const varDecls = (list: ts.VariableDeclarationList) => {
           for (const d of list.declarations) {
             const dn = bindingId(d.name);
@@ -2238,7 +2251,7 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       if (ts.isCallExpression(e)) {
         const d = declOf(e);
         if (d && isThrower(d)) {
-          if (closureDepth > 0) fail(e, "closure (loop tier) calling a function that throws");
+          if (closureDepth > 0 && !(curFn && tryArrows.has(curFn))) fail(e, "closure (loop tier) calling a function that throws");
           if (tryFlags.length) { if (tryErr[tryErr.length - 1]) line(recordErr(callEx(e)).trim().replace(/;$/, "")); line(`${tryFlags[tryFlags.length - 1]} = true`); line("break"); return; }
           // A never-returning function's own return value is the error, so passing one on is a plain return.
           line(curFn && isThrower(curFn) ? `return ${callEx(e)}` : `return Result.Err(${callEx(e)})`);

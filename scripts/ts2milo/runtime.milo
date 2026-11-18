@@ -750,6 +750,52 @@ pub fn jsForEach<T>(v: &Vec<T>, f: (&T) => void) {
     }
 }
 
+// The *Try forms take a callback that can fail (a TS callback calling a function that throws): the first Err
+// stops the walk and is returned, as the exception would unwind out of the JS loop.
+pub fn jsSomeTry<T, E>(v: &Vec<T>, f: (&T) => Result<bool, E>): Result<bool, E> {
+    for e in v {
+        if f(e)? {
+            return Result.Ok(true)
+        }
+    }
+    return Result.Ok(false)
+}
+
+pub fn jsEveryTry<T, E>(v: &Vec<T>, f: (&T) => Result<bool, E>): Result<bool, E> {
+    for e in v {
+        if !f(e)? {
+            return Result.Ok(false)
+        }
+    }
+    return Result.Ok(true)
+}
+
+pub fn jsForEachTry<T, E>(v: &Vec<T>, f: (&T) => Result<bool, E>): Result<bool, E> {
+    for e in v {
+        f(e)?
+    }
+    return Result.Ok(true)
+}
+
+pub fn jsMapTry<T, U, E>(v: &Vec<T>, f: (&T) => Result<U, E>): Result<Vec<U>, E> {
+    var out: Vec<U> = Vec.new()
+    for e in v {
+        out.push(f(e)?)
+    }
+    return Result.Ok(out)
+}
+
+pub fn jsFindIndexTry<T, E>(v: &Vec<T>, f: (&T) => Result<bool, E>): Result<i64, E> {
+    var i: i64 = 0
+    for e in v {
+        if f(e)? {
+            return Result.Ok(i)
+        }
+        i += 1
+    }
+    return Result.Ok(-1)
+}
+
 pub fn jsMap<T, U>(v: &Vec<T>, f: (&T) => U): Vec<U> {
     var out: Vec<U> = Vec.new()
     for e in v {

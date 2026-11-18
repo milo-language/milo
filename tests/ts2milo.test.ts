@@ -720,6 +720,30 @@ describe("??, ?. and switch", () => {
     rejects("export interface F { xs?: number[] }\nexport function f(o: F): boolean | undefined { return o.xs?.some(x => x > 0); }");
   });
 
+  test("a loop-tier callback calling a throwing function returns a Result; the first throw unwinds the call", () => {
+    const r = gen("tsm_tc", [
+      "export class Bad { constructor(public msg: string) {} }",
+      "function dbl(n: number): number { if (n < 0) throw new Bad(\"neg\"); return n * 2; }",
+      "export function dbls(xs: number[]): number[] { return xs.map(x => dbl(x)); }",
+      "export function anyBig(xs: number[]): boolean { return xs.some(x => dbl(x) > 5); }",
+      "export function total(xs: number[]): number { let t = 0; xs.forEach(x => { t += dbl(x); }); return t; }",
+    ].join("\n"), [
+      "from \"./tsm_tc\" import { dbls, anyBig, total }",
+      "fn main(): i32 {",
+      "    match dbls([1, 2]) { Result.Ok(v) => { if v.len() != 2 || v[1] != 4 { return 1 } }, Result.Err(_) => { return 2 } }",
+      "    match dbls([1, -2]) { Result.Ok(_) => { return 3 }, Result.Err(_) => {} }",
+      "    // some stops at the first true, before the negative element would throw",
+      "    match anyBig([3, -1]) { Result.Ok(b) => { if !b { return 4 } }, Result.Err(_) => { return 5 } }",
+      "    match anyBig([1, -1]) { Result.Ok(_) => { return 6 }, Result.Err(_) => {} }",
+      "    match total([1, 2]) { Result.Ok(t) => { if t != 6 { return 7 } }, Result.Err(_) => { return 8 } }",
+      "    match total([1, -2]) { Result.Ok(_) => { return 9 }, Result.Err(_) => {} }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("jsMapTry(");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+  });
+
   test("?. reads a field through an optional, chains, flattens and composes", () => {
     const r = gen("tsm_oc", [
       "export interface Inner { n: number; t: string | undefined }",
