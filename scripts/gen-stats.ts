@@ -41,7 +41,7 @@ export const STATS: Record<string, () => number> = {
   // Platform arms (foo.darwin.milo, foo.linux.milo) are one importable module behind
   // one name, which is the number a user of `from "std/x"` experiences.
   "std-modules": () => new Set(
-    readdirSync(join(ROOT, "std")).filter(f => f.endsWith(".milo")).map(f => f.split(".")[0]),
+    readdirSync(join(ROOT, "std")).filter(f => f.endsWith(".milo") && !f.endsWith("_test.milo")).map(f => f.split(".")[0]),
   ).size,
   "example-programs": () => countExamples(),
 };
