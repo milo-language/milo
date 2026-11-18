@@ -695,6 +695,31 @@ describe("??, ?. and switch", () => {
     rejects("export interface T { a: number; c?: number }\nexport function f(on: boolean): T { return { a: 1, c: 2, ...(on ? { c: 3 } : {}) }; }", "another member");
   });
 
+  test("xs?.some / xs?.every tested or defaulted match the optional array once", () => {
+    const r = gen("tsm_qs", [
+      "export interface A { n: number }",
+      "export interface F { attrs?: A[] }",
+      "export function t1(f: F): number { if (f.attrs?.some(a => a.n === 2)) return 1; return 0; }",
+      "export function t2(f: F): boolean { return f.attrs?.every(a => a.n > 0) ?? true; }",
+      "export function t3(f: F): number { return f.attrs?.some(a => a.n === 9) ? 5 : 6; }",
+    ].join("\n"), [
+      "from \"./tsm_qs\" import { A, F, t1, t2, t3 }",
+      "fn main(): i32 {",
+      "    let none = F { attrs: Option.None }",
+      "    let some = F { attrs: Option.Some([A { n: 1 }, A { n: 2 }]) }",
+      "    let neg = F { attrs: Option.Some([A { n: -1 }]) }",
+      "    if t1(none) != 0 || t1(some) != 1 { return 1 }",
+      "    if !t2(none) || !t2(some) || t2(neg) { return 2 }",
+      "    if t3(none) != 6 || t3(some) != 6 { return 3 }",
+      "    return 0",
+      "}",
+    ]);
+    expect(r.out).toContain("Option.None => true");
+    expect({ status: r.status, err: r.err }).toEqual({ status: 0, err: "" });
+    // As a value, xs?.some(..) is boolean | undefined: no Milo form, refused.
+    rejects("export interface F { xs?: number[] }\nexport function f(o: F): boolean | undefined { return o.xs?.some(x => x > 0); }");
+  });
+
   test("?. reads a field through an optional, chains, flattens and composes", () => {
     const r = gen("tsm_oc", [
       "export interface Inner { n: number; t: string | undefined }",

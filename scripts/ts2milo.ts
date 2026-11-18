@@ -5,7 +5,7 @@
 import ts from "typescript";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, orIsNullish, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
+import { anonStructHandled, assertionIsNoop, assertionReason, stripConst, arrayClosureCall, calleeKey, hoistedClosure, chainCompareHandled, clauseBody, isChainMember, isLibDecl, makeProgram, nullishHandled, optClosureCallHandled, orIsNullish, sideEffectFree, switchHandled, truthyHandled, truthyKind, violationsOf, inCondPos } from "./ts2milo/subset";
 import { desugarDestructuring, destructureRefusal } from "./ts2milo/destructure";
 import { buildImmutability } from "./ts2milo/written-props";
 import { ID_FIELD, isKeyedContainer, mapValuesRecv, nodeCompare, nodeKeyOf, nodeKeyOfContainer, type NodeKey } from "./ts2milo/node-identity";
@@ -629,9 +629,21 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     const truthText = (k: "str" | "num" | "optBool", code: string) =>
       k === "str" ? `(${useRuntime("jsLen", sf)}(${code}) != 0)` : k === "num" ? `(${code} != 0)` : code;
     // An enum-typed operand where a js string is wanted (`"x" + tok.kind`): its string value.
+    // `xs?.some(cb)` tested or defaulted (subset optClosureCallHandled): match xs once; the call reads the payload.
+    const optClosureCall = (c: ts.CallExpression, absent: string): string => {
+      const r = unparen((c.expression as ts.PropertyAccessExpression).expression);
+      const key = r.getText(), name = fresh("xs"), scrut = ex(r);
+      const saved = narrow.get(key);
+      narrow.set(key, { name, deref: boxedPlace(r) });
+      const inner = ex(c);
+      if (saved) narrow.set(key, saved); else narrow.delete(key);
+      hit("optional array closure call", "xs?.some(cb): match xs, absent is the test's false or the ?? default");
+      return `(match ${scrut} { Option.Some(${name}) => ${inner}, Option.None => ${absent} })`;
+    };
     const cond = (e: ts.Expression): string => {
       // Outside the subset's narrowing positions (lenient only), an optional is still tested, just not narrowed.
       const ue = unparen(e);
+      if (ts.isCallExpression(ue) && optClosureCallHandled(program, checker, ue) !== null) return optClosureCall(ue, "false");
       const logical = ts.isBinaryExpression(ue) && (ue.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || ue.operatorToken.kind === ts.SyntaxKind.BarBarToken);
       const k = truthyHandled(checker, e) ?? (inCondPos(e) && !logical ? truthyKind(tOf(e)) : null);
       if (!k && ts.isBinaryExpression(ue) && (ue.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || ue.operatorToken.kind === ts.SyntaxKind.BarBarToken)) return ex(e);
@@ -1046,6 +1058,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
     // The left side of a `place ?? []` loop head whose body never writes the loop variable: iterating a clone is unobservable.
     let roNullishLeft: ts.Expression | null = null;
     const nullish = (b: ts.BinaryExpression): string => {
+      const lc = unparen(b.left);
+      if (ts.isCallExpression(lc)) { const absent = optClosureCallHandled(program, checker, lc); if (absent !== null) return optClosureCall(lc, absent); }
       const mode = nullishHandled(checker, b) ?? fail(b, "?? outside the subset");
       hit("nullish coalescing", mode === "value" ? "Milo ?? (the default runs only when absent)" : "if isSome, else the default");
       const rt = tOf(b);
@@ -2062,7 +2076,8 @@ function transpileOnce(inputs: string[], opts: { overridesDir?: string; astRoots
       const flush = () => { if (plain.length) { heads.push(`if ${plain.join(" && ")} {`); plain = []; } };
       for (const c of conjuncts(test)) {
         let bind: { scrut: ts.Expression; pat: (n: string) => string; deref: boolean; what: string; then?: (code: string) => string; outer?: (n: string) => string } | null = null;
-        const tk = truthyHandled(checker, c);
+        // `if (xs?.some(cb))` is a plain test (cond matches xs), not an optional to bind.
+        const tk = ts.isCallExpression(c) && optClosureCallHandled(program, checker, c) !== null ? null : truthyHandled(checker, c);
         if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isStringLiteral(c.right)) {
           const tu = discriminantRead(checker, c.left);
           if (tu && ts.isPropertyAccessExpression(c.left)) {

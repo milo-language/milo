@@ -291,6 +291,25 @@ export function calleeKey(program: ts.Program, checker: ts.TypeChecker, call: ts
   return "?";
 }
 
+// The nearest ancestor that is not a parenthesized expression.
+const parenUp = (n: ts.Node): ts.Node => { while (ts.isParenthesizedExpression(n)) n = n.parent; return n; };
+// `xs?.some(cb)` / `xs?.every(cb)` on an optional array place, where only its truth is used: tested in a
+// condition, or defaulted by `?? <boolean literal>`. JS gives undefined when xs is absent, which a test reads as
+// false. The emitter matches xs once and runs the call on the payload. Returns the Milo value for absent, else null.
+export function optClosureCallHandled(program: ts.Program, checker: ts.TypeChecker, c: ts.CallExpression): string | null {
+  if (!ts.isPropertyAccessExpression(c.expression) || !c.expression.questionDotToken) return null;
+  const cl = arrayClosureCall(program, checker, c);
+  if (!cl || typeof cl === "string" || (cl.method !== "some" && cl.method !== "every")) return null;
+  const r = unparenE(c.expression.expression);
+  if (!isPlaceE(r) || !sideEffectFree(r) || isChainMember(r) || !isOptionalType(checker.getTypeAtLocation(r))) return null;
+  let up: ts.Node = c.parent;
+  while (ts.isParenthesizedExpression(up)) up = up.parent;
+  if (ts.isBinaryExpression(up) && up.operatorToken.kind === K.QuestionQuestionToken && unparenE(up.left) === c) {
+    const d = unparenE(up.right);
+    return d.kind === K.TrueKeyword ? "true" : d.kind === K.FalseKeyword ? "false" : null;
+  }
+  return inCondPos(c) ? "false" : null;
+}
 // Array methods whose callback is an arrow literal, lowered to the jsSome/jsMap/... runtime helpers (loop tier).
 const CLOSURE_METHODS = new Set(["some", "every", "map", "filter", "find", "findIndex", "forEach", "flatMap", "reduce"]);
 const BOOL_CLOSURE = new Set(["some", "every", "filter", "find", "findIndex"]);
@@ -304,7 +323,9 @@ export function arrayClosureCall(program: ts.Program, checker: ts.TypeChecker, c
   if (!m || !CLOSURE_METHODS.has(m[1]) || !ts.isPropertyAccessExpression(c.expression)) return null;
   const method = m[1];
   const why = (r: string) => `closure (loop tier) in Array.${method}: ${r}`;
-  const recvT = checker.getTypeAtLocation(c.expression.expression);
+  // `xs?.some(..)`: the call runs on the present array; the chain around it supplies the absent case.
+  const recvT0 = checker.getTypeAtLocation(c.expression.expression);
+  const recvT = c.expression.questionDotToken ? checker.getNonNullableType(recvT0) : recvT0;
   if (!checker.isArrayType(recvT)) return why("receiver is not an array");
   const elem = checker.getTypeArguments(recvT as ts.TypeReference)[0];
   const arrow = c.arguments[0];
@@ -516,7 +537,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
       }
       case K.PropertyAccessExpression: {
         const p = n as ts.PropertyAccessExpression;
-        if (isChainMember(p)) { if (!chainHandled(checker, p)) bad(n, "optional chaining"); return; }
+        if (isChainMember(p)) { if (!chainHandled(checker, p) && !(ts.isCallExpression(p.parent) && p.parent.expression === p && optClosureCallHandled(program, checker, p.parent) !== null)) bad(n, "optional chaining"); return; }
         const disc = discriminantRead(checker, p);
         const u = disc ?? unionOfType(checker, checker.getTypeAtLocation(p.expression));
         if (u) {
@@ -581,7 +602,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         if (ASSIGN_OPS.has(op) && !ts.isExpressionStatement(b.parent)) bad(n, "assignment as expression");
         if (orIsNullish(checker, b)) return;
         // `...(c && { k })`: the object is not a value, its members become fields of the outer literal.
-        if (op === K.AmpersandAmpersandToken && ts.isSpreadAssignment(ts.walkUpParenthesizedExpressions(b.parent)) && ts.isObjectLiteralExpression(ts.skipParentheses(b.right))) return;
+        if (op === K.AmpersandAmpersandToken && ts.isSpreadAssignment(parenUp(b.parent)) && ts.isObjectLiteralExpression(unparenE(b.right))) return;
         if (op === K.AmpersandAmpersandToken || op === K.BarBarToken) { needBool(b.left, "operand of &&/||"); needBool(b.right, "operand of &&/||"); }
         if (op === K.PlusToken) {
           const l = checker.getTypeAtLocation(b.left), r = checker.getTypeAtLocation(b.right);
@@ -616,7 +637,7 @@ export function violationsOf(program: ts.Program, checker: ts.TypeChecker, sf: t
         // The object of a conditional spread (`...(c ? { k } : {})`, `...(c && { k })`) is not built: its members become fields of the outer literal.
         let up: ts.Node = o.parent;
         while (ts.isParenthesizedExpression(up)) up = up.parent;
-        if ((ts.isConditionalExpression(up) || (ts.isBinaryExpression(up) && up.operatorToken.kind === K.AmpersandAmpersandToken)) && ts.isSpreadAssignment(ts.walkUpParenthesizedExpressions(up.parent))) return;
+        if ((ts.isConditionalExpression(up) || (ts.isBinaryExpression(up) && up.operatorToken.kind === K.AmpersandAmpersandToken)) && ts.isSpreadAssignment(parenUp(up.parent))) return;
         const ctx = checker.getContextualType(o);
         // With no annotation the literal's own inferred type is what gets a synthesized struct.
         const t = checker.getNonNullableType(ctx ?? checker.getTypeAtLocation(o));
