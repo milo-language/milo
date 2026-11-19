@@ -119,6 +119,8 @@ export function divergences(o: Outcome, which: Which[] = ["interp", "o0", "asan"
   const out: string[] = [];
   const { interp, o0, asan } = o;
   if (which.includes("interp") && interp.note?.startsWith("unsupported")) return ["skip"];
+  // Every pipeline timing out is a program that does not terminate (a generator bug), not a disagreement.
+  if (which.length === 3 && [interp, o0, asan].every(r => r.note?.startsWith("killed"))) return ["hang"];
   if (which.includes("interp") && interp.note) out.push(interp.note.startsWith("stuck") ? "interp-stuck" : interp.note.startsWith("crash") ? "interp-crash" : "interp-killed");
   for (const [k, b] of [["o0", o0], ["asan", asan]] as const) {
     if (!which.includes(k)) continue;
@@ -233,7 +235,8 @@ if (import.meta.main) {
       if (!ds.length) continue;
       for (const d of ds) tally.set(d, (tally.get(d) ?? 0) + 1);
       console.error(`seed ${seed}: DIVERGES ${ds.join(", ")}`);
-      const min = await reduce(src, ds[0]!, dir);
+      // Reducing a hang only deletes the loop exits that would end it.
+      const min = ds[0] === "hang" ? src : await reduce(src, ds[0]!, dir);
       found.push({ seed, key: ds[0]!, src, min });
       if (save) {
         const d = join(ROOT, "tests", "fixtures", "gen");

@@ -41,6 +41,9 @@ test("divergences names each kind of disagreement", () => {
   expect(divergences(outcome({ o0: obs({ note: "build failed: boom" }) }))).toEqual(["build-failed:o0"]);
   expect(divergences(outcome({ interp: obs({ note: "stuck: interp: stuck at x" }) }))).toContain("interp-stuck");
   expect(divergences(outcome({ interp: obs({ note: "unsupported: interp: unsupported: x" }) }))).toEqual(["skip"]);
+  const killed = obs({ note: "killed: exceeded 20000 ms" });
+  expect(divergences(outcome({ interp: killed, o0: killed, asan: killed }))).toEqual(["hang"]);
+  expect(divergences(outcome({ o0: killed }))).toEqual(["o0-killed"]);
 });
 
 test("an interpreter-only run of a known program sees its stdout", async () => {

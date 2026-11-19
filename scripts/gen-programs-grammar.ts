@@ -536,10 +536,11 @@ class Gen {
       }],
       [deep ? 0 : 1, () => { // while true with a counted break: owned locals live across it
         const i = this.name("i");
-        out.push(`${ind}var ${i}: i64 = 0`, `${ind}while true {`, `${ind}    ${i} += 1`);
+        // The break test comes first: a generated `continue` in the body would skip a test at the end forever.
+        out.push(`${ind}var ${i}: i64 = 0`, `${ind}while true {`, `${ind}    ${i} += 1`, `${ind}    if ${i} > ${this.int(1, 3)} {`, `${ind}        break`, `${ind}    }`);
         const frozen = new Set([...ctx.frozen, ...env.map(v => v.name)]);
         this.sub(env, ctx, out, indent + 1, e => this.declare(e, i, "int", false), true, frozen);
-        out.push(`${ind}    if ${i} >= ${this.int(1, 3)} {`, `${ind}        break`, `${ind}    }`, `${ind}}`);
+        out.push(`${ind}}`);
         return true;
       }],
       [2, () => { // closure borrowing a Vec / mutating a captured local, scoped so it dies before the next use
