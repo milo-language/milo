@@ -1077,7 +1077,7 @@ export class TypeChecker {
   // the statement after its if/match, so its moves are recorded here instead: a move
   // before `break` reaches the code after the loop, one before `continue` reaches the
   // next-iteration check.
-  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[]; reachable: boolean; stringMoves: Map<VarInfo, number> }[] = [];
+  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[]; reachable: boolean; stringMoves: Map<VarInfo, Map<string, number>> }[] = [];
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
@@ -3385,11 +3385,17 @@ export class TypeChecker {
   }
 
   private beginLoopMoves(): Map<VarInfo, MoveSnapshot> {
-    // A string already moved at loop entry is only provisionally moved (the move is a recorded site that a
-    // later use turns into a share). Remember how many sites each has, to notice the body adding its own.
-    const stringMoves = new Map<VarInfo, number>();
+    // A string (or string field) already moved at loop entry is only provisionally moved (the move is a recorded
+    // site that a later use turns into a share). Remember how many sites each place has, to notice the body adding its own.
+    const stringMoves = new Map<VarInfo, Map<string, number>>();
     const pre = this.snapshotMoveState();
-    for (const [info, snap] of pre) if (snap.moved && info.type.tag === "string") stringMoves.set(info, this.stringSiteCount(info));
+    for (const [info, snap] of pre) {
+      const byPath = new Map<string, number>();
+      let any = false;
+      if (snap.moved && info.type.tag === "string") { byPath.set("", this.stringSiteCount(info, "")); any = true; }
+      for (const p of snap.places) { byPath.set(p, this.stringSiteCount(info, p)); any = true; }
+      if (any) stringMoves.set(info, byPath);
+    }
     this.loopFrames.push({ breaks: [], continues: [], reachable: this.reachable, stringMoves });
     return pre;
   }
@@ -3441,13 +3447,27 @@ export class TypeChecker {
   // After a loop body: a move inside it would run a second time on the next iteration,
   // so it is an error unless the only path that moved also left the loop. Applies one
   // level down too — a field moved out in the body is just as gone on iteration two.
-  private stringSiteCount(info: VarInfo): number {
-    let n = 0;
-    for (const sites of this.stringMoveSites.get(info)?.values() ?? []) n += sites.length;
-    return n;
+  private stringSiteCount(info: VarInfo, path: string): number {
+    const byPath = this.stringMoveSites.get(info);
+    if (byPath !== undefined) {
+      const sites = byPath.get(path);
+      if (sites !== undefined) return sites.length;
+    }
+    return 0;
   }
 
-  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined, stringMoves: Map<VarInfo, number>) {
+  // Moved before the loop, revived by a use in the body (that turned the earlier move into a share) and
+  // moved again there: the next iteration reads it, so every move of it is a share.
+  private movedAgainInBody(info: VarInfo, path: string, stringMoves: Map<VarInfo, Map<string, number>>): boolean {
+    const byPath = stringMoves.get(info);
+    if (byPath !== undefined) {
+      const before = byPath.get(path);
+      if (before !== undefined) return this.stringSiteCount(info, path) > before;
+    }
+    return false;
+  }
+
+  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined, stringMoves: Map<VarInfo, Map<string, number>>) {
     const partialGlobals = this.partialMoveSnaps.get(pre);
     for (const scope of this.scopes) {
       const leftOut = partialGlobals !== undefined && scope === this.globalScope;
@@ -3458,11 +3478,13 @@ export class TypeChecker {
         const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
         if (!before.moved && info.moved && !this.shareStringMoves(info, "")) this.error(`cannot move '${name}' out of a loop`, sp);
-        // Moved before the loop, revived by a use in the body (that turned the earlier move into a share) and
-        // moved again there: the next iteration reads it, so every move of it is a share.
-        else if (before.moved && info.moved && stringMoves.has(info) && this.stringSiteCount(info) > stringMoves.get(info)!) this.shareStringMoves(info, "");
+        else if (before.moved && info.moved && this.movedAgainInBody(info, "", stringMoves)) this.shareStringMoves(info, "");
         for (const p of [...info.movedPlaces ?? []]) {
-          if (before.places.includes(p) || this.shareStringMoves(info, p)) continue;
+          if (before.places.includes(p)) {
+            if (this.movedAgainInBody(info, p, stringMoves)) this.shareStringMoves(info, p);
+            continue;
+          }
+          if (this.shareStringMoves(info, p)) continue;
           this.error(`cannot move '${name}${p}' out of a loop`, sp);
         }
       }

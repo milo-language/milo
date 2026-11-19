@@ -40,7 +40,7 @@
   "src/checker-task-scopes.ts": 0,
   "src/checker-thread-boundary-host.ts": 114,
   "src/checker-thread-boundary.ts": 0,
-  "src/checker.ts": 3432,
+  "src/checker.ts": 3428,
   "src/emit-forms.ts": 494,
   "src/emit-mlir.ts": 1676,
   "src/lexer.ts": 0,

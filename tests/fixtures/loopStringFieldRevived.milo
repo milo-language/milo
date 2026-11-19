@@ -1,0 +1,26 @@
+// A string field moved before a loop (here only on an untaken path), read again and moved
+// again in the body: every iteration reads it, so the body's move must be a share.
+// Found by gen-programs (seed 9326): the interpreter got stuck on iteration two.
+struct Res { id: i64 }
+
+struct Rec { name: string, tags: Vec<string> }
+
+fn main(): i32 {
+    let a0: i64 = 1
+    var v11: Rec = Rec { name: $"{a0}bc", tags: [] }
+    var v13: Res = Res { id: 8 }
+    if a0 > 1 {
+        let old = replace(v11, Rec { name: "z", tags: [v11.name] })
+    }
+    var i: i64 = 0
+    while i < 3 {
+        i += 1
+        v13 = Res { id: 13 }
+        let x: Vec<string> = [v11.name, v11.name]
+        print(x.len, " ", v13.id)
+    }
+    return 0
+}
+// @expect: 2 13
+// @expect: 2 13
+// @expect: 2 13
