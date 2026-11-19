@@ -16,6 +16,7 @@ interface Node {
   expr?: Expr; // the expression of a use, so a decision can be looked up per expression
   capture?: boolean; // a closure literal capturing the place; `expr` is the closure
   captureMove?: boolean; // a capture taken by a `move` closure: the use consumes the place
+  hardMove?: boolean; // consumes the place whatever its type: `forget(s)`, `*h`, calling a call-once closure
   succ: number[];
 }
 
@@ -38,6 +39,10 @@ class Builder {
   // Bindings that hold a borrow (`&T` / `&mut T` params): a string read out of one is always a share,
   // a local rule that needs no flow.
   borrowed = new Set<Place>();
+  // A binding holding a by-reference closure: what it captures, so every use of the binding reads them.
+  private closureCaps = new Map<Place, Place[]>();
+  // A binding holding a `move` closure whose body moves a capture out: calling it consumes it.
+  private callsOnce = new Set<Place>();
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
   private exits: number[] = []; // nodes that leave the function (return, `?`)
@@ -131,6 +136,7 @@ class Builder {
       case "LetDecl": case "VarDecl": {
         cur = this.expr(s.value, cur);
         const id = this.declare(s.name);
+        if (s.value.kind === "Closure") this.noteClosure(id, s.value);
         if (this.cr.viewLets.has(s)) this.borrowed.add(id); // `let x = v[i]` aliases the element
         return this.node({ def: id }, cur);
       }
@@ -211,6 +217,33 @@ class Builder {
     }
   }
 
+  private noteClosure(id: Place, c: Expr & { kind: "Closure" }): void {
+    const caps = this.cr.closureCaptures.get(c) ?? [];
+    if (c.isMove !== true) {
+      const places = caps.map(k => this.lookup(k.name)).filter((p): p is Place => p !== null);
+      if (places.length > 0) this.closureCaps.set(id, places);
+      return;
+    }
+    // A move closure owns its captures; if its body moves one out, the first call uses it up.
+    const names = new Set(caps.filter(k => !this.host.isCopy(k.type)).map(k => k.name));
+    let consumes = false;
+    const visit = (v: unknown): void => {
+      if (consumes || v === null || typeof v !== "object") return;
+      if (Array.isArray(v)) { for (const x of v) visit(x); return; }
+      const o = v as Record<string, unknown>;
+      if (o.kind === "Ident" && names.has(o.name as string) && this.cr.movedExprs.has(o as unknown as Expr)) { consumes = true; return; }
+      for (const k in o) if (k !== "span") visit(o[k]);
+    };
+    visit(c.body);
+    if (consumes) this.callsOnce.add(id);
+  }
+
+  // Each use of a binding holding a by-reference closure reads the places the closure captured.
+  private readCaptures(place: Place, e: Expr, cur: number): number {
+    for (const p of this.closureCaps.get(place) ?? []) cur = this.node({ use: p, expr: e, capture: true }, cur);
+    return cur;
+  }
+
   private match(subject: Expr, arms: { pattern: Pattern; body: Stmt[] }[], cur: number): number {
     cur = this.expr(subject, cur);
     const ends = arms.map(arm => this.scoped(() => this.stmts(arm.body, this.bindPattern(arm.pattern, cur, subject))));
@@ -221,7 +254,7 @@ class Builder {
   expr(e: Expr, cur: number): number {
     if (cur < 0) return cur;
     const place = this.placeOf(e);
-    if (place !== null) return this.node({ use: place, expr: e }, cur);
+    if (place !== null) return this.readCaptures(place, e, this.node({ use: place, expr: e }, cur));
     switch (e.kind) {
       case "IntLit": case "FloatLit": case "BoolLit": case "StringLit": case "CharLit": case "Ident": return cur;
       case "BinOp": {
@@ -229,7 +262,17 @@ class Builder {
         if (e.op === "&&" || e.op === "||") return this.join([cur, this.expr(e.right, cur)]);
         return this.expr(e.right, cur);
       }
-      case "UnaryOp": case "Unwrap": case "CastExpr": case "IsExpr": return this.expr(e.operand, cur);
+      case "UnaryOp": {
+        // `*h` taken by value moves the payload out of the Heap: `h` is spent. Through a raw pointer
+        // (unsafe) it is a read: the pointer owns nothing.
+        const inner = e.op === "*" && this.cr.exprTypes.get(e.operand)?.tag !== "ptr" ? this.placeOf(e.operand) : null;
+        if (inner !== null && this.cr.movePositions.has(e)) {
+          const t = this.cr.exprTypes.get(e);
+          if (t !== undefined && !this.host.isCopy(t)) return this.node({ use: inner, expr: e, hardMove: true }, cur);
+        }
+        return this.expr(e.operand, cur);
+      }
+      case "Unwrap": case "CastExpr": case "IsExpr": return this.expr(e.operand, cur);
       case "Propagate": {
         cur = this.expr(e.operand, cur);
         if (cur >= 0) this.exits.push(cur);
@@ -238,7 +281,16 @@ class Builder {
       case "DefaultValue": { cur = this.expr(e.operand, cur); return this.join([cur, this.expr(e.default, cur)]); }
       case "EnumLit": { for (const a of e.args) cur = this.expr(a, cur); return cur; }
       // A call whose type is never (exit, panic) ends the path: nothing after it reads anything.
-      case "Call": { for (const a of e.args) cur = this.expr(a, cur); return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur; }
+      case "Call": {
+        // `forget(x)` ends x's ownership without dropping it: a move whatever the type, a string included.
+        const forgotten = e.func === "forget" && e.args.length === 1 ? this.placeOf(e.args[0]!) : null;
+        if (forgotten !== null) return this.node({ use: forgotten, expr: e.args[0]!, hardMove: true }, cur);
+        for (const a of e.args) cur = this.expr(a, cur);
+        // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
+        const callee = this.lookup(e.func);
+        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, hardMove: this.callsOnce.has(callee) }, cur));
+        return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
+      }
       case "MethodCall": {
         cur = this.expr(e.object, cur);
         for (const a of e.args) cur = this.expr(a, cur);
@@ -332,6 +384,7 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
   // A move empties its place: a non-Copy value taken by value out of a place this body owns. Strings
   // never empty one: a string at a move position moves only when nothing reads it again (below).
   maybeMoved(b.nodes, n => {
+    if (n.hardMove) return true;
     if (n.capture) return n.captureMove === true;
     if (n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return false;
     const t = cr.exprTypes.get(n.expr);
