@@ -1,8 +1,11 @@
 // A string passed both by borrow and by value in one call: the borrow lasts until the callee
-// returns, so the by-value argument must share the buffer, whichever argument comes first.
+// returns, so the by-value argument must share the buffer, whichever argument comes first. A
+// by-reference closure argument lends what it captures the same way.
 // @expect: 30
 // @expect: 30
 // @expect: 8
+// @expect: 30
+// @expect: 30
 
 struct Doc { name: string }
 
@@ -16,6 +19,11 @@ fn ownedFirst(b: string, a: &string): i64 {
     return a.len() + n
 }
 
+fn runThen(f: () => i64, b: string): i64 {
+    let n = b.len()
+    return f() + n
+}
+
 pub fn main(): i32 {
     let s = "hello".repeat(3)
     print(lentFirst(s, s))
@@ -23,5 +31,10 @@ pub fn main(): i32 {
     print(ownedFirst(t, t))
     let d = Doc { name: "ab".repeat(2) }
     print(lentFirst(d.name, d.name))
+    let u = "hello".repeat(3)
+    print(runThen((): i64 => u.len(), u))
+    let w = "hello".repeat(3)
+    let c = (): i64 => w.len()
+    print(runThen(c, w))
     return 0
 }

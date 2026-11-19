@@ -20593,8 +20593,10 @@ A conforming implementation shall accept this program, and running it shall writ
 - `30`
 - `30`
 - `8`
+- `30`
+- `30`
 
-**Rationale.** A string passed both by borrow and by value in one call: the borrow lasts until the callee returns, so the by-value argument must share the buffer, whichever argument comes first.
+**Rationale.** A string passed both by borrow and by value in one call: the borrow lasts until the callee returns, so the by-value argument must share the buffer, whichever argument comes first. A by-reference closure argument lends what it captures the same way.
 
 *Program:* [`tests/fixtures/stringMovedAndLentSameCall.milo`](../tests/fixtures/stringMovedAndLentSameCall.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

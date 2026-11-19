@@ -300,12 +300,24 @@ class Builder {
   // A place passed by borrow stays read until the callee returns, so a string moved by an earlier
   // argument of the same call is still live: `f(s, s)` with `f(a: &string, b: string)` must share
   // the second `s`, or `a` reads the buffer `b` owns. The read node has no expression: it only keeps
-  // the place live (the argument's own node reports a use after move).
+  // the place live (the argument's own node reports a use after move). A by-reference closure
+  // argument, a literal or a binding, reads what it captures whenever the callee runs it.
   private lend(args: Expr[], cur: number): number {
     for (const a of args) {
-      if (cur < 0 || this.cr.movePositions.has(a)) continue;
+      if (cur < 0) return cur;
+      if (a.kind === "Closure" && a.isMove !== true) {
+        for (const c of this.cr.closureCaptures.get(a) ?? []) {
+          const p = this.lookup(c.name);
+          if (p !== null) cur = this.node({ use: p }, cur);
+        }
+        continue;
+      }
       const p = this.placeOf(a);
-      if (p !== null) cur = this.node({ use: p }, cur);
+      if (p === null) continue;
+      if (!this.cr.movePositions.has(a)) cur = this.node({ use: p }, cur);
+      // Passed by value or not, a by-reference closure still reads its captures when it runs.
+      const caps = this.closureCaps.get(p);
+      if (caps !== undefined) for (const r of caps.reads) cur = this.node({ use: r.place }, cur);
     }
     return cur;
   }
