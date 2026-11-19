@@ -601,6 +601,8 @@ export interface CheckResult {
   staticCalls: Map<Expr, string>;
   rewrittenStructLits: Map<Expr, string>;
   movedExprs: Set<Expr>;
+  // Every expression in a move position (consumed by value), moved or not: src/move-flow.ts decides from these.
+  movePositions: Set<Expr>;
   borrowedExprs: Set<Expr>;
   sharedStringExprs: Set<Expr>;
   sharedStringCaptures: Map<Expr, Set<string>>;
@@ -956,7 +958,7 @@ export class TypeChecker {
   // Every expression a call path handed to tryMove: the by-value arguments that path
   // really moves, which checkCallSiteExclusivity counts as exclusive uses. Asking the
   // path rather than re-deriving it keeps builtins (`format` reads its args) out.
-  private moveRequested = new WeakSet<Expr>();
+  private moveRequested = new Set<Expr>();
   // The binding each Ident resolved to when it was checked. A fork's tail is moved only
   // after the whole fork is checked (tryMove forwards a match/if to its arm tails), and by
   // then the arm's scope is popped: `lookup` misses the pattern binding, so a `&T` payload
@@ -3977,6 +3979,7 @@ export class TypeChecker {
       staticCalls: this.staticCalls,
       rewrittenStructLits: this.rewrittenStructLits,
       movedExprs: this.movedExprs,
+      movePositions: this.moveRequested,
       borrowedExprs: this.borrowedExprs,
       sharedStringExprs: this.sharedStringExprs,
       sharedStringCaptures: this.sharedStringCaptures,
