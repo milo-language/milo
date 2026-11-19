@@ -1245,6 +1245,12 @@ export class TypeChecker {
     this.diagnostics.push({ severity: "error", span: span ?? this.currentFnDecl?.span, message: msg, hint });
   }
 
+  // A use-after-move error from the walk. src/move-flow.ts reports these now (identical wording, from the
+  // control-flow graph); the walk's copy only speaks when the pass is off (scripts/move-diff.ts).
+  private flowError(msg: string, span?: Span, hint?: string) {
+    if (!this.applyMoveFlow) this.error(msg, span, hint);
+  }
+
   private errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic {
     const d: Diagnostic = { severity: "error", span, message: msg, hint, ...(notes.length > 0 && { notes }) };
     this.diagnostics.push(d);
@@ -3483,7 +3489,7 @@ export class TypeChecker {
       for (const [name, info] of scope) {
         const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
-        if (!before.moved && info.moved && !this.shareStringMoves(info, "")) this.error(`cannot move '${name}' out of a loop`, sp);
+        if (!before.moved && info.moved && !this.shareStringMoves(info, "")) this.flowError(`cannot move '${name}' out of a loop`, sp);
         else if (before.moved && info.moved && this.movedAgainInBody(info, "", stringMoves)) this.shareStringMoves(info, "");
         for (const p of [...info.movedPlaces ?? []]) {
           if (before.places.includes(p)) {
@@ -3491,7 +3497,7 @@ export class TypeChecker {
             continue;
           }
           if (this.shareStringMoves(info, p)) continue;
-          this.error(`cannot move '${name}${p}' out of a loop`, sp);
+          this.flowError(`cannot move '${name}${p}' out of a loop`, sp);
         }
       }
     }
@@ -3954,6 +3960,15 @@ export class TypeChecker {
     // A CheckAbort in the core leaves the rewrites unapplied; a second call is a no-op.
     applyRewrites(this);
     if (this.reportStringClones) this.printStringClones();
+    const result = this.buildResult();
+    // Moves are decided by the dataflow pass (src/move-flow.ts, docs/plans/move-dataflow.md): its
+    // use-after-move errors are the checker's, and on a program without errors its string decisions
+    // (move or share) are what codegen reads. Before the qualified-name rewrite below, which they need too.
+    if (this.applyMoveFlow) {
+      const flow = moveFlow(program, result, this);
+      for (const d of flow.diagnostics) this.error(d.message, d.span, d.hint);
+      if (!this.diagnostics.some(d => d.severity === "error")) applyStringDecisions(result, flow);
+    }
     if (this._displayNames !== undefined && this._displayNames.size > 0) {
       // The file a renamed symbol came from, when exactly one file declared it.
       const origins = new Map<string, string>();
@@ -3969,7 +3984,11 @@ export class TypeChecker {
         if (hint) d.hint = displayQualified(this._displayNames, hint, origins);
       }
     }
-    const result: CheckResult = {
+    return result;
+  }
+
+  private buildResult(): CheckResult {
+    return {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
       patternBindingTypes: this.patternBindingTypes,
@@ -4037,9 +4056,6 @@ export class TypeChecker {
       rewrites: this.rewrites,
       patternRewrites: this.patternRewrites,
     };
-    // Strings: the dataflow pass decides move or share (src/move-flow.ts, docs/plans/move-dataflow.md).
-    if (this.applyMoveFlow && !this.diagnostics.some(d => d.severity === "error")) applyStringDecisions(result, moveFlow(program, result, this));
-    return result;
   }
 
   // Registration and every expression check. Records rewrites, never writes the AST.
@@ -8772,7 +8788,7 @@ export class TypeChecker {
         const partial = info.movedPlaces && info.movedPlaces.size > 0
           ? [...info.movedPlaces][0]! : null;
         if (partial) {
-          this.error(`cannot move '${expr.name}' because '${expr.name}${partial}' was already moved out of it`, expr.span,
+          this.flowError(`cannot move '${expr.name}' because '${expr.name}${partial}' was already moved out of it`, expr.span,
             `move the remaining fields individually, or clone '${expr.name}${partial}' at the point it was transferred so '${expr.name}' stays whole`);
           return;
         }
@@ -9574,13 +9590,13 @@ export class TypeChecker {
       for (const path of cap.readPaths ?? []) {
         const gone = path === "" ? [...info.movedPlaces][0]! : this.movedPlaceCovering(info, path);
         if (!gone) continue;
-        this.error(`use of moved value '${cap.name}${gone}'`, sp,
+        this.flowError(`use of moved value '${cap.name}${gone}'`, sp,
           `'${fname}' captures '${cap.name}' by reference and reads '${cap.name}${path}' when it runs, but '${cap.name}${gone}' was moved out earlier, so the closure would see an emptied field. Clone it at the point of transfer: '${cap.name}${gone}.clone()'.`);
         return;
       }
     }
     if (!info?.moved) return;
-    this.error(`use of moved variable '${cap.name}'`, sp,
+    this.flowError(`use of moved variable '${cap.name}'`, sp,
       `'${fname}' captures '${cap.name}' by reference and uses it when it runs, but ownership of '${cap.name}' was transferred earlier, so the closure would see an emptied value. Reassign '${cap.name}' first, or clone it at the point of transfer.`);
   }
 
@@ -10766,12 +10782,12 @@ export class TypeChecker {
     if (info.moved && !this.movedByPattern.has(info)) this.shareStringMoves(info, "");
     if (this.placeBaseDepth === 0 && info.movedPlaces && info.movedPlaces.size > 0) {
       const gone = [...info.movedPlaces][0]!;
-      this.error(`'${expr.name}' is incomplete: '${expr.name}${gone}' was moved out of it`, sp,
+      this.flowError(`'${expr.name}' is incomplete: '${expr.name}${gone}' was moved out of it`, sp,
         `using '${expr.name}' as a whole would show that field as empty — clone it at the point of transfer, or use the fields that are still there`);
     }
     if (info.moved) {
       if (this.movedByPattern.has(info)) {
-        this.error(
+        this.flowError(
           `use of moved variable '${expr.name}'`,
           sp,
           `the pattern moved '${expr.name}''s payload out, so reading '${expr.name}' here would see a zeroed value. Use the pattern's binding instead, or compute what you need from '${expr.name}' before the match.`,
@@ -10787,7 +10803,7 @@ export class TypeChecker {
         // captured environment whose contents may not be clonable at all, and duplicating
         // the environment is exactly what makes it unsound to own. Say what it is instead.
         const owningFn = t.tag === "fn" && t.owning === true;
-        this.error(
+        this.flowError(
           `use of moved variable '${expr.name}'`,
           sp,
           owningFn
@@ -11739,7 +11755,7 @@ export class TypeChecker {
         // destructor it is a genuine use-after-free: `Task.spawn(f)` moves `f` into the
         // task, the task is reaped, and `f()` afterwards runs from a freed environment.
         if (varInfo.moved) {
-          this.error(`use of moved variable '${expr.func}'`, sp,
+          this.flowError(`use of moved variable '${expr.func}'`, sp,
             varInfo.consumedByCall
               ? `'${expr.func}' moves a captured value out of itself when it runs, so calling it consumes it: the second call would see that capture already gone. Build a second closure, or clone what it captures inside the body instead of moving it.`
               : varInfo.type.tag === "fn" && varInfo.type.owning === true
@@ -12395,7 +12411,7 @@ export class TypeChecker {
         this.eachCaptureOf(place.root, cap => { (cap.readPaths ??= new Set()).add(place.path); });
         const gone = this.movedPlaceCovering(rootInfo, place.path);
         if (gone && !this.shareStringMoves(rootInfo, gone)) {
-          this.error(`use of moved value '${place.root}${place.path}'`, sp,
+          this.flowError(`use of moved value '${place.root}${place.path}'`, sp,
             gone === place.path
               ? `ownership of '${place.root}${place.path}' was transferred earlier — the field is empty now. Clone it at the point of transfer: '${place.root}${place.path}.clone()'.`
               : `'${place.root}${gone}' was moved out earlier, which took '${place.root}${place.path}' with it. Clone at the point of transfer: '${place.root}${gone}.clone()'.`);

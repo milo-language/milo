@@ -405,7 +405,8 @@ function maybeMoved(b: Builder, moves: (n: Node) => boolean, report: (n: Node, p
     if (n.use !== undefined) {
       const used = n.use;
       for (const [p, m] of cur) {
-        if (!overlaps(p, used) || seen.has(n) || n.expr === undefined) continue;
+        // An arm taking the payload is the subject's own use again: the subject node already reported it.
+        if (!overlaps(p, used) || seen.has(n) || n.expr === undefined || n.armTakes) continue;
         seen.add(n);
         report(n, used, m, p);
       }
