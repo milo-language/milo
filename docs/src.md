@@ -124,6 +124,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/mlir-debug.ts` | -g: the module's DICompileUnit and a DISubprogram per Milo function and closure body, as LLVM-dialect debug attributes fused into their locs. |
 | `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
 | `src/mlir-llvm.ts` | A typed builder for MLIR's LLVM dialect, as text: the scaffold (src/scaffold.ts) writes its functions and globals through it. |
+| `src/move-diagnostics.ts` | The text of every use-after-move diagnostic, one function per shape. |
 | `src/move-flow.ts` | Move analysis as dataflow (docs/plans/move-dataflow.md): a control-flow graph of place events per function body, backward liveness to a fixpoint, and the move-or-share decision for strings read off i… |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/mutability-scan.ts` | The visitor behind src/checker-mutability.ts, in the portable subset (scripts/ts2milo/subset.ts) so it can be transpiled to Milo. |

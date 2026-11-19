@@ -2,7 +2,9 @@
 // function body, backward liveness to a fixpoint, and the move-or-share decision for strings read off
 // it. Runs after the checker on the rewritten tree and reads only CheckResult facts. Shadow mode for
 // now: scripts/move-diff.ts compares its decisions with the checker's movedExprs / sharedStringExprs.
-import type { Expr, Function, Param, Pattern, Program, Stmt } from "./ast";
+import type { Expr, Function, Param, Pattern, Program, Span, Stmt } from "./ast";
+import type { TypeKind } from "./types";
+import * as text from "./move-diagnostics";
 import { patternLeafNames } from "./ast";
 import type { CheckResult } from "./checker";
 
@@ -17,6 +19,13 @@ interface Node {
   capture?: boolean; // a closure literal capturing the place; `expr` is the closure
   captureMove?: boolean; // a capture taken by a `move` closure: the use consumes the place
   hardMove?: boolean; // consumes the place whatever its type: `forget(s)`, `*h`, calling a call-once closure
+  // A read of a capture through closure binding `fname` (when it is used or called): the closure reads `path` of it.
+  viaClosure?: { fname: string; cap: string; path: string };
+  callee?: string; // the call of a local closure binding named this
+  subject?: boolean; // a match subject's evaluation: never a move itself, see `armTakes`
+  armTakes?: boolean; // the start of an arm whose pattern binds: the payload is taken from the subject here
+  plainTake?: boolean;
+  firstUse?: Expr; // a closure literal's capture: where the body first names it (what an error points at)
   succ: number[];
 }
 
@@ -26,10 +35,13 @@ export interface MoveFlowResult {
   // A use of a place that a move may have emptied on some path that reaches it: `use` is the reading
   // expression (or the closure that captures it), `movedAt` the move.
   useAfterMove: { use: Expr; place: string; movedAt: Expr }[];
+  // The checker's wording for each of them (src/move-diagnostics.ts), at the span it reports.
+  diagnostics: { span: Span | undefined; message: string; hint?: string }[];
 }
 
 export interface MoveFlowHost {
-  isCopyType(t: import("./types").TypeKind): boolean;
+  isCopyType(t: TypeKind): boolean;
+  show(t: TypeKind): string;
 }
 
 const NO_TYPE = { name: "", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
@@ -41,11 +53,18 @@ class Builder {
   // a local rule that needs no flow.
   borrowed = new Set<Place>();
   // A binding holding a by-reference closure: what it captures, so every use of the binding reads them.
-  private closureCaps = new Map<Place, Place[]>();
+  private closureCaps = new Map<Place, { fname: string; reads: { cap: string; place: Place; path: string }[] }>();
   // A binding holding a `move` closure whose body moves a capture out: calling it consumes it.
   private callsOnce = new Set<Place>();
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
+  // Edges that return to a loop head ("from>to"), and each head's loop statement span.
+  backEdges = new Set<string>();
+  loopSpans = new Map<number, Span | undefined>();
+  private backTo(from: number, head: number): void {
+    this.nodes[from]!.succ.push(head);
+    this.backEdges.add(`${from}>${head}`);
+  }
   private exits: number[] = []; // nodes that leave the function (return, `?`)
   private ids = 0;
 
@@ -120,8 +139,12 @@ class Builder {
     return p !== null && (this.borrowed.has(p.split(".")[0]!) || !this.cr.movePositions.has(subject));
   }
 
-  private bindPattern(p: Pattern, cur: number, subject: Expr): number {
+  // `inChain`: a let-chain clause, whose take the checker words as a plain transfer, not a pattern move.
+  private bindPattern(p: Pattern, cur: number, subject: Expr, inChain = false): number {
     const views = this.subjectLends(subject);
+    // A pattern that binds takes the payload only on the path where it matched.
+    const sp = this.placeOf(subject);
+    if (sp !== null && patternLeafNames(p).some(n => n !== "_")) cur = this.node({ use: sp, expr: subject, armTakes: true, plainTake: inChain }, cur);
     for (const name of patternLeafNames(p)) {
       if (name === "_") continue;
       const id = this.declare(name);
@@ -155,7 +178,7 @@ class Builder {
       }
       case "ExprStmt": return this.expr(s.expr, cur);
       case "BreakStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) l.breaks.push(cur); return -1; }
-      case "ContinueStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) this.nodes[cur]!.succ.push(l.head); return -1; }
+      case "ContinueStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) this.backTo(cur, l.head); return -1; }
       case "UnsafeBlock": return this.stmts(s.body, cur);
       case "IfStmt": {
         cur = this.expr(s.cond, cur);
@@ -164,7 +187,7 @@ class Builder {
         return this.join([a, b]);
       }
       case "IfLetStmt": {
-        cur = this.expr(s.subject, cur);
+        cur = this.subjectOf(s.subject, cur);
         const a = this.scoped(() => this.stmts(s.thenBody, this.bindPattern(s.pattern, cur, s.subject)));
         const b = s.elseBody ? this.stmts(s.elseBody, cur) : cur;
         return this.join([a, b]);
@@ -175,7 +198,7 @@ class Builder {
         const then = this.scoped(() => {
           let c = cur;
           for (const cl of s.clauses) {
-            if (cl.kind === "LetClause") { c = this.expr(cl.subject, c); fails.push(c); c = this.bindPattern(cl.pattern, c, cl.subject); }
+            if (cl.kind === "LetClause") { c = this.subjectOf(cl.subject, c); fails.push(c); c = this.bindPattern(cl.pattern, c, cl.subject, true); }
             else { c = this.expr(cl.cond, c); fails.push(c); }
           }
           return this.stmts(s.thenBody, c);
@@ -185,7 +208,7 @@ class Builder {
         return this.join([then, els]);
       }
       case "LetElseStmt": {
-        cur = this.expr(s.value, cur);
+        cur = s.bindName ? this.expr(s.value, cur) : this.subjectOf(s.value, cur);
         this.stmts(s.elseBody, cur); // diverges: its end is never a successor of anything after
         if (s.bindName) return this.node({ def: this.declare(s.bindName) }, cur);
         return this.bindPattern(s.pattern, cur, s.value);
@@ -195,8 +218,9 @@ class Builder {
         const head = this.join([cur]);
         const afterCond = this.expr(s.cond, head);
         this.loops.push({ head, breaks: [] });
+        this.loopSpans.set(head, s.span);
         const end = this.stmts(s.body, afterCond);
-        if (end >= 0) this.nodes[end]!.succ.push(head);
+        if (end >= 0) this.backTo(end, head);
         const { breaks } = this.loops.pop()!;
         return this.join([afterCond, ...breaks]);
       }
@@ -204,6 +228,7 @@ class Builder {
         cur = this.expr(s.iterable, cur);
         const head = this.join([cur]);
         this.loops.push({ head, breaks: [] });
+        this.loopSpans.set(head, s.span);
         const end = this.scoped(() => {
           // Elements of a container the loop does not consume stay in it: the bindings are views.
           const views = !this.cr.consumingForIns.has(s) && !this.cr.iteratorForIns.has(s);
@@ -212,7 +237,7 @@ class Builder {
           if (s.varName2) c = bind(s.varName2, c);
           return this.stmts(s.body, c);
         });
-        if (end >= 0) this.nodes[end]!.succ.push(head);
+        if (end >= 0) this.backTo(end, head);
         const { breaks } = this.loops.pop()!;
         return this.join([head, ...breaks]);
       }
@@ -222,8 +247,15 @@ class Builder {
   private noteClosure(id: Place, c: Expr & { kind: "Closure" }): void {
     const caps = this.cr.closureCaptures.get(c) ?? [];
     if (c.isMove !== true) {
-      const places = caps.map(k => this.lookup(k.name)).filter((p): p is Place => p !== null);
-      if (places.length > 0) this.closureCaps.set(id, places);
+      const reads: { cap: string; place: Place; path: string }[] = [];
+      for (const k of caps) {
+        const p = this.lookup(k.name);
+        if (p === null) continue;
+        // What the body reads of the capture: the whole value unless only fields of it.
+        const paths = k.readPaths !== undefined && k.readPaths.size > 0 ? [...k.readPaths] : [""];
+        for (const path of paths) reads.push({ cap: k.name, place: p + path, path });
+      }
+      if (reads.length > 0) this.closureCaps.set(id, { fname: id.split("#")[0]!, reads });
       return;
     }
     // A move closure owns its captures; if its body moves one out, the first call uses it up.
@@ -242,12 +274,22 @@ class Builder {
 
   // Each use of a binding holding a by-reference closure reads the places the closure captured.
   private readCaptures(place: Place, e: Expr, cur: number): number {
-    for (const p of this.closureCaps.get(place) ?? []) cur = this.node({ use: p, expr: e, capture: true }, cur);
+    const c = this.closureCaps.get(place);
+    if (c === undefined) return cur;
+    for (const r of c.reads) cur = this.node({ use: r.place, expr: e, capture: true, viaClosure: { fname: c.fname, cap: r.cap, path: r.path } }, cur);
+    return cur;
+  }
+
+  // A pattern's subject: evaluating it reads it; a binding arm takes from it (bindPattern).
+  private subjectOf(subject: Expr, cur: number): number {
+    const before = this.nodes.length;
+    cur = this.expr(subject, cur);
+    if (cur >= before && this.placeOf(subject) !== null) this.nodes[cur]!.subject = true;
     return cur;
   }
 
   private match(subject: Expr, arms: { pattern: Pattern; body: Stmt[] }[], cur: number): number {
-    cur = this.expr(subject, cur);
+    cur = this.subjectOf(subject, cur);
     const ends = arms.map(arm => this.scoped(() => this.stmts(arm.body, this.bindPattern(arm.pattern, cur, subject))));
     return this.join(ends);
   }
@@ -270,7 +312,7 @@ class Builder {
         const inner = e.op === "*" && this.cr.exprTypes.get(e.operand)?.tag !== "ptr" ? this.placeOf(e.operand) : null;
         if (inner !== null && this.cr.movePositions.has(e)) {
           const t = this.cr.exprTypes.get(e);
-          if (t !== undefined && !this.host.isCopyType(t)) return this.node({ use: inner, expr: e, hardMove: true }, cur);
+          if (t !== undefined && !this.host.isCopyType(t)) return this.node({ use: inner, expr: e.operand, hardMove: true }, cur);
         }
         return this.expr(e.operand, cur);
       }
@@ -290,7 +332,7 @@ class Builder {
         for (const a of e.args) cur = this.expr(a, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
-        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, hardMove: this.callsOnce.has(callee) }, cur));
+        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
       case "MethodCall": {
@@ -314,7 +356,7 @@ class Builder {
         // as reads of the captures too: see the closure-binding note in docs/plans/move-dataflow.md.
         for (const c of this.cr.closureCaptures.get(e) ?? []) {
           const p = this.lookup(c.name);
-          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string" }, cur);
+          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, firstUse: firstIdent(e.body, c.name), captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string" }, cur);
         }
         return cur;
       }
@@ -346,37 +388,75 @@ function liveness(nodes: Node[]): Set<Place>[] {
 }
 
 // Forward maybe-moved: the places some path to a node has moved out of and not reassigned since, each
-// with the move. A use of anything overlapping one is a use after move.
-function maybeMoved(nodes: Node[], moves: (n: Node) => boolean, out: MoveFlowResult): void {
-  const state: (Map<Place, Expr> | undefined)[] = nodes.map(() => undefined);
+// with the move. A use of anything overlapping one is a use after move. A move that reaches a use only
+// around a loop's back edge is the loop repeating it: `loop` is that loop's head.
+interface Moved { at: Expr; atNode: Node; loop: number | null }
+
+function maybeMoved(b: Builder, moves: (n: Node) => boolean, report: (n: Node, place: Place, m: Moved, p: Place) => void): void {
+  const nodes = b.nodes;
+  const state: (Map<Place, Moved> | undefined)[] = nodes.map(() => undefined);
   state[0] = new Map();
   const work = [0];
-  const reported = new Set<Node>();
+  const seen = new Set<Node>();
   while (work.length > 0) {
     const i = work.pop()!;
     const n = nodes[i]!;
     const cur = new Map(state[i]!);
     if (n.use !== undefined) {
       const used = n.use;
-      for (const [p, at] of cur) {
-        if (!overlaps(p, used) || reported.has(n) || n.expr === undefined) continue;
-        reported.add(n);
-        out.useAfterMove.push({ use: n.expr, place: used, movedAt: at });
+      for (const [p, m] of cur) {
+        if (!overlaps(p, used) || seen.has(n) || n.expr === undefined) continue;
+        seen.add(n);
+        report(n, used, m, p);
       }
       if (moves(n)) {
         for (const p of [...cur.keys()]) if (p.startsWith(used + ".")) cur.delete(p);
-        cur.set(used, n.expr!);
+        cur.set(used, { at: n.expr!, atNode: n, loop: null });
       }
     }
     if (n.def !== undefined) for (const p of [...cur.keys()]) if (p === n.def || p.startsWith(n.def + ".")) cur.delete(p);
     for (const sIdx of n.succ) {
+      const back = b.backEdges.has(`${i}>${sIdx}`);
       const prev = state[sIdx];
-      if (prev === undefined) { state[sIdx] = new Map(cur); work.push(sIdx); continue; }
-      let grew = false;
-      for (const [p, at] of cur) if (!prev.has(p)) { prev.set(p, at); grew = true; }
+      let grew = prev === undefined;
+      const into = prev ?? new Map<Place, Moved>();
+      for (const [p, m] of cur) {
+        const carried = back && m.loop === null ? { ...m, loop: sIdx } : m;
+        const had = into.get(p);
+        // A move that also arrives without going around the loop is an ordinary use after move.
+        if (had === undefined) { into.set(p, carried); grew = true; }
+        else if (had.loop !== null && carried.loop === null) { into.set(p, carried); grew = true; }
+      }
+      state[sIdx] = into;
       if (grew) work.push(sIdx);
     }
   }
+}
+
+// The first identifier named `name` in `body`, in source order.
+function firstIdent(body: Stmt[], name: string): Expr | undefined {
+  let found: Expr | undefined;
+  const visit = (v: unknown): void => {
+    if (found !== undefined || v === null || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const x of v) visit(x); return; }
+    const o = v as Record<string, unknown>;
+    if (o.kind === "Ident" && o.name === name) { found = o as unknown as Expr; return; }
+    for (const k in o) if (k !== "span") visit(o[k]);
+  };
+  visit(body);
+  return found;
+}
+
+// "v#3.name.first" -> the binding's name and the field path: ["v", ".name.first"].
+function display(p: Place): [string, string] {
+  const dot = p.indexOf(".");
+  const root = dot < 0 ? p : p.slice(0, dot);
+  return [root.slice(0, root.indexOf("#")), dot < 0 ? "" : p.slice(dot)];
+}
+
+// The innermost object of a field chain: the binding's own identifier.
+function rootExpr(e: Expr): Expr {
+  return e.kind === "FieldAccess" ? rootExpr(e.object) : e;
 }
 
 function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body: Stmt[], out: MoveFlowResult): void {
@@ -385,16 +465,50 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
   const liveIn = liveness(b.nodes);
   // A move empties its place: a non-Copy value taken by value out of a place this body owns. Strings
   // never empty one: a string at a move position moves only when nothing reads it again (below).
-  maybeMoved(b.nodes, n => {
+  const moves = (n: Node): boolean => {
     if (n.hardMove) return true;
     if (n.capture) return n.captureMove === true;
+    if (n.subject) return false;
     if (n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return false;
     const t = cr.exprTypes.get(n.expr);
     // An unknown type is a binding a type error already reported: no second error cascades from it.
     return t !== undefined && t.tag !== "string" && t.tag !== "unknown" && !host.isCopyType(t) && !b.borrowed.has(n.use.split(".")[0]!);
-  }, out);
+  };
+  const loopsReported = new Set<string>();
+  maybeMoved(b, moves, (n, used, m, movedPlace) => {
+    const use = n.expr!;
+    out.useAfterMove.push({ use, place: used, movedAt: m.at });
+    const [name, usePath] = display(used);
+    const [, gonePath] = display(movedPlace);
+    let t: text.MoveText;
+    let span = use.span;
+    if (m.loop !== null) {
+      const key = `${m.loop}|${movedPlace}`;
+      if (loopsReported.has(key)) return;
+      loopsReported.add(key);
+      t = text.moveOutOfLoop(name + gonePath);
+      span = b.loopSpans.get(m.loop);
+    } else if (n.callee !== undefined) {
+      t = text.calledAfterMove(n.callee, cr.exprTypes.get(m.at), m.atNode.callee !== undefined);
+    } else if (n.capture && n.firstUse !== undefined) {
+      span = n.firstUse.span;
+      t = text.usedAfterMove(name, cr.exprTypes.get(n.firstUse) ?? { tag: "unknown" }, cr.structs, t2 => host.show(t2), m.atNode.armTakes === true && m.atNode.plainTake !== true);
+    } else if (n.viaClosure !== undefined) {
+      const v = n.viaClosure;
+      t = text.captureUsedAfterMove(v.fname, v.cap, v.path, gonePath === "" ? null : gonePath);
+    } else if (gonePath === "") {
+      t = text.usedAfterMove(name, cr.exprTypes.get(rootExpr(use)) ?? { tag: "unknown" }, cr.structs, t2 => host.show(t2), m.atNode.armTakes === true && m.atNode.plainTake !== true);
+    } else if (usePath === "") {
+      // Moving it whole reads it whole first: both are reported, as the checker does.
+      if (moves(n)) out.diagnostics.push({ span, ...text.incomplete(name, gonePath) });
+      t = moves(n) ? text.moveOfIncomplete(name, gonePath) : text.incomplete(name, gonePath);
+    } else {
+      t = text.fieldUsedAfterMove(name, usePath, gonePath);
+    }
+    out.diagnostics.push({ span, ...t });
+  });
   b.nodes.forEach(n => {
-    if (n.capture || n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
+    if (n.capture || n.armTakes || n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
     if (cr.exprTypes.get(n.expr)?.tag !== "string") return;
     const after = new Set<Place>();
     for (const s of n.succ) for (const p of liveIn[s]!) after.add(p);
@@ -419,7 +533,7 @@ function closuresIn(body: Stmt[]): { params: Param[]; body: Stmt[] }[] {
 }
 
 export function moveFlow(program: Program, cr: CheckResult, host: MoveFlowHost): MoveFlowResult {
-  const out: MoveFlowResult = { stringDecisions: new Map(), useAfterMove: [] };
+  const out: MoveFlowResult = { stringDecisions: new Map(), useAfterMove: [], diagnostics: [] };
   const fns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods), ...cr.monomorphizedFns];
   const seen = new Set<Function>();
   for (const f of fns) {

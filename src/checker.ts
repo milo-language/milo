@@ -2934,7 +2934,7 @@ export class TypeChecker {
     return args.length === 0 ? info.baseName : `${info.baseName}<${args}>`;
   }
 
-  private show(t: TypeKind): string {
+  show(t: TypeKind): string {
     return typeName(t, n => this.demangle(n));
   }
 

@@ -27,7 +27,7 @@ for (const a of inputs.length ? inputs : [join(ROOT, "tests/fixtures"), join(ROO
   else files.push(a);
 }
 
-const tally = { checked: 0, rejected: 0, crashed: 0, same: 0, oldMoveNewShare: 0, oldShareNewMove: 0, oldNone: 0, uamAgree: 0, uamOnlyOld: 0, uamOnlyNew: 0 };
+const tally = { checked: 0, rejected: 0, crashed: 0, same: 0, oldMoveNewShare: 0, oldShareNewMove: 0, oldNone: 0, uamAgree: 0, uamOnlyOld: 0, uamOnlyNew: 0, diagSame: 0, diagOnlyOld: 0, diagOnlyNew: 0 };
 const FLOW_ERROR = /use of moved|out of a loop|used after its source|was already moved out of it|is incomplete/;
 const cases: { kind: string; at: string; text: string }[] = [];
 for (const path of files) {
@@ -42,6 +42,12 @@ for (const path of files) {
   } catch { tally.crashed++; continue; }
   let flow;
   try { flow = moveFlow(program, cr, tc); } catch (e) { tally.crashed++; cases.push({ kind: "move-flow crash", at: relative(ROOT, path), text: String(e).slice(0, 90) }); continue; }
+  // Diagnostics, as "line:col message | hint": the checker's flow errors against the pass's wording.
+  const key = (sp: { line: number; col: number } | undefined, m: string, h?: string) => `${sp?.line}:${sp?.col} ${m} | ${h ?? ""}`;
+  const oldD = new Set(cr.diagnostics.filter(d => d.severity === "error" && FLOW_ERROR.test(d.message) && !d.message.includes("used after its source")).map(d => key(d.span, d.message, d.hint)));
+  const newD = new Set(flow.diagnostics.filter(d => d.span?.file === undefined || d.span.file === path).map(d => key(d.span, d.message, d.hint)));
+  for (const k of oldD) if (newD.has(k)) tally.diagSame++; else { tally.diagOnlyOld++; cases.push({ kind: "diagnostic: checker only", at: relative(ROOT, path), text: k.slice(0, 160) }); }
+  for (const k of newD) if (!oldD.has(k)) { tally.diagOnlyNew++; cases.push({ kind: "diagnostic: dataflow only", at: relative(ROOT, path), text: k.slice(0, 160) }); }
   const oldFlow = cr.diagnostics.some(d => d.severity === "error" && FLOW_ERROR.test(d.message));
   const newFlow = flow.useAfterMove.length > 0;
   if (oldFlow && newFlow) tally.uamAgree++;
@@ -65,7 +71,7 @@ for (const path of files) {
   }
 }
 console.log(JSON.stringify(tally));
-for (const kind of ["move-flow crash", "use after move: checker only", "use after move: dataflow only", "old move, new share", "old share, new move"]) {
+for (const kind of ["diagnostic: checker only", "diagnostic: dataflow only", "move-flow crash", "use after move: checker only", "use after move: dataflow only", "old move, new share", "old share, new move"]) {
   const ks = cases.filter(c => c.kind === kind);
   if (ks.length) console.log(`${kind} (${ks.length}):\n  ${ks.slice(0, show).map(c => `${c.at}  ${c.text}`).join("\n  ")}`);
 }
