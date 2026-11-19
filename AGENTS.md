@@ -89,7 +89,7 @@ has no home.
 ### Language Design
 
 - `let` = immutable (SSA register), `var` = mutable (alloca)
-- Move semantics: single owner, use-after-move = compile error. Except `string`: strings are values, copy-on-write; `.clone()` is never needed on a string (a reused string is shared by count, its last use moves; checker `stringMoveSites`)
+- Move semantics: single owner, use-after-move = compile error. Except `string`: strings are values, copy-on-write; `.clone()` is never needed on a string (a reused string is shared by count, its last use moves; `src/move-flow.ts`)
 - Second-class references: `&T`/`&mut T` only in function params, never stored/returned
 - **Shared borrows are implicit — there is no `&x` expression.** A `&T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
 - **A `&mut T` argument is spelled `foo(&mut x)`** (non-receiver arguments only; `v.push(1)` stays implicit). The marker is stripped by the checker before the argument is checked (`takeExplicitMutArgs`), so borrow rules and codegen never see it. The bare form is the hard error `implicit-mut-borrow` (no flag silences it); `bun scripts/explicit-mut.ts [--closure] <file>` rewrites a file from the checker's resolved signatures.

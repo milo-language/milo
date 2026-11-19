@@ -1,5 +1,5 @@
 {
-  "src/checker.ts": 16031,
+  "src/checker.ts": 15623,
   "src/emit-mlir.ts": 5943,
   "src/interp.ts": 1513,
   "src/lsp.ts": 2412,

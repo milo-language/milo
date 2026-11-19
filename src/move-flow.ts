@@ -1,7 +1,6 @@
 // Move analysis as dataflow (docs/plans/move-dataflow.md): a control-flow graph of place events per
 // function body, backward liveness to a fixpoint, and the move-or-share decision for strings read off
-// it. Runs after the checker on the rewritten tree and reads only CheckResult facts. Shadow mode for
-// now: scripts/move-diff.ts compares its decisions with the checker's movedExprs / sharedStringExprs.
+// it. Runs after the checker on the rewritten tree and reads only CheckResult facts.
 import type { Expr, Function, Param, Pattern, Program, Span, Stmt } from "./ast";
 import type { TypeKind } from "./types";
 import * as text from "./move-diagnostics";
