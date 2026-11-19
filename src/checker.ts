@@ -15262,7 +15262,7 @@ export class TypeChecker {
   // goes through here so a struct/enum is Copy at every site or at none: `unwrapOr` once
   // called `isCopy` without the struct/enum callbacks and rejected a `Pt {x, y}` that
   // `let e = d` had just copied (design pass 2026-09, F1).
-  private isCopyType(t: TypeKind): boolean {
+  isCopyType(t: TypeKind): boolean {
     return isCopy(t, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n));
   }
 

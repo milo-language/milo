@@ -14,12 +14,21 @@ interface Node {
   use?: Place; // a read, borrow or move of the place (all keep everything overlapping it live)
   def?: Place; // a declaration or assignment: the place holds a fresh value afterwards
   expr?: Expr; // the expression of a use, so a decision can be looked up per expression
+  capture?: boolean; // a closure literal capturing the place; `expr` is the closure
+  captureMove?: boolean; // a capture taken by a `move` closure: the use consumes the place
   succ: number[];
 }
 
 export interface MoveFlowResult {
   // Each string-typed move position on a local place, and whether something overlapping it is read later.
   stringDecisions: Map<Expr, "move" | "share">;
+  // A use of a place that a move may have emptied on some path that reaches it: `use` is the reading
+  // expression (or the closure that captures it), `movedAt` the move.
+  useAfterMove: { use: Expr; place: string; movedAt: Expr }[];
+}
+
+export interface MoveFlowHost {
+  isCopy(t: import("./types").TypeKind): boolean;
 }
 
 const overlaps = (a: Place, b: Place) => a === b || a.startsWith(b + ".") || b.startsWith(a + ".");
@@ -34,7 +43,7 @@ class Builder {
   private exits: number[] = []; // nodes that leave the function (return, `?`)
   private ids = 0;
 
-  constructor(private cr: CheckResult) {}
+  constructor(private cr: CheckResult, private host: MoveFlowHost) {}
 
   private node(n: Omit<Node, "succ">, from: number): number {
     const id = this.nodes.length;
@@ -251,7 +260,7 @@ class Builder {
         // as reads of the captures too: see the closure-binding note in docs/plans/move-dataflow.md.
         for (const c of this.cr.closureCaptures.get(e) ?? []) {
           const p = this.lookup(c.name);
-          if (p !== null) cur = this.node({ use: p }, cur);
+          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, captureMove: e.isMove === true && !this.host.isCopy(c.type) && c.type.tag !== "string" }, cur);
         }
         return cur;
       }
@@ -282,12 +291,55 @@ function liveness(nodes: Node[]): Set<Place>[] {
   return liveIn;
 }
 
-function analyzeBody(cr: CheckResult, params: Param[], body: Stmt[], out: MoveFlowResult): void {
-  const b = new Builder(cr);
+// Forward maybe-moved: the places some path to a node has moved out of and not reassigned since, each
+// with the move. A use of anything overlapping one is a use after move.
+function maybeMoved(nodes: Node[], moves: (n: Node) => boolean, out: MoveFlowResult): void {
+  const state: (Map<Place, Expr> | undefined)[] = nodes.map(() => undefined);
+  state[0] = new Map();
+  const work = [0];
+  const reported = new Set<Node>();
+  while (work.length > 0) {
+    const i = work.pop()!;
+    const n = nodes[i]!;
+    const cur = new Map(state[i]!);
+    if (n.use !== undefined) {
+      const used = n.use;
+      for (const [p, at] of cur) {
+        if (!overlaps(p, used) || reported.has(n) || n.expr === undefined) continue;
+        reported.add(n);
+        out.useAfterMove.push({ use: n.expr, place: used, movedAt: at });
+      }
+      if (moves(n)) {
+        for (const p of [...cur.keys()]) if (p.startsWith(used + ".")) cur.delete(p);
+        cur.set(used, n.expr!);
+      }
+    }
+    if (n.def !== undefined) for (const p of [...cur.keys()]) if (p === n.def || p.startsWith(n.def + ".")) cur.delete(p);
+    for (const sIdx of n.succ) {
+      const prev = state[sIdx];
+      if (prev === undefined) { state[sIdx] = new Map(cur); work.push(sIdx); continue; }
+      let grew = false;
+      for (const [p, at] of cur) if (!prev.has(p)) { prev.set(p, at); grew = true; }
+      if (grew) work.push(sIdx);
+    }
+  }
+}
+
+function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body: Stmt[], out: MoveFlowResult): void {
+  const b = new Builder(cr, host);
   b.fn(params, body);
   const liveIn = liveness(b.nodes);
+  // A move empties its place: a non-Copy value taken by value out of a place this body owns. Strings
+  // never empty one: a string at a move position moves only when nothing reads it again (below).
+  maybeMoved(b.nodes, n => {
+    if (n.capture) return n.captureMove === true;
+    if (n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return false;
+    const t = cr.exprTypes.get(n.expr);
+    // An unknown type is a binding a type error already reported: no second error cascades from it.
+    return t !== undefined && t.tag !== "string" && t.tag !== "unknown" && !host.isCopy(t) && !b.borrowed.has(n.use.split(".")[0]!);
+  }, out);
   b.nodes.forEach(n => {
-    if (n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
+    if (n.capture || n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
     if (cr.exprTypes.get(n.expr)?.tag !== "string") return;
     const after = new Set<Place>();
     for (const s of n.succ) for (const p of liveIn[s]!) after.add(p);
@@ -311,15 +363,15 @@ function closuresIn(body: Stmt[]): { params: Param[]; body: Stmt[] }[] {
   return out;
 }
 
-export function moveFlow(program: Program, cr: CheckResult): MoveFlowResult {
-  const out: MoveFlowResult = { stringDecisions: new Map() };
+export function moveFlow(program: Program, cr: CheckResult, host: MoveFlowHost): MoveFlowResult {
+  const out: MoveFlowResult = { stringDecisions: new Map(), useAfterMove: [] };
   const fns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods), ...cr.monomorphizedFns];
   const seen = new Set<Function>();
   for (const f of fns) {
     if (seen.has(f) || !f.body) continue;
     seen.add(f);
-    analyzeBody(cr, f.params, f.body, out);
-    for (const c of closuresIn(f.body)) analyzeBody(cr, c.params, c.body, out);
+    analyzeBody(cr, host, f.params, f.body, out);
+    for (const c of closuresIn(f.body)) analyzeBody(cr, host, c.params, c.body, out);
   }
   return out;
 }

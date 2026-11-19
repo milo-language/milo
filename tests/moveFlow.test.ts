@@ -16,9 +16,10 @@ function decide(src: string): string[] {
   const path = join(dir, "m.milo");
   writeFileSync(path, src);
   const program = resolveImports(new Parser(new Lexer(src).tokenize(), src, path).parse(), dir, getHostTarget(), path);
-  const cr = new TypeChecker().check(program);
+  const tc = new TypeChecker();
+  const cr = tc.check(program);
   expect(cr.diagnostics.filter(d => d.severity === "error")).toEqual([]);
-  return [...moveFlow(program, cr).stringDecisions]
+  return [...moveFlow(program, cr, { isCopy: t => tc.isCopyType(t) }).stringDecisions]
     .filter(([e]) => e.span?.file === undefined || e.span.file === path)
     .map(([e, d]) => [e.span!.line, e.span!.col, d] as const)
     .sort((a, b) => a[0] - b[0] || a[1] - b[1])
