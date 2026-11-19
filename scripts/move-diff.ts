@@ -35,12 +35,13 @@ for (const path of files) {
   let cr;
   let program;
   const tc = new TypeChecker();
+  tc.applyMoveFlow = false;
   try {
     program = resolveImports(new Parser(new Lexer(src).tokenize(), src, path).parse(), dirname(path), getHostTarget(), path);
     cr = tc.check(program);
   } catch { tally.crashed++; continue; }
   let flow;
-  try { flow = moveFlow(program, cr, { isCopy: t => tc.isCopyType(t) }); } catch (e) { tally.crashed++; cases.push({ kind: "move-flow crash", at: relative(ROOT, path), text: String(e).slice(0, 90) }); continue; }
+  try { flow = moveFlow(program, cr, tc); } catch (e) { tally.crashed++; cases.push({ kind: "move-flow crash", at: relative(ROOT, path), text: String(e).slice(0, 90) }); continue; }
   const oldFlow = cr.diagnostics.some(d => d.severity === "error" && FLOW_ERROR.test(d.message));
   const newFlow = flow.useAfterMove.length > 0;
   if (oldFlow && newFlow) tally.uamAgree++;

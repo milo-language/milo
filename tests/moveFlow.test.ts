@@ -19,7 +19,7 @@ function decide(src: string): string[] {
   const tc = new TypeChecker();
   const cr = tc.check(program);
   expect(cr.diagnostics.filter(d => d.severity === "error")).toEqual([]);
-  return [...moveFlow(program, cr, { isCopy: t => tc.isCopyType(t) }).stringDecisions]
+  return [...moveFlow(program, cr, tc).stringDecisions]
     .filter(([e]) => e.span?.file === undefined || e.span.file === path)
     .map(([e, d]) => [e.span!.line, e.span!.col, d] as const)
     .sort((a, b) => a[0] - b[0] || a[1] - b[1])

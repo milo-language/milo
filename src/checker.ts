@@ -28,6 +28,7 @@ import { checkPurity } from "./checker-purity-host";
 import { checkPointerParamEscape } from "./checker-pointer-escape-host";
 import { checkMutParamBundle } from "./checker-mut-bundle-host";
 import { applyRewrites } from "./apply-rewrites";
+import { applyStringDecisions, moveFlow } from "./move-flow";
 import { checkEscapingClosures, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
@@ -662,6 +663,8 @@ export interface CheckResult {
   consumingForIns: Set<Stmt>;
   // `let x = v[i]` bindings that alias the element instead of cloning it (resolveViewBinds).
   viewLets: Set<Stmt>;
+  // `let` / `var` bindings whose type is a reference (a slice or view of another place): they own nothing.
+  refLets: Set<Stmt>;
   // The type each for-in binding was declared with ([varName, varName2?]), for hover.
   forInBindingTypes: Map<Stmt, TypeKind[]>;
   // The node the checker put in place of each expression it re-spelled (a prelude variant, a callback
@@ -996,6 +999,7 @@ export class TypeChecker {
   private defaultsFilled = new WeakSet<Expr>();
   private movedExprs = new Set<Expr>();
   private viewLets = new Set<Stmt>();
+  private refLets = new Set<Stmt>();
   // Candidates for viewLets in the function being checked, decided once its body is done.
   private viewBindPending = new Map<Stmt, { root: string; lint: () => void }>();
   private borrowedExprs = new Set<Expr>();
@@ -3499,6 +3503,8 @@ export class TypeChecker {
   // True while `tryMove` runs for a move that hands the source to an owner the pointer's
   // holders can still trust: `forget(v)` and `let w = v`. See `tryMoveLeaf`.
   private pointerMoveKeepsHolders = false;
+  // Off only in scripts/move-diff.ts, which compares the dataflow decisions with the walk's own.
+  applyMoveFlow = true;
   // True while `forget(x)` moves its argument: ending ownership is the point, so a string
   // there moves for real and a later read is still a use after move (no share).
   private forgetting = false;
@@ -3963,7 +3969,7 @@ export class TypeChecker {
         if (hint) d.hint = displayQualified(this._displayNames, hint, origins);
       }
     }
-    return {
+    const result: CheckResult = {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
       patternBindingTypes: this.patternBindingTypes,
@@ -4026,10 +4032,14 @@ export class TypeChecker {
       iterDelegates: this.iterDelegates,
       consumingForIns: this.consumingForIns,
       viewLets: this.viewLets,
+      refLets: this.refLets,
       forInBindingTypes: this.forInBindingTypes,
       rewrites: this.rewrites,
       patternRewrites: this.patternRewrites,
     };
+    // Strings: the dataflow pass decides move or share (src/move-flow.ts, docs/plans/move-dataflow.md).
+    if (this.applyMoveFlow && !this.diagnostics.some(d => d.severity === "error")) applyStringDecisions(result, moveFlow(program, result, this));
+    return result;
   }
 
   // Registration and every expression check. Records rewrites, never writes the AST.
@@ -7108,6 +7118,7 @@ export class TypeChecker {
             `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
         }
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
+        else this.refLets.add(stmt);
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(value && this.onceClosures.has(value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         const letInfo = this.lookup(stmt.name);
         if (letInfo && bindingType.tag === "string") {
@@ -7152,6 +7163,7 @@ export class TypeChecker {
               `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
           }
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
+          else this.refLets.add(stmt);
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(value && this.onceClosures.has(value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
           const varInfo = this.lookup(stmt.name);
           if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, varInfo);

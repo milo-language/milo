@@ -29,9 +29,10 @@ export interface MoveFlowResult {
 }
 
 export interface MoveFlowHost {
-  isCopy(t: import("./types").TypeKind): boolean;
+  isCopyType(t: import("./types").TypeKind): boolean;
 }
 
+const NO_TYPE = { name: "", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
 const overlaps = (a: Place, b: Place) => a === b || a.startsWith(b + ".") || b.startsWith(a + ".");
 
 class Builder {
@@ -137,7 +138,8 @@ class Builder {
         cur = this.expr(s.value, cur);
         const id = this.declare(s.name);
         if (s.value.kind === "Closure") this.noteClosure(id, s.value);
-        if (this.cr.viewLets.has(s)) this.borrowed.add(id); // `let x = v[i]` aliases the element
+        // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
+        if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
         return this.node({ def: id }, cur);
       }
       case "Assign": {
@@ -225,7 +227,7 @@ class Builder {
       return;
     }
     // A move closure owns its captures; if its body moves one out, the first call uses it up.
-    const names = new Set(caps.filter(k => !this.host.isCopy(k.type)).map(k => k.name));
+    const names = new Set(caps.filter(k => !this.host.isCopyType(k.type)).map(k => k.name));
     let consumes = false;
     const visit = (v: unknown): void => {
       if (consumes || v === null || typeof v !== "object") return;
@@ -268,7 +270,7 @@ class Builder {
         const inner = e.op === "*" && this.cr.exprTypes.get(e.operand)?.tag !== "ptr" ? this.placeOf(e.operand) : null;
         if (inner !== null && this.cr.movePositions.has(e)) {
           const t = this.cr.exprTypes.get(e);
-          if (t !== undefined && !this.host.isCopy(t)) return this.node({ use: inner, expr: e, hardMove: true }, cur);
+          if (t !== undefined && !this.host.isCopyType(t)) return this.node({ use: inner, expr: e, hardMove: true }, cur);
         }
         return this.expr(e.operand, cur);
       }
@@ -312,7 +314,7 @@ class Builder {
         // as reads of the captures too: see the closure-binding note in docs/plans/move-dataflow.md.
         for (const c of this.cr.closureCaptures.get(e) ?? []) {
           const p = this.lookup(c.name);
-          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, captureMove: e.isMove === true && !this.host.isCopy(c.type) && c.type.tag !== "string" }, cur);
+          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string" }, cur);
         }
         return cur;
       }
@@ -389,7 +391,7 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
     if (n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return false;
     const t = cr.exprTypes.get(n.expr);
     // An unknown type is a binding a type error already reported: no second error cascades from it.
-    return t !== undefined && t.tag !== "string" && t.tag !== "unknown" && !host.isCopy(t) && !b.borrowed.has(n.use.split(".")[0]!);
+    return t !== undefined && t.tag !== "string" && t.tag !== "unknown" && !host.isCopyType(t) && !b.borrowed.has(n.use.split(".")[0]!);
   }, out);
   b.nodes.forEach(n => {
     if (n.capture || n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
@@ -424,7 +426,18 @@ export function moveFlow(program: Program, cr: CheckResult, host: MoveFlowHost):
     if (seen.has(f) || !f.body) continue;
     seen.add(f);
     analyzeBody(cr, host, f.params, f.body, out);
-    for (const c of closuresIn(f.body)) analyzeBody(cr, host, c.params, c.body, out);
+    // A closure receives its arguments however the callee hands them over (`mapErr` lends its error),
+    // so its params are treated as borrows: a string read out of one is always a share.
+    for (const c of closuresIn(f.body)) analyzeBody(cr, host, c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), c.body, out);
   }
   return out;
+}
+
+// Writes the string decisions into the sets codegen and the interpreter read: a move hands the buffer
+// over, a share takes another count on it.
+export function applyStringDecisions(cr: CheckResult, flow: MoveFlowResult): void {
+  for (const [e, d] of flow.stringDecisions) {
+    if (d === "move") { cr.sharedStringExprs.delete(e); cr.movedExprs.add(e); }
+    else { cr.movedExprs.delete(e); cr.sharedStringExprs.add(e); }
+  }
 }
