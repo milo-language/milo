@@ -2,8 +2,10 @@
 //
 // Type-checks tests/errors/*.milo and tests/fixtures/*.milo in-process and records severity, code,
 // message, span, len, hint and notes. Run it before and after a move; the two files must be
-// byte-identical.
-//   bun scripts/checker-diag-snapshot.ts . <out.json> [--only <substr>] [--limit N] [--jobs N]
+// byte-identical. With --facts it also records the move facts codegen reads (movedExprs,
+// sharedStringExprs, sharedStringCaptures, borrowedExprs) as sorted spans, so a change to move
+// analysis can be shown to leave both the diagnostics and the generated code alone.
+//   bun scripts/checker-diag-snapshot.ts . <out.json> [--only <substr>] [--limit N] [--jobs N] [--facts]
 import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { cpus } from "os";
@@ -16,6 +18,7 @@ const only = opt("--only");
 const limit = Number(opt("--limit") ?? 0);
 const jobs = Number(opt("--jobs") ?? Math.max(1, cpus().length - 2));
 const shard = opt("--shard"); // internal: "k/n"
+const facts = args.includes("--facts");
 
 let files: string[] = [];
 for (const dir of ["tests/errors", "tests/fixtures"]) {
@@ -27,7 +30,7 @@ if (limit) files = files.slice(0, limit);
 if (!shard && jobs > 1 && files.length > jobs) {
   const parts = await Promise.all(Array.from({ length: jobs }, async (_, k) => {
     const tmp = `${OUT}.${k}.part`;
-    const p = Bun.spawn(["bun", import.meta.path, ROOT, tmp, "--shard", `${k}/${jobs}`, ...(only ? ["--only", only] : []), ...(limit ? ["--limit", String(limit)] : [])], { stdout: "inherit", stderr: "inherit" });
+    const p = Bun.spawn(["bun", import.meta.path, ROOT, tmp, "--shard", `${k}/${jobs}`, ...(facts ? ["--facts"] : []), ...(only ? ["--only", only] : []), ...(limit ? ["--limit", String(limit)] : [])], { stdout: "inherit", stderr: "inherit" });
     if (await p.exited !== 0) throw new Error(`shard ${k} failed`);
     const part = JSON.parse(readFileSync(tmp, "utf-8")) as Record<string, unknown>;
     await Bun.file(tmp).delete();
@@ -57,7 +60,15 @@ for (const f of files) {
     const src = readFileSync(path, "utf-8");
     let prog = new Parser(new Lexer(src).tokenize(), src, path).parse();
     prog = resolveImports(prog, dirname(path), getHostTarget(), path);
-    out[f] = rel(new TypeChecker().check(prog).diagnostics);
+    const cr = new TypeChecker().check(prog);
+    if (!facts) { out[f] = rel(cr.diagnostics); continue; }
+    const at = (e: any) => `${e.span?.file ?? ""}:${e.span?.line}:${e.span?.col}:${e.kind}`;
+    const spans = (xs: Iterable<any>) => [...xs].map(at).sort();
+    out[f] = rel({
+      diagnostics: cr.diagnostics,
+      moved: spans(cr.movedExprs), shared: spans(cr.sharedStringExprs), borrowed: spans(cr.borrowedExprs),
+      sharedCaptures: [...cr.sharedStringCaptures].map(([e, names]: [any, Set<string>]) => `${at(e)}:${[...names].sort().join(",")}`).sort(),
+    });
   } catch (e: any) {
     out[f] = rel({ thrown: e?.diagnostic ?? e?.message ?? String(e) });
   }

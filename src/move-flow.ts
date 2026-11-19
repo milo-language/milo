@@ -18,6 +18,7 @@ interface Node {
   expr?: Expr; // the expression of a use, so a decision can be looked up per expression
   capture?: boolean; // a closure literal capturing the place; `expr` is the closure
   captureMove?: boolean; // a capture taken by a `move` closure: the use consumes the place
+  captureString?: string; // a string captured by a `move` closure at a move position: moved or shared by liveness
   hardMove?: boolean; // consumes the place whatever its type: `forget(s)`, `*h`, calling a call-once closure
   // A read of a capture through closure binding `fname` (when it is used or called): the closure reads `path` of it.
   viaClosure?: { fname: string; cap: string; path: string };
@@ -32,6 +33,8 @@ interface Node {
 export interface MoveFlowResult {
   // Each string-typed move position on a local place, and whether something overlapping it is read later.
   stringDecisions: Map<Expr, "move" | "share">;
+  // The same decision for each string a `move` closure captures: closure literal -> capture name -> decision.
+  captureDecisions: Map<Expr, Map<string, "move" | "share">>;
   // A use of a place that a move may have emptied on some path that reaches it: `use` is the reading
   // expression (or the closure that captures it), `movedAt` the move.
   useAfterMove: { use: Expr; place: string; movedAt: Expr }[];
@@ -294,6 +297,19 @@ class Builder {
     return this.join(ends);
   }
 
+  // A place passed by borrow stays read until the callee returns, so a string moved by an earlier
+  // argument of the same call is still live: `f(s, s)` with `f(a: &string, b: string)` must share
+  // the second `s`, or `a` reads the buffer `b` owns. The read node has no expression: it only keeps
+  // the place live (the argument's own node reports a use after move).
+  private lend(args: Expr[], cur: number): number {
+    for (const a of args) {
+      if (cur < 0 || this.cr.movePositions.has(a)) continue;
+      const p = this.placeOf(a);
+      if (p !== null) cur = this.node({ use: p }, cur);
+    }
+    return cur;
+  }
+
   // A fork expression's value is its last statement; its blocks are statement lists like any other.
   expr(e: Expr, cur: number): number {
     if (cur < 0) return cur;
@@ -330,6 +346,7 @@ class Builder {
         const forgotten = e.func === "forget" && e.args.length === 1 ? this.placeOf(e.args[0]!) : null;
         if (forgotten !== null) return this.node({ use: forgotten, expr: e.args[0]!, hardMove: true }, cur);
         for (const a of e.args) cur = this.expr(a, cur);
+        cur = this.lend(e.args, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
         if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
@@ -338,6 +355,7 @@ class Builder {
       case "MethodCall": {
         cur = this.expr(e.object, cur);
         for (const a of e.args) cur = this.expr(a, cur);
+        cur = this.lend([e.object, ...e.args], cur);
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
       case "StructLit": { for (const f of e.fields) cur = this.expr(f.value, cur); return e.base ? this.expr(e.base, cur) : cur; }
@@ -356,7 +374,7 @@ class Builder {
         // as reads of the captures too: see the closure-binding note in docs/plans/move-dataflow.md.
         for (const c of this.cr.closureCaptures.get(e) ?? []) {
           const p = this.lookup(c.name);
-          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, firstUse: firstIdent(e.body, c.name), captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string" }, cur);
+          if (p !== null) cur = this.node({ use: p, expr: e, capture: true, firstUse: firstIdent(e.body, c.name), captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string", captureString: e.isMove === true && c.type.tag === "string" && this.cr.movePositions.has(e) ? c.name : undefined }, cur);
         }
         return cur;
       }
@@ -475,6 +493,13 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
     // An unknown type is a binding a type error already reported: no second error cascades from it.
     return t !== undefined && t.tag !== "string" && t.tag !== "unknown" && !host.isCopyType(t) && !b.borrowed.has(n.use.split(".")[0]!);
   };
+  // A string at a move position shares when its place is borrowed or something overlapping it is read later.
+  const shareAfter = (n: Node): boolean => {
+    const used = n.use!;
+    if (b.borrowed.has(used.split(".")[0]!)) return true;
+    for (const s of n.succ) for (const p of liveIn[s]!) if (overlaps(p, used)) return true;
+    return false;
+  };
   const loopsReported = new Set<string>();
   maybeMoved(b, moves, (n, used, m, movedPlace) => {
     const use = n.expr!;
@@ -509,13 +534,15 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
     out.diagnostics.push({ span, ...t });
   });
   b.nodes.forEach(n => {
+    if (n.captureString !== undefined && n.expr !== undefined && n.use !== undefined) {
+      let byName = out.captureDecisions.get(n.expr);
+      if (byName === undefined) { byName = new Map(); out.captureDecisions.set(n.expr, byName); }
+      byName.set(n.captureString, shareAfter(n) ? "share" : "move");
+      return;
+    }
     if (n.capture || n.armTakes || n.expr === undefined || n.use === undefined || !cr.movePositions.has(n.expr)) return;
     if (cr.exprTypes.get(n.expr)?.tag !== "string") return;
-    const after = new Set<Place>();
-    for (const s of n.succ) for (const p of liveIn[s]!) after.add(p);
-    const used = n.use;
-    const root = used.split(".")[0]!;
-    out.stringDecisions.set(n.expr, b.borrowed.has(root) || [...after].some(p => overlaps(p, used)) ? "share" : "move");
+    out.stringDecisions.set(n.expr, shareAfter(n) ? "share" : "move");
   });
 }
 
@@ -534,7 +561,7 @@ function closuresIn(body: Stmt[]): { params: Param[]; body: Stmt[] }[] {
 }
 
 export function moveFlow(program: Program, cr: CheckResult, host: MoveFlowHost): MoveFlowResult {
-  const out: MoveFlowResult = { stringDecisions: new Map(), useAfterMove: [], diagnostics: [] };
+  const out: MoveFlowResult = { stringDecisions: new Map(), captureDecisions: new Map(), useAfterMove: [], diagnostics: [] };
   const fns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods), ...cr.monomorphizedFns];
   const seen = new Set<Function>();
   for (const f of fns) {
@@ -554,5 +581,14 @@ export function applyStringDecisions(cr: CheckResult, flow: MoveFlowResult): voi
   for (const [e, d] of flow.stringDecisions) {
     if (d === "move") { cr.sharedStringExprs.delete(e); cr.movedExprs.add(e); }
     else { cr.movedExprs.delete(e); cr.sharedStringExprs.add(e); }
+  }
+  for (const [closure, byName] of flow.captureDecisions) {
+    let names = cr.sharedStringCaptures.get(closure);
+    for (const [name, d] of byName) {
+      if (d === "move") { if (names !== undefined) names.delete(name); continue; }
+      if (names === undefined) { names = new Set(); cr.sharedStringCaptures.set(closure, names); }
+      names.add(name);
+    }
+    if (names !== undefined && names.size === 0) cr.sharedStringCaptures.delete(closure);
   }
 }

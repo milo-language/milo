@@ -1,0 +1,27 @@
+// A string passed both by borrow and by value in one call: the borrow lasts until the callee
+// returns, so the by-value argument must share the buffer, whichever argument comes first.
+// @expect: 30
+// @expect: 30
+// @expect: 8
+
+struct Doc { name: string }
+
+fn lentFirst(a: &string, b: string): i64 {
+    let n = b.len()
+    return a.len() + n
+}
+
+fn ownedFirst(b: string, a: &string): i64 {
+    let n = b.len()
+    return a.len() + n
+}
+
+pub fn main(): i32 {
+    let s = "hello".repeat(3)
+    print(lentFirst(s, s))
+    let t = "hello".repeat(3)
+    print(ownedFirst(t, t))
+    let d = Doc { name: "ab".repeat(2) }
+    print(lentFirst(d.name, d.name))
+    return 0
+}
