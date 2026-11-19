@@ -1069,6 +1069,9 @@ export class Interp {
         const slot = this.declare("<match subject>", this.viewOf(this.getPlace(this.resolve(subject))), holder);
         pl = { slot, path: [], ro: false, viaRef: false };
       } else if (borrowed) pl = this.isPlaceExpr(subject) ? this.resolve(subject) : { slot: this.tempOwn(this.ev(subject)), path: [], ro: false, viaRef: false };
+      // A consumed place stays where it is: the arm that binds takes its payload out of it, and an arm
+      // that binds nothing (an if-let else, a wildcard) still finds it whole.
+      else if (this.isPlaceExpr(subject)) pl = this.resolve(subject);
       else {
         const slot = this.declare("<match subject>", this.ev(subject), holder);
         pl = { slot, path: [], ro: false, viaRef: false };

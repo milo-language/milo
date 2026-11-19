@@ -1,0 +1,19 @@
+// A branch that moves a value and then calls a function of type never (exit, panic) does not
+// reach the code after the if, so reading the value there is no use after move.
+// @expect: kept 3
+
+fn consume(v: Vec<i64>): i64 { return v.len() }
+
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    if v.len() > 10 {
+        let n = consume(v)
+        print(n)
+        exit(1)
+    }
+    print($"kept {v.len()}")
+    return 0
+}

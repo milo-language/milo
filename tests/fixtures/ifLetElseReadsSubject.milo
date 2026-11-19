@@ -1,0 +1,24 @@
+// `if let` takes the payload only on the branch where the pattern matched: the else branch
+// still owns the subject whole and may move it.
+// @expect: other: b-side
+// @expect: got a-side
+
+pub enum Side { A(string), B(string) }
+
+fn show(s: Side): string {
+    return match s { Side.A(x) => $"a {x}", Side.B(x) => x }
+}
+
+fn pick(v: Side): string {
+    if let Side.A(s) = v {
+        return $"got {s}"
+    } else {
+        return $"other: {show(v)}"
+    }
+}
+
+pub fn main(): i32 {
+    print(pick(Side.B("b-" + "side")))
+    print(pick(Side.A("a-" + "side")))
+    return 0
+}
