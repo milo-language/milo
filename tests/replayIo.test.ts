@@ -276,7 +276,10 @@ test("MILO_REPLAY_STOP stops at the requested record", () => {
   expect(trapped.out).toBe("aaa\n");
 }, 60000);
 
-const lldb = spawnSync("lldb", ["--version"], { encoding: "utf-8" }).status === 0;
+// Present and allowed to attach: with macOS Developer Mode off, attaching waits on an unanswered
+// authorization prompt and the test times out (see tests/debugInfo.test.ts canAttach). Never skipped on CI.
+const lldb = spawnSync("lldb", ["--version"], { encoding: "utf-8" }).status === 0
+  && (!!process.env.CI || process.platform !== "darwin" || !/disabled/.test(spawnSync("DevToolsSecurity", ["-status"], { encoding: "utf-8" }).stdout ?? ""));
 
 test.skipIf(!lldb)("under lldb, a breakpoint on miloReplayStop stops at the record", () => {
   writeFileSync(join(dir, "a.txt"), "aaa\n");
