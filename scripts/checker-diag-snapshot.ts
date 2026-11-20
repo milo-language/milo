@@ -68,6 +68,9 @@ for (const f of files) {
       diagnostics: cr.diagnostics,
       moved: spans(cr.movedExprs), shared: spans(cr.sharedStringExprs), borrowed: spans(cr.borrowedExprs),
       sharedCaptures: [...cr.sharedStringCaptures].map(([e, names]: [any, Set<string>]) => `${at(e)}:${[...names].sort().join(",")}`).sort(),
+      // Codegen binds a viewLet without a copy; a refactor that widens the set is a use after free the
+      // diagnostics never show (9f462a20).
+      viewLets: spans(cr.viewLets), refLets: spans(cr.refLets),
     });
   } catch (e: any) {
     out[f] = rel({ thrown: e?.diagnostic ?? e?.message ?? String(e) });
