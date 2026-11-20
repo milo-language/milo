@@ -83,6 +83,10 @@ function stmt(c: Ctx, depth: number): S[] {
   type K = [string, number];
   const ks: K[] = [["slice", 10], ["ptr", 7], ["for", 8], ["iflet", 6], ["clodef", 6], ["each", 5], ["write", 18], ["move", 3], ["read", 26]];
   if (c.closures.length > 0) ks.push(["clocall", 8]);
+  // A closure that captures a loan holder (`let s = v[0..1]; let f = () => print(s[0])`) or reads a vec by reference, called
+  // after a write: the capture conflicts the walk used to track per statement are the flow's now.
+  if (c.loans.length > 0) ks.push(["clocap", 7]);
+  ks.push(["clorec", 3]);
   if (depth < 2) ks.push(["if", 6], ["while", 4]);
   if (c.inLoop) ks.push(["break", 2]);
   let t = c.r() * ks.reduce((a, [, w]) => a + w, 0), kind = "read";
@@ -103,8 +107,18 @@ function stmt(c: Ctx, depth: number): S[] {
   }
   if (kind === "break") return [leaf("break")];
   if (kind === "clocall") { const k = pick(c, c.closures); return [leaf(`${k.name}()`)]; }
+  if (kind === "clocap") {
+    const l = pick(c, c.loans), name = fresh(c, "c");
+    c.closures.push({ name, src: l.src });
+    return [{ head: `let ${name} = (): void =>`, body: [readLoan(c, l)] }];
+  }
   if (!v) return [];
   switch (kind) {
+    case "clorec": {
+      const name = fresh(c, "c");
+      c.closures.push({ name, src: v });
+      return [{ head: `let ${name} = (): void =>`, body: [leaf(`print(${v.name}.len())`)] }];
+    }
     case "slice": {
       const name = fresh(c, "s"), a = Math.floor(c.r() * 2);
       c.loans.push({ kind: "slice", name, src: v });

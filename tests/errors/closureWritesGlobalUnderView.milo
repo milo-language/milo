@@ -1,0 +1,17 @@
+// @error: cannot write to 'G0' by calling 'c0' while 's1' borrows 'G0'
+// A closure that pushes to a global through a `&mut` argument writes the global at every call, under a live view of it.
+var G0: Vec<i64> = [6, 4]
+
+fn bump(v: &mut Vec<i64>) {
+    v.push(1)
+}
+
+pub fn main(): i32 {
+    let c0 = () => {
+        bump(&mut G0)
+    }
+    let s1 = G0[0..2]
+    c0()
+    print(s1[0])
+    return 0
+}

@@ -1,0 +1,14 @@
+// @error: cannot return 'p': 'v' is freed when this function returns, so the pointer would dangle (from 'v.ptr()' on line 6)
+// A binding that holds a pointer into a local is returned: same hazard as `return v.ptr()`.
+fn data(): *u8 {
+    var v: Vec<u8> = Vec.new()
+    v.push(0)
+    let p = v.ptr()
+    return p
+}
+
+pub fn main(): i32 {
+    let p = data()
+    print(p as i64 != 0)
+    return 0
+}

@@ -180,7 +180,19 @@ notices when the rule breaks). Each row gives the mutant's counterpart in the mo
 | `move-no-carry` | not modelled: loans that follow a moved local into a new binding |
 | `field-move-no-carry` | not modelled: field paths |
 | `move-conflicts-pointer` | not modelled: the model conservatively conflicts a move with a pointer loan |
+| `pointer-carry-needs-only-pointers` | not modelled: loans that follow a moved local into a new binding |
+| `callback-element-receiver-shallow` | not modelled: callback loans (`v.each(cb)`), no callback kind |
+| `closure-global-write-off` | not modelled: mutable globals are not places |
 | `unsafe-write-conflicts` | not modelled: `unsafe` blocks |
+| `source-moved-off` | not modelled: a read of a pointer holder after its source moved is a use-after-free check on a raw pointer, and the model has no raw reads |
+| `forget-kills-holders` | not modelled: `forget` (ownership of the buffer handed to a C owner) |
+| `source-moved-in-unsafe` | not modelled: `unsafe` blocks |
+| `source-moved-redef-keeps` | not modelled: raw pointer reads; the redefinition itself is `Ev.redef` |
+| `source-moved-field-read` | not modelled: field paths and raw pointer reads |
+| `return-pointer-off` | not modelled: the model has no function exit, so no pointer outlives its frame |
+| `return-pointer-global` | not modelled: mutable globals are not places |
+| `return-pointer-ref-param` | not modelled: reference parameters are not owners of storage |
+| `return-node-off` | graph construction only: the event that marks the returned binding, same row as `return-pointer-off` |
 | `self-call-not-write` | graph construction: a `&mut self` call is `Ev.write p call` |
 | `collection-call-not-write` | graph construction: a mutating collection method is `Ev.write p call` |
 | `assign-not-write` | graph construction: assigning a local is `Ev.write p assign` |

@@ -15,6 +15,8 @@ import { Builder, liveness, overlaps, type InheritedLoan, type Node, type Place,
 
 export interface BorrowFlowResult {
   diagnostics: { span: Span | undefined; message: string; hint?: string; notes?: DiagnosticNote[] }[];
+  // `unsafe` blocks that admitted a read the flow would otherwise reject: the checker's unused-unsafe lint must not fire on them.
+  unsafeUsed: Span[];
 }
 
 // "v#3.name" -> "v".
@@ -71,8 +73,10 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     // a pointer; any other loan makes the move itself the error.
     if (n.use !== undefined && (moves(n) || n.hardMove)) {
       const root = rootName(n.use);
-      const on = [...out2].filter(k => rootName(placeOfKey(k)) === root && overlaps(placeOfKey(k), n.use!));
-      if (on.length > 0 && on.every(k => nodes[originOf(k)]!.loan!.kind === "pointer")) {
+      // A view or loop loan on the same place makes the move itself the error (reported below); the pointer loans still end or
+      // follow it, or a pointer loan would be lost behind a dead view (`let p = v.ptr(); let s = v[0..1]; var w = v; w.push(1)`).
+      const on = [...out2].filter(k => rootName(placeOfKey(k)) === root && overlaps(placeOfKey(k), n.use!) && nodes[originOf(k)]!.loan!.kind === "pointer");
+      if (on.length > 0) {
         for (const k of on) {
           out2.delete(k);
           if (n.carryTo !== undefined && !n.hardMove) out2.add(keyOf(originOf(k), n.carryTo + placeOfKey(k).slice(n.use.length)));
@@ -130,7 +134,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     }
     for (let l = 0; l <= i; l++) {
       const ln = nodes[l]!;
-      if ((ln.loan?.kind === "iteration" || (ln.loan?.kind === "callback" && !elem)) && ln.iterEnd !== undefined && i < ln.iterEnd && overlaps(ln.loan.place, place)) found.push(l);
+      if ((ln.loan?.kind === "iteration" || (ln.loan?.kind === "callback" && (!elem || ln.loan.deep === true))) && ln.iterEnd !== undefined && i < ln.iterEnd && overlaps(ln.loan.place, place)) found.push(l);
     }
     found.sort((x, y) => x - y);
     return found.length === 0 ? null : nodes[found[0]!]!;
@@ -208,12 +212,13 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       }
     }
     // A read of a holder whose pointer source was moved away.
-    if (n.use !== undefined && n.expr !== undefined && !n.unsafe && !n.capture && !n.subject && !n.armTakes) {
+    if (n.use !== undefined && n.expr !== undefined && !n.capture && !n.subject && !n.armTakes) {
       let id = n.expr;
       while (id.kind === "FieldAccess") id = id.object;
       for (const k of dead[i]!) {
         const ln = nodes[originOf(k)]!.loan!;
         if (id.kind !== "Ident" || !overlaps(n.use, ln.holder!)) continue;
+        if (n.unsafe) { if (n.unsafeAt !== undefined) out.unsafeUsed.push(n.unsafeAt); break; }
         report(id.span, text.usedAfterSourceMoved(id.name, rootName(placeOfKey(k)), ln.call!, ln.line!));
         break;
       }
@@ -255,7 +260,7 @@ function closureLiterals(body: unknown): (Expr & { kind: "Closure" })[] {
 }
 
 export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost & AnalysisHost): BorrowFlowResult {
-  const out: BorrowFlowResult = { diagnostics: [] };
+  const out: BorrowFlowResult = { diagnostics: [], unsafeUsed: [] };
   const { globals, effects } = callEffects(program, host);
   const fns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods), ...cr.monomorphizedFns];
   const fnSeen = new Set<Function>();
@@ -274,7 +279,12 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
 // structural rules, closure captures, Task.scope). A loop conflict replaces the walk's "cannot use 'v' inside 'for x in &mut v'"
 // at the same place: that message names the operation and the loop, so it is the better one.
 export function reportBorrowFlow(program: Program, cr: CheckResult, tc: PlaceCfgHost & AnalysisHost & { diagnostics: Diagnostic[]; mutForInUses: Map<string, Diagnostic>; errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic }): void {
-  for (const d of borrowFlow(program, cr, tc).diagnostics) {
+  const flow = borrowFlow(program, cr, tc);
+  for (const at of flow.unsafeUsed) {
+    const i = tc.diagnostics.findIndex(w => w.code === "unused-unsafe" && w.span?.file === at.file && w.span?.line === at.line && w.span?.col === at.col);
+    if (i >= 0) tc.diagnostics.splice(i, 1);
+  }
+  for (const d of flow.diagnostics) {
     const dup = d.span && /while a loop iterates over/.test(d.message) ? tc.mutForInUses.get(spanKey(d.span)) : undefined;
     const at = dup ? tc.diagnostics.indexOf(dup) : -1;
     if (at >= 0) tc.diagnostics.splice(at, 1);

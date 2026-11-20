@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 615 distinct messages across 785 programs the compiler must reject.
+Every error message the test suite pins: 619 distinct messages across 790 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -59,6 +59,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'break' outside of loop`](#break-outside-of-loop)
 - [`'bump' in 'impl Counter for Tally' takes 'self: &Tally' by shared reference; the trait 'Counter' declares 'self: &mut Self'`](#bump-in-impl-counter-for-tally-takes-self-tally-by-shared-reference-the-trait-counter-declares-self-mut-self)
 - [`'bx' is moved and borrowed in the same call`](#bx-is-moved-and-borrowed-in-the-same-call)
+- [`'c' used after its source 'v' was moved (from 'v.ptr()' on line 17)`](#c-used-after-its-source-v-was-moved-from-v-ptr-on-line-17)
 - [`'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)`](#cells-vec-i64-is-not-allowed-cells-is-copyonly-and-vec-i64-is-not-a-copy-type-it-owns-heap-memory)
 - [`'clone' would copy 'Res' out of the Vec: it carries Drop`](#clone-would-copy-res-out-of-the-vec-it-carries-drop)
 - [`'contains' requires a Vec of a comparable type (int, float, string, bool), got Vec<Point>`](#contains-requires-a-vec-of-a-comparable-type-int-float-string-bool-got-vec-point)
@@ -166,6 +167,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Vec' cannot be instantiated with 'void'`](#vec-cannot-be-instantiated-with-void)
 - [`'Vec' takes 1 type argument, got 2`](#vec-takes-1-type-argument-got-2)
 - [`'Vec<i64>.fromJson' needs 'i64' to have a Json codec`](#vec-i64-fromjson-needs-i64-to-have-a-json-codec)
+- [`'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 12)`](#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-12)
 - [`'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'w2' may reallocate here while 'p1' still points into its buffer (from 'a.b.items.ptr()' on line 6)`](#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-a-b-items-ptr-on-line-6)
 - [`'w2' may reallocate here while 'p1' still points into its buffer (from 'h.items.ptr()' on line 6)`](#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-h-items-ptr-on-line-6)
@@ -324,6 +326,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot repeat 'Handle' in '[v; 2]': it carries @noCopy`](#cannot-repeat-handle-in-v-2-it-carries-nocopy)
 - [`cannot replace 'v' while a loop iterates over it`](#cannot-replace-v-while-a-loop-iterates-over-it)
 - [`cannot replace through an immutable place`](#cannot-replace-through-an-immutable-place)
+- [`cannot return 'p': 'v' is freed when this function returns, so the pointer would dangle (from 'v.ptr()' on line 6)`](#cannot-return-p-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle-from-v-ptr-on-line-6)
 - [`cannot return 'v.ptr()': 'v' is freed when this function returns, so the pointer would dangle`](#cannot-return-v-ptr-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle)
 - [`cannot return a closure that captures 'n' by reference`](#cannot-return-a-closure-that-captures-n-by-reference)
 - [`cannot return a closure that captures 's' by reference`](#cannot-return-a-closure-that-captures-s-by-reference)
@@ -353,6 +356,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
 - [`cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'`](#cannot-write-to-b-by-calling-wipe-while-x-borrows-b)
 - [`cannot write to 'bag' by calling 'wipe' because 'bag' is borrowed`](#cannot-write-to-bag-by-calling-wipe-because-bag-is-borrowed)
+- [`cannot write to 'G0' by calling 'c0' while 's1' borrows 'G0'`](#cannot-write-to-g0-by-calling-c0-while-s1-borrows-g0)
 - [`cannot write to 'm' by passing 'clr' while a loop iterates over 'm'`](#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m)
 - [`cannot write to 's' by calling 'clr' while a loop iterates over 's'`](#cannot-write-to-s-by-calling-clr-while-a-loop-iterates-over-s)
 - [`cannot write to 's' by passing 'clr' while 'w' borrows 's'`](#cannot-write-to-s-by-passing-clr-while-w-borrows-s)
@@ -1543,6 +1547,34 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/aliasMoveAndBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMoveAndBorrow.milo)</sub>
+
+## `'c' used after its source 'v' was moved (from 'v.ptr()' on line 17)` {#c-used-after-its-source-v-was-moved-from-v-ptr-on-line-17}
+
+A struct carrying the pointer is a holder too: reading a field of it after the source moved is the same use after free.
+
+```milo skip
+from "std/os" import {
+    strlen
+}
+
+struct Cfg {
+    buf: *u8
+}
+
+fn take(v: Vec<u8>): i64 {
+    return v.len
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    let c = Cfg { buf: v.ptr() }
+    print(take(v))
+    print(strlen(c.buf))
+    return 0
+}
+```
+
+<sub>[tests/errors/ptrFieldUsedAfterSourceMoved.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrFieldUsedAfterSourceMoved.milo)</sub>
 
 ## `'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)` {#cells-vec-i64-is-not-allowed-cells-is-copyonly-and-vec-i64-is-not-a-copy-type-it-owns-heap-memory}
 
@@ -4460,6 +4492,31 @@ fn main(): i32 {
 
 <sub>[tests/errors/genericStaticFromJsonNoCodec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticFromJsonNoCodec.milo)</sub>
 
+## `'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 12)` {#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-12}
+
+A view of `v` that is never read again does not hide the pointer: the move into `w` still hands the pointer's loan on.
+
+```milo skip
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    print(v.len)
+    var a = 0
+    a += 1
+    let p = v.ptr()
+    let s = v[0..1]
+    var w = v
+    w.push(66)
+    unsafe { print(*p) }
+    return 0
+}
+```
+
+<sub>[tests/errors/ptrCarriedPastDeadView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrCarriedPastDeadView.milo)</sub>
+
 ## `'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)` {#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9}
 
 Moving the Vec keeps its buffer in place, so the pointer's obligation moves with it.
@@ -5779,6 +5836,20 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/borrowDeepViewElemAssign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowDeepViewElemAssign.milo)</sub>
+
+`vs[0].each(cb)` reads the buffer of element 0: reassigning that element in the callback frees it mid-iteration.
+
+```milo skip
+pub fn main(): i32 {
+    var vs: Vec<Vec<i64>> = [[9, 3], [8, 3, 9, 7]]
+    vs[0].each((x: i64) => {
+        vs[0] = [5, 9]
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/eachReceiverElementReassigned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/eachReceiverElementReassigned.milo)</sub>
 
 ## `cannot assign to immutable variable 'p.x'` {#cannot-assign-to-immutable-variable-p-x}
 
@@ -8541,6 +8612,27 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/replaceImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceImmutable.milo)</sub>
 
+## `cannot return 'p': 'v' is freed when this function returns, so the pointer would dangle (from 'v.ptr()' on line 6)` {#cannot-return-p-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle-from-v-ptr-on-line-6}
+
+A binding that holds a pointer into a local is returned: same hazard as `return v.ptr()`.
+
+```milo skip
+fn data(): *u8 {
+    var v: Vec<u8> = Vec.new()
+    v.push(0)
+    let p = v.ptr()
+    return p
+}
+
+pub fn main(): i32 {
+    let p = data()
+    print(p as i64 != 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/ptrHolderReturnDangles.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrHolderReturnDangles.milo)</sub>
+
 ## `cannot return 'v.ptr()': 'v' is freed when this function returns, so the pointer would dangle` {#cannot-return-v-ptr-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle}
 
 ```milo skip
@@ -9486,6 +9578,30 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureMatchCaptureSiblingWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMatchCaptureSiblingWrite.milo)</sub>
+
+## `cannot write to 'G0' by calling 'c0' while 's1' borrows 'G0'` {#cannot-write-to-g0-by-calling-c0-while-s1-borrows-g0}
+
+A closure that pushes to a global through a `&mut` argument writes the global at every call, under a live view of it.
+
+```milo skip
+var G0: Vec<i64> = [6, 4]
+
+fn bump(v: &mut Vec<i64>) {
+    v.push(1)
+}
+
+pub fn main(): i32 {
+    let c0 = () => {
+        bump(&mut G0)
+    }
+    let s1 = G0[0..2]
+    c0()
+    print(s1[0])
+    return 0
+}
+```
+
+<sub>[tests/errors/closureWritesGlobalUnderView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureWritesGlobalUnderView.milo)</sub>
 
 ## `cannot write to 'm' by passing 'clr' while a loop iterates over 'm'` {#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m}
 

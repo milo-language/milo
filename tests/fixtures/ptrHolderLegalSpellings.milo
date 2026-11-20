@@ -1,0 +1,45 @@
+// Spellings of a returned or read pointer holder that stay legal (the error twins are tests/errors/ptrHolderReturnDangles.milo
+// and ptrUsedAfterSourceMoved.milo): the source outlives the frame (a global, a `&` parameter), the read is in `unsafe`,
+// or the holder was assigned a fresh pointer after the source moved.
+from "std/os" import {
+    strlen
+}
+
+var G: Vec<u8> = [72, 105, 0]
+
+fn fromGlobal(): *u8 {
+    let p = G.ptr()
+    return p
+}
+
+fn fromParam(v: &Vec<u8>): *u8 {
+    let p = v.ptr()
+    return p
+}
+
+fn take(v: Vec<u8>): i64 {
+    return v.len
+}
+
+pub fn main(): i32 {
+    print(strlen(fromGlobal()))
+    let owned: Vec<u8> = [65, 66, 0]
+    print(strlen(fromParam(owned)))
+    var a: Vec<u8> = [67, 0]
+    let p = a.ptr()
+    take(a)
+    unsafe {
+        print(p as i64 != 0)
+    }
+    var b: Vec<u8> = [68, 69, 70, 0]
+    var q = b.ptr()
+    take(b)
+    var w: Vec<u8> = [71, 72, 0]
+    q = w.ptr()
+    print(strlen(q))
+    return 0
+}
+// @expect: 2
+// @expect: 2
+// @expect: true
+// @expect: 2

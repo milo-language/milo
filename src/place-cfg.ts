@@ -31,6 +31,7 @@ export interface Node {
   effect?: CallEffect & { span?: Span };
   loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
   unsafe?: boolean; // made inside an `unsafe` block (borrow events only)
+  unsafeAt?: Span; // the innermost such block
   returned?: boolean; // a `return x` of a whole local: the use node of x
   carryTo?: Place; // on a move of a whole local into a new binding: the pointer loans on it now belong to that binding
   iterEnd?: number; // on an iteration or callback loan's head: the loan covers node ids from the head up to this one (exclusive)
@@ -89,8 +90,9 @@ export class Builder {
   inheritedWrites: Map<string, { fname: string; writes: string[] }> | undefined;
   // A closure literal passed to a builtin collection method (`v.each(cb)`): the receiver, by root name and field path, and the
   // method's label ("v.each"). Its body is a separate graph, where the receiver is loaned for the body's whole length.
-  callbackOf = new Map<Expr, { root: string; path: string; label: string; span?: Span }>();
-  callbackLoan: { root: string; path: string; label: string; span?: Span } | undefined;
+  // `deep`: the receiver is an element (`vs[i].each(cb)`), so an element write of `vs` in the body frees what the loop reads.
+  callbackOf = new Map<Expr, { root: string; path: string; label: string; span?: Span; deep?: boolean }>();
+  callbackLoan: { root: string; path: string; label: string; span?: Span; deep?: boolean } | undefined;
   // What a call does to the mutable globals, when it parks or writes one; and the globals' names. A loan on a global lives on
   // the place "name#g", which no local binding can spell.
   effects: ((e: Expr) => CallEffect | undefined) | undefined;
@@ -113,12 +115,13 @@ export class Builder {
   private exits: number[] = []; // nodes that leave the function (return, `?`)
   private ids = 0;
   private unsafeDepth = 0;
+  private unsafeSpans: (Span | undefined)[] = [];
 
   constructor(private cr: CheckResult, private host: PlaceCfgHost, private borrowEvents = false) {}
 
   private node(n: Omit<Node, "succ">, from: number): number {
     const id = this.nodes.length;
-    this.nodes.push({ ...n, ...(this.borrowEvents && this.unsafeDepth > 0 && { unsafe: true }), succ: [] });
+    this.nodes.push({ ...n, ...(this.borrowEvents && this.unsafeDepth > 0 && { unsafe: true, unsafeAt: this.unsafeSpans[this.unsafeSpans.length - 1] }), succ: [] });
     if (from >= 0) this.nodes[from]!.succ.push(id);
     return id;
   }
@@ -180,7 +183,7 @@ export class Builder {
       }
       const cbRoot = this.callbackLoan?.root;
       const cbPlace = cbRoot === undefined ? null : this.lookup(cbRoot) ?? (this.mutableGlobals.has(cbRoot) ? `${cbRoot}#g` : null);
-      const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label, span: this.callbackLoan!.span } }, cur));
+      const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label, span: this.callbackLoan!.span, ...(this.callbackLoan!.deep && { deep: true }) } }, cur));
       for (const l of this.inheritedLoans ?? []) {
         const holder = this.lookup(l.holder), root = this.lookup(l.root);
         if (holder !== null && root !== null) cur = this.node({ loan: { kind: "view", place: root + l.path, holder, name: l.name, anon: l.anon, span: l.span } }, cur);
@@ -267,7 +270,7 @@ export class Builder {
       case "ExprStmt": return this.expr(s.expr, cur);
       case "BreakStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) l.breaks.push(cur); return -1; }
       case "ContinueStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) this.backTo(cur, l.head); return -1; }
-      case "UnsafeBlock": { this.unsafeDepth++; try { return this.stmts(s.body, cur); } finally { this.unsafeDepth--; } }
+      case "UnsafeBlock": { this.unsafeDepth++; this.unsafeSpans.push(s.span); try { return this.stmts(s.body, cur); } finally { this.unsafeDepth--; this.unsafeSpans.pop(); } }
       case "IfStmt": {
         cur = this.expr(s.cond, cur);
         const a = this.stmts(s.thenBody, cur);
@@ -434,6 +437,23 @@ export class Builder {
       if (reads.length > 0) this.closureCaps.set(id, { fname: id.split("#")[0]!, reads });
       if (this.borrowEvents) {
         const places = new Set<Place>();
+        // A mutable global the body writes directly (`bump(&mut G)`, `G.push(1)`, `G = ..`) is written by every call of the closure.
+        if (this.mutableGlobals.size > 0) {
+          const visit = (v: unknown): void => {
+            if (v === null || typeof v !== "object") return;
+            if (Array.isArray(v)) { for (const x of v) visit(x); return; }
+            const o = v as Record<string, unknown> & { kind?: string };
+            const add = (e: Expr): void => { const g = this.globalPlace(e); if (g !== null) places.add(g); };
+            if (o.kind === "Call" || o.kind === "MethodCall") {
+              const call = o as unknown as Expr & { kind: "Call" | "MethodCall" };
+              for (const arg of call.args) if (this.cr.autoBorrowed.get(arg)?.mutable === true && this.cr.exprTypes.get(arg)?.tag !== "ref") add(arg);
+              if (call.kind === "MethodCall" && this.mutatesReceiver(call)) add(call.object);
+            }
+            if (o.kind === "Assign") add((o as unknown as { target: Expr }).target);
+            for (const key in o) if (key !== "span") visit(o[key]);
+          };
+          visit(c.body);
+        }
         for (const k of caps) {
           const p = this.lookup(k.name);
           if (p === null) continue;
@@ -594,7 +614,7 @@ export class Builder {
           const rbase = recv?.tag === "ref" ? recv.inner : recv;
           if (base !== null && (rbase?.tag === "vec" || rbase?.tag === "hashmap")) {
             for (const a of e.args) {
-              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^(\d+|g)/, ""), label: `${rootOfPlace(base.place)}.${e.method}`, span: e.span });
+              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^(\d+|g)/, ""), label: `${rootOfPlace(base.place)}.${e.method}`, span: e.span, ...(base.indexed && { deep: true }) });
             }
           }
           // `ps.push(v.ptr())`: the container now holds the pointer.

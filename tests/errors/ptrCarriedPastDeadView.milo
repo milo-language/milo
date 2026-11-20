@@ -1,0 +1,18 @@
+// @error: 'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 12)
+// A view of `v` that is never read again does not hide the pointer: the move into `w` still hands the pointer's loan on.
+from "std/os" import {
+    strlen
+}
+
+pub fn main(): i32 {
+    var v: Vec<u8> = [65, 0]
+    print(v.len)
+    var a = 0
+    a += 1
+    let p = v.ptr()
+    let s = v[0..1]
+    var w = v
+    w.push(66)
+    unsafe { print(*p) }
+    return 0
+}

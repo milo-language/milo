@@ -1,0 +1,9 @@
+// @error: cannot assign to 'vs[...]' because 'vs' is being iterated
+// `vs[0].each(cb)` reads the buffer of element 0: reassigning that element in the callback frees it mid-iteration.
+pub fn main(): i32 {
+    var vs: Vec<Vec<i64>> = [[9, 3], [8, 3, 9, 7]]
+    vs[0].each((x: i64) => {
+        vs[0] = [5, 9]
+    })
+    return 0
+}

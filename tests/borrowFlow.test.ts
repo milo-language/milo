@@ -246,3 +246,14 @@ test("moving a field no view points into is fine, and so is moving it after the 
   expect(flow(`${H}fn main(): i32 {\n    let h = H { items: [7, 9], other: [1] }\n    let s = h.other[0..1]\n    var w = h.items\n    w.push(9)\n    print(s[0])\n    return 0\n}`)).toEqual([]);
   expect(flow(`${H}fn main(): i32 {\n    let h = H { items: [7, 9], other: [1] }\n    let s = h.items[0..1]\n    print(s[0])\n    var w = h.items\n    w.push(9)\n    return 0\n}`)).toEqual([]);
 });
+
+// The mutant gate judges errors only, so this pins the warning: an unsafe block that admits a read of a moved-source holder is used.
+test("an unsafe block admitting a read of a moved-source holder is not reported as unused", () => {
+  const src = `fn take(v: Vec<u8>) {}\n${PTR}    let p = v.ptr()\n    take(v)\n    unsafe {\n        print(p as i64)\n    }\n    return 0\n}`;
+  const dir = mkdtempSync(join(tmpdir(), "borrowflow-"));
+  const path = join(dir, "u.milo");
+  writeFileSync(path, src);
+  const program = resolveImports(new Parser(new Lexer(src).tokenize(), src, path).parse(), dir, getHostTarget(), path);
+  const cr = new TypeChecker().check(program);
+  expect(cr.diagnostics.filter(d => d.code === "unused-unsafe")).toEqual([]);
+});
