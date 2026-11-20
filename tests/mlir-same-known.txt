@@ -1,0 +1,14 @@
+# Fixtures whose compiled run differs from the interpreter today (scripts/mlir-same.ts --owned --known).
+# One per line: name, then why. The list only shrinks: the gate fails when a listed fixture starts to agree.
+# All 11 already differed at 904fce67 (2026-11-19); most are runtime state the interpreter does not model.
+dbPoolMany            # exit 134 vs 0: the interpreter's db pool model (also an interp-coverage DIFFER)
+dnsParallel           # stdout: the interpreter has no resolver, so it reports 0 lookups
+fetchKeepAlive        # live blocks interp 65, compiled 64: socket buffers held by the runtime at exit
+httpKeepAlive         # live blocks interp 73, compiled 76
+httpLongRouteChurn    # live blocks interp 36, compiled 35
+httpWorkers           # live blocks interp 130, compiled 147: worker threads' runtime state
+lookupAllByHung       # live blocks interp 29, compiled 23
+netErrorMessage       # live blocks interp 1, compiled 4: compiled keeps 3 more blocks; not yet explained
+taskPanicIsolated     # live blocks interp 51, compiled 58: the panicking task's frame
+workerChannelHandoff  # live blocks interp 14, compiled 0: worker threads' blocks are not counted
+workerWaitGroup       # live blocks interp 28, compiled 0: same as workerChannelHandoff

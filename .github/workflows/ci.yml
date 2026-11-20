@@ -58,11 +58,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [leak, asan, fuzz]
+        lane: [leak, asan, fuzz, parity]
     name: soundness (${{ matrix.lane }})
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/macos-setup
+      # Every fixture's compiled stdout, exit code and live heap blocks against the interpreter.
+      # The leak lane only sees blocks big enough for `leaks`; this counts every block, and is what
+      # caught the sortByKey extractor leak (e2d91310) locally. Fails only on a difference not in
+      # tests/mlir-same-known.txt, or a listed one that now agrees. ~22 min at --jobs 6 on an M-series.
+      - name: Heap parity with the interpreter
+        if: matrix.lane == 'parity'
+        run: bun scripts/mlir-same.ts --owned --jobs 3 --known tests/mlir-same-known.txt
       # A fixture that leaks still prints the right bytes, so `bun test` cannot see one.
       # That blind spot let the self-hosted compiler leak every owned local for months
       # while the sweep stayed green. This ratchets against tests/leak-clean.txt.

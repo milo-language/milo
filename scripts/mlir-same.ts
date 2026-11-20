@@ -13,6 +13,7 @@
 //   bun scripts/mlir-same.ts --filter arith   # only names matching the regex
 //   bun scripts/mlir-same.ts --programs       # only mlir/test/programs (seconds)
 //   bun scripts/mlir-same.ts --jobs 2
+//   bun scripts/mlir-same.ts --owned --known tests/mlir-same-known.txt   # CI: fail only on a new difference
 //   bun scripts/mlir-same.ts --programs --owned   # also: live heap blocks at exit equal the
 //                                             # interpreter's (scripts/livecount.c; at -O0), clean ASan
 //
@@ -36,6 +37,9 @@ const filter = opt("--filter");
 const dirOpt = opt("--dir"); // compare this directory's programs instead of tests/fixtures (scripts/gen-ownership-cells.ts)
 const jsonOut = opt("--json"); // per-program verdicts and the reasons functions were not lowered
 const jobs = Number(opt("--jobs") ?? 2);
+// `--known <file>`: fixtures that differ today, one per line (`name  # why`). Then only a difference
+// NOT on the list fails, and so does a listed fixture that now agrees, so the list only shrinks.
+const knownFile = opt("--known");
 const GUARD_TRIES = 3;
 const NOISE = new Set(["pressure", "global-memory", "watchdog-blind"]);
 const killed = (r: RunResult) => (!!r.guardKill && NOISE.has(r.guardKill)) || /\[guard\] SIGKILL: system memory pressure/.test(r.stderr);
@@ -255,4 +259,14 @@ for (const r of noOracle.sort((x, y) => (x.name < y.name ? -1 : 1))) console.log
 console.log(`mlir-same: ${count("same")}/${compared} same, ${bad} differ${OWNED ? ` (${count("owned-differ")} in ownership)` : ""}, ${count("nondeterministic")} nondeterministic, ${count("no-oracle")} no oracle (built and run, not compared)`);
 if (compared === 0) { console.error("mlir-same: nothing compared"); process.exit(1); }
 if (fnTotal.ok === 0) { console.error("mlir-same: no function went through MLIR, so nothing was tested"); process.exit(1); }
+if (knownFile) {
+  const known = new Set(readFileSync(knownFile, "utf-8").split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#")).map(l => l.split(/\s+/)[0]!));
+  const isBad = (r: { verdict: Verdict }) => r.verdict === "differ" || r.verdict === "build-differ" || r.verdict === "owned-differ";
+  const fresh = results.filter(r => isBad(r) && !known.has(basename(r.name))).map(r => basename(r.name));
+  const healed = results.filter(r => r.verdict === "same" && known.has(basename(r.name))).map(r => basename(r.name));
+  for (const n of fresh) console.error(`mlir-same: NEW difference ${n} (not in ${knownFile})`);
+  for (const n of healed) console.error(`mlir-same: ${n} agrees now: remove it from ${knownFile}`);
+  console.log(`mlir-same: ${bad - fresh.length} known differences, ${fresh.length} new, ${healed.length} healed`);
+  process.exit(fresh.length + healed.length > 0 ? 1 : 0);
+}
 process.exit(bad > 0 ? 1 : 0);
