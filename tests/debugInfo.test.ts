@@ -8,6 +8,7 @@ import { test, expect } from "bun:test";
 import { execSync, spawnSync } from "child_process";
 import { writeFileSync, unlinkSync, rmSync, existsSync } from "fs";
 import { join } from "path";
+import { canAttach } from "./debugger";
 import { tmpdir } from "os";
 
 const COMPILER = join(import.meta.dir, "..", "src", "main.ts");
@@ -24,16 +25,6 @@ fn main(): i32 {
 
 function have(tool: string): boolean {
   return spawnSync("sh", ["-c", `command -v ${tool}`], { stdio: "pipe" }).status === 0;
-}
-
-// lldb can attach to a process. On macOS with Developer Mode off, attaching waits on an
-// authorization prompt nobody answers, so every lldb test hung to its timeout and reported
-// "Received: \"\"" as if the debug info were wrong. CI runners can attach; there it never skips.
-function canAttach(): boolean {
-  if (!have("lldb")) return false;
-  if (process.env.CI || process.platform !== "darwin") return true;
-  const r = spawnSync("DevToolsSecurity", ["-status"], { stdio: "pipe" });
-  return !/disabled/.test(r.stdout.toString());
 }
 
 function emitIr(path: string, debug: boolean): string {
@@ -82,7 +73,7 @@ test("no debug metadata without -g (zero-cost by default)", () => {
 });
 
 test("built binary carries a source line table lldb can bind to", () => {
-  if (!canAttach()) return; // toolchain-gated: lldb present and allowed to attach
+  if (!have("lldb") || !canAttach()) return; // toolchain-gated: lldb present and allowed to attach
   const f = join(tmpdir(), "milo_dbg_lldb.milo");
   const bin = join(tmpdir(), "milo_dbg_lldb");
   writeFileSync(f, SRC);
@@ -243,7 +234,7 @@ test("enum variants are described at their own field offsets", () => {
 });
 
 test("frame variable reads each variant's fields at their own offsets", () => {
-  if (!canAttach()) return; // toolchain-gated: lldb present and allowed to attach
+  if (!have("lldb") || !canAttach()) return; // toolchain-gated: lldb present and allowed to attach
   const f = join(tmpdir(), "milo_dbg_offsets.milo");
   const bin = join(tmpdir(), "milo_dbg_offsets");
   writeFileSync(f, OFFSETS_SRC);
@@ -300,7 +291,7 @@ test("niche Options describe the payload-only layout", () => {
 });
 
 test("frame variable renders enum variants by name with typed payloads", () => {
-  if (!canAttach()) return; // toolchain-gated: lldb present and allowed to attach
+  if (!have("lldb") || !canAttach()) return; // toolchain-gated: lldb present and allowed to attach
   const f = join(tmpdir(), "milo_dbg_enum.milo");
   const bin = join(tmpdir(), "milo_dbg_enum");
   writeFileSync(f, ENUM_SRC);
@@ -323,7 +314,7 @@ test("frame variable renders enum variants by name with typed payloads", () => {
 
 // -g --debug: dbg.declare on stack slots, so locals are inspectable.
 test("frame variable inspects Milo locals, params, and structs (M2)", () => {
-  if (!canAttach()) return; // toolchain-gated: lldb present and allowed to attach
+  if (!have("lldb") || !canAttach()) return; // toolchain-gated: lldb present and allowed to attach
   const f = join(tmpdir(), "milo_dbg_vars.milo");
   const bin = join(tmpdir(), "milo_dbg_vars");
   writeFileSync(f, VARS_SRC);

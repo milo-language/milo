@@ -12,11 +12,12 @@
 // covers the same ground through scripts/leak-check.ts.
 import { test, expect } from "bun:test";
 import { execFileSync } from "child_process";
+import { canAttach } from "./debugger";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
 
-test.skipIf(process.platform !== "darwin")("owned HashMap ops leak nothing under random sequences", () => {
+test.skipIf(process.platform !== "darwin" || !canAttach())("owned HashMap ops leak nothing under random sequences", () => {
   let out = "";
   let code = 0;
   try {
