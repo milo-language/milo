@@ -93,7 +93,7 @@ async function interp(root: string, file: string): Promise<string> {
   const p = Bun.spawn(["bun", join(ROOT, "scripts/guard.ts"), "--mem-mb", "2000", "--timeout-s", "60", "--", "bun", join(root, "src/main.ts"), "interp", join(ROOT, file)], { stdout: "pipe", stderr: "pipe" });
   const [o, e, code] = [await new Response(p.stdout).text(), await new Response(p.stderr).text(), await p.exited];
   // The stuck report is the verdict; the rest of stderr (timings, paths) is not compared.
-  const stuck = (e.match(/E-STUCK[^\n]*/) ?? [""])[0];
+  const stuck = (e.match(/stuck at [^\n]*/) ?? [""])[0];
   return `${o}\n#exit ${code} ${stuck}`;
 }
 
@@ -127,9 +127,16 @@ for (const m of MUTANTS) {
   }
   if (!why) {
     const changed = Object.keys(base).filter(f => f.startsWith("tests/fixtures/") && errorsOf(base[f]).length === 0 && factsKey(base[f]) !== factsKey(got[f]));
-    // An even sample when a rule changes many fixtures: one broken rule shows up in any of them.
-    const step = Math.max(1, Math.ceil(changed.length / INTERP_SAMPLE));
-    const sample = changed.filter((_, i) => i % step === 0);
+    // Fixtures whose own lines changed come first: a rule broken inside std changes the facts of every
+    // fixture that imports it, and an even sample of those mostly runs std paths the change never reaches.
+    const own = (f: string) => {
+      const mine = (xs: string[] | undefined) => (xs ?? []).filter(x => x.startsWith(f + ":")).join();
+      return mine(base[f]?.moved) !== mine(got[f]?.moved) || mine(base[f]?.shared) !== mine(got[f]?.shared) ||
+        mine(base[f]?.sharedCaptures) !== mine(got[f]?.sharedCaptures);
+    };
+    const first = changed.filter(own), rest = changed.filter(f => !own(f));
+    const step = Math.max(1, Math.ceil(rest.length / Math.max(1, INTERP_SAMPLE - first.length)));
+    const sample = [...first, ...rest.filter((_, i) => i % step === 0)].slice(0, INTERP_SAMPLE);
     for (let i = 0; i < sample.length && !why; i += POOL) {
       const batch = sample.slice(i, i + POOL);
       const runs = await Promise.all(batch.map(async f => {

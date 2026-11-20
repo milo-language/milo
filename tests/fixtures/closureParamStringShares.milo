@@ -1,0 +1,16 @@
+// A closure parameter is borrowed: `each` and `map` lend each element, so passing `s` on by
+// value shares the string instead of moving it out of the Vec.
+fn keep(s: string): i64 { return s.len }
+
+fn main(): void {
+    let names: Vec<string> = ["alpha".clone(), "be".clone()]
+    var total: i64 = 0
+    names.each((s) => {
+        total = total + keep(s)
+    })
+    print($"{total}")
+    let lens = names.map((s) => keep(s) + s.len)
+    print($"{lens[0]} {names[1]}")
+}
+// @expect: 7
+// @expect: 10 be
