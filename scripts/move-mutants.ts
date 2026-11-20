@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Mutation gate for src/move-flow.ts: does the test corpus pin every rule of the move analysis?
+// Mutation gate for src/move-flow.ts and src/place-cfg.ts: does the test corpus pin every rule of the move analysis?
 // Each mutant below breaks one rule. It is applied to a copy of src/ in a temporary root (the tree
 // is never touched), the corpus is checked with it (scripts/checker-diag-snapshot.ts --facts), and
 // the mutant is KILLED when some test would fail:
@@ -18,10 +18,10 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, sym
 import { join } from "path";
 import { tmpdir } from "os";
 
-interface Mutant { id: string; rule: string; anchor: string; replace: string }
+interface Mutant { id: string; rule: string; anchor: string; replace: string; file?: string }
 
 const MUTANTS: Mutant[] = [
-  { id: "lend-off", rule: "a borrowed argument stays live until the call returns",
+  { id: "lend-off", file: "src/place-cfg.ts", rule: "a borrowed argument stays live until the call returns",
     anchor: "  private lend(args: Expr[], cur: number): number {\n", replace: "  private lend(args: Expr[], cur: number): number {\n    return cur;\n" },
   { id: "string-always-move", rule: "a string moves only when nothing reads it later",
     anchor: `out.stringDecisions.set(n.expr, shareAfter(n) ? "share" : "move");`, replace: `out.stringDecisions.set(n.expr, "move");` },
@@ -29,34 +29,34 @@ const MUTANTS: Mutant[] = [
     anchor: `byName.set(n.captureString, shareAfter(n) ? "share" : "move");`, replace: `byName.set(n.captureString, "move");` },
   { id: "overlap-exact", rule: "a later read of a field or of the whole keeps the place live",
     anchor: "for (const p of liveIn[s]!) if (overlaps(p, used)) return true;", replace: "for (const p of liveIn[s]!) if (p === used) return true;" },
-  { id: "ref-param-owned", rule: "a &T / &mut T parameter is borrowed",
+  { id: "ref-param-owned", file: "src/place-cfg.ts", rule: "a &T / &mut T parameter is borrowed",
     anchor: "if (p.type && (p.type.isRef || p.type.isRefMut)) this.borrowed.add(id);", replace: "" },
-  { id: "view-let-owned", rule: "a view or reference let binding is borrowed",
+  { id: "view-let-owned", file: "src/place-cfg.ts", rule: "a view or reference let binding is borrowed",
     anchor: "if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);", replace: "" },
-  { id: "pattern-view-owned", rule: "a pattern binding of a borrowed subject is borrowed",
+  { id: "pattern-view-owned", file: "src/place-cfg.ts", rule: "a pattern binding of a borrowed subject is borrowed",
     anchor: "      if (views) this.borrowed.add(id);\n      cur = this.node({ def: id }, cur);", replace: "      cur = this.node({ def: id }, cur);" },
   { id: "closure-param-owned", rule: "a closure parameter is borrowed",
     anchor: "c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } }))", replace: "c.params" },
   { id: "assign-no-revive", rule: "assigning a place makes it whole again",
     anchor: "    if (n.def !== undefined) for (const p of [...cur.keys()]) if (p === n.def || p.startsWith(n.def + \".\")) cur.delete(p);\n", replace: "" },
-  { id: "never-call-falls-through", rule: "a call of type never ends the path",
+  { id: "never-call-falls-through", file: "src/place-cfg.ts", rule: "a call of type never ends the path",
     anchor: "        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));\n        return this.cr.exprTypes.get(e)?.tag === \"never\" ? -1 : cur;",
     replace: "        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));\n        return cur;" },
-  { id: "forget-soft", rule: "forget(x) moves x whatever its type",
+  { id: "forget-soft", file: "src/place-cfg.ts", rule: "forget(x) moves x whatever its type",
     anchor: "return this.node({ use: forgotten, expr: e.args[0]!, hardMove: true }, cur);", replace: "return this.node({ use: forgotten, expr: e.args[0]!, hardMove: false }, cur);" },
-  { id: "heap-deref-soft", rule: "*h by value moves the box's payload",
+  { id: "heap-deref-soft", file: "src/place-cfg.ts", rule: "*h by value moves the box's payload",
     anchor: "return this.node({ use: inner, expr: e.operand, hardMove: true }, cur);", replace: "return this.node({ use: inner, expr: e.operand, hardMove: false }, cur);" },
-  { id: "call-once-reusable", rule: "calling a closure that moves a capture out consumes it",
+  { id: "call-once-reusable", file: "src/place-cfg.ts", rule: "calling a closure that moves a capture out consumes it",
     anchor: "callee: e.func, hardMove: this.callsOnce.has(callee) }", replace: "callee: e.func, hardMove: false }" },
-  { id: "closure-reads-nothing", rule: "using a by-reference closure binding reads its captures",
+  { id: "closure-reads-nothing", file: "src/place-cfg.ts", rule: "using a by-reference closure binding reads its captures",
     anchor: "    const c = this.closureCaps.get(place);\n    if (c === undefined) return cur;", replace: "    const c = this.closureCaps.get(place);\n    if (c === undefined || c !== undefined) return cur;" },
-  { id: "move-closure-borrows", rule: "a move closure takes its non-Copy captures",
+  { id: "move-closure-borrows", file: "src/place-cfg.ts", rule: "a move closure takes its non-Copy captures",
     anchor: `captureMove: e.isMove === true && !this.host.isCopyType(c.type) && c.type.tag !== "string",`, replace: "captureMove: false," },
   { id: "subject-moves", rule: "a match subject is taken by the binding arm, not when it is evaluated",
     anchor: "    if (n.subject) return false;", replace: "    if (n.subject) return n.expr !== undefined && cr.movePositions.has(n.expr);" },
   { id: "no-loop-carry", rule: "a move reaching a use around a back edge is a move out of a loop",
     anchor: "const carried = back && m.loop === null ? { ...m, loop: sIdx } : m;", replace: "const carried = m;" },
-  { id: "continue-no-back-edge", rule: "continue jumps back to the loop head",
+  { id: "continue-no-back-edge", file: "src/place-cfg.ts", rule: "continue jumps back to the loop head",
     anchor: "if (l && cur >= 0) this.backTo(cur, l.head); return -1;", replace: "return -1;" },
 ];
 
@@ -106,7 +106,7 @@ const results: { id: string; rule: string; verdict: string; why: string }[] = []
 for (const m of MUTANTS) {
   if (only && m.id !== only) continue;
   const root = makeRoot(m.id);
-  const file = join(root, "src/move-flow.ts");
+  const file = join(root, m.file ?? "src/move-flow.ts");
   const src = readFileSync(file, "utf-8");
   if (src.split(m.anchor).length !== 2) { results.push({ id: m.id, rule: m.rule, verdict: "STALE", why: "anchor does not occur exactly once" }); continue; }
   rmSync(file);

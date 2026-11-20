@@ -75,7 +75,7 @@ Said plainly, because a soundness theorem is only as wide as its model.
 
 ## Move soundness
 
-`MiniMilo/Moves.lean` models the move analysis in `src/move-flow.ts`. A function body is
+`MiniMilo/Moves.lean` models the move analysis in `src/move-flow.ts` (the graph is built in `src/place-cfg.ts`). A function body is
 the control-flow graph of place events that move-flow builds. Branch conditions are left
 out, so the theorem covers every path. The analysis is stated as the constraints its result
 meets (a liveness solution, the string decision, the acceptance rules), so any solution is

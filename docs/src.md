@@ -141,7 +141,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/mlir-glue.ts` | Type-directed glue for the MLIR path: functions generated once per type, in the dialect, shared by every function of the module (MlirPlan appends them as closures are appended). |
 | `src/mlir-llvm.ts` | A typed builder for MLIR's LLVM dialect, as text: the scaffold (src/scaffold.ts) writes its functions and globals through it. |
 | `src/move-diagnostics.ts` | The text of every use-after-move diagnostic, one function per shape. |
-| `src/move-flow.ts` | Move analysis as dataflow (docs/plans/move-dataflow.md): a control-flow graph of place events per function body, backward liveness to a fixpoint, and the move-or-share decision for strings read off i… |
+| `src/move-flow.ts` | Move analysis as dataflow (docs/plans/move-dataflow.md): the move-or-share decision for strings and the use-after-move rules, read off the place graph and liveness in src/place-cfg.ts. |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/mutability-scan.ts` | The visitor behind src/checker-mutability.ts, in the portable subset (scripts/ts2milo/subset.ts) so it can be transpiled to Milo. |
 | `src/noalias.ts` | `noalias` on `&mut` parameters, decided on the function bodies (their forms, src/emit-forms.ts). |
@@ -153,6 +153,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/pinned-build.ts` | Pinned build pipeline per safety profile (docs/plans/object-level-assurance.md step 1). |
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
 | `src/pkgcli.ts` | milo package-manager CLI verbs: init/new/add/remove/install/update/tree/why/ vendor/publish and the `tool` namespace (install/uninstall/list/run). |
+| `src/place-cfg.ts` | Per-function control-flow graph of place events and backward liveness, shared by the move and borrow analyses (docs/plans/move-dataflow.md). |
 | `src/playground-entry.ts` | Browser entry for the docs playground: lex, parse, resolve, check, then the reference interpreter (src/interp.ts), all in-page. |
 | `src/playground-fs.ts` | `fs` as the playground bundle sees it: a read-only view of the in-memory file map in playground-host.ts. |
 | `src/playground-host.ts` | Browser host for the playground bundle: the one place that stands in for the node APIs the frontend reads (process, fs). |
