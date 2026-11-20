@@ -53,13 +53,18 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
   const placeOfKey = (k: string) => k.slice(k.indexOf("@") + 1);
   const state: (Set<string> | undefined)[] = nodes.map(() => undefined);
   state[0] = new Set();
+  // Pointer loans whose source was moved away by a plain move (not `forget`, not `let w = v`): the holder is dead from there,
+  // and a read of it is the error (unless made in `unsafe`). Cleared where the holder is redefined, like a loan.
+  const dead: Set<string>[] = nodes.map(() => new Set());
   const work = [0];
   while (work.length > 0) {
     const i = work.pop()!;
     const n = nodes[i]!;
     const out2 = new Set(state[i]!);
+    const outDead = new Set(dead[i]!);
     if (n.def !== undefined) {
       for (const l of [...out2]) { const h = nodes[originOf(l)]!.loan!.holder!; if (h === n.def || h.startsWith(n.def + ".")) out2.delete(l); }
+      for (const l of [...outDead]) { const h = nodes[originOf(l)]!.loan!.holder!; if (h === n.def || h.startsWith(n.def + ".")) outDead.delete(l); }
     }
     // Moving a local keeps its buffer where it is, so pointers into it stay valid: they end with the
     // source, or follow it into the binding that took it (`let w = v`). Only when every loan on it is
@@ -71,15 +76,17 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
         for (const k of on) {
           out2.delete(k);
           if (n.carryTo !== undefined && !n.hardMove) out2.add(keyOf(originOf(k), n.carryTo + placeOfKey(k).slice(n.use.length)));
+          else if (!n.hardMove) outDead.add(k);
         }
       }
     }
-    if (n.loan?.kind === "view" || n.loan?.kind === "pointer") out2.add(keyOf(i, n.loan.place));
+    if (n.loan?.kind === "view" || n.loan?.kind === "pointer") { out2.add(keyOf(i, n.loan.place)); outDead.delete(keyOf(i, n.loan.place)); }
     for (const s of n.succ) {
       const prev = state[s];
-      if (prev === undefined) { state[s] = new Set(out2); work.push(s); continue; }
+      if (prev === undefined) { state[s] = new Set(out2); for (const l of outDead) dead[s]!.add(l); work.push(s); continue; }
       let grew = false;
       for (const l of out2) if (!prev.has(l)) { prev.add(l); grew = true; }
+      for (const l of outDead) if (!dead[s]!.has(l)) { dead[s]!.add(l); grew = true; }
       if (grew) work.push(s);
     }
   }
@@ -198,6 +205,27 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       for (const l of globalHeld(i)) {
         const g = rootName(l.loan!.place);
         if (n.effect.writes.includes(g)) report(n.effect.span, text.writesGlobalWhileHeld(n.effect.say, g, l.loan!.name!, l.loan!.kind === "pointer" ? l.loan!.call : undefined, l.loan!.line));
+      }
+    }
+    // A read of a holder whose pointer source was moved away.
+    if (n.use !== undefined && n.expr !== undefined && !n.unsafe && !n.capture && !n.subject && !n.armTakes) {
+      let id = n.expr;
+      while (id.kind === "FieldAccess") id = id.object;
+      for (const k of dead[i]!) {
+        const ln = nodes[originOf(k)]!.loan!;
+        if (id.kind !== "Ident" || !overlaps(n.use, ln.holder!)) continue;
+        report(id.span, text.usedAfterSourceMoved(id.name, rootName(placeOfKey(k)), ln.call!, ln.line!));
+        break;
+      }
+    }
+    // `return p` of a holder whose pointer source dies with the frame (a local or by-value param; not a global).
+    if (n.returned === true) {
+      for (const k of state[i] ?? []) {
+        const ln = nodes[originOf(k)]!.loan!;
+        const src = placeOfKey(k);
+        if (ln.kind !== "pointer" || !overlaps(n.use!, ln.holder!) || src.endsWith("#g") || b.borrowed.has(src.split(".")[0]!)) continue;
+        report(n.expr!.span, text.returnedPointerDangles((n.expr as { name: string }).name, rootName(src), ln.call!, ln.line!));
+        break;
       }
     }
     if (moves(n)) {

@@ -30,6 +30,8 @@ export interface Node {
   // A call that parks the task or writes some of the mutable globals (the checker's own call summaries, see borrowFlow).
   effect?: CallEffect & { span?: Span };
   loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
+  unsafe?: boolean; // made inside an `unsafe` block (borrow events only)
+  returned?: boolean; // a `return x` of a whole local: the use node of x
   carryTo?: Place; // on a move of a whole local into a new binding: the pointer loans on it now belong to that binding
   iterEnd?: number; // on an iteration or callback loan's head: the loan covers node ids from the head up to this one (exclusive)
   succ: number[];
@@ -116,7 +118,7 @@ export class Builder {
 
   private node(n: Omit<Node, "succ">, from: number): number {
     const id = this.nodes.length;
-    this.nodes.push({ ...n, succ: [] });
+    this.nodes.push({ ...n, ...(this.borrowEvents && this.unsafeDepth > 0 && { unsafe: true }), succ: [] });
     if (from >= 0) this.nodes[from]!.succ.push(id);
     return id;
   }
@@ -258,6 +260,7 @@ export class Builder {
       }
       case "Return": {
         if (s.value) cur = this.expr(s.value, cur);
+        if (this.borrowEvents && s.value?.kind === "Ident" && cur >= 0 && this.nodes[cur]!.expr === s.value && this.nodes[cur]!.use !== undefined) this.nodes[cur]!.returned = true;
         if (cur >= 0) this.exits.push(cur);
         return -1;
       }

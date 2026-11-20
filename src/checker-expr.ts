@@ -363,14 +363,6 @@ export function checkIdentExpr(c: TypeChecker, expr: Ident): TypeKind {
   }
   info.read = true;
   c.identBinding.set(expr, info);
-  // `unsafe` admits the read: the new owner is then the programmer's claim to make
-  // (giflib's CStore keeps every buffer alive until the C caller is done with it).
-  if (info.pointerSourceMoved) {
-    const m = info.pointerSourceMoved;
-    c.requireUnsafe(`'${expr.name}' used after its source '${m.root}' was moved (from '${m.call}' on line ${m.line})`, sp,
-      `use 'forget(${m.root})' to hand the buffer to the pointer's new owner, or take the pointer after the move`);
-    return c.setType(expr, c.deref(info.type));
-  }
   // A use of the whole value reads every place under it (move-flow reads readPaths).
   if (c.placeBaseDepth === 0) c.eachCaptureOf(expr.name, cap => { (cap.readPaths ??= new Set()).add(""); });
   return c.setType(expr, c.deref(info.type));

@@ -83,3 +83,20 @@ export function writesGlobalWhileHeld(say: string, global: string, holder: strin
     hint: `pushing to, clearing or reassigning '${global}' frees the buffer '${holder}' points into: take '${holder}' after the call, or end its block before it`,
   };
 }
+
+// A read of a pointer holder after a plain move of its source (`take(v)`): the new owner may have freed the buffer. `forget(v)`
+// and `let w = v` keep the holders alive.
+export function usedAfterSourceMoved(name: string, root: string, call: string, line: number): BorrowText {
+  return {
+    message: `'${name}' used after its source '${root}' was moved (from '${call}' on line ${line})`,
+    hint: `use 'forget(${root})' to hand the buffer to the pointer's new owner, or take the pointer after the move`,
+  };
+}
+
+// `return p` where `p` points into a local that dies with the frame.
+export function returnedPointerDangles(name: string, root: string, call: string, line: number): BorrowText {
+  return {
+    message: `cannot return '${name}': '${root}' is freed when this function returns, so the pointer would dangle (from '${call}' on line ${line})`,
+    hint: `return the buffer itself, or 'forget' it first if the caller takes ownership of it`,
+  };
+}

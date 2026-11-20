@@ -303,19 +303,7 @@ export function errorIfReturnedPointerDangles(c: TypeChecker, value: Expr, sp?: 
       return;
     }
   }
-  // ident-ok: a pointer holder is a NAME by construction (`let p = v.ptr()`); the
-  // holder-of-a-place case is the `pointerViewsIn` loop above.
-  if (value.kind === "Ident") {
-    const holder = c.lookup(value.name);
-    for (const src of holder?.freezes ?? []) {
-      const ph = src.borrowHolders?.find(h => h?.info === holder);
-      if (ph && src.borrowed && c.frameOwned(src)) {
-        c.error(`cannot return '${value.name}': '${ph.root}' is freed when this function returns, so the pointer would dangle (from '${ph.call}' on line ${ph.line})`, sp,
-          `return the buffer itself, or 'forget' it first if the caller takes ownership of it`);
-        return;
-      }
-    }
-  }
+  // A binding still holding such a pointer (`return p`) is src/borrow-flow.ts's.
 }
 
 // A move keeps the heap buffer where it is, so a pointer borrow of the source is not

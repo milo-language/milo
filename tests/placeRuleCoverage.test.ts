@@ -59,7 +59,7 @@ test("resolving a variable by matching Ident is exempted only with a written rea
   }
 
   // a scan that matched nothing proves nothing
-  expect(visited, "place-rule scan found nothing: the detector is broken").toBeGreaterThanOrEqual(20);
+  expect(visited, "place-rule scan found nothing: the detector is broken").toBeGreaterThanOrEqual(19);
   expect({
     unexplained,
     fix: unexplained.length

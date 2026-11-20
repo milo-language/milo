@@ -88,8 +88,14 @@ test("a pointer loan lasts to the end of its block (C may keep it), and a write 
   expect(flow(`${PTR}    let p = v.ptr()\n    unsafe {\n        v.push(1)\n    }\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
 });
 
-test("moving the source is allowed and ends the pointer's loan; a let move hands it to the new owner", () => {
-  expect(flow(`fn take(v: Vec<u8>) {}\n${PTR}    let p = v.ptr()\n    take(v)\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
+test("moving the source is allowed and ends the pointer's loan, but reading the holder after it is an error; a let move hands it to the new owner", () => {
+  expect(flow(`fn take(v: Vec<u8>) {}\n${PTR}    let p = v.ptr()\n    take(v)\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["10: 'p' used after its source 'v' was moved (from 'v.ptr()' on line 8)"]);
+  // `forget` keeps the holder alive, and `unsafe` admits the read.
+  expect(flow(`${PTR}    let p = v.ptr()\n    forget(v)\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
+  expect(flow(`fn take(v: Vec<u8>) {}\n${PTR}    let p = v.ptr()\n    take(v)\n    unsafe {\n        print(strlen(p))\n    }\n    return 0\n}`)).toEqual([]);
+  // A reassigned holder is a fresh pointer.
+  expect(flow(`fn take(v: Vec<u8>) {}\n${PTR}    var p = v.ptr()\n    take(v)\n    var w: Vec<u8> = [65, 0]\n    p = w.ptr()\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
   expect(flow(`${PTR}    let p = v.ptr()\n    var w = v\n    w.push(1)\n    print(strlen(p))\n    return 0\n}`))
     .toEqual(["9: 'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
 });

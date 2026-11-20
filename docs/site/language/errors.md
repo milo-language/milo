@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 611 distinct messages across 781 programs the compiler must reject.
+Every error message the test suite pins: 615 distinct messages across 785 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -160,6 +160,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'v' is written here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-written-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'v' may reallocate here while 'base' still points into its buffer (from 'v.ptr()' on line 10)`](#v-may-reallocate-here-while-base-still-points-into-its-buffer-from-v-ptr-on-line-10)
 - [`'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 11)`](#v-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-11)
+- [`'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 6)`](#v-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-6)
 - [`'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 11)`](#v-may-reallocate-here-while-ps-still-points-into-its-buffer-from-v-ptr-on-line-11)
 - [`'v' may reallocate here while 'q' still points into its buffer (from 'v.ptr()' on line 10)`](#v-may-reallocate-here-while-q-still-points-into-its-buffer-from-v-ptr-on-line-10)
 - [`'Vec' cannot be instantiated with 'void'`](#vec-cannot-be-instantiated-with-void)
@@ -226,6 +227,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot assign to 's' while 'view' borrows it`](#cannot-assign-to-s-while-view-borrows-it)
 - [`cannot assign to 't' while 's' borrows it`](#cannot-assign-to-t-while-s-borrows-it)
 - [`cannot assign to 'v0' while 's3' borrows it`](#cannot-assign-to-v0-while-s3-borrows-it)
+- [`cannot assign to 'vs[...]' because 'vs' is being iterated`](#cannot-assign-to-vs-because-vs-is-being-iterated)
 - [`cannot assign to immutable variable 'p.x'`](#cannot-assign-to-immutable-variable-p-x)
 - [`cannot assign to immutable variable 'STORE.n'`](#cannot-assign-to-immutable-variable-store-n)
 - [`cannot assign to immutable variable 'x'`](#cannot-assign-to-immutable-variable-x)
@@ -239,6 +241,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'pop' on 'v' while a loop iterates over it`](#cannot-call-pop-on-v-while-a-loop-iterates-over-it)
 - [`cannot call 'pop' on 'v0' while a loop iterates over it`](#cannot-call-pop-on-v0-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'b' while a loop iterates over it`](#cannot-call-push-on-b-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 'G' while a loop iterates over it`](#cannot-call-push-on-g-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'items' while 'items.each' borrows it`](#cannot-call-push-on-items-while-items-each-borrows-it)
 - [`cannot call 'push' on 'items' while a loop iterates over it`](#cannot-call-push-on-items-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 's' while 'sl' borrows it`](#cannot-call-push-on-s-while-sl-borrows-it)
@@ -246,6 +249,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'push' on 't' while 'v' borrows it`](#cannot-call-push-on-t-while-v-borrows-it)
 - [`cannot call 'push' on 'v' while a loop iterates over it`](#cannot-call-push-on-v-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'v0' while 's3' borrows it`](#cannot-call-push-on-v0-while-s3-borrows-it)
+- [`cannot call 'push' on 'vs' while a loop iterates over it`](#cannot-call-push-on-vs-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'xs' while 'r' borrows it`](#cannot-call-push-on-xs-while-r-borrows-it)
 - [`cannot call 'push' on 'xs' while a loop iterates over it`](#cannot-call-push-on-xs-while-a-loop-iterates-over-it)
 - [`cannot call 'setByte' on 's' while 'view' borrows it`](#cannot-call-setbyte-on-s-while-view-borrows-it)
@@ -4357,6 +4361,21 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/vecPtrOutlivesRealloc.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecPtrOutlivesRealloc.milo)</sub>
 
+## `'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 6)` {#v-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-6}
+
+A pointer loan lasts to the end of the holder's block, not to its last use (C code may keep the pointer), so the push is rejected although `p` is never read again.
+
+```milo skip
+fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    let p = v.ptr()
+    unsafe { print(*p) }
+    v.push(4)
+}
+```
+
+<sub>[tests/errors/borrowPointerOutlivesLastUse.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowPointerOutlivesLastUse.milo)</sub>
+
 ## `'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 11)` {#v-may-reallocate-here-while-ps-still-points-into-its-buffer-from-v-ptr-on-line-11}
 
 A `*T` pushed into a container makes the container the holder: no binding of `*u8` exists in the program text, but `ps` points into `v`'s buffer for as long as it lives.
@@ -5746,6 +5765,21 @@ fn main(): void {
 
 <sub>[tests/errors/borrowViewSurvivesWhileForIn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesWhileForIn.milo)</sub>
 
+## `cannot assign to 'vs[...]' because 'vs' is being iterated` {#cannot-assign-to-vs-because-vs-is-being-iterated}
+
+A view through an element of a container (`vs[0][1..3]`) is deep: overwriting the element frees the buffer the view points into, so an element write is a conflict with it (a shallow view of `vs` is not).
+
+```milo skip
+fn main(): void {
+    var vs: Vec<Vec<i64>> = [[1, 2, 3], [4, 5, 6]]
+    let s = vs[0][1..3]
+    vs[0] = [7]
+    print(s.len())
+}
+```
+
+<sub>[tests/errors/borrowDeepViewElemAssign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowDeepViewElemAssign.milo)</sub>
+
 ## `cannot assign to immutable variable 'p.x'` {#cannot-assign-to-immutable-variable-p-x}
 
 A `?&T` unwraps to a shared `&T`. After the unwrap it is an ordinary second-class reference and every existing rule applies unchanged — there is no new reference kind here to write a new rule for.
@@ -6017,6 +6051,24 @@ fn main() {
 
 <sub>[tests/errors/forInFieldMutate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInFieldMutate.milo)</sub>
 
+## `cannot call 'push' on 'G' while a loop iterates over it` {#cannot-call-push-on-g-while-a-loop-iterates-over-it}
+
+A for-in over a mutable global borrows the global for the whole body (src/borrow-flow.ts: the loop's iteration loan on "G#g"), so pushing to it inside the loop is the loop conflict, named as such.
+
+```milo skip
+var G: Vec<i64> = Vec.new()
+
+pub fn main(): i32 {
+    G.push(1)
+    for x in G {
+        G.push(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/borrowFlowGlobalForInPush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowFlowGlobalForInPush.milo)</sub>
+
 ## `cannot call 'push' on 'items' while 'items.each' borrows it` {#cannot-call-push-on-items-while-items-each-borrows-it}
 
 @note: 7:5 'items.each' borrows 'items' until its callback returns A callback over its own receiver names the call that holds the borrow.
@@ -6150,6 +6202,23 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/borrowViewSurvivesForInBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesForInBody.milo)</sub>
+
+## `cannot call 'push' on 'vs' while a loop iterates over it` {#cannot-call-push-on-vs-while-a-loop-iterates-over-it}
+
+A for-in over an element of a container (`vs[0]`) borrows the whole container: the element place is widened to `vs`, so growing `vs` inside the loop (which could move the element) is the loop conflict.
+
+```milo skip
+pub fn main(): i32 {
+    var vs: Vec<Vec<i64>> = Vec.new()
+    vs.push([1, 2])
+    for x in vs[0] {
+        vs.push([x])
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/borrowFlowIndexedForInPush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowFlowIndexedForInPush.milo)</sub>
 
 ## `cannot call 'push' on 'xs' while 'r' borrows it` {#cannot-call-push-on-xs-while-r-borrows-it}
 
