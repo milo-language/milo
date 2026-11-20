@@ -122,7 +122,7 @@ if (list && diffs.length > 0) {
 }
 // A gate: any difference fails, and so does an agreement count below the floor, so a template regex
 // that stops matching cannot pass as "0 differences". Raise MIN_AGREE as slices add templates.
-const MIN_AGREE = 66;
+const MIN_AGREE = 68;
 if (!args.includes("--only") && (walkOnly + flowOnly > 0 || agree < MIN_AGREE)) {
   console.error(`borrow-shadow: FAIL (${walkOnly + flowOnly} differences, ${agree} agree, floor ${MIN_AGREE})`);
   process.exit(1);

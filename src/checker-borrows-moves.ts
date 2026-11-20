@@ -380,6 +380,15 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
             `a closure capture, or a live slice, reference or loop over this variable, still points into it: moving it would leave that borrow dangling`);
           return;
         }
+        // Pointer borrows on the moved field: dead from here unless the move carries them to
+        // the new binding (`pointerMoveKeepsHolders`), as for a whole-variable move.
+        if (ap && rinfo && rinfo.borrowed) {
+          const hit = (i: number) => rinfo.borrowKinds?.[i] === "pointer" && c.borrowCollides(rinfo.borrowedPaths?.[i], ap.fields);
+          if (!c.pointerMoveKeepsHolders) {
+            (rinfo.borrowHolders ?? []).forEach((h, i) => { if (h && hit(i) && !h.info.pointerSourceMoved) h.info.pointerSourceMoved = { root: h.root, call: h.call, line: h.line }; });
+          }
+          c.retainBorrows(rinfo, (_, i) => !hit(i));
+        }
         c.movedExprs.add(expr);
       } else if (!c.isExtractorKey(expr)) {
         // `replace` is only offered for `&mut`: it swaps something in, which needs write

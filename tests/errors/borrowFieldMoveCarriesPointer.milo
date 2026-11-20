@@ -1,0 +1,11 @@
+// Moving a field out keeps the pointer into it alive in the new owner: the push can
+// reallocate the buffer the pointer reads.
+struct H { items: Vec<i64> }
+fn main(): void {
+    let h = H { items: [1, 2, 3, 4, 5, 6, 7, 8] }
+    let p1 = h.items.ptr()
+    var w2 = h.items
+    w2.push(9)
+    unsafe { print(*p1) }
+}
+// @error: 'w2' may reallocate here while 'p1' still points into its buffer (from 'h.items.ptr()' on line 6)

@@ -228,6 +228,11 @@ test("moving a nested field out while a view of it is live is a conflict", () =>
     .toEqual(["6: cannot move 'a.h.items' while 's' borrows 'a'"]);
 });
 
+test("a field move carries the pointer into it to the new binding", () => {
+  expect(flow(`${H}fn main(): i32 {\n    let h = H { items: [7, 9], other: [1] }\n    let p = h.items.ptr()\n    var w = h.items\n    w.push(9)\n    unsafe { print(*p) }\n    return 0\n}`))
+    .toEqual(["7: 'w' may reallocate here while 'p' still points into its buffer (from 'h.items.ptr()' on line 5)"]);
+});
+
 test("moving a field no view points into is fine, and so is moving it after the view's last use", () => {
   expect(flow(`${H}fn main(): i32 {\n    let h = H { items: [7, 9], other: [1] }\n    let s = h.other[0..1]\n    var w = h.items\n    w.push(9)\n    print(s[0])\n    return 0\n}`)).toEqual([]);
   expect(flow(`${H}fn main(): i32 {\n    let h = H { items: [7, 9], other: [1] }\n    let s = h.items[0..1]\n    print(s[0])\n    var w = h.items\n    w.push(9)\n    return 0\n}`)).toEqual([]);

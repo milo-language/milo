@@ -226,7 +226,7 @@ export class Builder {
         cur = this.expr(s.value, cur);
         const useNode = cur;
         const id = this.declare(s.name);
-        if (this.borrowEvents && s.value.kind === "Ident" && this.nodes[useNode]?.use !== undefined && this.nodes[useNode]!.expr === s.value) this.nodes[useNode]!.carryTo = id;
+        if (this.borrowEvents && (s.value.kind === "Ident" || s.value.kind === "FieldAccess") && this.nodes[useNode]?.use !== undefined && this.nodes[useNode]!.expr === s.value) this.nodes[useNode]!.carryTo = id;
         if (s.value.kind === "Closure") this.noteClosure(id, s.value);
         // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);

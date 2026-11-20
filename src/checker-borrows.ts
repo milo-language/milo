@@ -360,9 +360,27 @@ export function errorIfReturnedPointerDangles(c: TypeChecker, value: Expr, sp?: 
 // invalidated by `let w = v`, but its obligation now belongs to `w`. Snapshot the
 // pointer borrows a whole-variable initializer carries BEFORE `tryMove` releases them
 // from the source; `carryPointerBorrows` re-attaches them to the new binding.
-export function pointerBorrowsCarriedBy(c: TypeChecker, value: Expr): { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] } | null {
-  // ident-ok: only a whole-variable move (`let w = v`) carries the borrows; a field or
-  // element move leaves the source's buffer, and its holders, where they are.
+export function pointerBorrowsCarriedBy(c: TypeChecker, value: Expr): { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[]; field?: boolean } | null {
+  // A non-Copy field of an owned root moves its buffer to the new binding just as a whole
+  // variable does, so the pointer borrows on that field path follow it (`let w = h.items`).
+  if (value.kind === "FieldAccess") {
+    const ft = c.exprTypes.get(value);
+    const ap = c.accessPath(value);
+    const root = ap ? c.lookup(ap.root) : null;
+    if (!ft || c.isCopyType(ft) || !ap || ap.fields === null || !root || !root.borrowed || root.type.tag === "ref" || c.borrowBasePath(value) !== null) return null;
+    const holders: PointerHolder[] = [];
+    const paths: (string[] | null)[] = [];
+    const fields = ap.fields;
+    (root.borrowHolders ?? []).forEach((h, i) => {
+      if (!h || root.borrowKinds?.[i] !== "pointer" || !c.borrowCollides(root.borrowedPaths?.[i], fields)) return;
+      const p = root.borrowedPaths?.[i];
+      holders.push(h);
+      paths.push(p === null || p === undefined ? null : p.slice(fields.length));
+    });
+    return holders.length > 0 ? { from: root, paths, holders, field: true } : null;
+  }
+  // ident-ok: a whole-variable move (`let w = v`) carries the borrows; an element move
+  // leaves the source's buffer, and its holders, where they are.
   if (value.kind !== "Ident") return null;
   const info = c.lookup(value.name);
   if (!info || !c.onlyPointerBorrows(info) || !info.borrowHolders || !info.borrowedPaths) return null;
@@ -372,11 +390,11 @@ export function pointerBorrowsCarriedBy(c: TypeChecker, value: Expr): { from: Va
   return holders.length > 0 ? { from: info, paths, holders } : null;
 }
 
-export function carryPointerBorrows(c: TypeChecker, carried: { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] }, toName: string): void {
+export function carryPointerBorrows(c: TypeChecker, carried: { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[]; field?: boolean }, toName: string): void {
   const to = c.lookup(toName);
   // Only a binding that actually took ownership carries the borrow: a Copy source is
   // still the owner, `tryMoveLeaf` left its borrows in place, and there is nothing to carry.
-  if (!to || !carried.from.everMoved) return;
+  if (!to || (!carried.from.everMoved && !carried.field)) return;
   carried.holders.forEach((h, i) => {
     c.pushBorrow(to, carried.paths[i], "pointer", h, null);
     addPointerFreeze(h.info, to);
