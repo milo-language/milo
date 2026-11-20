@@ -1,0 +1,11 @@
+// A write inside `unsafe` is the one the checker lets through a live pointer (an element write never
+// reallocates); outside `unsafe` it is the pointer conflict.
+// @expect: 5
+fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    let p = v.ptr()
+    unsafe {
+        v[0] = 5
+        print(*p)
+    }
+}

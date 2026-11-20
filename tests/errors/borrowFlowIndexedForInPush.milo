@@ -1,0 +1,11 @@
+// A for-in over an element of a container (`vs[0]`) borrows the whole container: the element place is
+// widened to `vs`, so growing `vs` inside the loop (which could move the element) is the loop conflict.
+// @error: cannot call 'push' on 'vs' while a loop iterates over it
+pub fn main(): i32 {
+    var vs: Vec<Vec<i64>> = Vec.new()
+    vs.push([1, 2])
+    for x in vs[0] {
+        vs.push([x])
+    }
+    return 0
+}

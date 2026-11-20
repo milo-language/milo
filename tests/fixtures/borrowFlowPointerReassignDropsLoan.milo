@@ -1,0 +1,10 @@
+// Reassigning a pointer drops the loan it held: `p` points into `b` now, so growing `a` is fine.
+// @expect: 4
+fn main(): void {
+    var a: Vec<i64> = [1, 2, 3]
+    var b: Vec<i64> = [4, 5, 6]
+    var p = a.ptr()
+    p = b.ptr()
+    a.push(7)
+    unsafe { print(*p) }
+}

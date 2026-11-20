@@ -1,0 +1,10 @@
+// An element write inside a v.each callback never reallocates, so it is no conflict with the callback's
+// borrow of `items` (growing it would be: errors/eachMutateReceiver).
+// @expect: 5
+fn main(): void {
+    var items: Vec<i64> = [1, 2]
+    items.each((x: &i64) => {
+        items[0] = 5
+    })
+    print(items[0])
+}

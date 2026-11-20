@@ -1,0 +1,12 @@
+// A for-in over a mutable global borrows the global for the whole body (src/borrow-flow.ts: the loop's
+// iteration loan on "G#g"), so pushing to it inside the loop is the loop conflict, named as such.
+// @error: cannot call 'push' on 'G' while a loop iterates over it
+var G: Vec<i64> = Vec.new()
+
+pub fn main(): i32 {
+    G.push(1)
+    for x in G {
+        G.push(x)
+    }
+    return 0
+}

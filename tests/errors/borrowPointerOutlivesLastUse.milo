@@ -1,0 +1,9 @@
+// A pointer loan lasts to the end of the holder's block, not to its last use (C code may keep the
+// pointer), so the push is rejected although `p` is never read again.
+// @error: 'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 6)
+fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    let p = v.ptr()
+    unsafe { print(*p) }
+    v.push(4)
+}

@@ -1,0 +1,14 @@
+// Moving a local keeps its buffer where it is: the pointer's loan follows the buffer into `w` and no
+// longer covers `v`, so `v` can be assigned again.
+// @expect: 1
+// @expect: 3
+// @expect: 2
+fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    let p = v.ptr()
+    let w = v
+    v = [4, 5]
+    unsafe { print(*p) }
+    print(w.len())
+    print(v.len())
+}
