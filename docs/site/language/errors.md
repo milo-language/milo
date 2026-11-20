@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 603 distinct messages across 772 programs the compiler must reject.
+Every error message the test suite pins: 611 distinct messages across 781 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -166,6 +166,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Vec' takes 1 type argument, got 2`](#vec-takes-1-type-argument-got-2)
 - [`'Vec<i64>.fromJson' needs 'i64' to have a Json codec`](#vec-i64-fromjson-needs-i64-to-have-a-json-codec)
 - [`'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
+- [`'w2' may reallocate here while 'p1' still points into its buffer (from 'a.b.items.ptr()' on line 6)`](#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-a-b-items-ptr-on-line-6)
+- [`'w2' may reallocate here while 'p1' still points into its buffer (from 'h.items.ptr()' on line 6)`](#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-h-items-ptr-on-line-6)
 - [`'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)`](#writer-writes-the-global-g-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15)
 - [`'x' declared as Item (b.milo) but got Item (a.milo)`](#x-declared-as-item-b-milo-but-got-item-a-milo)
 - [`'x' shadows an outer binding`](#x-shadows-an-outer-binding)
@@ -222,6 +224,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot assign to 'n' because it is borrowed`](#cannot-assign-to-n-because-it-is-borrowed)
 - [`cannot assign to 's' while 'slice' borrows it`](#cannot-assign-to-s-while-slice-borrows-it)
 - [`cannot assign to 's' while 'view' borrows it`](#cannot-assign-to-s-while-view-borrows-it)
+- [`cannot assign to 't' while 's' borrows it`](#cannot-assign-to-t-while-s-borrows-it)
+- [`cannot assign to 'v0' while 's3' borrows it`](#cannot-assign-to-v0-while-s3-borrows-it)
 - [`cannot assign to immutable variable 'p.x'`](#cannot-assign-to-immutable-variable-p-x)
 - [`cannot assign to immutable variable 'STORE.n'`](#cannot-assign-to-immutable-variable-store-n)
 - [`cannot assign to immutable variable 'x'`](#cannot-assign-to-immutable-variable-x)
@@ -233,6 +237,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'insert' on 'm' while 'm.getOrInsertWith' borrows it`](#cannot-call-insert-on-m-while-m-getorinsertwith-borrows-it)
 - [`cannot call 'insert' on 'm' while 'm.modify' borrows it`](#cannot-call-insert-on-m-while-m-modify-borrows-it)
 - [`cannot call 'pop' on 'v' while a loop iterates over it`](#cannot-call-pop-on-v-while-a-loop-iterates-over-it)
+- [`cannot call 'pop' on 'v0' while a loop iterates over it`](#cannot-call-pop-on-v0-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'b' while a loop iterates over it`](#cannot-call-push-on-b-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'items' while 'items.each' borrows it`](#cannot-call-push-on-items-while-items-each-borrows-it)
 - [`cannot call 'push' on 'items' while a loop iterates over it`](#cannot-call-push-on-items-while-a-loop-iterates-over-it)
@@ -240,6 +245,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'push' on 't' because it is borrowed`](#cannot-call-push-on-t-because-it-is-borrowed)
 - [`cannot call 'push' on 't' while 'v' borrows it`](#cannot-call-push-on-t-while-v-borrows-it)
 - [`cannot call 'push' on 'v' while a loop iterates over it`](#cannot-call-push-on-v-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 'v0' while 's3' borrows it`](#cannot-call-push-on-v0-while-s3-borrows-it)
 - [`cannot call 'push' on 'xs' while 'r' borrows it`](#cannot-call-push-on-xs-while-r-borrows-it)
 - [`cannot call 'push' on 'xs' while a loop iterates over it`](#cannot-call-push-on-xs-while-a-loop-iterates-over-it)
 - [`cannot call 'setByte' on 's' while 'view' borrows it`](#cannot-call-setbyte-on-s-while-view-borrows-it)
@@ -274,9 +280,11 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot iterate 'v' with '&mut': it is not mutable`](#cannot-iterate-v-with-mut-it-is-not-mutable)
 - [`cannot move`](#cannot-move)
 - [`cannot move '{ … }.name' out of 'R', which implements Drop`](#cannot-move-name-out-of-r-which-implements-drop)
+- [`cannot move 'a.b.items' while 's0' borrows 'a'`](#cannot-move-a-b-items-while-s0-borrows-a)
 - [`cannot move 'b' while 's' borrows it`](#cannot-move-b-while-s-borrows-it)
 - [`cannot move 'd.a' out of the borrowed 'd'`](#cannot-move-d-a-out-of-the-borrowed-d)
 - [`cannot move 'd.text' out of the borrowed 'd'`](#cannot-move-d-text-out-of-the-borrowed-d)
+- [`cannot move 'h.items' while 's0' borrows 'h'`](#cannot-move-h-items-while-s0-borrows-h)
 - [`cannot move 'needle' out of a loop`](#cannot-move-needle-out-of-a-loop)
 - [`cannot move 'r.name' out of the borrowed 'r'`](#cannot-move-r-name-out-of-the-borrowed-r)
 - [`cannot move 's' out of a loop`](#cannot-move-s-out-of-a-loop)
@@ -4454,6 +4462,43 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/ptrOutlivesMovedSource.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrOutlivesMovedSource.milo)</sub>
 
+## `'w2' may reallocate here while 'p1' still points into its buffer (from 'a.b.items.ptr()' on line 6)` {#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-a-b-items-ptr-on-line-6}
+
+Same through a nested field path.
+
+```milo skip
+struct B { items: Vec<i64> }
+struct A { b: B }
+fn main(): void {
+    let a = A { b: B { items: [1, 2, 3, 4, 5, 6, 7, 8] } }
+    let p1 = a.b.items.ptr()
+    var w2 = a.b.items
+    w2.push(9)
+    unsafe { print(*p1) }
+}
+// @error: 'w2' may reallocate here while 'p1' still points into its buffer (from 'a.b.items.ptr()' on line 6)
+```
+
+<sub>[tests/errors/borrowNestedFieldMoveCarriesPointer.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowNestedFieldMoveCarriesPointer.milo)</sub>
+
+## `'w2' may reallocate here while 'p1' still points into its buffer (from 'h.items.ptr()' on line 6)` {#w2-may-reallocate-here-while-p1-still-points-into-its-buffer-from-h-items-ptr-on-line-6}
+
+Moving a field out keeps the pointer into it alive in the new owner: the push can reallocate the buffer the pointer reads.
+
+```milo skip
+struct H { items: Vec<i64> }
+fn main(): void {
+    let h = H { items: [1, 2, 3, 4, 5, 6, 7, 8] }
+    let p1 = h.items.ptr()
+    var w2 = h.items
+    w2.push(9)
+    unsafe { print(*p1) }
+}
+// @error: 'w2' may reallocate here while 'p1' still points into its buffer (from 'h.items.ptr()' on line 6)
+```
+
+<sub>[tests/errors/borrowFieldMoveCarriesPointer.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowFieldMoveCarriesPointer.milo)</sub>
+
 ## `'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)` {#writer-writes-the-global-g-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15}
 
 A bound `*T` into a global is an element view like a slice binding: a callee that pushes to the global frees the buffer it points into. The main pass cannot see a write made inside another function; the global walk has the write summary and the view list.
@@ -5648,6 +5693,59 @@ fn main(): i32 {
 
 <sub>[tests/errors/borrowSliceMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowSliceMethod.milo)</sub>
 
+## `cannot assign to 't' while 's' borrows it` {#cannot-assign-to-t-while-s-borrows-it}
+
+A string `lines()` loop ends only its own borrow, not a view taken before it.
+
+```milo skip
+fn main(): void {
+    var t = "a b c"
+    let s = t[0..1]
+    for l in t.lines() { }
+    t = "xyz"
+    print(s)
+}
+// @error: cannot assign to 't' while 's' borrows it
+```
+
+<sub>[tests/errors/borrowViewSurvivesLinesLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesLinesLoop.milo)</sub>
+
+## `cannot assign to 'v0' while 's3' borrows it` {#cannot-assign-to-v0-while-s3-borrows-it}
+
+An empty for-in over a Vec ends only its own iteration borrow, not the slice view.
+
+```milo skip
+fn main(): void {
+    var v0 = [1, 2, 3]
+    let s3 = v0[0..1]
+    for x4 in v0 { }
+    v0 = [7, 2, 3]
+    print(s3[0])
+}
+// @error: cannot assign to 'v0' while 's3' borrows it
+```
+
+<sub>[tests/errors/borrowViewSurvivesEmptyForIn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesEmptyForIn.milo)</sub>
+
+A while loop around a for-in does not release the view either.
+
+```milo skip
+fn main(): void {
+    var v0 = [1, 2, 3]
+    let s3 = v0[0..1]
+    var i = 0
+    while i < 2 {
+        for x4 in v0 { }
+        i = i + 1
+    }
+    v0 = [7, 2, 3]
+    print(s3[0])
+}
+// @error: cannot assign to 'v0' while 's3' borrows it
+```
+
+<sub>[tests/errors/borrowViewSurvivesWhileForIn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesWhileForIn.milo)</sub>
+
 ## `cannot assign to immutable variable 'p.x'` {#cannot-assign-to-immutable-variable-p-x}
 
 A `?&T` unwraps to a shared `&T`. After the unwrap it is an ordinary second-class reference and every existing rule applies unchanged — there is no new reference kind here to write a new rule for.
@@ -5881,6 +5979,25 @@ pub fn main(): void {
 
 <sub>[tests/errors/forInMutRefPop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPop.milo)</sub>
 
+## `cannot call 'pop' on 'v0' while a loop iterates over it` {#cannot-call-pop-on-v0-while-a-loop-iterates-over-it}
+
+A pointer binding that goes out of scope releases only its pointer borrow: the loop's iteration borrow of the same Vec must still forbid the pop.
+
+```milo skip
+fn main(): void {
+    var v0: Vec<i64> = [8, 5, 2]
+    for x1 in v0 {
+        if x1 > 0 {
+            let p2 = v0.ptr()
+        }
+        v0.pop()
+    }
+}
+// @error: cannot call 'pop' on 'v0' while a loop iterates over it
+```
+
+<sub>[tests/errors/borrowLoopSurvivesPointerScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowLoopSurvivesPointerScope.milo)</sub>
+
 ## `cannot call 'push' on 'b' while a loop iterates over it` {#cannot-call-push-on-b-while-a-loop-iterates-over-it}
 
 `for it in b.items` holds a pointer into that Vec's buffer for the loop's life, so pushing to it reallocates the memory the loop is reading. This was accepted until 2026-08-16 and was a heap-use-after-free in safe code (ASan, zero `unsafe`): the for-in freeze only fired when the iterable was a bare IDENT, so `for x in v` was caught and `for x in b.items` was not.
@@ -6014,6 +6131,25 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/forInMutRefPush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPush.milo)</sub>
+
+## `cannot call 'push' on 'v0' while 's3' borrows it` {#cannot-call-push-on-v0-while-s3-borrows-it}
+
+A for-in with a body ends only its own iteration borrow: the view outlives the loop.
+
+```milo skip
+fn main(): void {
+    var v0: Vec<i64> = [1, 2, 3]
+    let s3 = v0[0..1]
+    for x4 in v0 {
+        print(x4)
+    }
+    v0.push(7)
+    print(s3[0])
+}
+// @error: cannot call 'push' on 'v0' while 's3' borrows it
+```
+
+<sub>[tests/errors/borrowViewSurvivesForInBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowViewSurvivesForInBody.milo)</sub>
 
 ## `cannot call 'push' on 'xs' while 'r' borrows it` {#cannot-call-push-on-xs-while-r-borrows-it}
 
@@ -6671,6 +6807,25 @@ fn main(): i32 {
 
 <sub>[tests/errors/destructureDropStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/destructureDropStruct.milo)</sub>
 
+## `cannot move 'a.b.items' while 's0' borrows 'a'` {#cannot-move-a-b-items-while-s0-borrows-a}
+
+Same hole through a nested field path.
+
+```milo skip
+struct B { items: Vec<i64> }
+struct A { b: B }
+fn main(): void {
+    let a = A { b: B { items: [7, 9, 5, 6] } }
+    let s0 = a.b.items[0..1]
+    var w1 = a.b.items
+    w1.push(9)
+    print(s0[0])
+}
+// @error: cannot move 'a.b.items' while 's0' borrows 'a'
+```
+
+<sub>[tests/errors/borrowNestedFieldMoveWhileViewed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowNestedFieldMoveWhileViewed.milo)</sub>
+
 ## `cannot move 'b' while 's' borrows it` {#cannot-move-b-while-s-borrows-it}
 
 moving the receiver away while its view is live drops the storage the view points into
@@ -6789,6 +6944,24 @@ struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfBorrow.milo)</sub>
+
+## `cannot move 'h.items' while 's0' borrows 'h'` {#cannot-move-h-items-while-s0-borrows-h}
+
+A field moved out while a slice of it is live: the new owner frees or regrows the buffer the slice points into.
+
+```milo skip
+struct H { items: Vec<i64> }
+fn main(): void {
+    let h = H { items: [7, 9, 5, 6, 1, 2, 3, 4] }
+    let s0 = h.items[0..1]
+    var w1 = h.items
+    w1.push(9)
+    print(s0[0])
+}
+// @error: cannot move 'h.items' while 's0' borrows 'h'
+```
+
+<sub>[tests/errors/borrowFieldMoveWhileViewed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowFieldMoveWhileViewed.milo)</sub>
 
 ## `cannot move 'needle' out of a loop` {#cannot-move-needle-out-of-a-loop}
 
