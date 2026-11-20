@@ -37,14 +37,10 @@ export class TypeChecker {
   warningConfig: WarningConfig;
   diagnostics: Diagnostic[] = [];
   // checkMutForInSource's "cannot use 'v' inside 'for x in &mut v'" errors by site, so a
-  // loop-freeze error at the same site can replace its less specific twin.
+  // loop-conflict error from src/borrow-flow.ts at the same site can replace its less specific twin.
   mutForInUses = new Map<string, Diagnostic>();
-  // Borrow errors waiting for the holder's next read, which becomes their "still used
-  // here" note. Keyed by the holder binding; entries die with the checker.
   // The finished-program view and the global write/park summary of checkPasses, kept for src/borrow-flow.ts.
   callFacts: { host: ProgramPassHost; view: ProgramView; summary: { writes: Map<string, Set<string>>; parks: Set<string> } | undefined } | undefined;
-  // The walk's flow-class borrow errors, dropped from `diagnostics` at the end of check (see checker-core check).
-  pendingUseNotes = new Map<VarInfo, { diag: Diagnostic; name: string }[]>();
   // Deferred Vec element inference: `var v = Vec.new()` with no annotation gets a
   // placeholder element object, resolved in-place from the first `v.push(x)`.
   // inferVecElems holds the live placeholder objects (identity set); pendingInferVecs
