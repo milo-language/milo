@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: verification
-purpose: the machine-checked statement of what a proven contract means and what a build does with an unproven one
-key-files: proofs/MiniMilo/Contracts.lean, proofs/MiniMilo/Example.lean, proofs/MiniMilo/Audit.lean
-update-when: a contract rule changes (R-CONTRACT-*), a check level changes, or a theorem is added or weakened
-last-verified: 2026-11-09 (lake build green on Lean 4.35.0, no Mathlib)
+purpose: the machine-checked statement of what a proven contract means, what a build does with an unproven one, and why an accepted program never reads a moved place
+key-files: proofs/MiniMilo/Contracts.lean, proofs/MiniMilo/Example.lean, proofs/MiniMilo/Moves.lean, proofs/MiniMilo/MovesExample.lean, proofs/MiniMilo/Audit.lean
+update-when: a contract rule changes (R-CONTRACT-*), a check level changes, a move-flow rule or mutant changes, or a theorem is added or weakened
+last-verified: 2026-11-19 (lake build green on Lean 4.35.0, no Mathlib)
 -->
 
 # Mini-Milo contract soundness, checked by Lean
@@ -72,6 +72,62 @@ Said plainly, because a soundness theorem is only as wide as its model.
   nothing about it. `decreases` is not modelled.
 - **Loop invariants are checked before each test of the condition**, which is where the
   compiler puts the check.
+
+## Move soundness
+
+`MiniMilo/Moves.lean` models the move analysis in `src/move-flow.ts`. A function body is
+the control-flow graph of place events that move-flow builds. Branch conditions are left
+out, so the theorem covers every path. The analysis is stated as the constraints its result
+meets (a liveness solution, the string decision, the acceptance rules), so any solution is
+sound, including move-flow's fixpoint.
+
+| Theorem | Statement | Why it matters |
+|---|---|---|
+| `sound` | On every run of an accepted body, with move-flow's string decisions, no node reads a moved place (E-STUCK) or moves a borrowed one (T-NO-MOVE-OUT). | The property the interpreter checks on the corpus, for every program. |
+| `strings_never_rejected` | A body whose only moves are of strings is accepted. | Strings are values: their moves become shares, never errors. |
+| `noLend_stuck` | Without the lend rule (a call reads nothing), the analysis accepts `f(s, s)` with `f(a: &string, b: string)`, and the run gets stuck. | The bug 5dbc074a fixed. `sound` fails for that analysis, so the rule is needed for the proof, not just for one fixture. |
+| `lend_shares`, `lend_never_stuck` | With the rule, the second argument shares and the run is never stuck. | |
+
+### Rule trace
+
+Each rule of move-flow is a mutant in `scripts/move-mutants.ts` (the gate that a test notices
+when the rule breaks). Each row gives the mutant's counterpart in the model.
+`tests/proofs.test.ts` fails when a mutant has no row.
+
+| Mutant | Model |
+|---|---|
+| `lend-off` | `Ev.call` reads its lent places (`Ev.reads`); `noLend_stuck` |
+| `string-always-move` | `decide`: move only when `liveOut` is false |
+| `capture-always-move` | `decide`, on the `Ev.str` event at a `move` closure's creation |
+| `ref-param-owned` | `borrowed`: `decide` shares, `Accepted.takeOwned` rejects a take |
+| `view-let-owned` | `borrowed`, as above |
+| `pattern-view-owned` | `borrowed`, as above |
+| `closure-param-owned` | `borrowed`, as above |
+| `assign-no-revive` | `Ev.assigns`: `update` clears the place, `Live.flows` stops at it |
+| `forget-soft` | `Ev.take`: `forget(x)` is a take of `x` |
+| `heap-deref-soft` | `Ev.take` of the payload place (the model's places are whole variables) |
+| `no-loop-carry` | `Live.flows` over a back edge, like any edge ("out of a loop" is only the wording) |
+| `never-call-falls-through` | graph construction: a node with no successor ends the run |
+| `continue-no-back-edge` | graph construction: the edge from `continue` to the loop head |
+| `subject-moves` | graph construction: where the take of a match subject sits |
+| `closure-reads-nothing` | graph construction: using a by-reference closure is a `call` that reads its captures |
+| `move-closure-borrows` | graph construction: a `move` closure's creation takes its captures |
+| `overlap-exact` | not modelled: places are whole variables, no field paths |
+| `call-once-reusable` | not modelled: closures that may run only once |
+
+### What the move model leaves out
+
+- **Graph construction.** The model takes the graph as given. `sound` holds for any graph
+  that has every edge and every event the program can take, so a builder bug that drops an
+  edge or an event is outside it. Six of the mutant rows above sit there, and the mutation
+  gate is what checks them.
+- **Field paths.** A place is a variable. move-flow tracks `v.name` and `v.res.id` and treats
+  overlapping places as one.
+- **Closures as values.** Captures appear only as events at creation and at calls.
+- **The link to `src/move-flow.ts` is by test, as for contracts.** The interpreter, which is
+  now strict about moves through references (T-NO-MOVE-OUT for strings too), checks `sound`'s
+  conclusion on every fixture. `scripts/move-mutants.ts` checks that each rule in the table is
+  one the tests notice when it breaks.
 
 ## Extending it
 

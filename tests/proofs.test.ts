@@ -9,6 +9,7 @@ const PROOFS = join(import.meta.dir, "..", "proofs");
 const LEAN_DIR = join(PROOFS, "MiniMilo");
 const read = (f: string) => readFileSync(join(LEAN_DIR, f), "utf-8");
 const HEADLINE = ["frame", "sound", "proven_fn", "level_irrelevant", "checked_call"];
+const MOVES_HEADLINE = ["sound", "strings_never_rejected"];
 // Lean has exactly these three; a fourth name in the audit means someone added an axiom.
 const LEAN_AXIOMS = new Set(["propext", "Classical.choice", "Quot.sound"]);
 
@@ -26,7 +27,7 @@ test("no Lean file uses sorry, a declared axiom or an unchecked evaluator", () =
   expect(escapeHatches("axiom cheat : False")).toEqual(["axiom"]);
   expect(escapeHatches("/- a sorry in prose -/ theorem ok : True := trivial -- no axiom")).toEqual([]);
   const files = readdirSync(LEAN_DIR).filter(f => f.endsWith(".lean"));
-  expect(files.sort()).toEqual(["Audit.lean", "Contracts.lean", "Example.lean"]);
+  expect(files.sort()).toEqual(["Audit.lean", "Contracts.lean", "Example.lean", "Moves.lean", "MovesExample.lean"]);
   for (const f of files) expect({ f, found: escapeHatches(read(f)) }).toEqual({ f, found: [] });
 });
 
@@ -48,6 +49,12 @@ test("every theorem is under the axiom audit, and the audit names only Lean's ow
     if (name === "i64_some" || name === "countTo_verified") continue; // lemmas under prog_verified
     expect({ name, audited: audited.has(`MiniMilo.Example.${name}`) }).toEqual({ name: name!, audited: true });
   }
+  for (const [, name] of read("MovesExample.lean").matchAll(/^theorem (\w+)/gm))
+    expect({ name, audited: audited.has(`MiniMilo.Moves.Example.${name}`) }).toEqual({ name: name!, audited: true });
+  for (const t of MOVES_HEADLINE) {
+    expect(audited.has(`MiniMilo.Moves.${t}`)).toBe(true);
+    expect(read("Moves.lean")).toMatch(new RegExp(`^theorem ${t}\\b`, "m"));
+  }
   const contracts = read("Contracts.lean");
   for (const t of HEADLINE) expect(contracts).toMatch(new RegExp(`^theorem ${t}\\b`, "m"));
 });
@@ -59,6 +66,18 @@ test("the README names the theorems that exist", () => {
   const cited = [...readme.matchAll(/`(lies_\w+|countTo\w*)`/g)].map(m => m[1]!);
   expect(cited.length).toBeGreaterThan(0);
   for (const t of cited) expect(example).toContain(t);
+});
+
+// Every move-flow rule pinned by a mutant has a row in the README trace: modelled, outside the model's
+// graph, or not modelled. A new mutant (a new rule) cannot land without saying which.
+test("every move-flow mutant has a row in the proofs README rule trace", () => {
+  const mutants = [...readFileSync(join(import.meta.dir, "..", "scripts", "move-mutants.ts"), "utf-8").matchAll(/\bid: "([\w-]+)"/g)].map(m => m[1]!);
+  expect(mutants.length).toBeGreaterThanOrEqual(18);
+  const readme = readFileSync(join(PROOFS, "README.md"), "utf-8");
+  const trace = readme.slice(readme.indexOf("### Rule trace"), readme.indexOf("### What the move model leaves out"));
+  const rows = new Set([...trace.matchAll(/^\| `([\w-]+)` \|/gm)].map(m => m[1]!));
+  expect(mutants.filter(m => !rows.has(m))).toEqual([]);
+  expect([...rows].filter(r => !mutants.includes(r))).toEqual([]);
 });
 
 const lake = spawnSync("lake", ["--version"], { encoding: "utf-8" });

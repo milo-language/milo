@@ -6,6 +6,7 @@ adds one.
 -/
 import MiniMilo.Contracts
 import MiniMilo.Example
+import MiniMilo.MovesExample
 
 /-- info: 'MiniMilo.frame' depends on axioms: [propext] -/
 #guard_msgs in
@@ -42,3 +43,31 @@ import MiniMilo.Example
 /-- info: 'MiniMilo.Example.lies_returns_when_unchecked' depends on axioms: [propext] -/
 #guard_msgs in
 #print axioms MiniMilo.Example.lies_returns_when_unchecked
+
+/-- info: 'MiniMilo.Moves.sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.sound
+
+/-- info: 'MiniMilo.Moves.strings_never_rejected' depends on axioms: [propext] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.strings_never_rejected
+
+/-- info: 'MiniMilo.Moves.Example.noLend_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.Example.noLend_accepted
+
+/-- info: 'MiniMilo.Moves.Example.noLend_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.Example.noLend_stuck
+
+/-- info: 'MiniMilo.Moves.Example.lend_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.Example.lend_accepted
+
+/-- info: 'MiniMilo.Moves.Example.lend_shares' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.Example.lend_shares
+
+/-- info: 'MiniMilo.Moves.Example.lend_never_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Moves.Example.lend_never_stuck
