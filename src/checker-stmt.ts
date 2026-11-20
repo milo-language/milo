@@ -181,8 +181,9 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
       }
       for (const vi of newlyFrozen) chk.unfreeze(vi);
-      if (bindingType.tag === "ref") chk.refLets.add(stmt);
-      chk.declare(stmt.name, { type: bindingType, mutable: false, borrowed: false, read: false, span: sp });
+      let viewsAnother = false;
+      if (bindingType.tag === "ref") { chk.refLets.add(stmt); viewsAnother = true; }
+      chk.declare(stmt.name, { type: bindingType, mutable: false, borrowed: false, read: false, span: sp, viewsAnother });
       const letInfo = chk.lookup(stmt.name);
       if (letInfo && bindingType.tag === "string") {
         const c = chk.sqlConstOf(value);
@@ -225,8 +226,9 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
             `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
         }
         for (const vi of newlyFrozen) chk.unfreeze(vi);
-        if (bindingType.tag === "ref") chk.refLets.add(stmt);
-        chk.declare(stmt.name, { type: bindingType, mutable: true, borrowed: false, read: false, span: sp });
+        let viewsAnother = false;
+        if (bindingType.tag === "ref") { chk.refLets.add(stmt); viewsAnother = true; }
+        chk.declare(stmt.name, { type: bindingType, mutable: true, borrowed: false, read: false, span: sp, viewsAnother });
         const varInfo = chk.lookup(stmt.name);
         if (varInfo) chk.bindPointerViews(stmt.name, varInfo, value);
         if (varInfo) chk.noteClosureSources(varInfo, value);

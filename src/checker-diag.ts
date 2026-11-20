@@ -636,6 +636,7 @@ export function viewBindRoot(c: TypeChecker, stmt: LetDecl, hint: TypeKind | nul
   // A root that views another binding (`let s = v[0..1]`) is not the container: a
   // write to `v[0]` is legal while `s` lives and is invisible to a scan for `s`.
   if (info.freezes?.length || info.refInto) return null;
+  if (info.viewsAnother === true) return null;
   return p.root;
 }
 

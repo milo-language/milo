@@ -117,6 +117,9 @@ export interface VarInfo {
   // A ref pattern binding: the place it points into (root binding + steps), so the
   // call-site exclusivity check sees `inner` and the subject it came from as one place.
   refInto?: { root: unknown; name: string; steps: PlaceStep[] };
+  // A ref-typed `let`/`var` (`let s = v[0..1]`): it views another binding's storage, so it is
+  // never the container an element view-bind (viewLets) scans: a write to `v[0]` is invisible there.
+  viewsAnother?: boolean;
   // An unannotated `let x = <const-int-value>` whose width is still adaptable:
   // its value is built entirely from integer literals (directly, or as the arm
   // tails of an if/match expression), so it can be re-typed to a wider int on
