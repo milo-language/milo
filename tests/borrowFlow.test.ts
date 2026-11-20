@@ -131,3 +131,19 @@ test("an if-let payload that borrows the subject conflicts with a closure write 
     .toEqual(["14: cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'"]);
   expect(flow(`${head}    if let Slot.Full(x) = b.s {\n        print(x)\n        wipe()\n    }\n    return 0\n}`)).toEqual([]);
 });
+
+// Callback loans: the receiver of a builtin collection method is loaned to the callback literal's body.
+test("push on the receiver inside an each callback is a conflict that names the method", () => {
+  expect(flow(`fn main(): i32 {\n${VEC}    v.each((x: &i64) => {\n        v.push(1)\n    })\n    return 0\n}`))
+    .toEqual(["5: cannot call 'push' on 'v' while 'v.each' borrows it"]);
+});
+
+test("a HashMap modify callback that inserts into the map is a conflict", () => {
+  expect(flow(`fn main(): i32 {\n    var m: HashMap<string, i64> = HashMap.new()\n    m.insert("a", 1)\n    m.modify("a", (x: &mut i64): void => {\n        m.insert("b", 2)\n    })\n    return 0\n}`))
+    .toEqual(["5: cannot call 'insert' on 'm' while 'm.modify' borrows it"]);
+});
+
+test("the same write after the call, or an element write inside the callback, is fine (the loan is the callback's body)", () => {
+  expect(flow(`fn main(): i32 {\n${VEC}    v.each((x: &i64) => {\n        print(x)\n    })\n    v.push(1)\n    return 0\n}`)).toEqual([]);
+  expect(flow(`fn main(): i32 {\n${VEC}    v.each((x: &i64) => {\n        v[0] = 2\n    })\n    return 0\n}`)).toEqual([]);
+});

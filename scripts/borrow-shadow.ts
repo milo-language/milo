@@ -18,12 +18,12 @@ const list = args.includes("--list");
 
 // The in-scope message templates, in the order the table prints them.
 const TEMPLATES: [string, RegExp][] = [
-  ["call vs view", /^cannot call '.+' on '.+' while '[^'.]+' borrows .+$/],
+  ["call vs view", /^cannot call '.+' on '.+' while '[^']+' borrows .+$/],
   ["call vs loop", /^cannot call '.+' on '.+' while a loop iterates over .+$/],
-  ["assign vs view", /^cannot assign to '.+' while '[^'.]+' borrows .+$/],
+  ["assign vs view", /^cannot assign to '.+' while '[^']+' borrows .+$/],
   ["assign vs loop", /^cannot assign to '.+' while a loop iterates over .+$/],
   ["elem assign vs loop", /^cannot assign to '.+' because '.+' is being iterated$/],
-  ["move vs view", /^cannot move '[^']+' while '[^'.]+' borrows .+$/],
+  ["move vs view", /^cannot move '[^']+' while '[^']+' borrows .+$/],
   ["move vs loop", /^cannot move '[^']+' while a loop iterates over .+$/],
   ["call vs pointer", /^'.+' may reallocate here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
   ["assign vs pointer", /^'.+' is reassigned here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
@@ -137,7 +137,7 @@ if (list && diffs.length > 0) {
 }
 // A gate: any difference fails, and so does an agreement count below the floor, so a template regex
 // that stops matching cannot pass as "0 differences". Raise MIN_AGREE as slices add templates.
-const MIN_AGREE = 43;
+const MIN_AGREE = 47;
 if (!args.includes("--only") && (walkOnly + flowOnly > 0 || agree < MIN_AGREE)) {
   console.error(`borrow-shadow: FAIL (${walkOnly + flowOnly} differences, ${agree} agree, floor ${MIN_AGREE})`);
   process.exit(1);

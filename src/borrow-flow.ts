@@ -1,7 +1,7 @@
 // Borrow conflicts as dataflow, shadow mode: nothing here feeds the checker. A loan of place p held by
 // holder h is in force at a node iff the loan node reaches it with no redefinition of h in between and
 // h is still live there (an NLL region); a conflict is a write or move of something overlapping p
-// while a loan is in force. Slice scope: view lets, for-in loops and raw pointers into a local's buffer,
+// while a loan is in force. Slice scope: view lets, for-in loops, callback bodies and raw pointers into a local's buffer,
 // against method calls, assignments and moves of a local place. Reads the place graph of src/place-cfg.ts.
 import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
@@ -19,12 +19,13 @@ const rootName = (p: Place): string => p.slice(0, p.indexOf("#"));
 type Env = Builder["closureEnvs"] extends Map<unknown, infer V> ? V : never;
 
 // `inherit`: the writing closures a closure body captures (from the builder of the body that made the literal).
-function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env): Builder["closureEnvs"] {
+function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env, callback?: Builder["callbackLoan"]): Builder {
   const b = new Builder(cr, host, true);
   b.inheritedWrites = inherit;
+  b.callbackLoan = callback;
   b.fn(params, body);
   const nodes = b.nodes;
-  if (!nodes.some(n => n.loan !== undefined)) return b.closureEnvs;
+  if (!nodes.some(n => n.loan !== undefined)) return b;
   const liveIn = liveness(nodes);
 
   // A move of a local binding: a non-Copy value taken by value out of it.
@@ -94,7 +95,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     }
     for (let l = 0; l <= i; l++) {
       const ln = nodes[l]!;
-      if (ln.loan?.kind === "iteration" && ln.iterEnd !== undefined && i < ln.iterEnd && overlaps(ln.loan.place, place)) found.push(l);
+      if ((ln.loan?.kind === "iteration" || (ln.loan?.kind === "callback" && !elem)) && ln.iterEnd !== undefined && i < ln.iterEnd && overlaps(ln.loan.place, place)) found.push(l);
     }
     found.sort((x, y) => x - y);
     return found.length === 0 ? null : nodes[found[0]!]!;
@@ -107,7 +108,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
   };
   const emit = (loan: Node, prefix: string, root: string, span: Span | undefined) => {
     const l = loan.loan!;
-    report(span, l.kind === "view" ? text.whileHolderBorrows(prefix, root, l.name!) : text.whileLoopIterates(prefix, root));
+    report(span, l.kind === "view" || l.kind === "callback" ? text.whileHolderBorrows(prefix, root, l.name!) : text.whileLoopIterates(prefix, root));
   };
 
   nodes.forEach((n, i) => {
@@ -129,7 +130,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       if (loan !== null) emit(loan, text.movePrefix(e.name), e.name, e.span);
     }
   });
-  return b.closureEnvs;
+  return b;
 }
 
 // Every closure literal in a body, nested ones too (src/move-flow.ts closuresIn, but the literal itself so its captures can be looked up).
@@ -154,9 +155,9 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
   for (const f of fns) {
     if (fnSeen.has(f) || !f.body) continue;
     fnSeen.add(f);
-    const envs = analyzeBody(cr, host, f.params, f.body, out, reported);
+    const top = analyzeBody(cr, host, f.params, f.body, out, reported);
     // A closure body names the enclosing places it captures: they are places of its own graph too.
-    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, envs.get(c));
+    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c));
   }
   return out;
 }

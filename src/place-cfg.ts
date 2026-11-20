@@ -29,7 +29,7 @@ export interface Node {
   write?: BorrowWrite; // an operation that may reallocate or overwrite `place`: it conflicts with a loan in force
   loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
   carryTo?: Place; // on a move of a whole local into a new binding: the pointer loans on it now belong to that binding
-  iterEnd?: number; // on an iteration loan's head: the loan covers node ids from the head up to this one (exclusive)
+  iterEnd?: number; // on an iteration or callback loan's head: the loan covers node ids from the head up to this one (exclusive)
   succ: number[];
 }
 
@@ -37,7 +37,7 @@ export interface Node {
 // kind "closure": calling or passing a closure binding whose body writes the captured `place` (`via`, `fname`).
 export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string }
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
-export interface BorrowLoan { kind: "view" | "iteration" | "pointer"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
+export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
 
 export interface PlaceCfgHost {
   isCopyType(t: TypeKind): boolean;
@@ -77,6 +77,10 @@ export class Builder {
   closureEnvs = new Map<Expr, Map<string, { fname: string; writes: string[] }>>();
   // Set on a closure body's builder: the captured closure names it inherits (see closureEnvs).
   inheritedWrites: Map<string, { fname: string; writes: string[] }> | undefined;
+  // A closure literal passed to a builtin collection method (`v.each(cb)`): the receiver, by root name and field path, and the
+  // method's label ("v.each"). Its body is a separate graph, where the receiver is loaned for the body's whole length.
+  callbackOf = new Map<Expr, { root: string; path: string; label: string }>();
+  callbackLoan: { root: string; path: string; label: string } | undefined;
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
   // Edges that return to a loop head ("from>to"), and each head's loop statement span.
@@ -152,7 +156,10 @@ export class Builder {
           if (places.length > 0) this.closureWrites.set(p, { fname: name, places });
         }
       }
+      const cbPlace = this.callbackLoan === undefined ? null : this.lookup(this.callbackLoan.root);
+      const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label } }, cur));
       cur = this.stmts(body, cur);
+      if (cbHead >= 0) this.nodes[cbHead]!.iterEnd = this.nodes.length;
       const exit = this.join([cur, ...this.exits]);
       if (exit >= 0) this.nodes[exit]!.succ = [];
     });
@@ -180,10 +187,13 @@ export class Builder {
       if (name === "_") continue;
       const id = this.declare(name);
       if (views) this.borrowed.add(id);
-      // The first binding stands for the payload borrow of the subject, as the checker's attributeBorrows names it.
-      const loan = this.borrowEvents && attribute && first && sp !== null && !this.borrowed.has(sp.split(".")[0]!) && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true ? { kind: "view" as const, place: sp, holder: id, name } : undefined;
+      cur = this.node({ def: id }, cur);
+      // The first binding stands for the payload borrow of the subject, as the checker's attributeBorrows names it. A match arm
+      // is not attributed (the checker words that conflict without a holder), and a subject behind a reference is not frozen.
+      if (this.borrowEvents && attribute && first && sp !== null && !this.borrowed.has(sp.split(".")[0]!) && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true) {
+        cur = this.node({ loan: { kind: "view", place: sp, holder: id, name } }, cur);
+      }
       first = false;
-      cur = this.node({ def: id, ...(loan !== undefined && { loan }) }, cur);
     }
     return cur;
   }
@@ -394,7 +404,8 @@ export class Builder {
 
   // Each use of a binding holding a by-reference closure reads the places the closure captured. A call of it
   // (or handing it on, `via`) also writes the ones its body writes.
-  private readCaptures(place: Place, e: Expr, cur: number, via: "calling" | "passing" = "passing"): number {
+  private readCaptures(place: Place, e: Expr, cur: number): number {
+    const via = e.kind === "Call" ? "calling" : "passing";
     const cw = this.closureWrites.get(place);
     if (cw !== undefined) for (const p of cw.places) cur = this.node({ write: { kind: "closure", place: p, text: rootOfPlace(p), span: e.span, via, fname: cw.fname } }, cur);
     const c = this.closureCaps.get(place);
@@ -481,7 +492,7 @@ export class Builder {
         cur = this.lend(e.args, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
-        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur), "calling");
+        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
       case "MethodCall": {
@@ -491,6 +502,14 @@ export class Builder {
         if (this.borrowEvents) {
           const base = this.writeBase(e.object);
           if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span, unsafe: this.unsafeDepth > 0 } }, cur);
+          // `v.each(cb)`: the receiver is loaned to the callback's body.
+          const recv = this.cr.exprTypes.get(e.object);
+          const rbase = recv?.tag === "ref" ? recv.inner : recv;
+          if (base !== null && (rbase?.tag === "vec" || rbase?.tag === "hashmap")) {
+            for (const a of e.args) {
+              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^\d+/, ""), label: `${rootOfPlace(base.place)}.${e.method}` });
+            }
+          }
           // `ps.push(v.ptr())`: the container now holds the pointer.
           const holder = this.placeOf(e.object);
           const rt = this.cr.exprTypes.get(e.object);
