@@ -34,7 +34,8 @@ export interface Node {
 }
 
 // `unsafe`: written inside an `unsafe` block, which the checker lets write under a live pointer.
-export interface BorrowWrite { kind: "call" | "assign" | "elem"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean }
+// kind "closure": calling or passing a closure binding whose body writes the captured `place` (`via`, `fname`).
+export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string }
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
 export interface BorrowLoan { kind: "view" | "iteration" | "pointer"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
 
@@ -70,6 +71,12 @@ export class Builder {
   private closureCaps = new Map<Place, { fname: string; reads: { cap: string; place: Place; path: string }[] }>();
   // A binding holding a `move` closure whose body moves a capture out: calling it consumes it.
   private callsOnce = new Set<Place>();
+  // A binding holding a by-reference closure whose body writes a capture (directly or through a closure it calls): the places it writes.
+  private closureWrites = new Map<Place, { fname: string; places: Place[] }>();
+  // For each let-bound closure literal: the writing closures it captures, by name, so its body (a separate graph) can call them.
+  closureEnvs = new Map<Expr, Map<string, { fname: string; writes: string[] }>>();
+  // Set on a closure body's builder: the captured closure names it inherits (see closureEnvs).
+  inheritedWrites: Map<string, { fname: string; writes: string[] }> | undefined;
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
   // Edges that return to a loop head ("from>to"), and each head's loop statement span.
@@ -137,6 +144,14 @@ export class Builder {
         if (p.type && (p.type.isRef || p.type.isRefMut)) this.borrowed.add(id);
         cur = this.node({ def: id }, cur);
       }
+      if (this.inheritedWrites !== undefined) {
+        for (const [name, w] of this.inheritedWrites) {
+          const p = this.lookup(name);
+          if (p === null) continue;
+          const places = w.writes.flatMap(x => { const q = this.lookup(x.replace(/\..*$/, "")); return q === null ? [] : [q + x.slice(x.replace(/\..*$/, "").length)]; });
+          if (places.length > 0) this.closureWrites.set(p, { fname: name, places });
+        }
+      }
       cur = this.stmts(body, cur);
       const exit = this.join([cur, ...this.exits]);
       if (exit >= 0) this.nodes[exit]!.succ = [];
@@ -155,16 +170,20 @@ export class Builder {
   }
 
   // `inChain`: a let-chain clause, whose take the checker words as a plain transfer, not a pattern move.
-  private bindPattern(p: Pattern, cur: number, subject: Expr, inChain = false): number {
+  private bindPattern(p: Pattern, cur: number, subject: Expr, inChain = false, attribute = true): number {
     const views = this.subjectLends(subject);
     // A pattern that binds takes the payload only on the path where it matched.
     const sp = this.placeOf(subject);
     if (sp !== null && patternLeafNames(p).some(n => n !== "_")) cur = this.node({ use: sp, expr: subject, armTakes: true, plainTake: inChain }, cur);
+    let first = true;
     for (const name of patternLeafNames(p)) {
       if (name === "_") continue;
       const id = this.declare(name);
       if (views) this.borrowed.add(id);
-      cur = this.node({ def: id }, cur);
+      // The first binding stands for the payload borrow of the subject, as the checker's attributeBorrows names it.
+      const loan = this.borrowEvents && attribute && first && sp !== null && !this.borrowed.has(sp.split(".")[0]!) && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true ? { kind: "view" as const, place: sp, holder: id, name } : undefined;
+      first = false;
+      cur = this.node({ def: id, ...(loan !== undefined && { loan }) }, cur);
     }
     return cur;
   }
@@ -339,6 +358,24 @@ export class Builder {
         for (const path of paths) reads.push({ cap: k.name, place: p + path, path });
       }
       if (reads.length > 0) this.closureCaps.set(id, { fname: id.split("#")[0]!, reads });
+      if (this.borrowEvents) {
+        const places = new Set<Place>();
+        for (const k of caps) {
+          const p = this.lookup(k.name);
+          if (p === null) continue;
+          if (k.mutatedInClosure) for (const fields of k.mutatedFields ?? [null]) places.add(fields === null || fields.length === 0 ? p : `${p}.${fields.join(".")}`);
+          for (const w of this.closureWrites.get(p)?.places ?? []) places.add(w);
+        }
+        if (places.size > 0) this.closureWrites.set(id, { fname: id.split("#")[0]!, places: [...places] });
+        const env = new Map<string, { fname: string; writes: string[] }>();
+        for (const k of caps) {
+          const p = this.lookup(k.name);
+          const cw = p === null ? undefined : this.closureWrites.get(p);
+          if (cw !== undefined) env.set(k.name, { fname: cw.fname, writes: cw.places.map(w => rootOfPlace(w) + w.slice(w.indexOf("#") + 1).replace(/^\d+/, "")) });
+        }
+
+        if (env.size > 0) this.closureEnvs.set(c, env);
+      }
       return;
     }
     // A move closure owns its captures; if its body moves one out, the first call uses it up.
@@ -355,8 +392,11 @@ export class Builder {
     if (consumes) this.callsOnce.add(id);
   }
 
-  // Each use of a binding holding a by-reference closure reads the places the closure captured.
-  private readCaptures(place: Place, e: Expr, cur: number): number {
+  // Each use of a binding holding a by-reference closure reads the places the closure captured. A call of it
+  // (or handing it on, `via`) also writes the ones its body writes.
+  private readCaptures(place: Place, e: Expr, cur: number, via: "calling" | "passing" = "passing"): number {
+    const cw = this.closureWrites.get(place);
+    if (cw !== undefined) for (const p of cw.places) cur = this.node({ write: { kind: "closure", place: p, text: rootOfPlace(p), span: e.span, via, fname: cw.fname } }, cur);
     const c = this.closureCaps.get(place);
     if (c === undefined) return cur;
     for (const r of c.reads) cur = this.node({ use: r.place, expr: e, capture: true, viaClosure: { fname: c.fname, cap: r.cap, path: r.path } }, cur);
@@ -373,7 +413,7 @@ export class Builder {
 
   private match(subject: Expr, arms: { pattern: Pattern; body: Stmt[] }[], cur: number): number {
     cur = this.subjectOf(subject, cur);
-    const ends = arms.map(arm => this.scoped(() => this.stmts(arm.body, this.bindPattern(arm.pattern, cur, subject))));
+    const ends = arms.map(arm => this.scoped(() => this.stmts(arm.body, this.bindPattern(arm.pattern, cur, subject, false, false))));
     return this.join(ends);
   }
 
@@ -441,7 +481,7 @@ export class Builder {
         cur = this.lend(e.args, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
-        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
+        if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur), "calling");
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
       case "MethodCall": {

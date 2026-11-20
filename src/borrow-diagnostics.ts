@@ -35,9 +35,14 @@ export const movePrefix = (name: string) => `cannot move '${name}'`;
 
 // A write while a raw pointer into the buffer is held (src/checker-borrows.ts errorIfFrozen, and the index-write and
 // reassignment sites in src/checker-stmt.ts). `text` is the written expression; an index write names its root.
-export function pointerConflict(kind: "call" | "assign" | "elem", written: string, root: string, holder: string, call: string, line: number): BorrowText {
+export function pointerConflict(kind: "call" | "assign" | "elem" | "closure", written: string, root: string, holder: string, call: string, line: number): BorrowText {
   const tail = `while '${holder}' still points into its buffer (from '${call}' on line ${line})`;
   if (kind === "elem") return { message: `'${root}' is written here ${tail}`, hint: `write through '${holder}' instead, or take the pointer after the last write` };
+  // A closure's write names the capture and how the closure was reached: `written` is "calling 'f'".
+  if (kind === "closure") return { message: `'${root}' is written by ${written} ${tail}`, hint: `take the pointer after the last mutation, or pass '${call}' inline to the call` };
   const hint = `take the pointer after the last mutation, or pass '${call}' inline to the call`;
   return { message: kind === "call" ? `'${written}' may reallocate here ${tail}` : `'${written}' is reassigned here ${tail}`, hint };
 }
+
+// A closure body's write of a captured place, at the call of the closure or where it is handed on.
+export const closureWritePrefix = (name: string, how: "calling" | "passing", fname: string) => `cannot write to '${name}' by ${how} '${fname}'`;

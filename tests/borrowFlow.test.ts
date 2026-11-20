@@ -97,3 +97,37 @@ test("a container that was pushed the pointer holds the loan", () => {
   expect(flow(`${PTR}    var ps: Vec<*u8> = []\n    ps.push(v.ptr())\n    v.push(1)\n    print(strlen(ps[0]))\n    return 0\n}`))
     .toEqual(["9: 'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 8)"]);
 });
+
+// Capture writes: a closure holds no loan of what it captures (the checker accepts writes around a bound closure), but calling or
+// passing one whose body writes a capture is a write of it, judged against the loans others hold.
+const CLR = `    var v: Vec<i64> = Vec.new()\n    v.push(1)\n    let clr = (): void => {\n        v = Vec.new()\n    }\n`;
+const RUN = `fn run(f: () => void): void { f() }\n`;
+
+test("calling a closure that rewrites the vec inside a for-in over it is a conflict", () => {
+  expect(flow(`fn main(): i32 {\n${CLR}    for x in v {\n        clr()\n        print(x)\n    }\n    return 0\n}`))
+    .toEqual(["8: cannot write to 'v' by calling 'clr' while a loop iterates over 'v'"]);
+});
+
+test("calling it while a view is read later is a conflict; calling it after the view's last use is fine", () => {
+  expect(flow(`fn main(): i32 {\n${CLR}    let w = v[0..1]\n    clr()\n    print(w[0])\n    return 0\n}`))
+    .toEqual(["8: cannot write to 'v' by calling 'clr' while 'w' borrows 'v'"]);
+  expect(flow(`fn main(): i32 {\n${CLR}    let w = v[0..1]\n    print(w[0])\n    clr()\n    return 0\n}`)).toEqual([]);
+});
+
+test("handing the closure on counts as the write, at the argument", () => {
+  expect(flow(`${RUN}fn main(): i32 {\n${CLR}    let w = v[0..1]\n    run(clr)\n    print(w[0])\n    return 0\n}`))
+    .toEqual(["9: cannot write to 'v' by passing 'clr' while 'w' borrows 'v'"]);
+});
+
+test("a closure that only reads a capture does not stop writes to it, and one called through another closure still writes", () => {
+  expect(flow(`fn main(): i32 {\n${VEC}    let n = (): i64 => v.len\n    v.push(2)\n    print(n())\n    return 0\n}`)).toEqual([]);
+  expect(flow(`fn main(): i32 {\n${CLR}    let g = (): void => {\n        clr()\n    }\n    let w = v[0..1]\n    g()\n    print(w[0])\n    return 0\n}`))
+    .toEqual(["11: cannot write to 'v' by calling 'g' while 'w' borrows 'v'"]);
+});
+
+test("an if-let payload that borrows the subject conflicts with a closure write of it while read later", () => {
+  const head = `enum Slot {\n    Full(string),\n    Empty,\n}\nstruct Box1 {\n    s: Slot,\n}\nfn main(): i32 {\n    var b = Box1 { s: Slot.Full("a heap string long enough to be on the heap".clone()) }\n    let wipe = (): void => {\n        b.s = Slot.Empty\n    }\n`;
+  expect(flow(`${head}    if let Slot.Full(x) = b.s {\n        wipe()\n        print(x)\n    }\n    return 0\n}`))
+    .toEqual(["14: cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'"]);
+  expect(flow(`${head}    if let Slot.Full(x) = b.s {\n        print(x)\n        wipe()\n    }\n    return 0\n}`)).toEqual([]);
+});

@@ -6,7 +6,7 @@
 import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
 import * as text from "./borrow-diagnostics";
-import { closuresIn, NO_TYPE } from "./move-flow";
+import { NO_TYPE } from "./move-flow";
 import { Builder, liveness, overlaps, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
 
 export interface BorrowFlowResult {
@@ -16,11 +16,15 @@ export interface BorrowFlowResult {
 // "v#3.name" -> "v".
 const rootName = (p: Place): string => p.slice(0, p.indexOf("#"));
 
-function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>): void {
+type Env = Builder["closureEnvs"] extends Map<unknown, infer V> ? V : never;
+
+// `inherit`: the writing closures a closure body captures (from the builder of the body that made the literal).
+function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env): Builder["closureEnvs"] {
   const b = new Builder(cr, host, true);
+  b.inheritedWrites = inherit;
   b.fn(params, body);
   const nodes = b.nodes;
-  if (!nodes.some(n => n.loan !== undefined)) return;
+  if (!nodes.some(n => n.loan !== undefined)) return b.closureEnvs;
   const liveIn = liveness(nodes);
 
   // A move of a local binding: a non-Copy value taken by value out of it.
@@ -113,7 +117,8 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       if (loan === null) return;
       const root = rootName(w.place);
       const l = loan.loan!;
-      if (l.kind === "pointer") report(w.span, text.pointerConflict(w.kind, w.text, root, l.name!, l.call!, l.line!));
+      if (l.kind === "pointer") report(w.span, text.pointerConflict(w.kind, w.kind === "closure" ? `${w.via} '${w.fname}'` : w.text, root, l.name!, l.call!, l.line!));
+      else if (w.kind === "closure") emit(loan, text.closureWritePrefix(root, w.via!, w.fname!), root, w.span);
       else if (w.kind === "call") emit(loan, text.callPrefix(w.method!, root), root, w.span);
       else if (w.kind === "elem") report(w.span, text.elemAssignWhileIterated(w.text, root));
       else emit(loan, text.assignPrefix(w.text), root, w.span);
@@ -124,6 +129,21 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       if (loan !== null) emit(loan, text.movePrefix(e.name), e.name, e.span);
     }
   });
+  return b.closureEnvs;
+}
+
+// Every closure literal in a body, nested ones too (src/move-flow.ts closuresIn, but the literal itself so its captures can be looked up).
+function closureLiterals(body: unknown): (Expr & { kind: "Closure" })[] {
+  const out: (Expr & { kind: "Closure" })[] = [];
+  const visit = (v: unknown): void => {
+    if (Array.isArray(v)) { for (const x of v) visit(x); return; }
+    if (v === null || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    if (o.kind === "Closure") out.push(o as unknown as Expr & { kind: "Closure" });
+    for (const k in o) if (k !== "span" && k !== "type" && k !== "retType" && k !== "targetType") visit(o[k]);
+  };
+  visit(body);
+  return out;
 }
 
 export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost): BorrowFlowResult {
@@ -134,8 +154,9 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
   for (const f of fns) {
     if (fnSeen.has(f) || !f.body) continue;
     fnSeen.add(f);
-    analyzeBody(cr, host, f.params, f.body, out, reported);
-    for (const c of closuresIn(f.body)) analyzeBody(cr, host, c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), c.body, out, reported);
+    const envs = analyzeBody(cr, host, f.params, f.body, out, reported);
+    // A closure body names the enclosing places it captures: they are places of its own graph too.
+    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, envs.get(c));
   }
   return out;
 }
