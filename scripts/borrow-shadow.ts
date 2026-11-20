@@ -25,6 +25,9 @@ const TEMPLATES: [string, RegExp][] = [
   ["elem assign vs loop", /^cannot assign to '.+' because '.+' is being iterated$/],
   ["move vs view", /^cannot move '[^']+' while '[^'.]+' borrows .+$/],
   ["move vs loop", /^cannot move '[^']+' while a loop iterates over .+$/],
+  ["call vs pointer", /^'.+' may reallocate here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
+  ["assign vs pointer", /^'.+' is reassigned here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
+  ["elem write vs pointer", /^'.+' is written here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
 ];
 const templateOf = (m: string): string | null => TEMPLATES.find(([, re]) => re.test(m))?.[0] ?? null;
 
@@ -132,7 +135,7 @@ if (list && diffs.length > 0) {
 }
 // A gate: any difference fails, and so does an agreement count below the floor, so a template regex
 // that stops matching cannot pass as "0 differences". Raise MIN_AGREE as slices add templates.
-const MIN_AGREE = 17;
+const MIN_AGREE = 26;
 if (!args.includes("--only") && (walkOnly + flowOnly > 0 || agree < MIN_AGREE)) {
   console.error(`borrow-shadow: FAIL (${walkOnly + flowOnly} differences, ${agree} agree, floor ${MIN_AGREE})`);
   process.exit(1);

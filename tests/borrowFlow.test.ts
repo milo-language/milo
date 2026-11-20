@@ -66,3 +66,34 @@ test("a whole-vec assignment while a view is read later names the holder", () =>
   expect(flow(`fn main(): i32 {\n${VEC}    let w = v[0..1]\n    v = Vec.new()\n    print(w[0])\n    return 0\n}`))
     .toEqual(["5: cannot assign to 'v' while 'w' borrows it"]);
 });
+
+// Pointer loans: a binding that holds `v.ptr()` keeps a loan on `v`'s buffer while it is read later.
+const PTR = `from "std/os" import {\n    strlen\n}\nfn main(): i32 {\n    var v: Vec<u8> = Vec.new()\n    v.push(0)\n`;
+
+test("push while a pointer into the buffer is read later is a conflict", () => {
+  expect(flow(`${PTR}    let p = v.ptr()\n    v.push(1)\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["8: 'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
+});
+
+test("an index write and a reassignment under a live pointer name their own wording", () => {
+  expect(flow(`${PTR}    let p = v.ptr()\n    v[0] = 65\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["8: 'v' is written here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
+  expect(flow(`${PTR}    let p = v.ptr()\n    v = Vec.new()\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["8: 'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
+});
+
+test("push after the pointer's last use is fine (NLL), and so is a write inside unsafe", () => {
+  expect(flow(`${PTR}    let p = v.ptr()\n    print(strlen(p))\n    v.push(1)\n    return 0\n}`)).toEqual([]);
+  expect(flow(`${PTR}    let p = v.ptr()\n    unsafe {\n        v.push(1)\n    }\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
+});
+
+test("moving the source is allowed and ends the pointer's loan; a let move hands it to the new owner", () => {
+  expect(flow(`fn take(v: Vec<u8>) {}\n${PTR}    let p = v.ptr()\n    take(v)\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
+  expect(flow(`${PTR}    let p = v.ptr()\n    var w = v\n    w.push(1)\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["9: 'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
+});
+
+test("a container that was pushed the pointer holds the loan", () => {
+  expect(flow(`${PTR}    var ps: Vec<*u8> = []\n    ps.push(v.ptr())\n    v.push(1)\n    print(strlen(ps[0]))\n    return 0\n}`))
+    .toEqual(["9: 'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 8)"]);
+});

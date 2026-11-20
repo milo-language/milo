@@ -28,18 +28,23 @@ export interface Node {
   // Borrow events: emitted only when the Builder is made with `borrowEvents`.
   write?: BorrowWrite; // an operation that may reallocate or overwrite `place`: it conflicts with a loan in force
   loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
+  carryTo?: Place; // on a move of a whole local into a new binding: the pointer loans on it now belong to that binding
   iterEnd?: number; // on an iteration loan's head: the loan covers node ids from the head up to this one (exclusive)
   succ: number[];
 }
 
-export interface BorrowWrite { kind: "call" | "assign" | "elem"; place: Place; text: string; method?: string; span?: Span }
-export interface BorrowLoan { kind: "view" | "iteration"; place: Place; holder?: Place; name?: string; span?: Span }
+// `unsafe`: written inside an `unsafe` block, which the checker lets write under a live pointer.
+export interface BorrowWrite { kind: "call" | "assign" | "elem"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean }
+// A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
+export interface BorrowLoan { kind: "view" | "iteration" | "pointer"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
 
 export interface PlaceCfgHost {
   isCopyType(t: TypeKind): boolean;
   show(t: TypeKind): string;
   // Methods returning a view of only some fields of the receiver (the checker's own table); absent: the whole receiver.
   viewReturnFields?: ReadonlyMap<string, string[]>;
+  // The raw pointers into a local's buffer that an initializer carries (the checker's own recogniser).
+  pointerViewsIn?(e: Expr): { source: Expr; call: string; line: number }[];
 }
 
 // How a diagnostic names a written expression: `v`, `h.data`, `v[...]`, `*p`.
@@ -53,6 +58,7 @@ function describe(e: Expr): string {
   }
 }
 
+const rootOfPlace = (p: Place): string => p.slice(0, p.indexOf("#"));
 export const overlaps = (a: Place, b: Place) => a === b || a.startsWith(b + ".") || b.startsWith(a + ".");
 
 export class Builder {
@@ -75,6 +81,7 @@ export class Builder {
   }
   private exits: number[] = []; // nodes that leave the function (return, `?`)
   private ids = 0;
+  private unsafeDepth = 0;
 
   constructor(private cr: CheckResult, private host: PlaceCfgHost, private borrowEvents = false) {}
 
@@ -167,20 +174,31 @@ export class Builder {
     switch (s.kind) {
       case "LetDecl": case "VarDecl": {
         cur = this.expr(s.value, cur);
+        const useNode = cur;
         const id = this.declare(s.name);
+        if (this.borrowEvents && s.value.kind === "Ident" && this.nodes[useNode]?.use !== undefined && this.nodes[useNode]!.expr === s.value) this.nodes[useNode]!.carryTo = id;
         if (s.value.kind === "Closure") this.noteClosure(id, s.value);
         // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
         const viewOf = this.borrowEvents && (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) ? this.viewRoot(s.value) : null;
-        return this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.span } }) }, cur);
+        cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.span } }) }, cur);
+        return this.pointerLoans(id, s.name, s.value, cur, s.span);
       }
       case "Assign": {
         cur = this.expr(s.value, cur);
         const target = this.placeOf(s.target);
         const base = this.borrowEvents ? this.writeBase(s.target) : null;
-        if (target !== null) return this.node({ def: target, ...(base !== null && { write: { kind: "assign" as const, place: target, text: describe(s.target), span: s.span } }) }, cur);
+        if (target !== null) {
+          cur = this.node({ def: target, ...(base !== null && { write: { kind: "assign" as const, place: target, text: describe(s.target), span: s.span, unsafe: this.unsafeDepth > 0 } }) }, cur);
+          // `p = v.ptr()` replaces what `p` pointed at: the def drops the old loans, these open the new ones.
+          return s.target.kind === "Ident" ? this.pointerLoans(target, s.target.name, s.value, cur, s.span) : cur;
+        }
         cur = this.expr(s.target, cur); // `v[i] = x`, `*p = x`: the base is read, nothing is redefined
-        if (base !== null) cur = this.node({ write: { kind: base.indexed ? "elem" as const : "assign" as const, place: base.place, text: describe(s.target), span: s.span } }, cur);
+        if (base !== null) {
+          cur = this.node({ write: { kind: base.indexed ? "elem" as const : "assign" as const, place: base.place, text: describe(s.target), span: s.span, unsafe: this.unsafeDepth > 0 } }, cur);
+          // `c.buf = v.ptr()`: the pointer now lives in `c`, which holds it as long as it lives.
+          return this.pointerLoans(base.place.split(".")[0]!, rootOfPlace(base.place), s.value, cur, s.span);
+        }
         return cur;
       }
       case "Return": {
@@ -191,7 +209,7 @@ export class Builder {
       case "ExprStmt": return this.expr(s.expr, cur);
       case "BreakStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) l.breaks.push(cur); return -1; }
       case "ContinueStmt": { const l = this.loops[this.loops.length - 1]; if (l && cur >= 0) this.backTo(cur, l.head); return -1; }
-      case "UnsafeBlock": return this.stmts(s.body, cur);
+      case "UnsafeBlock": { this.unsafeDepth++; try { return this.stmts(s.body, cur); } finally { this.unsafeDepth--; } }
       case "IfStmt": {
         cur = this.expr(s.cond, cur);
         const a = this.stmts(s.thenBody, cur);
@@ -286,6 +304,17 @@ export class Builder {
       else if (e.kind === "FieldAccess") e = e.object;
       else return null;
     }
+  }
+
+  // Loans of the local buffers a pointer-carrying initializer points into, held by `holder`: one loan-only node each, after the holder's own def.
+  private pointerLoans(holder: Place, name: string, value: Expr, cur: number, span: Span | undefined): number {
+    if (!this.borrowEvents || cur < 0 || this.host.pointerViewsIn === undefined) return cur;
+    for (const pv of this.host.pointerViewsIn(value)) {
+      const src = this.writeBase(pv.source)?.place;
+      if (src === undefined || src.split(".")[0] === holder.split(".")[0]) continue;
+      cur = this.node({ loan: { kind: "pointer", place: src, holder, name, call: pv.call, line: pv.line, span } }, cur);
+    }
+    return cur;
   }
 
   // A call that may reallocate or overwrite its receiver: a mutating builtin collection method, or a user method taking `&mut self`.
@@ -421,7 +450,14 @@ export class Builder {
         cur = this.lend([e.object, ...e.args], cur);
         if (this.borrowEvents) {
           const base = this.writeBase(e.object);
-          if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span } }, cur);
+          if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span, unsafe: this.unsafeDepth > 0 } }, cur);
+          // `ps.push(v.ptr())`: the container now holds the pointer.
+          const holder = this.placeOf(e.object);
+          const rt = this.cr.exprTypes.get(e.object);
+          const rbare = rt?.tag === "ref" ? rt.inner : rt;
+          if (holder !== null && (e.method === "push" || e.method === "insert") && (rbare?.tag === "vec" || rbare?.tag === "hashmap")) {
+            for (const a of e.args) cur = this.pointerLoans(holder.split(".")[0]!, rootOfPlace(holder), a, cur, e.span);
+          }
         }
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
