@@ -103,6 +103,8 @@ jobs:
           bun run fuzz:tasks --n=100 --seed=${{ github.run_number }} --reduce-probes=0
           bun run fuzz:generic-drop --seed=${{ github.run_number }}
           bun run fuzz:drops --cases 40 --jobs 3 --seed ${{ github.run_number }} --reduce-probes 0
+          # Borrow-flow against the interpreter: exits 1 when the analysis accepts a stale-view read.
+          bun run fuzz:borrow --seed ${{ github.run_number }} --count 300 --jobs 3
 
   # The Lean proofs in proofs/ (contract soundness for Mini-Milo). tests/proofs.test.ts checks
   # the files for sorry and unaudited theorems on every runner, but only Lean can check a proof,
