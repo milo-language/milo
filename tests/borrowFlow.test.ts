@@ -171,3 +171,24 @@ test("swap before a view is taken, or after its last use, is fine", () => {
   expect(flow(`fn main(): i32 {\n    var s = "hello world".clone()\n    var t = "x".clone()\n    swap(s, t)\n    let w = s[0..1]\n    print(w)\n    return 0\n}`)).toEqual([]);
   expect(flow(`fn main(): i32 {\n    var s = "hello world".clone()\n    var t = "x".clone()\n    let w = s[0..5]\n    print(w)\n    swap(s, t)\n    return 0\n}`)).toEqual([]);
 });
+
+// Borrows the checker records without a holder (a match arm's payload, a lines() loop) read "because it is borrowed".
+const NODE = `enum Node { Pair(string, i64), Empty }\n`;
+test("reassigning a match subject while an arm's payload is read later is a holder-less conflict", () => {
+  expect(flow(`${NODE}fn clobber(n: &mut Node): void {\n    match n {\n        Node.Pair(s, k) => {\n            n = Node.Empty\n            print(s)\n        }\n        Node.Empty => {}\n    }\n}\nfn main(): i32 {\n    return 0\n}`))
+    .toEqual(["5: cannot assign to 'n' because it is borrowed"]);
+  expect(flow(`${NODE}fn clobber(n: &mut Node): void {\n    match n {\n        Node.Pair(s, k) => {\n            print(s)\n            n = Node.Empty\n        }\n        Node.Empty => {}\n    }\n}\nfn main(): i32 {\n    return 0\n}`)).toEqual([]);
+});
+
+test("push on a string inside a lines() loop is a holder-less conflict; after the loop it is fine", () => {
+  expect(flow(`fn main(): i32 {\n    var t: string = "a\\nb"\n    for line in t.lines() {\n        t.push(67)\n        print(line)\n    }\n    return 0\n}`))
+    .toEqual(["4: cannot call 'push' on 't' because it is borrowed"]);
+  expect(flow(`fn main(): i32 {\n    var t: string = "a\\nb"\n    for line in t.lines() {\n        print(line)\n    }\n    t.push(67)\n    return 0\n}`)).toEqual([]);
+});
+
+test("a closure body that writes a capture while another capture views it is a holder-less conflict", () => {
+  const head = `struct Holder {\n    o: Option<string>,\n}\nfn apply(f: () => i64): i64 {\n    return f()\n}\nfn via(h: &mut Holder): i64 {\n    match h.o {\n        Option.Some(s) => {\n            return apply((): i64 => {\n`;
+  const tail = `            })\n        }\n        Option.None => {\n            return 0\n        }\n    }\n}\nfn main(): i32 {\n    return 0\n}`;
+  expect(flow(`${head}                h.o = Option.None\n                print(s)\n                return s.len\n${tail}`)).toEqual(["11: cannot assign to 'h.o' because 'h' is borrowed"]);
+  expect(flow(`${head}                print(s)\n                h.o = Option.None\n                return 0\n${tail}`)).toEqual([]);
+});

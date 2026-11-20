@@ -38,7 +38,10 @@ export interface Node {
 // kind "place": a place handed to a `&mut` parameter or to `swap`/`replace` (`action` is the verb the checker words it with).
 export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure" | "place"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string; action?: "pass" | "swap" | "replace" }
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
-export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
+// `anon`: the checker records the borrow without naming a holder (a match arm's payload, a `lines()` loop), so its conflicts read "because it is borrowed".
+export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number; anon?: boolean }
+
+export interface InheritedLoan { holder: string; root: string; path: string; name: string; anon: boolean }
 
 export interface PlaceCfgHost {
   isCopyType(t: TypeKind): boolean;
@@ -82,6 +85,10 @@ export class Builder {
   // method's label ("v.each"). Its body is a separate graph, where the receiver is loaned for the body's whole length.
   callbackOf = new Map<Expr, { root: string; path: string; label: string }>();
   callbackLoan: { root: string; path: string; label: string } | undefined;
+  // Set on a closure body's builder: view loans in force where the literal is made, between two of its captures (see closureLoans).
+  inheritedLoans: InheritedLoan[] | undefined;
+  // For each closure literal: the view loans in force at its creation whose holder and place are both captures, by name.
+  closureLoans = new Map<Expr, InheritedLoan[]>();
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
   // Edges that return to a loop head ("from>to"), and each head's loop statement span.
@@ -159,6 +166,10 @@ export class Builder {
       }
       const cbPlace = this.callbackLoan === undefined ? null : this.lookup(this.callbackLoan.root);
       const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label } }, cur));
+      for (const l of this.inheritedLoans ?? []) {
+        const holder = this.lookup(l.holder), root = this.lookup(l.root);
+        if (holder !== null && root !== null) cur = this.node({ loan: { kind: "view", place: root + l.path, holder, name: l.name, anon: l.anon } }, cur);
+      }
       cur = this.stmts(body, cur);
       if (cbHead >= 0) this.nodes[cbHead]!.iterEnd = this.nodes.length;
       const exit = this.join([cur, ...this.exits]);
@@ -190,9 +201,10 @@ export class Builder {
       if (views) this.borrowed.add(id);
       cur = this.node({ def: id }, cur);
       // The first binding stands for the payload borrow of the subject, as the checker's attributeBorrows names it. A match arm
-      // is not attributed (the checker words that conflict without a holder), and a subject behind a reference is not frozen.
-      if (this.borrowEvents && attribute && first && sp !== null && !this.borrowed.has(sp.split(".")[0]!) && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true) {
-        cur = this.node({ loan: { kind: "view", place: sp, holder: id, name } }, cur);
+      // is not attributed (the checker words that conflict without a holder).
+      if (this.borrowEvents && first && sp !== null && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true) {
+        if (attribute && !this.borrowed.has(sp.split(".")[0]!)) cur = this.node({ loan: { kind: "view", place: sp, holder: id, name } }, cur);
+        else if (!attribute) cur = this.node({ loan: { kind: "view", place: sp, holder: id, name, anon: true } }, cur);
       }
       first = false;
     }
@@ -289,6 +301,9 @@ export class Builder {
         const head = this.join([cur]);
         const iterated = this.borrowEvents && head >= 0 && !this.cr.consumingForIns.has(s) && !this.cr.iteratorForIns.has(s) ? this.placeOf(s.iterable) : null;
         if (iterated !== null) this.nodes[head]!.loan = { kind: "iteration", place: iterated, span: s.span };
+        // `for piece in t.lines()`: the pieces point into `t`, which the checker freezes without naming a loop.
+        const pieces = this.borrowEvents && head >= 0 && iterated === null && s.iterable.kind === "MethodCall" && (s.iterable.method === "lines" || s.iterable.method === "splitView") ? this.placeOf(s.iterable.object) : null;
+        if (pieces !== null) this.nodes[head]!.loan = { kind: "iteration", place: pieces, span: s.span, anon: true };
         this.loops.push({ head, breaks: [] });
         this.loopSpans.set(head, s.span);
         const end = this.scoped(() => {
@@ -300,7 +315,7 @@ export class Builder {
           return this.stmts(s.body, c);
         });
         if (end >= 0) this.backTo(end, head);
-        if (iterated !== null) this.nodes[head]!.iterEnd = this.nodes.length;
+        if (iterated !== null || pieces !== null) this.nodes[head]!.iterEnd = this.nodes.length;
         const { breaks } = this.loops.pop()!;
         return this.join([head, ...breaks]);
       }

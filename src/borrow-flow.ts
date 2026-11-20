@@ -7,7 +7,7 @@ import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
 import * as text from "./borrow-diagnostics";
 import { NO_TYPE } from "./move-flow";
-import { Builder, liveness, overlaps, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
+import { Builder, liveness, overlaps, type InheritedLoan, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
 
 export interface BorrowFlowResult {
   diagnostics: { span: Span | undefined; message: string; hint?: string }[];
@@ -19,10 +19,11 @@ const rootName = (p: Place): string => p.slice(0, p.indexOf("#"));
 type Env = Builder["closureEnvs"] extends Map<unknown, infer V> ? V : never;
 
 // `inherit`: the writing closures a closure body captures (from the builder of the body that made the literal).
-function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env, callback?: Builder["callbackLoan"]): Builder {
+function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env, callback?: Builder["callbackLoan"], loans?: InheritedLoan[]): Builder {
   const b = new Builder(cr, host, true);
   b.inheritedWrites = inherit;
   b.callbackLoan = callback;
+  b.inheritedLoans = loans;
   b.fn(params, body);
   const nodes = b.nodes;
   if (!nodes.some(n => n.loan !== undefined)) return b;
@@ -76,6 +77,20 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     }
   }
 
+  // A closure made while a view of one capture is held by another: its body sees that loan too.
+  nodes.forEach((n, i) => {
+    if (!n.capture || n.expr?.kind !== "Closure") return;
+    const caps = new Set((cr.closureCaptures.get(n.expr) ?? []).map(k => k.name));
+    for (const k of state[i] ?? []) {
+      const ln = nodes[originOf(k)]!.loan!;
+      const holder = rootName(ln.holder!), root = rootName(placeOfKey(k));
+      if (ln.kind !== "view" || !caps.has(holder) || !caps.has(root)) continue;
+      const list = b.closureLoans.get(n.expr) ?? [];
+      const path = placeOfKey(k).slice(placeOfKey(k).indexOf("#")).replace(/^#\d+/, "");
+      if (!list.some(x => x.holder === holder && x.root === root && x.path === path)) list.push({ holder, root, path, name: ln.name!, anon: ln.anon === true });
+      b.closureLoans.set(n.expr, list);
+    }
+  });
   const holderLiveAfter = (n: Node, holder: Place): boolean => {
     for (const s of n.succ) for (const p of liveIn[s]!) if (overlaps(p, holder)) return true;
     return false;
@@ -108,6 +123,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
   };
   const emit = (loan: Node, prefix: string, root: string, span: Span | undefined) => {
     const l = loan.loan!;
+    if (l.anon) { report(span, text.unattributed(prefix, root)); return; }
     report(span, l.kind === "view" || l.kind === "callback" ? text.whileHolderBorrows(prefix, root, l.name!) : text.whileLoopIterates(prefix, root));
   };
 
@@ -158,7 +174,7 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
     fnSeen.add(f);
     const top = analyzeBody(cr, host, f.params, f.body, out, reported);
     // A closure body names the enclosing places it captures: they are places of its own graph too.
-    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c));
+    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c), top.closureLoans.get(c));
   }
   return out;
 }

@@ -14,6 +14,14 @@ export function whileHolderBorrows(prefix: string, root: string, holder: string)
   };
 }
 
+// A conflict with a borrow the checker records without a holder (reportBorrowed's fallback wording).
+export function unattributed(prefix: string, root: string): BorrowText {
+  return {
+    message: `${prefix} because ${prefix.endsWith(`'${root}'`) ? "it" : `'${root}'`} is borrowed`,
+    hint: `a reference or slice into this variable is still live: the write could move memory it points into`,
+  };
+}
+
 export function whileLoopIterates(prefix: string, root: string): BorrowText {
   return {
     message: `${prefix} while a loop iterates over ${itOf(prefix, root)}`,
