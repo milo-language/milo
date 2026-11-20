@@ -367,6 +367,19 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
         } else if (c.errorIfFieldMovedOutOfElement(expr)) {
           return;
         }
+        // The field's buffer changes hands, so a live view of that field (or of a part of
+        // it, or of the whole root) would dangle, exactly as for a whole-variable move.
+        // A view of a sibling field does not collide (`borrowCollides`). Pointer borrows
+        // are exempt as for a whole move: the header moves, the buffer stays.
+        const ap = c.accessPath(expr);
+        const rinfo = ap ? c.lookup(ap.root) : null;
+        if (ap && rinfo && rinfo.borrowed && c.frozenAgainstFields(rinfo, ap.fields, "pointer")) {
+          const site = c.conflictingBorrowFields(rinfo, ap.fields, "pointer");
+          c.reportBorrowed(`cannot move '${c.describeExpr(expr)}'`, ap.root, site, expr.span,
+            `cannot move '${c.describeExpr(expr)}' because it is borrowed`,
+            `a closure capture, or a live slice, reference or loop over this variable, still points into it: moving it would leave that borrow dangling`);
+          return;
+        }
         c.movedExprs.add(expr);
       } else if (!c.isExtractorKey(expr)) {
         // `replace` is only offered for `&mut`: it swaps something in, which needs write

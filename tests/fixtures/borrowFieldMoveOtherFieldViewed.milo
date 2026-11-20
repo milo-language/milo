@@ -1,0 +1,12 @@
+// @expect: 7
+// Moving a field no live view points into is fine: the view is of a sibling field.
+struct H { items: Vec<i64>, other: Vec<i64> }
+
+fn main(): i32 {
+    let h = H { items: [7, 9, 5], other: [7, 2] }
+    let s0 = h.other[0..1]
+    var w1 = h.items
+    w1.push(9)
+    print(s0[0])
+    return 0
+}

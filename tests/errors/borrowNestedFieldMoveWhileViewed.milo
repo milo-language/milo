@@ -1,0 +1,11 @@
+// Same hole through a nested field path.
+struct B { items: Vec<i64> }
+struct A { b: B }
+fn main(): void {
+    let a = A { b: B { items: [7, 9, 5, 6] } }
+    let s0 = a.b.items[0..1]
+    var w1 = a.b.items
+    w1.push(9)
+    print(s0[0])
+}
+// @error: cannot move 'a.b.items' while 's0' borrows 'a'

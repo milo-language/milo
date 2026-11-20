@@ -1,0 +1,11 @@
+// A field moved out while a slice of it is live: the new owner frees or regrows the buffer
+// the slice points into.
+struct H { items: Vec<i64> }
+fn main(): void {
+    let h = H { items: [7, 9, 5, 6, 1, 2, 3, 4] }
+    let s0 = h.items[0..1]
+    var w1 = h.items
+    w1.push(9)
+    print(s0[0])
+}
+// @error: cannot move 'h.items' while 's0' borrows 'h'

@@ -32,10 +32,11 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
   if (!nodes.some(n => n.loan !== undefined)) return b;
   const liveIn = liveness(nodes);
 
-  // A move of a local binding: a non-Copy value taken by value out of it.
+  // A move of a local binding, or of a field place of one (`var w = h.items`): a non-Copy value taken
+  // by value out of it. A field move conflicts only with loans whose place overlaps the field.
   const moves = (n: Node): boolean => {
     const e = n.expr;
-    if (e === undefined || e.kind !== "Ident" || n.use === undefined || n.capture || n.subject || n.armTakes) return false;
+    if (e === undefined || (e.kind !== "Ident" && e.kind !== "FieldAccess") || n.use === undefined || n.capture || n.subject || n.armTakes) return false;
     if (cr.movedExprs.has(e)) return true;
     if (!cr.movePositions.has(e) || b.borrowed.has(n.use)) return false;
     const t = cr.exprTypes.get(e);
@@ -62,7 +63,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     // a pointer; any other loan makes the move itself the error.
     if (n.use !== undefined && (moves(n) || n.hardMove)) {
       const root = rootName(n.use);
-      const on = [...out2].filter(k => rootName(placeOfKey(k)) === root);
+      const on = [...out2].filter(k => rootName(placeOfKey(k)) === root && overlaps(placeOfKey(k), n.use!));
       if (on.length > 0 && on.every(k => nodes[originOf(k)]!.loan!.kind === "pointer")) {
         for (const k of on) {
           out2.delete(k);
@@ -162,9 +163,12 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       }
     }
     if (moves(n)) {
-      const e = n.expr as Expr & { kind: "Ident" };
+      const e = n.expr!;
       const loan = conflicting(i, n.use!, false, false, false);
-      if (loan !== null) emit(loan, text.movePrefix(e.name), e.name, e.span);
+      if (loan !== null) {
+        const root = rootName(n.use!);
+        emit(loan, text.movePrefix(e.kind === "Ident" ? e.name : n.use!.replace(/#\d+/, "")), root, e.span);
+      }
     }
   });
   return b;
