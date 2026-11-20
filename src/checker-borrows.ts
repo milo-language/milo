@@ -1,4 +1,4 @@
-// Borrow and place tracking: scopes, borrow windows, pointer borrows, places, freezing, mutability roots.
+// Borrow and place tracking: scopes, capture and pointer borrows, places, mutability roots.
 import type { TypeChecker } from "./checker";
 import type { BorrowKind, BorrowSite, PatternLeaf, Place, PlaceStep, PointerHolder, VarInfo } from "./checker";
 import { DEREF, INDEX, OPAQUE, PAYLOAD, VALUE, rewritten, spanKey, stepKey, stepsEq } from "./checker-util";

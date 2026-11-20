@@ -51,7 +51,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checked-dump.ts` | Graph codec for the checker's output (Program + CheckResult): the seam where a checker that is not this process's (the generated Milo one) hands its facts to the emitter. |
 | `src/checker-borrows-moves.ts` | Move tracking and call-site exclusivity: tryMove, assignment targets, closure capture writes (pairs with checker-borrows.ts). |
-| `src/checker-borrows.ts` | Borrow and place tracking: scopes, borrow windows, pointer borrows, places, freezing, mutability roots. |
+| `src/checker-borrows.ts` | Borrow and place tracking: scopes, capture and pointer borrows, places, mutability roots. |
 | `src/checker-calls.ts` | Call expressions: argument matching, callbacks, collection intrinsics, static calls, SQL call notes. |
 | `src/checker-closure-env.ts` | A `move` closure that captures anything owns a heap environment. |
 | `src/checker-concurrent-args-host.ts` | The boundary between the checker and the portable `@concurrent` closure-argument pass (src/checker-concurrent-args.ts). |

@@ -228,8 +228,8 @@ above says must not exist — the user would be writing the enum the design refu
 
 **A second live unwrap of the same `?&mut T` is rejected,** which the spec does not mention
 and which the axiom requires: two `let`s would hand the body two `&mut T` aliasing one
-object. It reuses the existing borrow plumbing (`VarInfo.borrowed` plus `freezes`, released
-by `popScope`), so it is scoped rather than function-wide: unwrapping once in each arm of an
+object. It reuses the existing borrow plumbing (`VarInfo.borrowed`, which goes away
+with the binding's scope), so it is scoped rather than function-wide: unwrapping once in each arm of an
 `if` is accepted. A shared `?&T` has nothing to exclude and is not restricted.
 
 **`let NAME = value else { … }` had to be added to the parser at all.** The existing let-else
