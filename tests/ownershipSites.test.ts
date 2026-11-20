@@ -1,7 +1,7 @@
 // Ownership-site census (scripts/ownership-sites.ts) and the ownership-cells ratchet comparison
 // (scripts/gen-ownership-cells.ts): the matcher, that the gates can fail, and that the real census runs.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { census, checkAgainst, collectExpected, collectSites, findSites, isOwnershipWorded, siteKey, type Site } from "../scripts/ownership-sites";
@@ -51,6 +51,10 @@ describe("real census", () => {
     expect(Date.now() - t).toBeLessThan(20_000);
     expect(sites.length).toBeGreaterThan(50);
     expect(c.reachedSites).toBeGreaterThan(0);
+    // The baseline ratchet itself: nothing else runs `ownership-sites.ts --check`, and its file-keyed
+    // baseline went stale unnoticed through the checker split.
+    const base = JSON.parse(readFileSync(join(import.meta.dir, "..", "scripts", "ownership-sites-baseline.json"), "utf-8"));
+    expect(checkAgainst(base, { reached: c.reachedSites, unreached: c.unreached })).toEqual([]);
   });
 });
 

@@ -3,7 +3,7 @@
 //
 //   bun scripts/ownership-sites.ts [--list] [--check] [--update-baseline]
 //
-// Static half: the TypeScript compiler API finds every call to a diagnostic helper in src/checker*.ts
+// Static half: the TypeScript compiler API finds every call to a diagnostic helper in src/checker*.ts, plus the `message:` builders in src/*-diagnostics.ts
 // (error, errorWithNotes, errorCode, report, fail, reportBorrowed, requireUnsafe) and takes the first string/template
 // argument as the site's message; template holes become wildcards. A site is ownership-worded when its
 // literal text contains a word from OWNERSHIP_WORDS.
@@ -32,7 +32,8 @@ const MIN_REVERSE_LITERAL = 10;
 
 export type Site = { file: string; line: number; pieces: string[] }; // pieces: literal text between holes
 export const siteText = (s: Site) => s.pieces.join("${}");
-export const siteKey = (s: Site) => `${s.file}: ${siteText(s).slice(0, 100)}`;
+// Keyed by wording, not file: a site moved by a file split (aa7c33a4) is the same site.
+export const siteKey = (s: Site) => siteText(s).slice(0, 100);
 
 // Literal pieces of a string-ish expression; null when it has no literal head at all.
 function piecesOf(e: ts.Expression): string[] | null {
@@ -55,6 +56,12 @@ export function findSites(file: string, source: string): Site[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const out: Site[] = [];
   const visit = (node: ts.Node) => {
+    // The flow analyses keep their wording in src/*-diagnostics.ts as `{ message: \`...\` }` builders
+    // (src/move-diagnostics.ts, src/borrow-diagnostics.ts): each `message:` there is a site.
+    if (/-diagnostics\.ts$/.test(file) && ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === "message") {
+      const p = piecesOf(node.initializer);
+      if (p) out.push({ file, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, pieces: p });
+    }
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const nm = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
@@ -108,7 +115,7 @@ export function checkAgainst(base: Baseline, cur: { reached: number; unreached: 
 }
 
 export function collectSites(): Site[] {
-  const files = readdirSync(join(ROOT, "src")).filter(f => /^checker(-[\w-]+)?\.ts$/.test(f)).sort();
+  const files = readdirSync(join(ROOT, "src")).filter(f => /^checker(-[\w-]+)?\.ts$/.test(f) || /^[\w-]+-diagnostics\.ts$/.test(f)).sort();
   const all: Site[] = [];
   for (const f of files) for (const s of findSites(`src/${f}`, readFileSync(join(ROOT, "src", f), "utf-8"))) if (isOwnershipWorded(s)) all.push(s);
   return all;
