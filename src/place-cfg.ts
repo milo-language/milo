@@ -27,6 +27,8 @@ export interface Node {
   firstUse?: Expr; // a closure literal's capture: where the body first names it (what an error points at)
   // Borrow events: emitted only when the Builder is made with `borrowEvents`.
   write?: BorrowWrite; // an operation that may reallocate or overwrite `place`: it conflicts with a loan in force
+  // A call that parks the task or writes some of the mutable globals (the checker's own call summaries, see borrowFlow).
+  effect?: CallEffect & { span?: Span };
   loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
   carryTo?: Place; // on a move of a whole local into a new binding: the pointer loans on it now belong to that binding
   iterEnd?: number; // on an iteration or callback loan's head: the loan covers node ids from the head up to this one (exclusive)
@@ -40,6 +42,8 @@ export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure" | "p
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
 // `anon`: the checker records the borrow without naming a holder (a match arm's payload, a `lines()` loop), so its conflicts read "because it is borrowed".
 export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number; anon?: boolean }
+
+export interface CallEffect { say: string; parks: boolean; writes: string[] }
 
 export interface InheritedLoan { holder: string; root: string; path: string; name: string; anon: boolean }
 
@@ -85,6 +89,10 @@ export class Builder {
   // method's label ("v.each"). Its body is a separate graph, where the receiver is loaned for the body's whole length.
   callbackOf = new Map<Expr, { root: string; path: string; label: string }>();
   callbackLoan: { root: string; path: string; label: string } | undefined;
+  // What a call does to the mutable globals, when it parks or writes one; and the globals' names. A loan on a global lives on
+  // the place "name#g", which no local binding can spell.
+  effects: ((e: Expr) => CallEffect | undefined) | undefined;
+  mutableGlobals = new Set<string>();
   // Set on a closure body's builder: view loans in force where the literal is made, between two of its captures (see closureLoans).
   inheritedLoans: InheritedLoan[] | undefined;
   // For each closure literal: the view loans in force at its creation whose holder and place are both captures, by name.
@@ -224,7 +232,7 @@ export class Builder {
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
         const viewOf = this.borrowEvents && (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) ? this.viewRoot(s.value) : null;
         cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.span } }) }, cur);
-        return this.pointerLoans(id, s.name, s.value, cur, s.span);
+        return this.globalLoans(id, s.name, s.value, this.pointerLoans(id, s.name, s.value, cur, s.span));
       }
       case "Assign": {
         cur = this.expr(s.value, cur);
@@ -362,6 +370,30 @@ export class Builder {
     return cur;
   }
 
+  // The mutable global a place expression roots at ("G", "G.f", "G[i]", "G!.f"), as its loan place.
+  private globalPlace(e: Expr): Place | null {
+    for (;;) {
+      if (e.kind === "Ident") return this.lookup(e.name) === null && this.mutableGlobals.has(e.name) ? `${e.name}#g` : null;
+      if (e.kind === "FieldAccess" || e.kind === "IndexAccess") e = e.object;
+      else if (e.kind === "Unwrap") e = e.operand;
+      else return null;
+    }
+  }
+
+  // A binding that holds a reference into a global's buffer (a slice, or a raw pointer from `g.ptr()`) holds a loan of the global.
+  private globalLoans(holder: Place, name: string, value: Expr, cur: number): number {
+    if (!this.borrowEvents || cur < 0 || this.mutableGlobals.size === 0) return cur;
+    if (this.cr.exprTypes.get(value)?.tag === "ref") {
+      const place = this.globalPlace(value.kind === "MethodCall" ? value.object : value);
+      return place === null ? cur : this.node({ loan: { kind: "view", place, holder, name } }, cur);
+    }
+    for (const pv of this.host.pointerViewsIn?.(value) ?? []) {
+      const place = this.globalPlace(pv.source);
+      if (place !== null) cur = this.node({ loan: { kind: "pointer", place, holder, name, call: pv.call, line: pv.line } }, cur);
+    }
+    return cur;
+  }
+
   // A call that may reallocate or overwrite its receiver: a mutating builtin collection method, or a user method taking `&mut self`.
   private mutatesReceiver(e: Expr & { kind: "MethodCall" }): boolean {
     let t = this.cr.exprTypes.get(e.object);
@@ -469,6 +501,11 @@ export class Builder {
     return cur;
   }
 
+  private callEffect(e: Expr & { kind: "Call" | "MethodCall" }, cur: number): number {
+    const fx = this.borrowEvents ? this.effects?.(e) : undefined;
+    return fx === undefined ? cur : this.node({ effect: { ...fx, span: e.span } }, cur);
+  }
+
   // An argument handed to a `&mut` parameter, and the places `swap`/`replace` write, are writes of the place.
   private placeArgWrites(e: Expr & { kind: "Call" | "MethodCall" }, cur: number): number {
     if (!this.borrowEvents) return cur;
@@ -520,6 +557,7 @@ export class Builder {
         for (const a of e.args) cur = this.expr(a, cur);
         cur = this.lend(e.args, cur);
         cur = this.placeArgWrites(e, cur);
+        cur = this.callEffect(e, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
         if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
@@ -530,6 +568,7 @@ export class Builder {
         for (const a of e.args) cur = this.expr(a, cur);
         cur = this.lend([e.object, ...e.args], cur);
         cur = this.placeArgWrites(e, cur);
+        cur = this.callEffect(e, cur);
         if (this.borrowEvents) {
           const base = this.writeBase(e.object);
           if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span, unsafe: this.unsafeDepth > 0 } }, cur);

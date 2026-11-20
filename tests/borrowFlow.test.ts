@@ -192,3 +192,17 @@ test("a closure body that writes a capture while another capture views it is a h
   expect(flow(`${head}                h.o = Option.None\n                print(s)\n                return s.len\n${tail}`)).toEqual(["11: cannot assign to 'h.o' because 'h' is borrowed"]);
   expect(flow(`${head}                print(s)\n                h.o = Option.None\n                return 0\n${tail}`)).toEqual([]);
 });
+
+// Loans into a global's buffer: a call that parks the task while a slice or pointer of the global is held.
+const PARK_HEAD = `from "std/os" import {\n    strlen\n}\nfrom "std/runtime" import {\n    schedulerYield\n}\nvar g: Vec<i64> = []\nvar b: Vec<u8> = []\n\n`;
+test("a park while a slice of a global is read later is a conflict; after its last use it is fine", () => {
+  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    g.push(1)\n    let s = g[0..1]\n    schedulerYield()\n    print(s[0])\n    return 0\n}`))
+    .toEqual(["13: 'schedulerYield' can park this task while 's' borrows from 'g's buffer; another task may push to 'g' before it resumes"]);
+  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    g.push(1)\n    let s = g[0..1]\n    print(s[0])\n    schedulerYield()\n    return 0\n}`)).toEqual([]);
+});
+
+test("a park while a raw pointer into a global is read later names where the pointer came from", () => {
+  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    schedulerYield()\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["13: 'schedulerYield' can park this task while 'p' still points into 'b's buffer (from 'b.ptr()' on line 12); another task may push to 'b' before it resumes"]);
+  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    print(strlen(p))\n    schedulerYield()\n    return 0\n}`)).toEqual([]);
+});

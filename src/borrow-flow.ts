@@ -7,6 +7,7 @@ import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
 import * as text from "./borrow-diagnostics";
 import { NO_TYPE } from "./move-flow";
+import { callEffects, type AnalysisHost } from "./borrow-flow-park";
 import { Builder, liveness, overlaps, type InheritedLoan, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
 
 export interface BorrowFlowResult {
@@ -19,10 +20,12 @@ const rootName = (p: Place): string => p.slice(0, p.indexOf("#"));
 type Env = Builder["closureEnvs"] extends Map<unknown, infer V> ? V : never;
 
 // `inherit`: the writing closures a closure body captures (from the builder of the body that made the literal).
-function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env, callback?: Builder["callbackLoan"], loans?: InheritedLoan[]): Builder {
+function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Builder["fn"]>[0], body: Parameters<Builder["fn"]>[1], out: BorrowFlowResult, seen: Set<string>, inherit?: Env, callback?: Builder["callbackLoan"], loans?: InheritedLoan[], effects?: Builder["effects"], globals: Set<string> = new Set()): Builder {
   const b = new Builder(cr, host, true);
   b.inheritedWrites = inherit;
   b.callbackLoan = callback;
+  b.effects = effects;
+  b.mutableGlobals = globals;
   b.inheritedLoans = loans;
   b.fn(params, body);
   const nodes = b.nodes;
@@ -115,6 +118,11 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     found.sort((x, y) => x - y);
     return found.length === 0 ? null : nodes[found[0]!]!;
   };
+  // A call that parks, with a reference into a global's buffer held across it.
+  const globalHeld = (i: number): Node[] => {
+    const n = nodes[i]!;
+    return [...(state[i] ?? [])].map(k => nodes[originOf(k)]!).filter(l => l.loan!.place.endsWith("#g") && holderLiveAfter(n, l.loan!.holder!)).sort((x, y) => nodes.indexOf(x) - nodes.indexOf(y));
+  };
   const report = (span: Span | undefined, t: text.BorrowText) => {
     const key = `${span?.file}:${span?.line}:${span?.col}:${t.message}`;
     if (seen.has(key)) return;
@@ -141,6 +149,12 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       else if (w.kind === "elem") report(w.span, text.elemAssignWhileIterated(w.text, root));
       else emit(loan, text.assignPrefix(w.text), root, w.span);
     }
+    if (n.effect?.parks) {
+      for (const l of globalHeld(i)) {
+        const g = rootName(l.loan!.place);
+        report(n.effect.span, text.parkWhileHeld(n.effect.say, g, l.loan!.name!, l.loan!.kind === "pointer" ? l.loan!.call : undefined, l.loan!.line));
+      }
+    }
     if (moves(n)) {
       const e = n.expr as Expr & { kind: "Ident" };
       const loan = conflicting(i, n.use!, false, false, false);
@@ -164,17 +178,18 @@ function closureLiterals(body: unknown): (Expr & { kind: "Closure" })[] {
   return out;
 }
 
-export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost): BorrowFlowResult {
+export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost & AnalysisHost): BorrowFlowResult {
   const out: BorrowFlowResult = { diagnostics: [] };
+  const { globals, effects } = callEffects(program, host);
   const fns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods), ...cr.monomorphizedFns];
   const fnSeen = new Set<Function>();
   const reported = new Set<string>();
   for (const f of fns) {
     if (fnSeen.has(f) || !f.body) continue;
     fnSeen.add(f);
-    const top = analyzeBody(cr, host, f.params, f.body, out, reported);
+    const top = analyzeBody(cr, host, f.params, f.body, out, reported, undefined, undefined, undefined, effects, globals);
     // A closure body names the enclosing places it captures: they are places of its own graph too.
-    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c), top.closureLoans.get(c));
+    for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c), top.closureLoans.get(c), effects, globals);
   }
   return out;
 }

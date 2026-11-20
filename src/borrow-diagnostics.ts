@@ -56,3 +56,12 @@ export function pointerConflict(kind: "call" | "assign" | "elem" | "closure", wr
 
 // A closure body's write of a captured place, at the call of the closure or where it is handed on.
 export const closureWritePrefix = (name: string, how: "calling" | "passing", fname: string) => `cannot write to '${name}' by ${how} '${fname}'`;
+
+// A call that parks the task while a reference into a global's buffer is held (src/checker-global-borrow.ts parkBlock).
+export function parkWhileHeld(say: string, global: string, holder: string, call?: string, line?: number): BorrowText {
+  const held = call === undefined ? `'${holder}' borrows from '${global}'s buffer` : `'${holder}' still points into '${global}'s buffer (from '${call}' on line ${line})`;
+  return {
+    message: `${say} can park this task while ${held}; another task may push to '${global}' before it resumes`,
+    hint: `iterate by index ('while i < ${global}.len'), snapshot first ('${global}.clone()'), or take it with 'replace(${global}, ...)' so the task owns it`,
+  };
+}

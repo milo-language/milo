@@ -43,6 +43,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
 | `src/backend-program.ts` | What the backend compiles, read off the merged AST and the checker's result: the module's declarations (struct and enum layouts, function signatures, globals, itables, the C-facing claims) with each… |
 | `src/borrow-diagnostics.ts` | The text of the view-loan and loop-loan conflict diagnostics. |
+| `src/borrow-flow-park.ts` | What each call does to the mutable globals (parks the task, writes one), for the global-buffer loans of src/borrow-flow.ts. |
 | `src/borrow-flow.ts` | Borrow conflicts as dataflow, shadow mode: nothing here feeds the checker. |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
 | `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
