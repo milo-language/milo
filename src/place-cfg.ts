@@ -41,7 +41,7 @@ export interface Node {
 export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure" | "place"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string; action?: "pass" | "swap" | "replace" }
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
 // `anon`: the checker records the borrow without naming a holder (a match arm's payload, a `lines()` loop), so its conflicts read "because it is borrowed".
-export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number; anon?: boolean }
+export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; deep?: boolean; holder?: Place; name?: string; span?: Span; call?: string; line?: number; anon?: boolean }
 
 export interface CallEffect { say: string; parks: boolean; writes: string[] }
 
@@ -172,7 +172,8 @@ export class Builder {
           if (places.length > 0) this.closureWrites.set(p, { fname: name, places });
         }
       }
-      const cbPlace = this.callbackLoan === undefined ? null : this.lookup(this.callbackLoan.root);
+      const cbRoot = this.callbackLoan?.root;
+      const cbPlace = cbRoot === undefined ? null : this.lookup(cbRoot) ?? (this.mutableGlobals.has(cbRoot) ? `${cbRoot}#g` : null);
       const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label, span: this.callbackLoan!.span } }, cur));
       for (const l of this.inheritedLoans ?? []) {
         const holder = this.lookup(l.holder), root = this.lookup(l.root);
@@ -231,13 +232,13 @@ export class Builder {
         // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
         const viewOf = this.borrowEvents && (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) ? this.viewRoot(s.value) : null;
-        cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.value.span } }) }, cur);
+        cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf.place, ...(viewOf.deep && { deep: true }), holder: id, name: s.name, span: s.value.span } }) }, cur);
         return this.globalLoans(id, s.name, s.value, this.pointerLoans(id, s.name, s.value, cur, s.span));
       }
       case "Assign": {
         cur = this.expr(s.value, cur);
         const target = this.placeOf(s.target);
-        const base = this.borrowEvents ? this.writeBase(s.target) : null;
+        const base = this.borrowEvents ? this.writeBase(s.target, true) : null;
         if (target !== null) {
           cur = this.node({ def: target, ...(base !== null && { write: { kind: "assign" as const, place: target, text: describe(s.target), span: s.span, unsafe: this.unsafeDepth > 0 } }) }, cur);
           // `p = v.ptr()` replaces what `p` pointed at: the def drops the old loans, these open the new ones.
@@ -307,7 +308,7 @@ export class Builder {
       case "ForInStmt": {
         cur = this.expr(s.iterable, cur);
         const head = this.join([cur]);
-        const iterated = this.borrowEvents && head >= 0 && !this.cr.consumingForIns.has(s) && !this.cr.iteratorForIns.has(s) ? this.placeOf(s.iterable) : null;
+        const iterated = this.borrowEvents && head >= 0 && !this.cr.consumingForIns.has(s) && !this.cr.iteratorForIns.has(s) ? (this.placeOf(s.iterable) ?? this.writeBase(s.iterable, true)?.place ?? null) : null;
         if (iterated !== null) this.nodes[head]!.loan = { kind: "iteration", place: iterated, span: s.span };
         // `for piece in t.lines()`: the pieces point into `t`, which the checker freezes without naming a loop.
         const pieces = this.borrowEvents && head >= 0 && iterated === null && s.iterable.kind === "MethodCall" && (s.iterable.method === "lines" || s.iterable.method === "splitView") ? this.placeOf(s.iterable.object) : null;
@@ -332,14 +333,18 @@ export class Builder {
   }
 
   // The local place a view-typed initializer points into: `s.slice(a, b)`, `v[a..b]`, `h.data[0..2]`.
-  private viewRoot(e: Expr): Place | null {
+  // `deep`: the view goes through an element of a container (`vs[0][1..2]`), so overwriting an element frees what it points into.
+  private viewRoot(e: Expr): { place: Place; deep: boolean } | null {
+    let steps = 0, calls = 0;
     for (;;) {
       const p = this.placeOf(e);
-      if (p !== null) return p;
+      if (p !== null) return { place: p, deep: steps >= 2 || (steps >= 1 && calls >= 1) };
+      if (e.kind === "IndexAccess") steps++;
+      if (e.kind === "MethodCall") calls++;
       if (e.kind === "MethodCall") {
         const fields = this.host.viewReturnFields?.get(this.cr.resolvedMethods.get(e) ?? "");
         const base = fields?.length === 1 ? this.placeOf(e.object) : null;
-        if (base !== null && fields !== undefined) return `${base}.${fields[0]}`;
+        if (base !== null && fields !== undefined) return { place: `${base}.${fields[0]}`, deep: false };
         e = e.object;
       } else if (e.kind === "IndexAccess" || e.kind === "FieldAccess") e = e.object;
       else if (e.kind === "Unwrap") e = e.operand;
@@ -348,13 +353,17 @@ export class Builder {
   }
 
   // The local place a write through `e` lands in, and whether it went through an index (an element write).
-  private writeBase(e: Expr): { place: Place; indexed: boolean } | null {
+  // `globals`: a chain rooted at a mutable global resolves too, to "G#g" plus the field steps above the first index step
+  // (an index step leaves the element unknown, so the place stops at what holds it and overlaps everything under it).
+  private writeBase(e: Expr, globals = false): { place: Place; indexed: boolean } | null {
     let indexed = false;
+    let fields: string[] = [];
     for (;;) {
       const p = this.placeOf(e);
       if (p !== null) return { place: p, indexed };
-      if (e.kind === "IndexAccess") { indexed = true; e = e.object; }
-      else if (e.kind === "FieldAccess") e = e.object;
+      if (globals && this.borrowEvents && e.kind === "Ident" && this.mutableGlobals.has(e.name)) return { place: `${e.name}#g${fields.map(f => `.${f}`).join("")}`, indexed };
+      if (e.kind === "IndexAccess") { indexed = true; fields = []; e = e.object; }
+      else if (e.kind === "FieldAccess") { fields.unshift(e.field); e = e.object; }
       else return null;
     }
   }
@@ -503,6 +512,7 @@ export class Builder {
 
   private callEffect(e: Expr & { kind: "Call" | "MethodCall" }, cur: number): number {
     const fx = this.borrowEvents ? this.effects?.(e) : undefined;
+    // A callee's writes to a global under a loop over it are the global-buffer pass's ("which is being iterated here").
     return fx === undefined ? cur : this.node({ effect: { ...fx, span: e.span } }, cur);
   }
 
@@ -513,7 +523,7 @@ export class Builder {
     const verb = builtin && e.func === "swap" ? "swap" : builtin && e.func === "replace" ? "replace" : null;
     const targets = verb === "swap" ? e.args.slice(0, 2) : verb === "replace" ? e.args.slice(0, 1) : e.args.filter(a => this.cr.autoBorrowed.get(a)?.mutable === true && this.cr.exprTypes.get(a)?.tag !== "ref");
     for (const a of targets) {
-      const base = this.writeBase(a);
+      const base = this.writeBase(a, true);
       if (base !== null) cur = this.node({ write: { kind: "place", place: base.place, text: describe(a), span: e.span, unsafe: this.unsafeDepth > 0, action: verb ?? "pass" } }, cur);
     }
     return cur;
@@ -570,14 +580,14 @@ export class Builder {
         cur = this.placeArgWrites(e, cur);
         cur = this.callEffect(e, cur);
         if (this.borrowEvents) {
-          const base = this.writeBase(e.object);
+          const base = this.writeBase(e.object, true);
           if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span, unsafe: this.unsafeDepth > 0 } }, cur);
           // `v.each(cb)`: the receiver is loaned to the callback's body.
           const recv = this.cr.exprTypes.get(e.object);
           const rbase = recv?.tag === "ref" ? recv.inner : recv;
           if (base !== null && (rbase?.tag === "vec" || rbase?.tag === "hashmap")) {
             for (const a of e.args) {
-              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^\d+/, ""), label: `${rootOfPlace(base.place)}.${e.method}`, span: e.span });
+              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^(\d+|g)/, ""), label: `${rootOfPlace(base.place)}.${e.method}`, span: e.span });
             }
           }
           // `ps.push(v.ptr())`: the container now holds the pointer.

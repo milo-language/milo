@@ -2,7 +2,8 @@
 // holder h is in force at a node iff the loan node reaches it with no redefinition of h in between and
 // h is still live there (an NLL region); a conflict is a write or move of something overlapping p
 // while a loan is in force. Slice scope: view lets, for-in loops, callback bodies and raw pointers into a local's buffer,
-// against method calls, assignments and moves of a local place. Reads the place graph of src/place-cfg.ts.
+// against method calls, assignments and moves of a local place; loops and callbacks also loan a mutable global ("G#g") or the
+// container an indexed iterable sits in (`for x in vs[i]` loans `vs`). Reads the place graph of src/place-cfg.ts.
 import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
 import type { Diagnostic, DiagnosticNote } from "./diagnostics";
@@ -111,7 +112,8 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       const l = originOf(k);
       const ln = nodes[l]!;
       const kind = ln.loan!.kind;
-      if ((kind === "view" ? elem : unsafe || !pointers) || !overlaps(placeOfKey(k), place) || !holderLiveAfter(n, ln.loan!.holder!)) continue;
+      // An element write overwrites (and frees) the element a deep view points into.
+      if ((kind === "view" ? elem && ln.loan!.deep !== true : unsafe || !pointers) || !overlaps(placeOfKey(k), place) || !holderLiveAfter(n, ln.loan!.holder!)) continue;
       found.push(l);
     }
     for (let l = 0; l <= i; l++) {

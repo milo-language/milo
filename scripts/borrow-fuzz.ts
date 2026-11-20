@@ -1,6 +1,6 @@
-// Differential fuzzer for the borrow dataflow (src/borrow-flow.ts, F) against the reference interpreter (I, the
-// oracle: it gets stuck on E-BORROW when a view is read after its Vec changed length or capacity, and on
-// R-MEM-UAF when a raw pointer is).
+// Differential fuzzer for the borrow dataflow (src/borrow-flow.ts, F) against the reference interpreter (I).
+// I is the oracle: it gets stuck on E-BORROW when a view is read after its Vec changed length or capacity,
+// and on R-MEM-UAF when a raw pointer is.
 //   bun scripts/borrow-fuzz.ts --seed N --count N --jobs N [--keep N]
 // Program i of seed s is generated from PRNG(s, i) alone, so any finding reproduces from (seed, index).
 // Classes:
@@ -145,6 +145,8 @@ function stmt(c: Ctx, depth: number): S[] {
     }
     case "write": return [write(c, v)];
     case "move": {
+      // A global or an element cannot be moved out of by a `var`.
+      if (v.name === "G0" || v.name.includes("[")) return [];
       const name = fresh(c, "w");
       v.dead = true;
       c.vecs.push({ name, ty: v.ty, dead: false });
@@ -188,6 +190,18 @@ function gen(seedN: number, idx: number): S[] {
     head.push(leaf(`${name}.push(${lit(c, ty)})`));
   }
   if (r() < 0.4) { head.push(leaf(`var h = H { items: ${vecLit(c, "i64")} }`)); c.vecs.push({ name: "h.items", ty: "i64", dead: false }); head.push(leaf("h.items.push(1)")); }
+  // A module-level Vec and an element of a Vec<Vec<i64>> (`for x in vs[0]`): places a local-only loan table never sees.
+  // Their own PRNG keeps the programs of the local shapes stable for a given (seed, index).
+  const r2 = rng(seedN ^ 0x5bd1e995, idx);
+  if (r2() < 0.35) {
+    head.unshift(leaf(`@global var G0: Vec<i64> = ${vecLit(c, "i64")}`));
+    head.push(leaf("G0.push(1)"));
+    c.vecs.push({ name: "G0", ty: "i64", dead: false });
+  }
+  if (r2() < 0.35) {
+    head.push(leaf(`var vs: Vec<Vec<i64>> = [${vecLit(c, "i64")}, ${vecLit(c, "i64")}]`), leaf("vs[0].push(1)"));
+    c.vecs.push({ name: "vs[0]", ty: "i64", dead: false });
+  }
   const body = block(c, 5 + Math.floor(r() * 21), 0);
   // The tail reads every loan and Vec so a stale view is read, not just taken.
   return [...head, ...body];
@@ -195,8 +209,9 @@ function gen(seedN: number, idx: number): S[] {
 
 const sourceOf = (ss: S[]): string => {
   const out: string[] = [];
-  render(ss, "    ", out);
-  return `${PRELUDE}fn main(): void {\n${out.join("\n")}\n}\n`;
+  const globals = ss.filter(s => s.head.startsWith("@global ")).map(s => s.head.slice(8));
+  render(ss.filter(s => !s.head.startsWith("@global ")), "    ", out);
+  return `${PRELUDE}${globals.join("\n")}${globals.length > 0 ? "\n" : ""}fn main(): void {\n${out.join("\n")}\n}\n`;
 };
 
 // ── evaluation ──
