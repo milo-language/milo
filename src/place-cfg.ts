@@ -97,6 +97,8 @@ export class Builder {
   inheritedLoans: InheritedLoan[] | undefined;
   // For each closure literal: the view loans in force at its creation whose holder and place are both captures, by name.
   closureLoans = new Map<Expr, InheritedLoan[]>();
+  // Where each binding's lexical block ends, as the node count at exit: a raw pointer's loan lasts that long (C code may keep it).
+  scopeEnds = new Map<Place, number>();
   private scopes: Map<string, string>[] = [];
   private loops: { head: number; breaks: number[] }[] = [];
   // Edges that return to a loop head ("from>to"), and each head's loop statement span.
@@ -141,7 +143,9 @@ export class Builder {
   }
   private scoped<T>(f: () => T): T {
     this.scopes.push(new Map());
-    try { return f(); } finally { this.scopes.pop(); }
+    try { return f(); } finally {
+      for (const id of this.scopes.pop()!.values()) this.scopeEnds.set(id, this.nodes.length);
+    }
   }
 
   // The place an expression names, when it is a local binding or a static field chain of struct fields off one.

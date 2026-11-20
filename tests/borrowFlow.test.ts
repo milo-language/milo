@@ -82,8 +82,9 @@ test("an index write and a reassignment under a live pointer name their own word
     .toEqual(["8: 'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
 });
 
-test("push after the pointer's last use is fine (NLL), and so is a write inside unsafe", () => {
-  expect(flow(`${PTR}    let p = v.ptr()\n    print(strlen(p))\n    v.push(1)\n    return 0\n}`)).toEqual([]);
+test("a pointer loan lasts to the end of its block (C may keep it), and a write inside unsafe is fine", () => {
+  expect(flow(`${PTR}    let p = v.ptr()\n    print(strlen(p))\n    v.push(1)\n    return 0\n}`))
+    .toEqual(["9: 'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 7)"]);
   expect(flow(`${PTR}    let p = v.ptr()\n    unsafe {\n        v.push(1)\n    }\n    print(strlen(p))\n    return 0\n}`)).toEqual([]);
 });
 
@@ -204,7 +205,9 @@ test("a park while a slice of a global is read later is a conflict; after its la
 test("a park while a raw pointer into a global is read later names where the pointer came from", () => {
   expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    schedulerYield()\n    print(strlen(p))\n    return 0\n}`))
     .toEqual(["13: 'schedulerYield' can park this task while 'p' still points into 'b's buffer (from 'b.ptr()' on line 12); another task may push to 'b' before it resumes"]);
-  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    print(strlen(p))\n    schedulerYield()\n    return 0\n}`)).toEqual([]);
+  expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    print(strlen(p))\n    schedulerYield()\n    return 0\n}`)).toEqual([
+    "14: 'schedulerYield' can park this task while 'p' still points into 'b's buffer (from 'b.ptr()' on line 12); another task may push to 'b' before it resumes",
+  ]);
 });
 
 test("a callee that pushes to a global while a pointer or slice of it is read later is a conflict; after the last use it is fine", () => {

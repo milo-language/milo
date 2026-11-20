@@ -98,6 +98,11 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       b.closureLoans.set(n.expr, list);
     }
   });
+  // A pointer loan lasts to the end of its holder's block, not its last use; every other loan ends when the holder is dead.
+  const held = (n: Node, i: number, loan: NonNullable<Node["loan"]>): boolean => {
+    const end = loan.kind === "pointer" ? b.scopeEnds.get(loan.holder!.split(".")[0]!) : undefined;
+    return end !== undefined ? i < end : holderLiveAfter(n, loan.holder!);
+  };
   const holderLiveAfter = (n: Node, holder: Place): boolean => {
     for (const s of n.succ) for (const p of liveIn[s]!) if (overlaps(p, holder)) return true;
     return false;
@@ -113,7 +118,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       const ln = nodes[l]!;
       const kind = ln.loan!.kind;
       // An element write overwrites (and frees) the element a deep view points into.
-      if ((kind === "view" ? elem && ln.loan!.deep !== true : unsafe || !pointers) || !overlaps(placeOfKey(k), place) || !holderLiveAfter(n, ln.loan!.holder!)) continue;
+      if ((kind === "view" ? elem && ln.loan!.deep !== true : unsafe || !pointers) || !overlaps(placeOfKey(k), place) || !held(n, i, ln.loan!)) continue;
       found.push(l);
     }
     for (let l = 0; l <= i; l++) {
@@ -126,7 +131,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
   // A call that parks, with a reference into a global's buffer held across it.
   const globalHeld = (i: number): Node[] => {
     const n = nodes[i]!;
-    return [...(state[i] ?? [])].map(k => nodes[originOf(k)]!).filter(l => l.loan!.place.endsWith("#g") && holderLiveAfter(n, l.loan!.holder!)).sort((x, y) => nodes.indexOf(x) - nodes.indexOf(y));
+    return [...(state[i] ?? [])].map(k => nodes[originOf(k)]!).filter(l => l.loan!.place.endsWith("#g") && held(n, i, l.loan!)).sort((x, y) => nodes.indexOf(x) - nodes.indexOf(y));
   };
   const report = (span: Span | undefined, t: text.BorrowText, notes: DiagnosticNote[] = []) => {
     const key = `${span?.file}:${span?.line}:${span?.col}:${t.message}`;
