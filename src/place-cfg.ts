@@ -256,6 +256,7 @@ export class Builder {
         const { breaks } = this.loops.pop()!;
         return this.join([head, ...breaks]);
       }
+      default: { const unhandled: never = s; return unhandled; }
     }
   }
 
@@ -444,6 +445,7 @@ export class Builder {
         }
         return cur;
       }
+      default: { const unhandled: never = e; return unhandled; }
     }
   }
 }

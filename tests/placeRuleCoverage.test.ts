@@ -18,16 +18,19 @@
 // To add an exemption, put `ident-ok:` and a reason on the line or just above it. To
 // remove one, route the rule through `accessPath`/`placesOf` instead.
 import { test, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 
-const CHECKER = join(import.meta.dir, "..", "src", "checker.ts");
+const SRC = join(import.meta.dir, "..", "src");
+// The TypeChecker's methods are spread over src/checker*.ts (split aa7c33a4); a moved method takes the checker as c or chk.
+const CHECKER_FILES = readdirSync(SRC).filter(f => /^checker(-[\w-]+)?\.ts$/.test(f));
 
 test("resolving a variable by matching Ident is exempted only with a written reason", () => {
-  const lines = readFileSync(CHECKER, "utf8").split("\n");
   const unexplained: string[] = [];
   let visited = 0;
 
+  for (const file of CHECKER_FILES) {
+  const lines = readFileSync(join(SRC, file), "utf8").split("\n");
   for (let i = 0; i < lines.length; i++) {
     // Two spellings of the same habit, and the first version of this gate caught only the
     // first — which is the very defect it exists to prevent, committed in the gate:
@@ -41,7 +44,7 @@ test("resolving a variable by matching Ident is exempted only with a written rea
     // tail of a fork) resolves to no root and the rule silently does not run. Note both
     // `===` and `!==` count: `if (root.kind !== "Ident") return` is the same decision.
     const identTest = /\.kind (===|!==) "Ident"/.test(lines[i])
-      && lines.slice(i, i + 4).join("\n").includes("this.lookup(");
+      && lines.slice(i, i + 4).join("\n").match(/\b(this|c|chk)\.lookup\(/) !== null;
     const handRolledWalk = /while \([^)]*kind === "FieldAccess"[^)]*kind === "IndexAccess"/.test(lines[i]);
     if (!identTest && !handRolledWalk) continue;
     // A line that only DESCRIBES the pattern (this file's own prose lives in checker.ts's
@@ -51,7 +54,8 @@ test("resolving a variable by matching Ident is exempted only with a written rea
     // The reason may sit on the line itself or in the comment block just above it.
     const window = lines.slice(Math.max(0, i - 5), i + 1).join("\n");
     if (window.includes("ident-ok:")) continue;
-    unexplained.push(`checker.ts:${i + 1}: ${lines[i].trim().slice(0, 90)}`);
+    unexplained.push(`${file}:${i + 1}: ${lines[i].trim().slice(0, 90)}`);
+  }
   }
 
   // a scan that matched nothing proves nothing

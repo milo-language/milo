@@ -7,7 +7,7 @@
 // a list by hand. The docs site did copy one, and shipped `char`/`String`/`Box` — words
 // Milo does not have — for months.
 import { test, expect } from "bun:test";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { execFileSync, spawnSync } from "child_process";
 import { tmpdir } from "os";
@@ -21,8 +21,9 @@ import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "../src/cli-help";
 
 const ROOT = join(import.meta.dir, "..");
-// The program passes are checker code too: they raise warnings through host.warn.
-const CHECKER = ["checker.ts", "checker-program-passes.ts", "checker-mutability.ts"].map(f => readFileSync(join(ROOT, "src", f), "utf-8")).join("\n");
+// The TypeChecker's methods and the program passes live across src/checker*.ts; all of it is checker code.
+const CHECKER_FILES = readdirSync(join(ROOT, "src")).filter(f => /^checker(-[\w-]+)?\.ts$/.test(f));
+const CHECKER = CHECKER_FILES.map(f => readFileSync(join(ROOT, "src", f), "utf-8")).join("\n");
 
 test("the CLI emits the same payload as the module, and it parses", () => {
   const out = execFileSync("bun", ["run", join(ROOT, "src", "main.ts"), "lang", "--json"], { encoding: "utf-8" });
@@ -136,7 +137,7 @@ test("every attribute names at least one target and carries a doc", () => {
 // Both per-target lists the checker used to carry lived inside error-message strings and
 // had drifted from each other. Derived, or the drift comes back.
 test("the checker derives its attribute lists from the vocabulary", () => {
-  const src = readFileSync(join(import.meta.dir, "..", "src", "checker.ts"), "utf-8");
+  const src = CHECKER;
   expect(src).toContain('attributesFor("struct")');
   expect(src).toContain('attributesFor("fn")');
   expect(src).toContain('attributesFor("method")');
