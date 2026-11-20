@@ -314,7 +314,7 @@ export class Interp {
       if (cur.k === "struct") return { get: () => cur.f[step as string]!, set: v => { cur.f[step as string] = v; } };
       if (cur.k === "arr") return { get: () => cur.e[step as number]!, set: v => { cur.e[step as number] = v; } };
       if (cur.k === "enum") return { get: () => cur.a[step as number]!, set: v => { cur.a[step as number] = v; } };
-      if (cur.k === "vec" && cur.buf) { const b = cur.buf, i = cur.start + (step as number); return { get: () => b.elems[i]!, set: v => { b.elems[i] = v; } }; }
+      if (cur.k === "vec" && cur.buf) { const b = cur.buf, i = cur.start + (step as number); if (cur.view && b.id >= 0 && !this.blocks.has(b.id)) this.stuck("E-BORROW", "an element read through a view of a buffer that has since been reallocated or freed"); return { get: () => b.elems[i]!, set: v => { b.elems[i] = v; } }; }
       if (cur.k === "box") {
         if (step === "*") return { get: () => cur.cell.v, set: v => { cur.cell.v = v; } };
         return this.child(cur.cell.v, step); // `h.field` on a Heap<S> goes through the box

@@ -815,6 +815,23 @@ fn main() {
 }`)).toBe("R-MEM-LAYOUT");
 });
 
+test("E-BORROW: a view read after its Vec grew into a new buffer is stuck; a view of a fixed array is not", () => {
+  expect(stuckLoose(`
+fn main() {
+    var v: Vec<i64> = [1, 2, 3, 4, 5, 6, 7, 8]
+    let s = v[0..2]
+    v.push(9)
+    print(s[0])
+}`)).toBe("E-BORROW");
+  const r = run(`
+fn first(s: &[i64]): i64 { return s[0] }
+fn main() {
+    let a = [9, 8]
+    print(first(a[0..2]))
+}`);
+  expect(r.out).toBe("9\n");
+});
+
 test("R-SYS-ENV, R-SYS-CLOCK, R-SYS-RANDOM, R-SYS-EXIT, R-REPLAY-OFF, R-MEM-WRITE-RO: the environment, the clock, entropy, _exit, record/replay off, a read-only message", () => {
   const r = run(`
 from "std/time" import { epochMillis }

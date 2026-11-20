@@ -124,9 +124,16 @@ const elemSize = (it: Interp, e: Expr | undefined): number => {
   return t && (t.tag === "vec" || t.tag === "array") ? sizeOf(it, t.element) : 8;
 };
 // E-VEC
+// Growing moves the elements to a new block and frees the old one, as the compiled vecGrow does: a
+// view or pointer still holding the old buffer is then a use after free (E-BORROW, R-MEM-*).
 function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
-  else h.buf.elems.length = h.start + cap;
+  else if (h.start + cap > h.buf.elems.length) {
+    const old = h.buf;
+    h.buf = it.newBuf(h.start + cap);
+    for (let i = 0; i < old.elems.length; i++) h.buf.elems[i] = old.elems[i];
+    it.free(old.id);
+  } else h.buf.elems.length = h.start + cap;
   h.cap = cap;
 }
 // std/vec vecGrowOne: the first buffer holds 8 elements (64 bytes' worth when they are bigger), then doubles
