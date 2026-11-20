@@ -15,7 +15,7 @@
   "src/ast.ts": 19,
   "src/backend-program.ts": 98,
   "src/checker-borrows-moves.ts": 232,
-  "src/checker-borrows.ts": 252,
+  "src/checker-borrows.ts": 253,
   "src/checker-calls.ts": 363,
   "src/checker-closure-env.ts": 75,
   "src/checker-concurrent-args-host.ts": 26,

@@ -1,0 +1,12 @@
+// A pointer binding that goes out of scope releases only its pointer borrow: the loop's
+// iteration borrow of the same Vec must still forbid the pop.
+fn main(): void {
+    var v0: Vec<i64> = [8, 5, 2]
+    for x1 in v0 {
+        if x1 > 0 {
+            let p2 = v0.ptr()
+        }
+        v0.pop()
+    }
+}
+// @error: cannot call 'pop' on 'v0' while a loop iterates over it

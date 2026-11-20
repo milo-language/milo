@@ -1,0 +1,9 @@
+// An empty for-in over a Vec ends only its own iteration borrow, not the slice view.
+fn main(): void {
+    var v0 = [1, 2, 3]
+    let s3 = v0[0..1]
+    for x4 in v0 { }
+    v0 = [7, 2]
+    print(s3[0])
+}
+// @error: cannot assign to 'v0' while 's3' borrows it

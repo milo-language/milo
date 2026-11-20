@@ -514,7 +514,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         }
         // One freeze for every container shape below (see freezeIterable). A consumed
         // temporary has no root to freeze.
-        const iterBorrowInfo = consume ? null : chk.freezeIterable(stmt.iterable, sp);
+        const iterBorrow = consume ? null : chk.freezeIterable(stmt.iterable, sp);
         if (iterType.tag === "vec") {
           const mutElem = !!stmt.mutRef;
           const elemRef: TypeKind = consume ? iterType.element : { tag: "ref", inner: iterType.element, mutable: mutElem };
@@ -662,7 +662,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         // Released once, for whichever arm above ran. Paired with the single
         // freezeIterable before the dispatch — see that function for why the pairing
         // is here and not inside each arm.
-        if (iterBorrowInfo) chk.unfreeze(iterBorrowInfo);
+        if (iterBorrow) chk.releaseBorrowSite(iterBorrow.info, iterBorrow.site);
       }
       break;
     }

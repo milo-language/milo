@@ -1,0 +1,13 @@
+// A while loop around a for-in does not release the view either.
+fn main(): void {
+    var v0 = [1, 2, 3]
+    let s3 = v0[0..1]
+    var i = 0
+    while i < 2 {
+        for x4 in v0 { }
+        i = i + 1
+    }
+    v0 = [7, 2]
+    print(s3[0])
+}
+// @error: cannot assign to 'v0' while 's3' borrows it

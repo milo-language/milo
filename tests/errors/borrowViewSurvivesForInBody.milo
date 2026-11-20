@@ -1,0 +1,11 @@
+// A for-in with a body ends only its own iteration borrow: the view outlives the loop.
+fn main(): void {
+    var v0: Vec<i64> = [1, 2, 3]
+    let s3 = v0[0..1]
+    for x4 in v0 {
+        print(x4)
+    }
+    v0.push(7)
+    print(s3[0])
+}
+// @error: cannot call 'push' on 'v0' while 's3' borrows it

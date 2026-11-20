@@ -1,0 +1,9 @@
+// A string `lines()` loop ends only its own borrow, not a view taken before it.
+fn main(): void {
+    var t = "a b c"
+    let s = t[0..1]
+    for l in t.lines() { }
+    t = "xyz"
+    print(s)
+}
+// @error: cannot assign to 't' while 's' borrows it

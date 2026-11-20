@@ -978,6 +978,7 @@ export class TypeChecker {
   isPlaceIterable(slot: Expr) { return borrows.isPlaceIterable(this, slot); }
 
   freezeIterable(iterable: Expr, loopSpan?: Span) { return borrows.freezeIterable(this, iterable, loopSpan); }
+  releaseBorrowSite(info: VarInfo, site: BorrowSite) { return borrows.releaseBorrowSite(this, info, site); }
 
   rootNameOf(e: Expr) { return borrows.rootNameOf(this, e); }
   freezeRootOf(place: Expr, kind?: BorrowKind, site?: BorrowSite) { return borrows.freezeRootOf(this, place, kind, site); }

@@ -1,5 +1,5 @@
 // View provenance, fall-off and reachability analysis, copy-ness queries.
-import { TypeChecker } from "./checker";
+import { TypeChecker, type BorrowSite } from "./checker";
 import type { Expr, Function, Pattern, Span, Stmt, ForInStmt } from "./ast";
 import { typeName } from "./types";
 import type { TypeKind } from "./types";
@@ -62,7 +62,9 @@ export function checkStringViewForIn(c: TypeChecker, stmt: ForInStmt, mode: "lin
   }
   // Same freeze a slice takes: every piece points into the receiver's buffer, so it must
   // not be mutated, moved or reallocated for the whole loop.
-  const rootInfo = c.freezeRootOf(call.object);
+  // Released by its own site below: another view of the same string may outlive this loop.
+  const loopSite: BorrowSite = { span: call.object.span };
+  const rootInfo = c.freezeRootOf(call.object, "view", loopSite);
   c.borrowedExprs.add(call.object);
   c.stringViewForIns.set(stmt, { mode });
 
@@ -82,7 +84,7 @@ export function checkStringViewForIn(c: TypeChecker, stmt: ForInStmt, mode: "lin
   for (const s of stmt.body) c.checkStmt(s, fnRetType);
   c.loopDepth--;
   c.popScope();
-  if (rootInfo) c.unfreeze(rootInfo);
+  if (rootInfo) c.releaseBorrowSite(rootInfo, loopSite);
   c.endLoop(true);
 }
 

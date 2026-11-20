@@ -8,11 +8,30 @@ import { typeName } from "./types";
 import type { TypeKind } from "./types";
 import type { Pattern } from "./ast";
 
+// A binding leaves scope: its borrow of `src` ends. A view binding was the first to freeze `src`
+// (see newlyFrozen in checker-stmt), so everything but pointers goes; a pointer holder owns only its
+// pointer borrow, and dropping the rest would end a loop's iteration borrow or another binding's view.
+function releaseFreeze(c: TypeChecker, src: VarInfo, holder: VarInfo) {
+  let pointerOnly = false;
+  for (const p of holder.pointerFreezes ?? []) if (p === src) pointerOnly = true;
+  if (!pointerOnly) c.unfreeze(src);
+  c.releasePointerBorrows(src, holder);
+}
+
+// `holder` now holds a pointer borrow of `src`. Unless it already froze `src` as a view binding
+// (which owns the view borrows), that is all it owns, see `releaseFreeze`.
+function addPointerFreeze(holder: VarInfo, src: VarInfo) {
+  let had = false;
+  for (const f of holder.freezes ?? []) if (f === src) had = true;
+  if (!had) (holder.pointerFreezes ??= []).push(src);
+  (holder.freezes ??= []).push(src);
+}
+
 export function popScope(c: TypeChecker) {
   const scope = c.scopes.pop();
   if (scope) {
     for (const [, vi] of scope) {
-      if (vi.freezes) for (const src of vi.freezes) { c.unfreeze(src); c.releasePointerBorrows(src, vi); }
+      if (vi.freezes) for (const src of vi.freezes) releaseFreeze(c, src, vi);
     }
   }
 }
@@ -49,7 +68,7 @@ export function declare(c: TypeChecker, name: string, info: VarInfo, span?: Span
     // Bind the new declaration anyway: later lines were written against it, and
     // resolving them to the first one turned every use into a type error of its own.
     // The first binding leaves scope here, so its freezes go with it as in popScope.
-    if (prior?.freezes) for (const src of prior.freezes) { c.unfreeze(src); c.releasePointerBorrows(src, prior); }
+    if (prior?.freezes) for (const src of prior.freezes) releaseFreeze(c, src, prior);
     if (scope === c.globalScope) c.globalScopeInfos.add(info);
     scope.set(name, info);
     return;
@@ -269,7 +288,7 @@ export function bindPointerViews(c: TypeChecker, name: string, holderInfo: VarIn
     const src = c.lookup(ap.root);
     if (!src || src === holderInfo) continue;
     c.freeze(src, pv.source, "pointer", { name, info: holderInfo, root: ap.root, call: pv.call, line: pv.line });
-    (holderInfo.freezes ??= []).push(src);
+    addPointerFreeze(holderInfo, src);
   }
 }
 
@@ -360,7 +379,7 @@ export function carryPointerBorrows(c: TypeChecker, carried: { from: VarInfo; pa
   if (!to || !carried.from.everMoved) return;
   carried.holders.forEach((h, i) => {
     c.pushBorrow(to, carried.paths[i], "pointer", h, null);
-    (h.info.freezes ??= []).push(to);
+    addPointerFreeze(h.info, to);
   });
 }
 
@@ -1087,8 +1106,19 @@ export function frameOwned(c: TypeChecker, info: VarInfo): boolean {
   return info.type.tag !== "ref" && c.scopeIndexOf(info) >= c.fnScopeFloor;
 }
 
-export function freezeIterable(c: TypeChecker, iterable: Expr, loopSpan?: Span): VarInfo | null {
-  return c.freezeRootOf(iterable, "iteration", { span: loopSpan ?? iterable.span, via: "loop" });
+// Returns the frozen root with the exact site the loop took, so the loop can release only its own
+// borrow (`releaseBorrowSite`) and leave every other view of the same Vec alone.
+export function freezeIterable(c: TypeChecker, iterable: Expr, loopSpan?: Span): { info: VarInfo; site: BorrowSite } | null {
+  const site: BorrowSite = { span: loopSpan ?? iterable.span, via: "loop" };
+  const info = c.freezeRootOf(iterable, "iteration", site);
+  return info ? { info, site } : null;
+}
+
+// End the one borrow that was recorded with `site`. Unlike `unfreeze` this keeps every other
+// borrow of `info` (views, pointers, other loops), which are owned by other bindings.
+export function releaseBorrowSite(c: TypeChecker, info: VarInfo, site: BorrowSite) {
+  const sites = info.borrowSites ?? [];
+  c.retainBorrows(info, (_, i) => sites[i] !== site);
 }
 
 // Phase 2 (use-after-invalidate): mutating a collection while a borrow into it is

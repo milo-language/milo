@@ -103,6 +103,10 @@ export interface VarInfo {
   // Released (borrowed=false) when the binding's scope pops, so a slice in an
   // inner block doesn't freeze its source for the rest of the function.
   freezes?: VarInfo[];
+  // The subset of `freezes` this binding holds only through a POINTER borrow (`let p = v.ptr()`).
+  // Such a binding never owned the view/loop borrows of the source, so its scope pop releases its
+  // pointer borrow and nothing else.
+  pointerFreezes?: VarInfo[];
   // Which places inside this variable the live borrows point into, as field chains off
   // the root (`["a"]` for a view of `x.a`, `[]` for the whole variable). A `null` entry
   // means the borrow's path could not be determined and the whole variable is frozen.
