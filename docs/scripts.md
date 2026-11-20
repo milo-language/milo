@@ -39,6 +39,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ast-writes.ts` | Census of writes to AST nodes after the parser, grouped by stage. |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/borrow-fuzz.ts` | Differential fuzzer for the borrow dataflow (src/borrow-flow.ts, F) against the reference interpreter (I). |
+| `scripts/borrow-mutants.ts` | Mutation gate for the borrow dataflow (src/borrow-flow.ts, src/borrow-flow-park.ts and the borrow events of src/place-cfg.ts): does the test corpus pin every rule of the borrow analysis? |
 | `scripts/borrow-templates.ts` | The message templates of the borrow errors src/borrow-flow.ts reports; scripts/borrow-fuzz.ts judges generated programs by them. |
 | `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
@@ -107,6 +108,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
 | `scripts/move-mutants.ts` | Mutation gate for src/move-flow.ts and src/place-cfg.ts: does the test corpus pin every rule of the move analysis? |
 | `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
+| `scripts/mutant-gate.ts` | Shared harness of the mutation gates (scripts/move-mutants.ts, scripts/borrow-mutants.ts): a private copy of src/ and scripts/ per mutant (the tree itself is never touched), the corpus snapshot of th… |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
 | `scripts/ownership-sites.ts` | Ownership diagnostic-site census: how many ownership-worded checker diagnostics does at least one tests/errors fixture reach? |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |

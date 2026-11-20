@@ -14,9 +14,10 @@
 // on any survivor. A mutant that no longer applies (its anchor is gone) fails too, so the table
 // cannot rot silently.
 //   bun scripts/move-mutants.ts [--only <id>] [--jobs N]
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { diagKill, errorsOf, makeRoot as makeRootIn, ROOT, snapshot as snapshotIn, type Facts } from "./mutant-gate";
 
 interface Mutant { id: string; rule: string; anchor: string; replace: string; file?: string }
 
@@ -60,33 +61,18 @@ const MUTANTS: Mutant[] = [
     anchor: "if (l && cur >= 0) this.backTo(cur, l.head); return -1;", replace: "return -1;" },
 ];
 
-const ROOT = join(import.meta.dir, "..");
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1]; };
 const only = opt("--only");
 const jobs = opt("--jobs");
 const SCRATCH = mkdtempSync(join(tmpdir(), "move-mutants-"));
 
-type Facts = Record<string, { diagnostics?: { severity: string; message: string; hint?: string }[]; moved?: string[]; shared?: string[]; sharedCaptures?: string[]; thrown?: unknown }>;
-
 const BINARY_SAMPLE = 12;
 const INTERP_SAMPLE = 60;
 const POOL = 8;
 
-// A root that shares everything with the checkout except src/ and scripts/, which are private copies
-// (the binary judge compiles with the src/ next to its script).
-function makeRoot(name: string): string {
-  const root = join(SCRATCH, name);
-  for (const d of ["src", "scripts"]) cpSync(join(ROOT, d), join(root, d), { recursive: true });
-  for (const e of readdirSync(ROOT)) if (e !== "src" && e !== "scripts" && e !== ".git") symlinkSync(join(ROOT, e), join(root, e));
-  return root;
-}
-
-async function snapshot(root: string, out: string): Promise<Facts> {
-  const p = Bun.spawn(["bun", join(ROOT, "scripts/checker-diag-snapshot.ts"), root, out, "--facts", ...(jobs ? ["--jobs", jobs] : [])], { stdout: "ignore", stderr: "inherit" });
-  if (await p.exited !== 0) throw new Error(`snapshot failed for ${root}`);
-  return JSON.parse(readFileSync(out, "utf-8")) as Facts;
-}
+const makeRoot = (name: string) => makeRootIn(SCRATCH, name);
+const snapshot = (root: string, out: string) => snapshotIn(root, out, jobs, true);
 
 // stdout + exit of the reference interpreter, run from `root`'s src.
 async function interp(root: string, file: string): Promise<string> {
@@ -97,7 +83,6 @@ async function interp(root: string, file: string): Promise<string> {
   return `${o}\n#exit ${code} ${stuck}`;
 }
 
-const errorsOf = (f: Facts[string] | undefined) => (f?.diagnostics ?? []).filter(d => d.severity === "error");
 const factsKey = (f: Facts[string] | undefined) => JSON.stringify([f?.moved, f?.shared, f?.sharedCaptures]);
 
 const base = await snapshot(makeRoot("base"), join(SCRATCH, "base.json"));
@@ -112,19 +97,7 @@ for (const m of MUTANTS) {
   rmSync(file);
   writeFileSync(file, src.replace(m.anchor, m.replace));
   const got = await snapshot(root, join(SCRATCH, `${m.id}.json`));
-  let why = "";
-  for (const f of Object.keys(base)) {
-    const b = base[f], g = got[f];
-    if (f.startsWith("tests/errors/")) {
-      const want = (readFileSync(join(ROOT, f), "utf-8").match(/\/\/ @error: (.*)/) ?? [])[1]?.trim();
-      if (want === undefined) continue;
-      const before = errorsOf(b).some(d => `${d.message} ${d.hint ?? ""}`.includes(want));
-      const after = errorsOf(g).some(d => `${d.message} ${d.hint ?? ""}`.includes(want));
-      if (before && !after) { why = `${f} no longer reports '${want.slice(0, 60)}'`; break; }
-      continue;
-    }
-    if (errorsOf(b).length === 0 && (errorsOf(g).length > 0 || g?.thrown !== undefined)) { why = `${f} is now rejected: ${errorsOf(g)[0]?.message.slice(0, 80) ?? "crash"}`; break; }
-  }
+  let why = diagKill(base, got);
   if (!why) {
     const changed = Object.keys(base).filter(f => f.startsWith("tests/fixtures/") && errorsOf(base[f]).length === 0 && factsKey(base[f]) !== factsKey(got[f]));
     // Fixtures whose own lines changed come first: a rule broken inside std changes the facts of every
