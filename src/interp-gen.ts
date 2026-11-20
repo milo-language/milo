@@ -9,7 +9,7 @@ import { externNative } from "./interp-sys";
 import { Interp } from "./interp";
 import { Unwind, OP_IMPLIES, strip, MAX_FRAMES, NOT_NATIVE, isRef, isStr, prefixOf, wrapInt, normName, describe, describeExpr } from "./interp";
 import type { Completion, Scope, CallE, MethodE } from "./interp";
-import { display, jsonStringify, appendTo, strRange, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
+import { display, jsonStringify, appendTo, strRange, iterGen, NONE, opt, asVec, sliceView, BUILTIN_FNS, STR_METHODS, INT_ARITH, take } from "./interp-natives";
 import type { Native } from "./interp-natives";
 import { ExitProgram, MOVED, enc, strText, staticStr } from "./interp-values";
 import type { Str, Struct, EnumV, VecV, BoxV, MapV, Slot, Ref, ClosureV, Step, Value, Place } from "./interp-values";
@@ -736,8 +736,8 @@ export class InterpGen extends Interp {
       else pl = (yield* this.resolve$g(iterE));
       const whole = this.getPlace(pl);
       const strIter = it.tag === "string";
-      const n = strIter ? (whole as Str).b.bytes.length : this.seqLen(whole);
-      for (let i = 0; i < n; i++) {
+      const n = strIter ? (whole as Str).b.bytes.length : this.seqLen(whole), gen0 = consume || it.tag !== "vec" ? undefined : iterGen(whole);
+      for (let i = 0; i < n; i++) { if (i > 0 && gen0 !== undefined && iterGen(this.getPlace(pl)) !== gen0) this.stuck("E-BORROW", "the Vec a for-in loop iterates changed length or capacity inside the loop");
         const r = fin((yield* this.loopBody$g(s, sc => {
           const ep: Place = { slot: pl.slot, path: [...pl.path, i], ro: pl.ro, viaRef: pl.viaRef };
           if (s.varName2) this.declare(s.varName, BigInt(i), sc);

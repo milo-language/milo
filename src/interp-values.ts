@@ -37,9 +37,10 @@ export interface Str { k: "str"; b: StrBuf }
 export interface Struct { k: "struct"; name: string; f: Record<string, Value>; ghost?: true }
 export interface EnumV { k: "enum"; en: string; variant: string; tag: number; a: Value[]; ghost?: true }
 export interface ArrV { k: "arr"; e: Value[] }
-export interface VecBuf { id: number; elems: Value[] }
-// `view`: a slice, which borrows the buffer and drops nothing. `buf` null: nothing allocated.
-export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number; cap: number; view: boolean }
+// gen: bumped on every length or capacity change of the owner; compiled code may reallocate under a different capacity, so such a change ends every view whether or not this run reallocated
+export interface VecBuf { id: number; elems: Value[]; gen: number }
+// `view`: a slice, which borrows the buffer and drops nothing. `buf` null: nothing allocated. `gen`: the buffer's gen when the view was taken.
+export interface VecV { k: "vec"; buf: VecBuf | null; start: number; len: number; cap: number; view: boolean; gen?: number }
 // raw: the malloc'd block an adopted box stands on; dropping the box frees that block
 export interface BoxV { k: "box"; id: number; cell: { v: Value }; ghost?: true; raw?: { live: boolean } }
 export interface IfaceV { k: "iface"; concrete: string; inner: Value }

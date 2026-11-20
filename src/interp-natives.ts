@@ -95,7 +95,11 @@ export function strRange(it: Interp, s: Str, a: bigint, b: bigint): [number, num
 }
 
 // ── Vec ──
-const vecOf = (it: Interp, r: Value) => it.deref(r) as VecV;
+const vecOf = (it: Interp, r: Value): VecV => {
+  const h = it.deref(r) as VecV;
+  if (staleView(it, h)) it.stuck("E-BORROW", STALE_VIEW_MSG);
+  return h;
+};
 // size in bytes of a value of type t (the compiled layout), which decides a Vec's first capacity
 // R-MEM-COPY
 export function sizeOf(it: Interp, t: TypeKind): number {
@@ -126,11 +130,18 @@ const elemSize = (it: Interp, e: Expr | undefined): number => {
 // E-VEC
 // Growing moves the elements to a new block and frees the old one, as the compiled vecGrow does: a
 // view or pointer still holding the old buffer is then a use after free (E-BORROW, R-MEM-*).
+export const invalidate = (h: VecV): void => { if (h.buf) h.buf.gen++; };
+// a view whose buffer was freed, or whose owner changed length or capacity since the view was taken
+export const staleView = (it: Interp, h: VecV): boolean => h.view && h.buf !== null && h.buf.id >= 0 && (!it.blocks.has(h.buf.id) || h.buf.gen !== h.gen);
+// the buffer generation of the Vec a for-in loop walks (undefined: nothing allocated)
+export const iterGen = (v: Value): number | undefined => (v && typeof v === "object" && v.k === "vec" ? v.buf?.gen : undefined);
+export const STALE_VIEW_MSG = "a view read after its Vec changed length or capacity (it may have reallocated)";
 function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
   else if (h.start + cap > h.buf.elems.length) {
     const old = h.buf;
     h.buf = it.newBuf(h.start + cap);
+    h.buf.gen = old.gen + 1;
     for (let i = 0; i < old.elems.length; i++) h.buf.elems[i] = old.elems[i];
     it.free(old.id);
   } else h.buf.elems.length = h.start + cap;
@@ -159,13 +170,17 @@ const idx = (it: Interp, v: Value, n: number, inclusive = false): number => {
   return Number(i);
 };
 // the Vec header behind a Vec, a slice or a fixed array (a fixed array is viewed whole)
-export const asVec = (it: Interp, v: Value): VecV => (v && typeof v === "object" && v.k === "arr" ? sliceView(it, v, 0n, BigInt(v.e.length)) : (v as VecV));
+export const asVec = (it: Interp, v: Value): VecV => {
+  if (v && typeof v === "object" && v.k === "arr") return sliceView(it, v, 0n, BigInt(v.e.length));
+  if (v && typeof v === "object" && v.k === "vec" && staleView(it, v)) it.stuck("E-BORROW", STALE_VIEW_MSG);
+  return v as VecV;
+};
 // E-VEC
 export function sliceView(it: Interp, v: VecV | { k: "arr"; e: Value[] }, lo: bigint, hi: bigint): VecV {
   const n = v.k === "arr" ? v.e.length : v.len;
   if (lo < 0n || hi < lo || hi > BigInt(n)) it.panic(`slice ${lo}..${hi} out of bounds (len ${n})`);
-  const base = v.k === "arr" ? { id: -1, elems: v.e } : v.buf;
-  return { k: "vec", buf: base, start: (v.k === "arr" ? 0 : v.start) + Number(lo), len: Number(hi - lo), cap: Number(hi - lo), view: true };
+  const base = v.k === "arr" ? { id: -1, elems: v.e, gen: 0 } : v.buf;
+  return { k: "vec", buf: base, start: (v.k === "arr" ? 0 : v.start) + Number(lo), len: Number(hi - lo), cap: Number(hi - lo), view: true, gen: base?.gen };
 }
 function natCmp(it: Interp, a: Value, b: Value): number {
   if (typeof a === "bigint" && typeof b === "bigint") return a < b ? -1 : a > b ? 1 : 0;
@@ -236,7 +251,7 @@ for (const name of ["rawSlice", "rawSliceMut"]) {
       get: (tg, k, r) => (k === "length" ? n : typeof k === "string" && /^\d+$/.test(k) ? it.mem.load(at(Number(k)), el) : Reflect.get(tg, k, r)),
       set: (tg, k, v, r) => { if (typeof k === "string" && /^\d+$/.test(k)) { it.mem.store(at(Number(k)), el, v as Value); return true; } return k === "length" || Reflect.set(tg, k, v, r); },
     });
-    return { k: "vec", buf: { id: -1, elems }, start: 0, len: n, cap: n, view: true } as VecV;
+    return { k: "vec", buf: { id: -1, elems, gen: 0 }, start: 0, len: n, cap: n, view: true, gen: 0 } as VecV;
   });
 }
 // adopt: the owned Heap or Vec for a pointer a Heap or Vec gave out with ptr() or malloc made (std/foreign)
@@ -268,33 +283,35 @@ for (const [w, bits] of [["I64", 64], ["I32", 32], ["Bool", 0]] as const) {
 
 const copyOut = (it: Interp, x: Value): Value => (it.copyable(x) || isStr(x) ? it.share(x, "copy") : it.deepClone(x));
 const VEC: Record<string, Native> = {
-  push: (it, [self, x], e) => { const h = vecOf(it, self); growOne(it, h, elemSize(it, e)); h.buf!.elems[h.start + h.len++] = x; return undefined; },
+  push: (it, [self, x], e) => { const h = vecOf(it, self); growOne(it, h, elemSize(it, e)); invalidate(h); h.buf!.elems[h.start + h.len++] = x; return undefined; },
   // first / last are copies of the element (get yields a view of it), as E-INDEX-COPY reads one
   first: (it, [self], e) => { const h = asVec(it, it.deref(self)); return h.len === 0 ? opt(it, e, NONE) : opt(it, e, copyOut(it, h.buf!.elems[h.start]!)); },
   last: (it, [self], e) => { const h = asVec(it, it.deref(self)); return h.len === 0 ? opt(it, e, NONE) : opt(it, e, copyOut(it, h.buf!.elems[h.start + h.len - 1]!)); },
   pop: (it, [self], e) => {
     const h = vecOf(it, self);
+    if (h.len > 0) invalidate(h);
     return h.len === 0 ? opt(it, e, NONE) : opt(it, e, h.buf!.elems[h.start + --h.len]!);
   },
   insert: (it, [self, i, x], e) => {
     const h = vecOf(it, self); const k = idx(it, i, h.len, true);
-    growOne(it, h, elemSize(it, e));
+    growOne(it, h, elemSize(it, e)); invalidate(h);
     h.buf!.elems.splice(h.start + k, 0, x); h.buf!.elems.length = h.start + h.cap; h.len++;
     return undefined;
   },
   remove: (it, [self, i]) => {
     const h = vecOf(it, self); const k = idx(it, i, h.len);
+    invalidate(h);
     const [v] = h.buf!.elems.splice(h.start + k, 1); h.buf!.elems.length = h.start + h.cap; h.len--;
     return v;
   },
   truncate: (it, [self, n]) => {
     const h = vecOf(it, self); const k = Number(n as bigint);
     const keep = Math.max(k, 0);
-    if (keep < h.len) { for (let i = keep; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = keep; } // first to last
+    if (keep < h.len) { for (let i = keep; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = keep; invalidate(h); } // first to last
     return undefined;
   },
-  clear: (it, [self]) => { const h = vecOf(it, self); for (let i = 0; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = 0; return undefined; },
-  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) < 0n) it.panic("negative capacity"); reserveTotal(it, h, h.len + Number(n)); return undefined; },
+  clear: (it, [self]) => { const h = vecOf(it, self); for (let i = 0; i < h.len; i++) it.dropValue(h.buf!.elems[h.start + i]!); h.len = 0; invalidate(h); return undefined; },
+  reserve: (it, [self, n]) => { const h = vecOf(it, self); if ((n as bigint) < 0n) it.panic("negative capacity"); reserveTotal(it, h, h.len + Number(n)); invalidate(h); return undefined; },
   swap: (it, [self, a, b]) => {
     const h = vecOf(it, self); const i = idx(it, a, h.len), j = idx(it, b, h.len);
     const el = h.buf!.elems; [el[h.start + i], el[h.start + j]] = [el[h.start + j]!, el[h.start + i]!];
@@ -308,7 +325,7 @@ const VEC: Record<string, Native> = {
   },
   extend: (it, [self, other]) => {
     const h = vecOf(it, self), o = other as VecV;
-    if (o.len) { reserveTotal(it, h, h.len + o.len); for (let i = 0; i < o.len; i++) h.buf!.elems[h.start + h.len++] = o.buf!.elems[o.start + i]!; }
+    if (o.len) { reserveTotal(it, h, h.len + o.len); invalidate(h); for (let i = 0; i < o.len; i++) h.buf!.elems[h.start + h.len++] = o.buf!.elems[o.start + i]!; }
     if (o.buf && !o.view) it.free(o.buf.id);
     return undefined;
   },

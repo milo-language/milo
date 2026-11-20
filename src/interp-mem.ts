@@ -13,7 +13,7 @@ import type { Interp } from "./interp";
 import { Layout } from "./layout";
 import type { TypeKind } from "./types";
 import type { Expr } from "./ast";
-import { unique } from "./interp-natives";
+import { invalidate, unique } from "./interp-natives";
 import { staticStr, type BoxV, type Place, type Ref, type Slot, type Str, type Struct, type Value, type VecBuf, type VecV } from "./interp-values";
 
 export interface PtrV { k: "ptr"; a: Alloc; off: number }
@@ -250,7 +250,7 @@ export class Mem {
       get: (tg, k, r) => (k === "length" ? len : typeof k === "string" && /^\d+$/.test(k) ? this.load(at(Number(k)), elem) : Reflect.get(tg, k, r)),
       set: (tg, k, v, r) => { if (typeof k === "string" && /^\d+$/.test(k)) { this.store(at(Number(k)), elem, v as Value); return true; } return k === "length" || Reflect.set(tg, k, v, r); },
     });
-    return { k: "vec", buf: { id: q.a.block, elems }, start: 0, len, cap: len, view: false };
+    return { k: "vec", buf: { id: q.a.block, elems, gen: 0 }, start: 0, len, cap: len, view: false };
   }
   // `s.cstr()`: a NUL-terminated copy. Nothing frees it and the string does not see writes to it, as C's `const char *`.
   // R-MEM-CSTR
@@ -275,6 +275,7 @@ export class Mem {
       set: (_i, s) => {
         const h = cur(), f = (s as Struct).f;
         if (this.addr(f._data!) !== this.addr(this.vecPtr(h, elem))) it.unsupported("a Vec header pointed at a different buffer");
+        if (h.len !== Number(f._len as bigint) || h.cap !== Number(f._cap as bigint)) invalidate(h);
         h.len = Number(f._len as bigint);
         if (Number(f._cap as bigint) !== h.cap) { h.cap = Number(f._cap as bigint); if (h.buf) h.buf.elems.length = h.start + h.cap; }
       },

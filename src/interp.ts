@@ -21,7 +21,7 @@ import {
 } from "./interp-values";
 import { Mem, isPtr, memSlot } from "./interp-mem";
 import { externNative, type Sys, type SysOptions } from "./interp-sys";
-import { BUILTIN_FNS, builtinCall, concat, jsonStringify, methodNative, nativeFor, sliceView, type Native } from "./interp-natives";
+import { BUILTIN_FNS, STALE_VIEW_MSG, builtinCall, iterGen, concat, jsonStringify, methodNative, nativeFor, sliceView, staleView, type Native } from "./interp-natives";
 
 export type Completion = undefined | { k: "return"; v: Value } | { k: "break" } | { k: "continue" };
 // Control flow raised from expression position (`?`, a diverging if/match arm): caught by the
@@ -122,7 +122,7 @@ export class Interp {
   free(id: number): void {
     if (!this.blocks.delete(id)) this.stuck("heap", `block ${id} freed twice or never allocated`);
   }
-  newBuf(cap: number): VecBuf { return { id: this.alloc(), elems: new Array(cap).fill(undefined) }; }
+  newBuf(cap: number): VecBuf { return { id: this.alloc(), elems: new Array(cap).fill(undefined), gen: 0 }; }
   // E-STRING-SHARE
   newStr(bytes: number[]): Str {
     const id = bytes.length ? this.alloc() : -1; // an empty string owns no buffer
@@ -314,7 +314,7 @@ export class Interp {
       if (cur.k === "struct") return { get: () => cur.f[step as string]!, set: v => { cur.f[step as string] = v; } };
       if (cur.k === "arr") return { get: () => cur.e[step as number]!, set: v => { cur.e[step as number] = v; } };
       if (cur.k === "enum") return { get: () => cur.a[step as number]!, set: v => { cur.a[step as number] = v; } };
-      if (cur.k === "vec" && cur.buf) { const b = cur.buf, i = cur.start + (step as number); if (cur.view && b.id >= 0 && !this.blocks.has(b.id)) this.stuck("E-BORROW", "an element read through a view of a buffer that has since been reallocated or freed"); return { get: () => b.elems[i]!, set: v => { b.elems[i] = v; } }; }
+      if (cur.k === "vec" && cur.buf) { const b = cur.buf, i = cur.start + (step as number); if (staleView(this, cur)) this.stuck("E-BORROW", STALE_VIEW_MSG); return { get: () => b.elems[i]!, set: v => { b.elems[i] = v; } }; }
       if (cur.k === "box") {
         if (step === "*") return { get: () => cur.cell.v, set: v => { cur.cell.v = v; } };
         return this.child(cur.cell.v, step); // `h.field` on a Heap<S> goes through the box
@@ -447,7 +447,7 @@ export class Interp {
     if (v === undefined || typeof v !== "object" || v === MOVED) return v;
     switch (v.k) {
       case "str": return { k: "str", b: { bytes: v.b.bytes, rc: 1, id: -1 } };
-      case "vec": return { ...v, view: true };
+      case "vec": return { ...v, view: true, gen: v.buf?.gen };
       case "struct": { const f: Record<string, Value> = {}; for (const n of Object.keys(v.f)) f[n] = this.viewOf(v.f[n]!); return { k: "struct", name: v.name, f, ghost: true }; }
       case "enum": return { ...v, a: v.a.map(x => this.viewOf(x)), ghost: true };
       case "arr": return { k: "arr", e: v.e.map(x => this.viewOf(x)) };
@@ -1438,8 +1438,8 @@ export class Interp {
       else pl = this.resolve(iterE);
       const whole = this.getPlace(pl);
       const strIter = it.tag === "string";
-      const n = strIter ? (whole as Str).b.bytes.length : this.seqLen(whole);
-      for (let i = 0; i < n; i++) {
+      const n = strIter ? (whole as Str).b.bytes.length : this.seqLen(whole), gen0 = consume || it.tag !== "vec" ? undefined : iterGen(whole);
+      for (let i = 0; i < n; i++) { if (i > 0 && gen0 !== undefined && iterGen(this.getPlace(pl)) !== gen0) this.stuck("E-BORROW", "the Vec a for-in loop iterates changed length or capacity inside the loop");
         const r = fin(this.loopBody(s, sc => {
           const ep: Place = { slot: pl.slot, path: [...pl.path, i], ro: pl.ro, viaRef: pl.viaRef };
           if (s.varName2) this.declare(s.varName, BigInt(i), sc);

@@ -832,6 +832,50 @@ fn main() {
   expect(r.out).toBe("9\n");
 });
 
+test("E-BORROW: a length or capacity change ends every view and an iteration, an element write ends none", () => {
+  // the Vec holds 2 of 8 slots: the push fits, so only the generation notices
+  expect(stuckLoose(`
+fn main() {
+    var v: Vec<i64> = [1, 2]
+    v.reserve(6)
+    let s = v[0..1]
+    v.push(3)
+    print(s[0])
+}`)).toBe("E-BORROW");
+  expect(stuckLoose(`
+fn main() {
+    var v: Vec<i64> = [1, 2, 3]
+    v.reserve(5)
+    let s = v[0..1]
+    v.pop()
+    print(s[0])
+}`)).toBe("E-BORROW");
+  expect(stuckLoose(`
+fn main() {
+    var v: Vec<i64> = [1, 2]
+    v.reserve(6)
+    let s = v[0..1]
+    v.push(3)
+    print(s.len())
+}`)).toBe("E-BORROW");
+  expect(stuckLoose(`
+fn main() {
+    var v: Vec<i64> = [1, 2]
+    v.reserve(6)
+    for x in v {
+        v.push(x)
+    }
+}`)).toBe("E-BORROW");
+  const r = run(`
+fn main() {
+    var v: Vec<i64> = [1, 2]
+    let s = v[0..1]
+    v[0] = 5
+    print(s[0])
+}`);
+  expect(r.out).toBe("5\n");
+});
+
 test("R-SYS-ENV, R-SYS-CLOCK, R-SYS-RANDOM, R-SYS-EXIT, R-REPLAY-OFF, R-MEM-WRITE-RO: the environment, the clock, entropy, _exit, record/replay off, a read-only message", () => {
   const r = run(`
 from "std/time" import { epochMillis }
