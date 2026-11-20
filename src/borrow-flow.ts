@@ -118,9 +118,10 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       if (loan === null) return;
       const root = rootName(w.place);
       const l = loan.loan!;
-      if (l.kind === "pointer") report(w.span, text.pointerConflict(w.kind, w.kind === "closure" ? `${w.via} '${w.fname}'` : w.text, root, l.name!, l.call!, l.line!));
+      if (l.kind === "pointer") report(w.span, text.pointerConflict(w.kind === "place" ? "call" : w.kind, w.kind === "closure" ? `${w.via} '${w.fname}'` : w.text, root, l.name!, l.call!, l.line!));
       else if (w.kind === "closure") emit(loan, text.closureWritePrefix(root, w.via!, w.fname!), root, w.span);
       else if (w.kind === "call") emit(loan, text.callPrefix(w.method!, root), root, w.span);
+      else if (w.kind === "place") emit(loan, text.actionPrefix(w.action!, root), root, w.span);
       else if (w.kind === "elem") report(w.span, text.elemAssignWhileIterated(w.text, root));
       else emit(loan, text.assignPrefix(w.text), root, w.span);
     }

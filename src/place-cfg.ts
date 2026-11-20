@@ -35,7 +35,8 @@ export interface Node {
 
 // `unsafe`: written inside an `unsafe` block, which the checker lets write under a live pointer.
 // kind "closure": calling or passing a closure binding whose body writes the captured `place` (`via`, `fname`).
-export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string }
+// kind "place": a place handed to a `&mut` parameter or to `swap`/`replace` (`action` is the verb the checker words it with).
+export interface BorrowWrite { kind: "call" | "assign" | "elem" | "closure" | "place"; place: Place; text: string; method?: string; span?: Span; unsafe?: boolean; via?: "calling" | "passing"; fname?: string; action?: "pass" | "swap" | "replace" }
 // A pointer loan also carries the call that took the pointer ("v.ptr()") and its line, for the message.
 export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback"; place: Place; holder?: Place; name?: string; span?: Span; call?: string; line?: number }
 
@@ -453,6 +454,19 @@ export class Builder {
     return cur;
   }
 
+  // An argument handed to a `&mut` parameter, and the places `swap`/`replace` write, are writes of the place.
+  private placeArgWrites(e: Expr & { kind: "Call" | "MethodCall" }, cur: number): number {
+    if (!this.borrowEvents) return cur;
+    const builtin = e.kind === "Call" && !this.cr.functions.has(e.func) && this.lookup(e.func) === null;
+    const verb = builtin && e.func === "swap" ? "swap" : builtin && e.func === "replace" ? "replace" : null;
+    const targets = verb === "swap" ? e.args.slice(0, 2) : verb === "replace" ? e.args.slice(0, 1) : e.args.filter(a => this.cr.autoBorrowed.get(a)?.mutable === true && this.cr.exprTypes.get(a)?.tag !== "ref");
+    for (const a of targets) {
+      const base = this.writeBase(a);
+      if (base !== null) cur = this.node({ write: { kind: "place", place: base.place, text: describe(a), span: e.span, unsafe: this.unsafeDepth > 0, action: verb ?? "pass" } }, cur);
+    }
+    return cur;
+  }
+
   // A fork expression's value is its last statement; its blocks are statement lists like any other.
   expr(e: Expr, cur: number): number {
     if (cur < 0) return cur;
@@ -490,6 +504,7 @@ export class Builder {
         if (forgotten !== null) return this.node({ use: forgotten, expr: e.args[0]!, hardMove: true }, cur);
         for (const a of e.args) cur = this.expr(a, cur);
         cur = this.lend(e.args, cur);
+        cur = this.placeArgWrites(e, cur);
         // Calling a local closure reads it (and what it captures); a call-once closure is spent by the call.
         const callee = this.lookup(e.func);
         if (callee !== null) cur = this.readCaptures(callee, e, this.node({ use: callee, expr: e, capture: true, callee: e.func, hardMove: this.callsOnce.has(callee) }, cur));
@@ -499,6 +514,7 @@ export class Builder {
         cur = this.expr(e.object, cur);
         for (const a of e.args) cur = this.expr(a, cur);
         cur = this.lend([e.object, ...e.args], cur);
+        cur = this.placeArgWrites(e, cur);
         if (this.borrowEvents) {
           const base = this.writeBase(e.object);
           if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span, unsafe: this.unsafeDepth > 0 } }, cur);

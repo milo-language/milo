@@ -31,6 +31,8 @@ export function elemAssignWhileIterated(target: string, root: string): BorrowTex
 
 export const callPrefix = (method: string, text: string) => `cannot call '${method}' on '${text}'`;
 export const assignPrefix = (text: string) => `cannot assign to '${text}'`;
+// A place handed to a `&mut` parameter ("pass") or written by `swap` / `replace`; names the root, as the checker does.
+export const actionPrefix = (action: string, root: string) => `cannot ${action} '${root}'`;
 export const movePrefix = (name: string) => `cannot move '${name}'`;
 
 // A write while a raw pointer into the buffer is held (src/checker-borrows.ts errorIfFrozen, and the index-write and

@@ -147,3 +147,27 @@ test("the same write after the call, or an element write inside the callback, is
   expect(flow(`fn main(): i32 {\n${VEC}    v.each((x: &i64) => {\n        print(x)\n    })\n    v.push(1)\n    return 0\n}`)).toEqual([]);
   expect(flow(`fn main(): i32 {\n${VEC}    v.each((x: &i64) => {\n        v[0] = 2\n    })\n    return 0\n}`)).toEqual([]);
 });
+
+// Places handed to a `&mut` parameter, or to swap / replace, are writes of the place.
+const GROW = `fn grow(v: &mut Vec<i64>): void {\n    v.push(1)\n}\n`;
+test("passing the iterated vec to a &mut parameter in its loop is a conflict", () => {
+  expect(flow(`${GROW}fn main(): i32 {\n${VEC}    for x in v {\n        grow(&mut v)\n    }\n    return 0\n}`))
+    .toEqual(["8: cannot pass 'v' while a loop iterates over it"]);
+});
+
+test("passing the vec to a &mut parameter after the loop or after the view's last use is fine", () => {
+  expect(flow(`${GROW}fn main(): i32 {\n${VEC}    for x in v {\n        print(x)\n    }\n    grow(&mut v)\n    return 0\n}`)).toEqual([]);
+  expect(flow(`${GROW}fn main(): i32 {\n${VEC}    let w = v[0..1]\n    print(w[0])\n    grow(&mut v)\n    return 0\n}`)).toEqual([]);
+});
+
+test("swap and replace of a viewed or iterated place are conflicts", () => {
+  expect(flow(`fn main(): i32 {\n    var s = "hello world".clone()\n    var t = "x".clone()\n    let w = s[0..5]\n    swap(s, t)\n    print(w)\n    return 0\n}`))
+    .toEqual(["5: cannot swap 's' while 'w' borrows it"]);
+  expect(flow(`fn main(): i32 {\n${VEC}    for x in v {\n        let old = replace(v, [])\n        print(old.len)\n    }\n    return 0\n}`))
+    .toEqual(["5: cannot replace 'v' while a loop iterates over it"]);
+});
+
+test("swap before a view is taken, or after its last use, is fine", () => {
+  expect(flow(`fn main(): i32 {\n    var s = "hello world".clone()\n    var t = "x".clone()\n    swap(s, t)\n    let w = s[0..1]\n    print(w)\n    return 0\n}`)).toEqual([]);
+  expect(flow(`fn main(): i32 {\n    var s = "hello world".clone()\n    var t = "x".clone()\n    let w = s[0..5]\n    print(w)\n    swap(s, t)\n    return 0\n}`)).toEqual([]);
+});
