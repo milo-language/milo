@@ -127,15 +127,16 @@ const elemSize = (it: Interp, e: Expr | undefined): number => {
   const t = obj ? it.T(obj) : undefined;
   return t && (t.tag === "vec" || t.tag === "array") ? sizeOf(it, t.element) : 8;
 };
-// E-VEC
-// Growing moves the elements to a new block and frees the old one, as the compiled vecGrow does: a
-// view or pointer still holding the old buffer is then a use after free (E-BORROW, R-MEM-*).
+// E-BORROW: a length or capacity change ends every view of the buffer, whether or not this run reallocated.
 export const invalidate = (h: VecV): void => { if (h.buf) h.buf.gen++; };
 // a view whose buffer was freed, or whose owner changed length or capacity since the view was taken
 export const staleView = (it: Interp, h: VecV): boolean => h.view && h.buf !== null && h.buf.id >= 0 && (!it.blocks.has(h.buf.id) || h.buf.gen !== h.gen);
 // the buffer generation of the Vec a for-in loop walks (undefined: nothing allocated)
 export const iterGen = (v: Value): number | undefined => (v && typeof v === "object" && v.k === "vec" ? v.buf?.gen : undefined);
 export const STALE_VIEW_MSG = "a view read after its Vec changed length or capacity (it may have reallocated)";
+// E-VEC
+// Growing moves the elements to a new block and frees the old one, as the compiled vecGrow does: a
+// view or pointer still holding the old buffer is then a use after free (E-BORROW, R-MEM-*).
 function setCap(it: Interp, h: VecV, cap: number): void {
   if (!h.buf) h.buf = it.newBuf(cap);
   else if (h.start + cap > h.buf.elems.length) {

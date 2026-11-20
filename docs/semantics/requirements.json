@@ -214,6 +214,12 @@
       "source": "docs/semantics/milo.md §Rules the interpreter added"
     },
     {
+      "id": "E-BORROW",
+      "text": "A view (a slice, a for-in over a Vec it does not consume) carries the generation of its source's buffer when it was taken. Any change to the source's length or capacity (push, pop, insert, remove, truncate, clear, reserve, extend; growth into a new block frees the old one) bumps the generation, whether or not this run reallocated, since compiled code may under another capacity. A read through a view whose generation no longer matches, or whose block is freed, is stuck. An element write in place changes neither.",
+      "parent": "SEM-10",
+      "source": "docs/semantics/milo.md §Rules the interpreter added"
+    },
+    {
       "id": "E-PROPAGATE",
       "text": "`e?` on `Some(x)`/`Ok(x)` evaluates to x; on `None`/`Err(c)` it returns `None`/`Err(conv(c))` from the enclosing fn or closure after the usual scope drops.",
       "parent": "SEM-10",

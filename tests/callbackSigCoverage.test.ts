@@ -20,16 +20,19 @@
 //
 // Same shape as tests/placeRuleCoverage.test.ts and tests/ownedTempCoverage.test.ts.
 import { test, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 
-const CHECKER = join(import.meta.dir, "..", "src", "checker.ts");
+const SRC = join(import.meta.dir, "..", "src");
+// The TypeChecker's methods are spread over src/checker*.ts (split aa7c33a4).
+const CHECKER_FILES = readdirSync(SRC).filter(f => /^checker(-[\w-]+)?\.ts$/.test(f));
 
 test("every cbHint site checks the callback's signature", () => {
-  const lines = readFileSync(CHECKER, "utf8").split("\n");
   const unchecked: string[] = [];
   let visited = 0;
 
+  for (const file of CHECKER_FILES) {
+  const lines = readFileSync(join(SRC, file), "utf8").split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (!/const cbHint(:| =)/.test(lines[i])) continue;
     visited++;
@@ -39,17 +42,18 @@ test("every cbHint site checks the callback's signature", () => {
     // unnoticed. The next `expr.method === "…"` starts a different combinator, so it is
     // the honest end of this one.
     let end = i + 1;
-    while (end < lines.length && end < i + 60 && !/expr\.method === "/.test(lines[end])) end++;
+    while (end < lines.length && end < i + 60 && !/(expr|call)\.method === "/.test(lines[end])) end++;
     const window = lines.slice(i, end).join("\n");
     if (window.includes("checkCallbackSig(")) continue;
     if (window.includes("cbhint-ok:")) continue;
     // Name the method so the failure says which combinator, not just a line number.
     let method = "?";
     for (let j = i; j > Math.max(0, i - 40); j--) {
-      const m = /expr\.method === "(\w+)"/.exec(lines[j]);
+      const m = /(?:expr|call)\.method === "(\w+)"/.exec(lines[j]);
       if (m) { method = m[1]; break; }
     }
-    unchecked.push(`checker.ts:${i + 1}: '${method}' builds a cbHint and never checks the callback against it`);
+    unchecked.push(`${file}:${i + 1}: '${method}' builds a cbHint and never checks the callback against it`);
+  }
   }
 
   // a scan that matched nothing proves nothing
