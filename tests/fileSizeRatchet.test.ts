@@ -9,8 +9,10 @@ test("no tracked source file over the limit grew past its baseline line count", 
   expect(Object.keys(current).length).toBeGreaterThan(400);
   // Every directory in scope is measured, not only src/.
   for (const d of ["src/", "scripts/", "std/", "mlir/", "tests/", "proofs/"]) expect(Object.keys(current).some(f => f.startsWith(d))).toBe(true);
-  // checker.ts is why the ratchet exists; a baseline without it guards nothing.
-  expect(baseline["src/checker.ts"]).toBeGreaterThan(LIMIT);
+  // checker.ts was split under the limit (aa7c33a4): it must stay out of the baseline, and every entry is a file still over it.
+  expect(baseline["src/checker.ts"]).toBeUndefined();
+  expect(current["src/checker.ts"]).toBeLessThanOrEqual(LIMIT);
+  expect(Object.values(baseline).every(n => n > LIMIT)).toBe(true);
   expect(violations(baseline, current)).toEqual([]);
 });
 

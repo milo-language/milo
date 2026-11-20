@@ -221,7 +221,7 @@
     },
     {
       "id": "E-MATCH",
-      "text": "An owned, moved subject goes into a holder the match owns, and an arm's bindings move their payloads out of it (a Copy payload is copied). A borrowed subject binds references (`&mut` when the checker says so). The first arm that matches wins; a binding marked escaping (let-else) is declared in the enclosing scope.",
+      "text": "An owned, moved subject that is a place stays in that place, and the arm that matches moves its bindings' payloads out of it (a Copy payload is copied), so an arm that binds nothing (an `if let` else, a wildcard) finds it whole; any other owned subject goes into a holder the match owns. A borrowed subject binds references (`&mut` when the checker says so). The first arm that matches wins; a binding marked escaping (let-else) is declared in the enclosing scope.",
       "parent": "SEM-10",
       "source": "docs/semantics/milo.md §Rules the interpreter added"
     },

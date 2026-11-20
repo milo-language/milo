@@ -100,21 +100,21 @@ const NOT_MEMBERS = new Set(["json", "at"]);
 // Every method name the dispatch mentions, from both forms it uses: direct
 // `expr.method === "x"` comparisons and the `[...].includes(expr.method)` lists.
 function dispatchedNames(): string[] {
-  const src = readFileSync(join(import.meta.dir, "..", "src", "checker.ts"), "utf-8").split("\n");
-  const start = src.findIndex(l => l.includes("private checkMethodCallExprInner("));
+  const src = readFileSync(join(import.meta.dir, "..", "src", "checker-method-call.ts"), "utf-8").split("\n");
+  const start = src.findIndex(l => l.includes("export function checkMethodCallExprInner("));
   expect(start).toBeGreaterThan(-1);
   let end = src.length;
   for (let i = start + 1; i < src.length; i++) {
-    if (/^ {2}(private |public )?[a-zA-Z_]+\(/.test(src[i]!)) { end = i; break; }
+    if (/^(export )?function [a-zA-Z_]+\(/.test(src[i]!)) { end = i; break; }
   }
   const body = src.slice(start, end).join("\n");
   expect(end).toBeGreaterThan(start + 100); // the range must be the real function, not a stray match
 
   const names = new Set<string>();
-  for (const m of body.matchAll(/expr\.method === "([a-zA-Z0-9_]+)"/g)) names.add(m[1]!);
+  for (const m of body.matchAll(/(?:expr|call)\.method === "([a-zA-Z0-9_]+)"/g)) names.add(m[1]!);
   // `const xMethods = ["a", "b"]; ... xMethods.includes(expr.method)`
   for (const decl of body.matchAll(/const (\w+) = \[((?:\s*"[a-zA-Z0-9_]+",?)+)\]/g)) {
-    if (!body.includes(`${decl[1]}.includes(expr.method)`)) continue;
+    if (!body.includes(`${decl[1]}.includes(expr.method)`) && !body.includes(`${decl[1]}.includes(call.method)`)) continue;
     for (const n of decl[2]!.matchAll(/"([a-zA-Z0-9_]+)"/g)) names.add(n[1]!);
   }
   return [...names].sort();
