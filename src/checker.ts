@@ -30,8 +30,8 @@ import * as literals from "./checker-literals";
 import * as stmts from "./checker-stmt";
 import * as core from "./checker-core";
 import * as register from "./checker-register";
-import type { ArgUse, BorrowKind, BorrowSite, CSig, CValue, CaptureInfo, EnumInfo, FnSig, GenericEnumInfo, GenericFnInfo, GenericStructInfo, ImplInfo, InterfaceInfo, PatternLeaf, PlaceStep, PointerHolder, PropagateBoxing, StructInfo, TraitInfo, TraitMethodInfo, VarInfo } from "./checker-types";
-export type { ArgUse, BorrowKind, BorrowSite, CaptureInfo, CheckResult, EnumInfo, ExprOf, FnSig, ImplInfo, InterfaceMethodInfo, NestedWrite, PatternLeaf, Place, PlaceStep, PointerHolder, PropagateBoxing, StructInfo, TraitInfo, TraitMethodInfo, VarInfo } from "./checker-types";
+import type { ArgUse, CSig, CValue, CaptureInfo, EnumInfo, FnSig, GenericEnumInfo, GenericFnInfo, GenericStructInfo, ImplInfo, InterfaceInfo, PatternLeaf, PlaceStep, PropagateBoxing, StructInfo, TraitInfo, TraitMethodInfo, VarInfo } from "./checker-types";
+export type { ArgUse, CaptureInfo, CheckResult, EnumInfo, ExprOf, FnSig, ImplInfo, InterfaceMethodInfo, NestedWrite, PatternLeaf, Place, PlaceStep, PropagateBoxing, StructInfo, TraitInfo, TraitMethodInfo, VarInfo } from "./checker-types";
 
 export class TypeChecker {
   warningConfig: WarningConfig;
@@ -130,10 +130,6 @@ export class TypeChecker {
   // The module scope (pushed before globals are declared) and every VarInfo declared in it.
   globalScope: Map<string, VarInfo> | null = null;
   globalScopeInfos = new Set<VarInfo>();
-  // Open "which bindings did this statement newly freeze" windows. The before-set is
-  // scanned lazily at the first change to any `borrowed` flag inside the window, so a
-  // statement that freezes nothing never scans at all.
-  borrowWindows: { before: Set<VarInfo> | null }[] = [];
   // Bindings whose flexInt is (or recently was) set, with the name they are declared under.
   flexIntVars = new Map<VarInfo, string>();
   exprTypes = new Map<Expr, TypeKind>();
@@ -529,31 +525,13 @@ export class TypeChecker {
   // Index of the innermost scope belonging to the function currently being
   // checked. Shadowing is judged relative to this, not to the whole stack.
   fnScopeFloor = 0;
-  // True while `tryMove` runs for a move that hands the source to an owner the pointer's
-  // holders can still trust: `forget(v)` and `let w = v`. See `tryMoveLeaf`.
-  pointerMoveKeepsHolders = false;
   // True while `forget(x)` moves its argument: ending ownership is the point, so a string
   // there moves for real and a later read is still a use after move (no share).
   forgetting = false;
   declare(name: string, info: VarInfo, span?: Span) { return borrows.declare(this, name, info, span); }
 
-  freeze(info: VarInfo, place: Expr | null, kind: BorrowKind, holder?: PointerHolder | null, site?: BorrowSite) { return borrows.freeze(this, info, place, kind, holder, site); }
-  pushBorrow(info: VarInfo, path: string[] | null, kind: BorrowKind, holder: PointerHolder | null, site: BorrowSite | null) { return borrows.pushBorrow(this, info, path, kind, holder, site); }
-  borrowPrefix(place: Expr) { return borrows.borrowPrefix(this, place); }
-  openBorrowWindow() { return borrows.openBorrowWindow(this); }
-  noteBorrowChange() { return borrows.noteBorrowChange(this); }
-  newlyFrozenSince(w: { before: Set<VarInfo> | null }) { return borrows.newlyFrozenSince(this, w); }
-
-  unfreeze(info: VarInfo) { return borrows.unfreeze(this, info); }
-
-  releasePointerBorrows(info: VarInfo, holder: VarInfo) { return borrows.releasePointerBorrows(this, info, holder); }
-  retainBorrows(info: VarInfo, keep: (holder: PointerHolder | null, i: number) => boolean) { return borrows.retainBorrows(this, info, keep); }
-
-  targetFields(target: Expr | null) { return borrows.targetFields(this, target); }
-  borrowCollides(p: string[] | null | undefined, mutFields: string[] | null): boolean { return borrows.borrowCollides(p, mutFields); }
-  onlyPointerBorrows(info: VarInfo): boolean { return borrows.onlyPointerBorrows(info); }
   pointerViewsIn(slot: Expr, out?: { source: Expr; call: string; line: number }[]) { return borrows.pointerViewsIn(this, slot, out); }
-  bindPointerViews(name: string, holderInfo: VarInfo, value: Expr): void { return borrows.bindPointerViews(this, name, holderInfo, value); }
+  bindPointerViews(holderInfo: VarInfo, value: Expr): void { return borrows.bindPointerViews(this, holderInfo, value); }
   holdPointerArgsIn(container: Expr, args: Expr[]): void { return borrows.holdPointerArgsIn(this, container, args); }
   scopeIndexOf(info: VarInfo) { return borrows.scopeIndexOf(this, info); }
 
@@ -561,8 +539,7 @@ export class TypeChecker {
   errorIfPointerOutlivesSource(name: string, holder: VarInfo, value: Expr, sp?: Span): void { return borrows.errorIfPointerOutlivesSource(this, name, holder, value, sp); }
   errorIfReturnedPointerDangles(value: Expr, sp?: Span): void { return borrows.errorIfReturnedPointerDangles(this, value, sp); }
 
-  pointerBorrowsCarriedBy(value: Expr) { return borrows.pointerBorrowsCarriedBy(this, value); }
-  carryPointerBorrows(carried: { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] }, toName: string): void { return borrows.carryPointerBorrows(this, carried, toName); }
+  carryPointerMarkers(value: Expr, to: VarInfo | null): void { return borrowMoves.carryPointerMarkers(this, value, to); }
 
   lookup(name: string) { return borrows.lookup(this, name); }
 
@@ -985,10 +962,8 @@ export class TypeChecker {
   writtenPlaceMutable(target: Expr & { object: Expr }) { return borrows.writtenPlaceMutable(this, target); }
   rootMutable(slot: Expr) { return borrows.rootMutable(this, slot); }
 
-  captureBorrowAgainst(info: VarInfo, mutFields: string[] | null) { return borrows.captureBorrowAgainst(this, info, mutFields); }
-  reportCaptured(prefix: string, root: string, site: BorrowSite, sp: Span | undefined) { return borrows.reportCaptured(this, prefix, root, site, sp); }
-  errorIfFrozen(obj: Expr, action: string, sp?: Span) { return borrows.errorIfFrozen(this, obj, action, sp); }
-  checkPlaceArgWrite(place: Expr, action: string, sp?: Span) { return borrows.checkPlaceArgWrite(this, place, action, sp); }
+  markWritten(obj: Expr) { return borrows.markWritten(this, obj); }
+  checkPlaceArgWrite(place: Expr) { return borrows.checkPlaceArgWrite(this, place); }
   takeExplicitMutArgs(args: Expr[], callee: string, paramAt: (i: number) => { name: string; mut: boolean; show: () => string } | undefined) { return borrows.takeExplicitMutArgs(this, args, callee, paramAt); }
 
   sigParamAt(p: { name: string; type: TypeKind } | undefined) {

@@ -147,7 +147,7 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
           isPlace ? `declare it with 'var', or take a '&mut' parameter` : `bind the Option to a 'var' first, or match on it to move the value out`);
       } else {
         chk.markPlaceRead(o);
-        chk.checkPlaceArgWrite(o, "take", sp);
+        chk.checkPlaceArgWrite(o);
       }
       return chk.setType(expr, objType);
     }
@@ -521,7 +521,7 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
   // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
   if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")
       && MUTATING_COLLECTION_METHODS.has(expr.method)) {
-    chk.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+    chk.markWritten(expr.object);
     chk.collectionGuarded.add(expr);
   }
   // slices: `v[a..b]` desugars to `.slice(a,b)`; a slice is `&[T]` — a ref to an
@@ -1264,7 +1264,7 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
           return chk.setType(expr, sig.ret);
         }
         // a `&var self` method may mutate the receiver — same hazard as builtins
-        if (selfParam.type.mutable) chk.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+        if (selfParam.type.mutable) chk.markWritten(expr.object);
         if (selfParam.type.mutable) chk.errorIfCopyBind(expr.object, expr.method, sp);
         chk.autoBorrow(expr.object, { mutable: selfParam.type.mutable });
       } else {

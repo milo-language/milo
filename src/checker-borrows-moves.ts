@@ -229,36 +229,12 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
     if (info && info.type.tag === "string" && !c.isExtractorKey(expr) && !c.forgetting) {
       let captured = false;
       c.eachCaptureOf(expr.name, () => { captured = true; });
-      if (info.borrowed || captured || c.sharedStringExprs.has(expr)) { c.shareMovedExpr(expr); return; }
+      if (captured || c.sharedStringExprs.has(expr)) { c.shareMovedExpr(expr); return; }
       info.everMoved = true;
       c.movedExprs.add(expr);
       return;
     }
     if (info && !c.isCopyType(info.type)) {
-      // A pointer borrow does not forbid the move (the header moves, the buffer stays),
-      // but the new owner may free that buffer at any time the checker cannot see, so
-      // every holder of the pointer is dead from here: `let p = v.ptr(); take(v);
-      // strlen(p)` was a heap-use-after-free (h4-ptr-then-move). Two moves keep the
-      // holders alive, and set `pointerMoveKeepsHolders`: `forget(v)` (the explicit "the
-      // pointer's owner has the buffer now" spelling of the FFI give leg) and a plain
-      // `let w = v`, where `carryPointerBorrows` re-attaches the borrow to `w`. The
-      // borrow is released from the source either way, so a later revive
-      // (`v = Vec.new()`) is not mistaken for a reassignment under `p`.
-      if (info.borrowed && c.onlyPointerBorrows(info)) {
-        if (!c.pointerMoveKeepsHolders) {
-          for (const h of info.borrowHolders ?? []) {
-            if (h && !h.info.pointerSourceMoved) h.info.pointerSourceMoved = { root: h.root, call: h.call, line: h.line };
-          }
-        }
-        c.retainBorrows(info, () => false);
-      }
-      if (info.borrowed) {
-        // A live view, loop or capture: moving would leave it dangling. Views and loops are reported by
-        // src/borrow-flow.ts, a capture here; either way the move is not recorded.
-        const captured = c.captureBorrowAgainst(info, null);
-        if (captured) c.reportCaptured(`cannot move '${expr.name}'`, expr.name, captured, expr.span);
-        return;
-      }
       info.everMoved = true;
       c.movedExprs.add(expr);
       // Moving a capture out of a `move` closure empties the environment slot it
@@ -282,12 +258,9 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
             if (!names) c.sharedStringCaptures.set(expr, names = new Set());
             names.add(cap.name);
           };
-          if (info.borrowed || c.sharedStringCaptures.get(expr)?.has(cap.name)) { shareCap(); continue; }
+          if (c.sharedStringCaptures.get(expr)?.has(cap.name)) { shareCap(); continue; }
         }
-        if (info) {
-          info.everMoved = true;
-          c.unfreeze(info);
-        }
+        if (info) info.everMoved = true;
         // The move reaches the binding through every enclosing closure that captured it,
         // exactly as a `consume(x)` written in the nested body would. Without this an
         // outer by-reference closure (a scoped task, a Task.scope body) looked like a
@@ -365,27 +338,6 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
           if (strField && c.sharedStringExprs.has(expr)) { c.shareMovedExpr(expr); return; }
         } else if (c.errorIfFieldMovedOutOfElement(expr)) {
           return;
-        }
-        // A closure literal in this statement that captured the field (or part of it, or the root) would see the
-        // buffer change hands, as for a whole-variable move. Live views and loops are src/borrow-flow.ts's.
-        // Pointer borrows are exempt as for a whole move: the header moves, the buffer stays.
-        const ap = c.accessPath(expr);
-        const rinfo = ap ? c.lookup(ap.root) : null;
-        if (ap && rinfo && rinfo.borrowed) {
-          const captured = c.captureBorrowAgainst(rinfo, ap.fields);
-          if (captured) {
-            c.reportCaptured(`cannot move '${c.describeExpr(expr)}'`, ap.root, captured, expr.span);
-            return;
-          }
-        }
-        // Pointer borrows on the moved field: dead from here unless the move carries them to
-        // the new binding (`pointerMoveKeepsHolders`), as for a whole-variable move.
-        if (ap && rinfo && rinfo.borrowed) {
-          const hit = (i: number) => rinfo.borrowKinds?.[i] === "pointer" && c.borrowCollides(rinfo.borrowedPaths?.[i], ap.fields);
-          if (!c.pointerMoveKeepsHolders) {
-            (rinfo.borrowHolders ?? []).forEach((h, i) => { if (h && hit(i) && !h.info.pointerSourceMoved) h.info.pointerSourceMoved = { root: h.root, call: h.call, line: h.line }; });
-          }
-          c.retainBorrows(rinfo, (_, i) => !hit(i));
         }
         c.movedExprs.add(expr);
       } else if (!c.isExtractorKey(expr)) {
@@ -970,4 +922,12 @@ export function borrowModeOf(c: TypeChecker, arg: Expr): { mutable: boolean } | 
   if (ab) return ab;
   const t = c.exprTypes.get(arg);
   return t?.tag === "ref" ? { mutable: t.mutable } : null;
+}
+
+// `let w = v` / `let w = h.items`: a pointer source handed whole to a new binding is still one (the buffer stays where it is).
+export function carryPointerMarkers(c: TypeChecker, value: Expr, to: VarInfo | null): void {
+  if (!to) return;
+  // ident-ok: a whole-variable move is the only one that hands the source on under its own name; a field move goes through accessPath.
+  const from = value.kind === "Ident" ?c.lookup(value.name) : value.kind === "FieldAccess" ? c.lookup(c.accessPath(value)?.root ?? "") : null;
+  if (from?.pointerSource && !c.isCopyType(to.type)) to.pointerSource = true;
 }

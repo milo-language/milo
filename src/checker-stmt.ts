@@ -60,7 +60,7 @@ export function checkFunctionBody(chk: TypeChecker, fn: Function) {
     const pType = chk.resolve(declared);
     const nullableRef = declared.isNullableRef && pType.tag === "ptr"
       ? { inner: pType.inner, mutable: !!declared.isRefMut } : undefined;
-    chk.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, borrowed: false, read: false, span: p.span,
+    chk.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, read: false, span: p.span,
       ...(nullableRef && { nullableRef }), ...(pType.tag !== "ref" && { byValueParam: true }) });
   }
 
@@ -69,7 +69,7 @@ export function checkFunctionBody(chk: TypeChecker, fn: Function) {
     chk.pushScope();
     const hasEnsures = fn.contracts.some(c => c.kind === "ensures");
     if (hasEnsures && retType.tag !== "void") {
-      chk.declare("result", { type: retType, mutable: false, borrowed: false, read: true });
+      chk.declare("result", { type: retType, mutable: false, read: true });
     }
     for (const c of fn.contracts) chk.checkContractClause(c);
     chk.popScope();
@@ -141,7 +141,6 @@ export function checkBindingInit(c: TypeChecker, stmt: Extract<Stmt, { kind: "Le
   if (hint && c.nestedRef(hint)) {
     c.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
   }
-  const frozenBeforeRhs = c.openBorrowWindow();
   const deferred = !hint ? c.tryDeferVecInfer(stmt.value) : null;
   const valType = deferred ?? c.checkExpr(stmt.value, hint);
   const value = rewritten(c.rewrites, stmt.value);
@@ -158,19 +157,15 @@ export function checkBindingInit(c: TypeChecker, stmt: Extract<Stmt, { kind: "Le
     }
   }
   if (hint?.tag === "int") c.enforceRangeInto(value, valType, hint, sp);
-  return { hint, valType, frozenBeforeRhs };
+  return { hint, valType };
 }
 
 export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind, valueTail: { expected: TypeKind | null } | null) {
   const sp = stmt.span;
   switch (stmt.kind) {
     case "LetDecl": {
-      const { hint, valType, frozenBeforeRhs } = chk.checkBindingInit(stmt);
+      const { hint, valType } = chk.checkBindingInit(stmt);
       const value = rewritten(chk.rewrites, stmt.value);
-      // Borrows the RHS created: a ref binding owns them until its scope pops;
-      // any other binding consumed them within the statement (e.g. s[0..n].clone())
-      // and must not leak a freeze onto later statements.
-      const newlyFrozen = chk.newlyFrozenSince(frozenBeforeRhs);
       const bindingType = hint ?? valType;
       // A void binding gets a storage slot it cannot have: `alloca void`. The value
       // side of "no data" is `Unit`; `void` is only a function return type. Silent once a
@@ -180,16 +175,15 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         chk.error(`'${stmt.name}' cannot have type 'void': 'void' has no runtime representation`, sp,
           `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
       }
-      for (const vi of newlyFrozen) chk.unfreeze(vi);
       let viewsAnother = false;
       if (bindingType.tag === "ref") { chk.refLets.add(stmt); viewsAnother = true; }
-      chk.declare(stmt.name, { type: bindingType, mutable: false, borrowed: false, read: false, span: sp, viewsAnother });
+      chk.declare(stmt.name, { type: bindingType, mutable: false, read: false, span: sp, viewsAnother });
       const letInfo = chk.lookup(stmt.name);
       if (letInfo && bindingType.tag === "string") {
         const c = chk.sqlConstOf(value);
         if (c !== null) letInfo.constStr = c;
       }
-      if (letInfo) chk.bindPointerViews(stmt.name, letInfo, value);
+      if (letInfo) chk.bindPointerViews(letInfo, value);
       if (letInfo) chk.noteClosureSources(letInfo, value);
       // An unannotated `let x = <const-int-value>` stays width-adaptable until
       // its first use (see VarInfo.flexInt): its default i32 can widen to an
@@ -205,17 +199,14 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
       const viewRoot = chk.viewBindRoot(stmt, hint, valType);
       if (viewRoot) chk.viewBindPending.set(stmt, { root: viewRoot, lint: () => chk.lintIndexClone(value, bindingType, sp) });
       else chk.lintIndexClone(value, bindingType, sp);
-      const letCarried = chk.pointerBorrowsCarriedBy(value);
-      chk.pointerMoveKeepsHolders = letCarried !== null;
-      try { chk.tryMove(value); } finally { chk.pointerMoveKeepsHolders = false; }
-      if (letCarried) chk.carryPointerBorrows(letCarried, stmt.name);
+      chk.tryMove(value);
+      chk.carryPointerMarkers(value, letInfo);
       break;
     }
     case "VarDecl": {
-      const { hint, valType, frozenBeforeRhs } = chk.checkBindingInit(stmt);
+      const { hint, valType } = chk.checkBindingInit(stmt);
       const value = rewritten(chk.rewrites, stmt.value);
       {
-        const newlyFrozen = chk.newlyFrozenSince(frozenBeforeRhs);
         const bindingType = hint ?? valType;
         // A void binding gets a storage slot it cannot have: `alloca void`. The value
         // side of "no data" is `Unit`; `void` is only a function return type. Silent once a
@@ -225,20 +216,17 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           chk.error(`'${stmt.name}' cannot have type 'void': 'void' has no runtime representation`, sp,
             `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
         }
-        for (const vi of newlyFrozen) chk.unfreeze(vi);
         let viewsAnother = false;
         if (bindingType.tag === "ref") { chk.refLets.add(stmt); viewsAnother = true; }
-        chk.declare(stmt.name, { type: bindingType, mutable: true, borrowed: false, read: false, span: sp, viewsAnother });
+        chk.declare(stmt.name, { type: bindingType, mutable: true, read: false, span: sp, viewsAnother });
         const varInfo = chk.lookup(stmt.name);
-        if (varInfo) chk.bindPointerViews(stmt.name, varInfo, value);
+        if (varInfo) chk.bindPointerViews(varInfo, value);
         if (varInfo) chk.noteClosureSources(varInfo, value);
         if (bindingType.tag === "array") chk.lintStackArray(stmt.name, bindingType, sp);
         chk.lintIndexClone(value, bindingType, sp);
       }
-      const varCarried = chk.pointerBorrowsCarriedBy(value);
-      chk.pointerMoveKeepsHolders = varCarried !== null;
-      try { chk.tryMove(value); } finally { chk.pointerMoveKeepsHolders = false; }
-      if (varCarried) chk.carryPointerBorrows(varCarried, stmt.name);
+      chk.tryMove(value);
+      chk.carryPointerMarkers(value, chk.lookup(stmt.name));
       break;
     }
     case "Assign": {
@@ -278,20 +266,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
       const indexQualified = assignPath ? assignPath.steps.some((s) => s === "[]" || s === "*") : false;
       const assignInfo = assignPath ? chk.lookup(assignPath.root) : null;
       if (assignPath && !indexQualified) {
-        // A closure assigning to its own capture is exempt from the capture borrows.
-        const isCapturedMutation = chk.closureScopeDepth !== null && (chk.currentClosureCaptures !== null && chk.currentClosureCaptures.has(assignPath.root));
-        const info = chk.lookup(assignPath.root);
-        const site = info && !isCapturedMutation ? chk.captureBorrowAgainst(info, chk.targetFields(target)) : null;
-        if (site) {
-          chk.reportCaptured(`cannot assign to '${chk.describeExpr(target)}'`, assignPath.root, site, sp);
-          break;
-        }
       }
-      // Slice/index borrows taken to compute the RHS (e.g. `s[0..n].clone()`)
-      // are consumed within this statement — no binding outlives it — so they
-      // must not leak a freeze onto the next statement. Snapshot which vars are
-      // already frozen, then release any newly-frozen by the RHS afterward.
-      const frozenBeforeRhs = chk.openBorrowWindow();
       const valType = chk.checkExpr(stmt.value, targetInfo.type);
       chk.lintStringConcatInLoop(target, stmt.value, targetInfo.type, sp);
       if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
@@ -307,19 +282,13 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           chk.error(`type mismatch: cannot assign ${chk.show(valType)} to ${chk.show(targetInfo.type)}`, sp);
         }
       }
-      for (const vi of chk.newlyFrozenSince(frozenBeforeRhs)) chk.unfreeze(vi);
       if (targetInfo.type.tag === "int") chk.enforceRangeInto(stmt.value, valType, targetInfo.type, sp);
       // ident-ok: assigning a whole variable revives it, and a field assignment deliberately must not revive the whole
       if (target.kind === "Ident") {
         const info = chk.lookup(target.name);
         if (info) {
-          // `p = w.ptr()` overwrites whatever `p` pointed at, so the borrows the old
-          // value held end here; the new ones are bound below. A `var` can never hold a
-          // reference, so every freeze on it is a pointer borrow.
-          if (info.freezes) { for (const src of info.freezes) chk.releasePointerBorrows(src, info); info.freezes = undefined; }
-          info.pointerSourceMoved = undefined;
           chk.errorIfPointerOutlivesSource(target.name, info, stmt.value, sp);
-          chk.bindPointerViews(target.name, info, stmt.value);
+          chk.bindPointerViews(info, stmt.value);
         }
       } else if (assignPath && assignInfo && chk.pointerViewsIn(stmt.value).length > 0) {
         // `c.buf = v.ptr()` / `ps[0] = v.ptr()`: the pointer now lives inside `c`/`ps`,
@@ -327,7 +296,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         // released (a field write cannot tell which of `c`'s borrows it overwrote), so
         // this can only over-approximate, and the whole-variable arm above is the reset.
         chk.errorIfPointerOutlivesSource(assignPath.root, assignInfo, stmt.value, sp);
-        chk.bindPointerViews(assignPath.root, assignInfo, stmt.value);
+        chk.bindPointerViews(assignInfo, stmt.value);
       }
       chk.tryMove(stmt.value);
       break;
@@ -430,7 +399,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         chk.setType(stmt.iterable, varType);
         chk.beginLoop();
         chk.pushScope();
-        chk.declare(stmt.varName, { type: varType, mutable: false, borrowed: false, read: false }, stmt.span);
+        chk.declare(stmt.varName, { type: varType, mutable: false, read: false }, stmt.span);
         for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
         chk.noteForInBind(stmt);
         chk.loopDepth++;
@@ -485,10 +454,10 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           if (stmt.varName2) {
             // enumerate: for i, val in vec
             const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
-            chk.declare(stmt.varName, { type: idxType, mutable: false, borrowed: false, read: false }, stmt.span);
-            chk.declare(stmt.varName2, { type: elemRef, mutable: mutElem, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: idxType, mutable: false, read: false }, stmt.span);
+            chk.declare(stmt.varName2, { type: elemRef, mutable: mutElem, read: false }, stmt.span);
           } else {
-            chk.declare(stmt.varName, { type: elemRef, mutable: mutElem, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: elemRef, mutable: mutElem, read: false }, stmt.span);
           }
           for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
           chk.noteForInBind(stmt);
@@ -503,10 +472,10 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           chk.pushScope();
           if (stmt.varName2) {
             const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
-            chk.declare(stmt.varName, { type: idxType, mutable: false, borrowed: false, read: false }, stmt.span);
-            chk.declare(stmt.varName2, { type: byteType, mutable: false, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: idxType, mutable: false, read: false }, stmt.span);
+            chk.declare(stmt.varName2, { type: byteType, mutable: false, read: false }, stmt.span);
           } else {
-            chk.declare(stmt.varName, { type: byteType, mutable: false, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: byteType, mutable: false, read: false }, stmt.span);
           }
           for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
           chk.noteForInBind(stmt);
@@ -520,9 +489,9 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           const valRef: TypeKind = { tag: "ref", inner: iterType.value, mutable: false };
           chk.beginLoop();
           chk.pushScope();
-          chk.declare(stmt.varName, { type: keyRef, mutable: false, borrowed: false, read: false }, stmt.span);
+          chk.declare(stmt.varName, { type: keyRef, mutable: false, read: false }, stmt.span);
           if (stmt.varName2) {
-            chk.declare(stmt.varName2, { type: valRef, mutable: false, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName2, { type: valRef, mutable: false, read: false }, stmt.span);
           }
           for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
           chk.noteForInBind(stmt);
@@ -538,10 +507,10 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           chk.pushScope();
           if (stmt.varName2) {
             const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
-            chk.declare(stmt.varName, { type: idxType, mutable: false, borrowed: false, read: false }, stmt.span);
-            chk.declare(stmt.varName2, { type: elemRef, mutable: mutElem, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: idxType, mutable: false, read: false }, stmt.span);
+            chk.declare(stmt.varName2, { type: elemRef, mutable: mutElem, read: false }, stmt.span);
           } else {
-            chk.declare(stmt.varName, { type: elemRef, mutable: mutElem, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: elemRef, mutable: mutElem, read: false }, stmt.span);
           }
           for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
           chk.noteForInBind(stmt);
@@ -560,7 +529,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           // iteration. A real type that simply lacks `next` still errors.
           if (!resolved && !chk.structs.has(iterType.name) && !chk.enums.has(iterType.name)) {
             chk.pushScope();
-            chk.declare(stmt.varName, { type: { tag: "unknown" }, mutable: false, borrowed: false, read: false }, stmt.span);
+            chk.declare(stmt.varName, { type: { tag: "unknown" }, mutable: false, read: false }, stmt.span);
             for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
             chk.noteForInBind(stmt);
             // The frame only gives this body's break/continue somewhere to count into.
@@ -608,7 +577,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
               chk.iteratorForIns.set(stmt, { nextMethod: resolved.mangled, elemType, optionEnumName });
               chk.beginLoop();
               chk.pushScope();
-              chk.declare(stmt.varName, { type: elemType, mutable: false, borrowed: false, read: false }, stmt.span);
+              chk.declare(stmt.varName, { type: elemType, mutable: false, read: false }, stmt.span);
               for (const inv of stmt.invariants ?? []) chk.checkContractClause(inv);
               chk.noteForInBind(stmt);
               chk.loopDepth++;
@@ -638,9 +607,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
       // A view produced by a discarded expression (`print(lx.word(0, 5))`) has no
       // binding to outlive the statement, so its freeze must not survive it either —
       // same reasoning as the RHS snapshot in Assign, which this mirrors.
-      const frozenBefore = chk.openBorrowWindow();
       const exprType = chk.checkExpr(stmt.expr, valueTail?.expected ?? null);
-      for (const vi of chk.newlyFrozenSince(frozenBefore)) chk.unfreeze(vi);
       let warned = valueTail !== null;
       if (!warned && exprType.tag === "enum") {
         const enumInfo = chk.enums.get(exprType.name);
@@ -794,7 +761,7 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           // Bindings escape into the CURRENT scope (the whole point vs if-let).
           for (let i = 0; i < Math.min(pat.bindings.length, variant.fields.length); i++) {
             const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
-            chk.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
+            chk.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, read: false, span: bindSpan, patternBound: true,
               copyBind: chk.isCopyBind(bindTypes[i], chk.isPlaceExpr(stmt.value)) });
             const bound = chk.lookup(pat.bindings[i]);
             if (bound) chk.noteRefInto(bound, stmt.value, pat.variant, i);
@@ -896,7 +863,7 @@ export function bindLetClause(c: TypeChecker, pattern: Pattern, subject: Expr, s
     c.patternBindingTypes.set(pattern, bindTypes);
     for (let i = 0; i < Math.min(pattern.bindings.length, variant.fields.length); i++) {
       const bindSpan = pattern.bindingSpans?.[i] ?? pattern.span;
-      c.declare(pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
+      c.declare(pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, read: false, span: bindSpan, patternBound: true,
         copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)) });
       const bound = c.lookup(pattern.bindings[i]);
       if (bound) c.noteRefInto(bound, subject, pattern.variant, i);
@@ -1005,7 +972,7 @@ export function declarePatternLeaves(c: TypeChecker, pattern: Pattern, leaves: P
   const bindTypes = leaves.map(l => c.payloadBindType(l.type, subjBorrows, subjIsMut));
   c.patternBindingTypes.set(pattern, bindTypes);
   leaves.forEach((l, i) => {
-    c.declare(l.name, { type: bindTypes[i]!, mutable: subjIsMut, borrowed: false, read: false, span: l.span, patternBound: true,
+    c.declare(l.name, { type: bindTypes[i]!, mutable: subjIsMut, read: false, span: l.span, patternBound: true,
       copyBind: c.isCopyBind(bindTypes[i]!, c.isPlaceExpr(subject)) });
     const bound = c.lookup(l.name);
     if (bound) c.noteRefIntoSteps(bound, subject, l.steps);

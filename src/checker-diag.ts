@@ -358,13 +358,11 @@ export function recover(c: TypeChecker, f: () => void) {
   const loopFrameCount = c.loopFrames.length;
   const reachable = c.reachable;
   const closureFrameCount = c.closureFrames.length;
-  const borrowWindowCount = c.borrowWindows.length;
   try {
     f();
   } catch (e) {
     if (!(e instanceof CheckAbort)) throw e;
     c.scopes.length = scopeDepth;
-    c.borrowWindows.length = borrowWindowCount;
     c.unsafeDepth = unsafeDepth;
     c.unsafeUsedStack.length = unsafeUsed;
     c.loopDepth = loopDepth;
@@ -632,10 +630,10 @@ export function viewBindRoot(c: TypeChecker, stmt: LetDecl, hint: TypeKind | nul
   if (!p) return null;
   const info = c.lookup(p.root);
   if (!info || info.isGlobal || c.globalScopeInfos.has(info) || info.nullableRef) return null;
-  if (info.borrowKinds?.includes("pointer")) return null;
+  if (info.pointerSource) return null;
   // A root that views another binding (`let s = v[0..1]`) is not the container: a
   // write to `v[0]` is legal while `s` lives and is invisible to a scan for `s`.
-  if (info.freezes?.length || info.refInto) return null;
+  if (info.holdsPointer || info.refInto) return null;
   if (info.viewsAnother === true) return null;
   return p.root;
 }

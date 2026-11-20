@@ -13,29 +13,13 @@ import type { Diagnostic } from "./diagnostics";
 // is what the itable is keyed on.
 export interface PropagateBoxing { fromType: string; ifaceName: string; viaMessage: boolean; errType: TypeKind }
 
-// One hop from a place to a place inside it. `index` is deliberately opaque —
-// two index steps may or may not select the same element, and nothing here tries
-// to decide that. `payload` is the inside of an Option/Result reached by `!`/`?`.
-// The borrows the walk still records on a binding. Views, loops and callbacks over it are src/borrow-flow.ts's
-// (it reads the program, not this state). A `pointer` borrow is a bound `*T` from `v.ptr()` / `s.cstr()` /
-// `h.ptr()`: unlike a view it does not forbid a MOVE of its source; the move ends the holder instead, except
-// through `forget` (see `tryMoveLeaf`). `capture`: a closure literal captured the binding; it lasts for the
-// statement that holds the literal.
-export type BorrowKind = "pointer" | "capture";
-
-// The binding that holds a pointer borrow, so the diagnostic can name both ends:
-// `'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on
-// line N)`. `null` in `VarInfo.borrowHolders` for every non-pointer borrow.
-export interface PointerHolder { name: string; info: VarInfo; root: string; call: string; line: number }
-
-// Where a capture borrow was taken, so the conflicting write can point at the closure.
-export interface BorrowSite { span?: Span }
-
 // A binding a pattern introduces, wherever it sits. `steps` is its path from the subject,
 // one (variant, payload index) per enum it passes through: a flat `Some(x)` has one step,
 // `Ok(Some(x))` two. `type` is the payload's own type, before the borrow rule applies.
 export interface PatternLeaf { name: string; type: TypeKind; span?: Span; steps: { variant: string; index: number }[] }
 
+// One hop from a place to a place inside it. `index` is deliberately opaque: two index steps may or may not select the same
+// element, and nothing here tries to decide that. `payload` is the inside of an Option/Result reached by `!`/`?`.
 export type PlaceStep =
   | { tag: "field"; name: string }
   | { tag: "index" }
@@ -61,7 +45,6 @@ export interface VarInfo {
   // Set wherever the walk moves the binding (never cleared, reassignment included): what the
   // unused-move lint and carryPointerBorrows ask. Use-after-move itself is src/move-flow.ts.
   everMoved?: boolean;
-  borrowed: boolean;
   read: boolean;
   span?: Span;
   // Declared at module scope. A global has no single owner (every function, and every
@@ -87,24 +70,15 @@ export interface VarInfo {
   // Holds a closure: the literals it may have been bound or assigned from, so passing
   // the binding to a call is checked for exclusivity like passing those literals.
   closureSources?: Expr[];
-  // The sources this binding holds a pointer borrow of (`let p = v.ptr()`), released when it leaves scope or is reassigned.
-  freezes?: VarInfo[];
-  // Which places inside this variable the live borrows point into, as field chains off
-  // the root (`["a"]` for a view of `x.a`, `[]` for the whole variable). A `null` entry
-  // means the borrow's path could not be determined and the whole variable is frozen.
-  // Absent while `borrowed` is true is read the same as `[null]`. Only mutations whose
-  // own path overlaps a frozen one are rejected, so a capture of `x.a` leaves `x.b` writable.
-  borrowedPaths?: (string[] | null)[];
-  // Why each borrow in `borrowedPaths` was taken, same order.
-  borrowKinds?: BorrowKind[];
-  // Who holds each borrow in `borrowedPaths`, same order; only a `pointer` borrow has one.
-  borrowHolders?: (PointerHolder | null)[];
-  // Where each capture borrow was taken, same order (diagnostics only).
-  borrowSites?: (BorrowSite | null)[];
-  // This binding holds a `*T` whose source has since been moved to an owner the checker
-  // cannot see (`take(v)`, `store.push(v)`), so the buffer may be freed at any point after.
-  // Any read of the binding is an error until it is reassigned. Set by `tryMoveLeaf`.
-  pointerSourceMoved?: { root: string; call: string; line: number };
+  // A `v.ptr()` / `s.cstr()` of this binding is held by some binding (`let p = v.ptr()`), now or earlier. The conflicts are
+  // src/borrow-flow.ts's; this only keeps the `viewBindRoot` optimisation off a root a pointer may alias.
+  pointerSource?: boolean;
+  // This binding holds such a pointer (or a struct/collection carrying one).
+  holdsPointer?: boolean;
+  // A `let x = p else { .. }` unwrap of the `?&mut T` parameter `p` is live (until `x`'s scope pops): a second one would alias it.
+  unwrapped?: boolean;
+  // On `x` of that unwrap: the parameter it unwraps, released when `x`'s scope pops.
+  unwrapOf?: VarInfo;
   // Bound by a MATCH/if-let pattern rather than by a `let`/`var` declaration. Assignment
   // to one is rejected like any other immutable binding, but the generic advice ("declare
   // with 'var'") names a declaration the reader cannot find: there is no `let` here, and

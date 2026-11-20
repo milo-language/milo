@@ -907,7 +907,7 @@ export function checkClosureExpr(chk: TypeChecker, expr: ClosureExpr, expected: 
       pType = { tag: "unknown" };
     }
     paramTypes.push(pType);
-    chk.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, borrowed: false, read: false, span: p.span,
+    chk.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, read: false, span: p.span,
       ...(pType.tag !== "ref" && { byValueParam: true }) });
   }
   // An explicit annotation always wins; otherwise take the caller's expected return
@@ -977,7 +977,6 @@ export function checkClosureExpr(chk: TypeChecker, expr: ClosureExpr, expected: 
         // slot matches the width every use in the body was checked against.
         cap.type = info.type;
         cap.info = info;
-        chk.freeze(info, null, "capture", null, { span: expr.span });
         break;
       }
     }

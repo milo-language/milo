@@ -68,10 +68,10 @@ export function checkStringViewForIn(c: TypeChecker, stmt: ForInStmt, mode: "lin
   c.pushScope();
   if (stmt.varName2) {
     // enumerate: `for i, line in text.lines()`
-    c.declare(stmt.varName, { type: { tag: "int", bits: 64, signed: true }, mutable: false, borrowed: false, read: false }, stmt.span);
-    c.declare(stmt.varName2, { type: viewType, mutable: false, borrowed: false, read: false }, stmt.span);
+    c.declare(stmt.varName, { type: { tag: "int", bits: 64, signed: true }, mutable: false, read: false }, stmt.span);
+    c.declare(stmt.varName2, { type: viewType, mutable: false, read: false }, stmt.span);
   } else {
-    c.declare(stmt.varName, { type: viewType, mutable: false, borrowed: false, read: false }, stmt.span);
+    c.declare(stmt.varName, { type: viewType, mutable: false, read: false }, stmt.span);
   }
   for (const inv of stmt.invariants ?? []) c.checkContractClause(inv);
   c.noteForInBind(stmt);

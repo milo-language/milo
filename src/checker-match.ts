@@ -90,7 +90,7 @@ export function checkNullRefUnwrap(c: TypeChecker, stmt: import("./ast").LetElse
   // which is the aliasing the one rule exists to prevent. Scoped, not function-wide: the
   // borrow is released when the first binding's scope pops, so unwrapping once per arm of
   // an `if` is fine. A shared `?&T` has nothing to exclude, so it is not restricted.
-  if (info.nullableRef.mutable && info.borrowed) {
+  if (info.nullableRef.mutable && info.unwrapped) {
     c.error(`'${(stmt.value as { name: string }).name}' is already unwrapped here — a second '&mut ${c.show(info.nullableRef.inner)}' to the same object would alias the first`, sp,
       `use the binding you already have, or let the first one's scope end before unwrapping again`);
     return;
@@ -114,9 +114,9 @@ export function checkNullRefUnwrap(c: TypeChecker, stmt: import("./ast").LetElse
   // Keyed on the placeholder pattern, which is unique per statement: this is the map the
   // LSP already reads for a let-else binding's hover, so the unwrap gets one for free.
   c.patternBindingTypes.set(stmt.pattern, [refType]);
-  if (refType.mutable) { c.noteBorrowChange(); info.borrowed = true; }
-  c.declare(name, { type: refType, mutable: refType.mutable, borrowed: false, read: false, span: sp,
-    ...(refType.mutable && { freezes: [info] }) });
+  if (refType.mutable) info.unwrapped = true;
+  c.declare(name, { type: refType, mutable: refType.mutable, read: false, span: sp,
+    ...(refType.mutable && { viewsAnother: true, unwrapOf: info }) });
 }
 
 export function isCopyBind(c: TypeChecker, bt: TypeKind, subjectIsPlace: boolean): boolean {
@@ -433,7 +433,7 @@ export function checkMatchLike(c: TypeChecker, subject: Expr, arms: MatchArm[], 
           }
           for (let i = 0; i < bindTypes.length; i++) {
             const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
-            c.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
+            c.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, read: false, span: bindSpan, patternBound: true,
               copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)) });
             const bound = c.lookup(pat.bindings[i]);
             if (bound) c.noteRefInto(bound, subject, pat.variant, i);

@@ -392,7 +392,7 @@ export function checkCore(c: TypeChecker, program: Program): void {
     if (!info) continue;
     c.pushScope();
     for (const f of info.fields) {
-      c.declare(f.name, { type: f.type, mutable: false, borrowed: false, read: true });
+      c.declare(f.name, { type: f.type, mutable: false, read: true });
     }
     for (const inv of s.invariants) {
       if (inv.kind !== "invariant") {
@@ -803,7 +803,7 @@ export function checkCore(c: TypeChecker, program: Program): void {
     if (!g.type) continue;
     const t = c.resolve(g.type);
     globalTypes.set(g.name, t);
-    c.declare(g.name, { type: t, mutable: g.mutable, borrowed: false, read: true, span: g.span, isGlobal: true });
+    c.declare(g.name, { type: t, mutable: g.mutable, read: true, span: g.span, isGlobal: true });
   }
   for (const g of c.globalsOrdered) {
     const hint = g.type ? c.resolve(g.type) : null;
@@ -826,7 +826,7 @@ export function checkCore(c: TypeChecker, program: Program): void {
     // strips `@main`, so nothing ever calls `@__milo.global_init` and every global
     // in this list would silently stay zero. That path rejects on this list.
     if (!c.isConstGlobalInit(g.value)) c._nonConstGlobals.push(g.name);
-    if (!g.type) c.declare(g.name, { type: finalType, mutable: g.mutable, borrowed: false, read: true, span: g.span, isGlobal: true });
+    if (!g.type) c.declare(g.name, { type: finalType, mutable: g.mutable, read: true, span: g.span, isGlobal: true });
     for (const attr of g.attributes ?? []) {
       if (attr.name === "cValue") c.checkCValue(g, attr, finalType);
       else {

@@ -334,9 +334,8 @@ export function checkCallExpr(chk: TypeChecker, expr: Call, expected: TypeKind |
       chk.warn("useless-forget", `'forget' on a Copy value does nothing`, sp,
         `${chk.show(t)} owns no resource, so there is no drop to suppress`);
     }
-    chk.pointerMoveKeepsHolders = true;
     chk.forgetting = true;
-    try { chk.tryMove(expr.args[0]); } finally { chk.pointerMoveKeepsHolders = false; chk.forgetting = false; }
+    try { chk.tryMove(expr.args[0]); } finally { chk.forgetting = false; }
     return chk.setType(expr, { tag: "void" });
   }
   // `isNull(s.field)` — the ONE test a C function-pointer field admits besides being
@@ -444,7 +443,7 @@ export function checkCallExpr(chk: TypeChecker, expr: Call, expected: TypeKind |
     // when it is an owned local rather than a borrow.
     chk.markPlaceRead(expr.args[0]);
     if (!place.mutable) chk.error(`cannot replace through an immutable place`, expr.args[0].span, `declare it with 'var'`);
-    else chk.checkPlaceArgWrite(expr.args[0], "replace", sp);
+    else chk.checkPlaceArgWrite(expr.args[0]);
     // value moves in, old occupant moves out to the caller — the place stays valid,
     // so it is NOT invalidated here (only the by-value argument is consumed).
     const vt = chk.checkExpr(expr.args[1], place.type);
@@ -466,9 +465,9 @@ export function checkCallExpr(chk: TypeChecker, expr: Call, expected: TypeKind |
     const a = chk.resolveAssignTarget(expr.args[0]);
     const b = chk.resolveAssignTarget(expr.args[1]);
     if (!a.mutable) chk.error(`cannot swap through an immutable place`, expr.args[0].span, `declare it with 'var'`);
-    else chk.checkPlaceArgWrite(expr.args[0], "swap", sp);
+    else chk.checkPlaceArgWrite(expr.args[0]);
     if (!b.mutable) chk.error(`cannot swap through an immutable place`, expr.args[1].span, `declare it with 'var'`);
-    else chk.checkPlaceArgWrite(expr.args[1], "swap", sp);
+    else chk.checkPlaceArgWrite(expr.args[1]);
     if (a.type.tag !== "unknown" && b.type.tag !== "unknown" && !typeEq(a.type, b.type)) {
       chk.error(`swap: operands have different types ${chk.show(a.type)} and ${chk.show(b.type)}`, sp);
     } else if (a.type.tag === "int" && b.type.tag === "int" && (a.type.min !== b.type.min || a.type.max !== b.type.max)) {

@@ -142,7 +142,7 @@ export function dispatchMangledMethod(c: TypeChecker, expr: MethodCall, mangled:
         for (const a of expr.args) c.checkExpr(a);
         return c.setType(expr, sig.ret);
       }
-      if (!c.collectionGuarded.has(expr)) c.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+      if (!c.collectionGuarded.has(expr)) c.markWritten(expr.object);
       c.errorIfCopyBind(expr.object, expr.method, sp);
     }
     c.autoBorrow(expr.object, { mutable: selfParam.type.mutable });
