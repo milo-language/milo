@@ -5,13 +5,14 @@
 // against method calls, assignments and moves of a local place. Reads the place graph of src/place-cfg.ts.
 import type { Expr, Function, Program, Span } from "./ast";
 import type { CheckResult } from "./checker";
+import type { Diagnostic, DiagnosticNote } from "./diagnostics";
 import * as text from "./borrow-diagnostics";
 import { NO_TYPE } from "./move-flow";
 import { callEffects, type AnalysisHost } from "./borrow-flow-park";
 import { Builder, liveness, overlaps, type InheritedLoan, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
 
 export interface BorrowFlowResult {
-  diagnostics: { span: Span | undefined; message: string; hint?: string }[];
+  diagnostics: { span: Span | undefined; message: string; hint?: string; notes?: DiagnosticNote[] }[];
 }
 
 // "v#3.name" -> "v".
@@ -91,7 +92,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       if (ln.kind !== "view" || !caps.has(holder) || !caps.has(root)) continue;
       const list = b.closureLoans.get(n.expr) ?? [];
       const path = placeOfKey(k).slice(placeOfKey(k).indexOf("#")).replace(/^#\d+/, "");
-      if (!list.some(x => x.holder === holder && x.root === root && x.path === path)) list.push({ holder, root, path, name: ln.name!, anon: ln.anon === true });
+      if (!list.some(x => x.holder === holder && x.root === root && x.path === path)) list.push({ holder, root, path, name: ln.name!, anon: ln.anon === true, span: ln.span });
       b.closureLoans.set(n.expr, list);
     }
   });
@@ -124,16 +125,45 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
     const n = nodes[i]!;
     return [...(state[i] ?? [])].map(k => nodes[originOf(k)]!).filter(l => l.loan!.place.endsWith("#g") && holderLiveAfter(n, l.loan!.holder!)).sort((x, y) => nodes.indexOf(x) - nodes.indexOf(y));
   };
-  const report = (span: Span | undefined, t: text.BorrowText) => {
+  const report = (span: Span | undefined, t: text.BorrowText, notes: DiagnosticNote[] = []) => {
     const key = `${span?.file}:${span?.line}:${span?.col}:${t.message}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.diagnostics.push({ span, ...t });
+    out.diagnostics.push({ span, ...t, ...(notes.length > 0 && { notes }) });
   };
-  const emit = (loan: Node, prefix: string, root: string, span: Span | undefined) => {
+  // The use that keeps a view's holder live past node `from`: the nearest later read of it along some path, stopping where the
+  // holder is redefined.
+  const stillUsedAt = (from: number, holder: Place): Span | undefined => {
+    const seenN = new Set<number>();
+    let frontier = [...nodes[from]!.succ];
+    while (frontier.length > 0) {
+      const next: number[] = [];
+      for (const j of frontier) {
+        if (seenN.has(j)) continue;
+        seenN.add(j);
+        const m = nodes[j]!;
+        if (m.use !== undefined && overlaps(m.use, holder) && m.expr?.span !== undefined) return m.expr.span;
+        if (m.def !== undefined && (m.def === holder || holder.startsWith(m.def + "."))) continue;
+        next.push(...m.succ);
+      }
+      frontier = next;
+    }
+    return undefined;
+  };
+  const emit = (loan: Node, prefix: string, root: string, span: Span | undefined, at: number, how: "call" | "assign" | "closure" | "move") => {
     const l = loan.loan!;
-    if (l.anon) { report(span, text.unattributed(prefix, root)); return; }
-    report(span, l.kind === "view" || l.kind === "callback" ? text.whileHolderBorrows(prefix, root, l.name!) : text.whileLoopIterates(prefix, root));
+    if (l.anon) { report(span, text.unattributed(prefix, root, how)); return; }
+    if (l.kind === "view") {
+      const notes: DiagnosticNote[] = [{ message: `'${l.name}' borrows '${root}' here`, span: l.span }];
+      const use = stillUsedAt(at, l.holder!);
+      if (use !== undefined) notes.push({ message: `'${l.name}' is still used here`, span: use });
+      report(span, text.whileHolderBorrows(prefix, root, l.name!), notes);
+    } else if (l.kind === "callback") {
+      report(span, text.whileCallbackRuns(prefix, root, l.name!), [{ message: `'${l.name}' borrows '${root}' until its callback returns`, span: l.span }]);
+    } else {
+      const line = l.span ? ` (line ${l.span.line})` : "";
+      report(span, text.whileLoopIterates(prefix, root), [{ message: `the loop over '${root}'${line} borrows it for its whole body`, span: l.span }]);
+    }
   };
 
   nodes.forEach((n, i) => {
@@ -144,11 +174,11 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       const root = rootName(w.place);
       const l = loan.loan!;
       if (l.kind === "pointer") report(w.span, text.pointerConflict(w.kind === "place" ? "call" : w.kind, w.kind === "closure" ? `${w.via} '${w.fname}'` : w.text, root, l.name!, l.call!, l.line!));
-      else if (w.kind === "closure") emit(loan, text.closureWritePrefix(root, w.via!, w.fname!), root, w.span);
-      else if (w.kind === "call") emit(loan, text.callPrefix(w.method!, root), root, w.span);
-      else if (w.kind === "place") emit(loan, text.actionPrefix(w.action!, root), root, w.span);
-      else if (w.kind === "elem") report(w.span, text.elemAssignWhileIterated(w.text, root));
-      else emit(loan, text.assignPrefix(w.text), root, w.span);
+      else if (w.kind === "closure") emit(loan, text.closureWritePrefix(root, w.via!, w.fname!), root, w.span, i, "closure");
+      else if (w.kind === "call") emit(loan, text.callPrefix(w.method!, root), root, w.span, i, "call");
+      else if (w.kind === "place") emit(loan, text.actionPrefix(w.action!, root), root, w.span, i, "call");
+      else if (w.kind === "elem") report(w.span, text.elemAssignWhileIterated(w.text, root), [{ message: `the loop over '${root}'${l.span ? ` (line ${l.span.line})` : ""} borrows it for its whole body`, span: l.span }]);
+      else emit(loan, text.assignPrefix(w.text), root, w.span, i, "assign");
     }
     if (n.effect?.parks) {
       for (const l of globalHeld(i)) {
@@ -167,7 +197,7 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
       const loan = conflicting(i, n.use!, false, false, false);
       if (loan !== null) {
         const root = rootName(n.use!);
-        emit(loan, text.movePrefix(e.kind === "Ident" ? e.name : n.use!.replace(/#\d+/, "")), root, e.span);
+        emit(loan, text.movePrefix(e.kind === "Ident" ? e.name : n.use!.replace(/#\d+/, "")), root, e.span, i, "move");
       }
     }
   });
@@ -202,4 +232,15 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
     for (const c of closureLiterals(f.body)) analyzeBody(cr, host, [...c.params.map(p => ({ ...p, type: { ...(p.type ?? NO_TYPE), isRef: true } })), ...(cr.closureCaptures.get(c) ?? []).map(k => ({ name: k.name, type: null }))], c.body, out, reported, top.closureEnvs.get(c), top.callbackOf.get(c), top.closureLoans.get(c), effects, globals);
   }
   return out;
+}
+
+// The checker's borrow conflicts: the flow's errors replace the walk's. The walk still raises the same errors while it runs;
+// those matching a flow-class template (src/borrow-diagnostics.ts) are taken out of `diagnostics` here and kept in
+// `walkFlowErrors` for scripts/borrow-shadow.ts. Temporary: phase 3b deletes the walk's machinery and this filter with it.
+// Local-rule errors (same-call exclusivity, structural, Task.scope) match no template and stay.
+export function reportBorrowFlow(program: Program, cr: CheckResult, tc: PlaceCfgHost & AnalysisHost & { diagnostics: Diagnostic[]; walkFlowErrors: Diagnostic[]; errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic }): void {
+  const kept: Diagnostic[] = [];
+  for (const d of tc.diagnostics) (d.severity === "error" && text.templateOf(d.message) !== null ? tc.walkFlowErrors : kept).push(d);
+  tc.diagnostics.splice(0, tc.diagnostics.length, ...kept);
+  for (const d of borrowFlow(program, cr, tc).diagnostics) tc.errorWithNotes(d.message, d.span, d.hint, d.notes ?? []);
 }

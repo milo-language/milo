@@ -25,7 +25,9 @@ export function setGlobalBorrowCapture(f: ((input: GlobalBorrowInput) => void) |
 // written captures are plain locals here.
 const RUNS_ONCE = /^(Task\$scope|TaskScope\$spawn|Task\$spawn|Task\$spawnWithStack|spawnOsThreadDetached|blockingPoolSubmit|dbpool\$dbPoolSubmit|dbPoolRun(_\w+)?|Promise\b.*\$(run|blocking))$/;
 
-export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Program, view: ProgramView): void {
+// Returns the write/park summary it computed (undefined when there are no mutable globals and no shared closure captures), so
+// src/borrow-flow.ts reads the same facts instead of running the fixpoint again.
+export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Program, view: ProgramView): { writes: Map<string, Set<string>>; parks: Set<string> } | undefined {
   const mutableGlobals = new Set<string>();
   for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
   const { fns, rootOf, calleeOf: target } = view;
@@ -50,8 +52,9 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
     seed.set(id, new Set(m.values()));
     for (const [nm, key] of m) capNames.push({ name: nm, key });
   }
-  if (mutableGlobals.size === 0 && sharedCaps.size === 0) return;
-  const { writes, parks } = globalWriteSummary(host, program, view, mutableGlobals, seed);
+  if (mutableGlobals.size === 0 && sharedCaps.size === 0) return undefined;
+  const summary = globalWriteSummary(host, program, view, mutableGlobals, seed);
+  const { writes, parks } = summary;
   const heldAcrossPark = paramViewsAcrossPark(host, view, parks);
 
   // Only a callee that parks or writes a tracked name can produce a finding.
@@ -179,4 +182,5 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
   const input: GlobalBorrowInput = { tasks, globals: [...mutableGlobals], capNames, callees, calls, views, fors, closures };
   if (captureInput) captureInput(input);
   for (const f of globalBorrowFindings(input)) host.error(f.message, f.span, f.hint);
+  return summary;
 }

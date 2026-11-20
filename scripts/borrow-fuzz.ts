@@ -235,7 +235,8 @@ async function evaluate(src: string): Promise<Eval> {
   const errs = cr.diagnostics.filter((d: any) => d.severity === "error");
   const other = errs.find((d: any) => templateOf(d.message) === null);
   if (other) return { status: "typeerr", W: [], F: [], I: "clean", detail: other.message };
-  const W = errs.map((d: any) => `${d.message} @${at(d.span)}`).sort();
+  // The checker reports the flow's errors and keeps the walk's in tc.walkFlowErrors (until phase 3b), so W is the walk's own answer.
+  const W = tc.walkFlowErrors.map((d: any) => `${d.message} @${at(d.span)}`).sort();
   let F: string[];
   try { F = m.borrowFlow(program, cr, tc).diagnostics.filter((d: any) => templateOf(d.message) !== null).map((d: any) => `${d.message} @${at(d.span)}`).sort(); }
   catch (e) { return { status: "crash", W, F: [], I: "clean", detail: `borrowFlow: ${(e as Error).message?.slice(0, 80)}` }; }

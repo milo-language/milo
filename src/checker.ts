@@ -41,6 +41,10 @@ export class TypeChecker {
   mutForInUses = new Map<string, Diagnostic>();
   // Borrow errors waiting for the holder's next read, which becomes their "still used
   // here" note. Keyed by the holder binding; entries die with the checker.
+  // The finished-program view and the global write/park summary of checkPasses, kept for src/borrow-flow.ts.
+  callFacts: { host: ProgramPassHost; view: ProgramView; summary: { writes: Map<string, Set<string>>; parks: Set<string> } | undefined } | undefined;
+  // The walk's flow-class borrow errors, dropped from `diagnostics` at the end of check (see checker-core check).
+  walkFlowErrors: Diagnostic[] = [];
   pendingUseNotes = new Map<VarInfo, { diag: Diagnostic; name: string }[]>();
   // Deferred Vec element inference: `var v = Vec.new()` with no annotation gets a
   // placeholder element object, resolved in-place from the first `v.push(x)`.

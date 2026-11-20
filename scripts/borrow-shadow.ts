@@ -2,7 +2,8 @@
 //
 // Runs the checker over tests/errors and tests/fixtures (the programs scripts/checker-diag-snapshot.ts
 // covers), then borrowFlow on the same CheckResult, and compares the (message, span) of the in-scope
-// borrow errors. Each difference is judged by running the program in the interpreter: a program that
+// borrow errors. The checker reports the flow's errors and drops the walk's (the in-scope ones it keeps in
+// tc.walkFlowErrors until phase 3b deletes the walk), so the walk side is that kept list, not the result. Each difference is judged by running the program in the interpreter: a program that
 // gets stuck on E-BORROW has a real borrow bug, one that runs clean has none.
 //   bun scripts/borrow-shadow.ts [--list] [--jobs N] [--only <substr>]
 import { readdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
@@ -63,7 +64,7 @@ if (shard) {
   for (const f of files.filter((_, i) => i % n === k)) {
     try {
       const { program, tc, cr } = await load(join(ROOT, f));
-      const walk = cr.diagnostics.filter((d: any) => d.severity === "error" && templateOf(d.message) !== null).map((d: any) => ({ at: at(d.span), message: d.message }));
+      const walk = tc.walkFlowErrors.map((d: any) => ({ at: at(d.span), message: d.message }));
       const flow = borrowFlow(program, cr, tc).diagnostics.filter((d: any) => templateOf(d.message) !== null).map((d: any) => ({ at: at(d.span), message: d.message }));
       out[f] = { walk, flow };
     } catch { /* a program the front end rejects has no CheckResult: nothing to compare */ }

@@ -4,6 +4,7 @@ import type { Expr, Function, Program, Span } from "./ast";
 import { CheckAbort, applyWarningDefaults, cNameOf, importPathFrom, inModule, isStdCollectionModule, mustUseOf, rawPointerField, rawPointerVariant, rewritten } from "./checker-util";
 import { applyRewrites } from "./apply-rewrites";
 import { applyStringDecisions, moveFlow } from "./move-flow";
+import { reportBorrowFlow } from "./borrow-flow";
 import { declaredType, simpleType } from "./ast";
 import { basename, resolve as resolvePath, sep } from "path";
 import { display, displayQualified } from "./mangle";
@@ -59,6 +60,8 @@ export function check(c: TypeChecker, program: Program): CheckResult {
   // (move or share) are what codegen reads. Before the qualified-name rewrite below, which they need too.
   const flow = moveFlow(program, result, c);
   for (const d of flow.diagnostics) c.error(d.message, d.span, d.hint);
+  // Borrow conflicts are decided by the dataflow pass too: its errors are the checker's, the walk's copies are dropped.
+  reportBorrowFlow(program, result, c);
   if (!c.diagnostics.some(d => d.severity === "error")) applyStringDecisions(result, flow);
   if (c._displayNames !== undefined && c._displayNames.size > 0) {
     // The file a renamed symbol came from, when exactly one file declared it.
@@ -918,7 +921,7 @@ export function checkPasses(c: TypeChecker, program: Program): void {
 
   // Needs the finished call-resolution maps too: the global-write summary is a fixpoint
   // over the call graph, so every callee has to be resolvable before it runs.
-  checkGlobalBorrowInvalidation(host, program, view);
+  c.callFacts = { host, view, summary: checkGlobalBorrowInvalidation(host, program, view) };
   checkPointerParamEscape(host, program, view);
   // Needs every call site resolved: the evidence suffix compares the argument roots
   // across all of a fn's callers.

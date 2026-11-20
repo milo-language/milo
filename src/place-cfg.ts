@@ -45,7 +45,7 @@ export interface BorrowLoan { kind: "view" | "iteration" | "pointer" | "callback
 
 export interface CallEffect { say: string; parks: boolean; writes: string[] }
 
-export interface InheritedLoan { holder: string; root: string; path: string; name: string; anon: boolean }
+export interface InheritedLoan { holder: string; root: string; path: string; name: string; anon: boolean; span?: Span }
 
 export interface PlaceCfgHost {
   isCopyType(t: TypeKind): boolean;
@@ -87,8 +87,8 @@ export class Builder {
   inheritedWrites: Map<string, { fname: string; writes: string[] }> | undefined;
   // A closure literal passed to a builtin collection method (`v.each(cb)`): the receiver, by root name and field path, and the
   // method's label ("v.each"). Its body is a separate graph, where the receiver is loaned for the body's whole length.
-  callbackOf = new Map<Expr, { root: string; path: string; label: string }>();
-  callbackLoan: { root: string; path: string; label: string } | undefined;
+  callbackOf = new Map<Expr, { root: string; path: string; label: string; span?: Span }>();
+  callbackLoan: { root: string; path: string; label: string; span?: Span } | undefined;
   // What a call does to the mutable globals, when it parks or writes one; and the globals' names. A loan on a global lives on
   // the place "name#g", which no local binding can spell.
   effects: ((e: Expr) => CallEffect | undefined) | undefined;
@@ -173,10 +173,10 @@ export class Builder {
         }
       }
       const cbPlace = this.callbackLoan === undefined ? null : this.lookup(this.callbackLoan.root);
-      const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label } }, cur));
+      const cbHead = cbPlace === null ? -1 : (cur = this.node({ loan: { kind: "callback", place: cbPlace + this.callbackLoan!.path, name: this.callbackLoan!.label, span: this.callbackLoan!.span } }, cur));
       for (const l of this.inheritedLoans ?? []) {
         const holder = this.lookup(l.holder), root = this.lookup(l.root);
-        if (holder !== null && root !== null) cur = this.node({ loan: { kind: "view", place: root + l.path, holder, name: l.name, anon: l.anon } }, cur);
+        if (holder !== null && root !== null) cur = this.node({ loan: { kind: "view", place: root + l.path, holder, name: l.name, anon: l.anon, span: l.span } }, cur);
       }
       cur = this.stmts(body, cur);
       if (cbHead >= 0) this.nodes[cbHead]!.iterEnd = this.nodes.length;
@@ -211,7 +211,7 @@ export class Builder {
       // The first binding stands for the payload borrow of the subject, as the checker's attributeBorrows names it. A match arm
       // is not attributed (the checker words that conflict without a holder).
       if (this.borrowEvents && first && sp !== null && this.cr.patternBindingTypes.get(p)?.some(t => t.tag === "ref") === true) {
-        if (attribute && !this.borrowed.has(sp.split(".")[0]!)) cur = this.node({ loan: { kind: "view", place: sp, holder: id, name } }, cur);
+        if (attribute && !this.borrowed.has(sp.split(".")[0]!)) cur = this.node({ loan: { kind: "view", place: sp, holder: id, name, span: subject.span } }, cur);
         else if (!attribute) cur = this.node({ loan: { kind: "view", place: sp, holder: id, name, anon: true } }, cur);
       }
       first = false;
@@ -231,7 +231,7 @@ export class Builder {
         // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
         const viewOf = this.borrowEvents && (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) ? this.viewRoot(s.value) : null;
-        cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.span } }) }, cur);
+        cur = this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.value.span } }) }, cur);
         return this.globalLoans(id, s.name, s.value, this.pointerLoans(id, s.name, s.value, cur, s.span));
       }
       case "Assign": {
@@ -577,7 +577,7 @@ export class Builder {
           const rbase = recv?.tag === "ref" ? recv.inner : recv;
           if (base !== null && (rbase?.tag === "vec" || rbase?.tag === "hashmap")) {
             for (const a of e.args) {
-              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^\d+/, ""), label: `${rootOfPlace(base.place)}.${e.method}` });
+              if (a.kind === "Closure" && a.isMove !== true) this.callbackOf.set(a, { root: rootOfPlace(base.place), path: base.place.slice(base.place.indexOf("#") + 1).replace(/^\d+/, ""), label: `${rootOfPlace(base.place)}.${e.method}`, span: e.span });
             }
           }
           // `ps.push(v.ptr())`: the container now holds the pointer.
