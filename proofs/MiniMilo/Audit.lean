@@ -7,6 +7,7 @@ adds one.
 import MiniMilo.Contracts
 import MiniMilo.Example
 import MiniMilo.MovesExample
+import MiniMilo.BorrowsExample
 
 /-- info: 'MiniMilo.frame' depends on axioms: [propext] -/
 #guard_msgs in
@@ -71,3 +72,71 @@ import MiniMilo.MovesExample
 /-- info: 'MiniMilo.Moves.Example.lend_never_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms MiniMilo.Moves.Example.lend_never_stuck
+
+/-- info: 'MiniMilo.Borrows.sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.sound
+
+/-- info: 'MiniMilo.Borrows.Example.notStuck_of' depends on axioms: [propext] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.notStuck_of
+
+/-- info: 'MiniMilo.Borrows.Example.body_reach' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.body_reach
+
+/-- info: 'MiniMilo.Borrows.Example.body_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.body_stuck
+
+/-- info: 'MiniMilo.Borrows.Example.body_rejected' depends on axioms: [propext] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.body_rejected
+
+/-- info: 'MiniMilo.Borrows.Example.forceF_forced' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.forceF_forced
+
+/-- info: 'MiniMilo.Borrows.Example.loansEndAtOnce_accepted' depends on axioms: [propext] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.loansEndAtOnce_accepted
+
+/-- info: 'MiniMilo.Borrows.Example.loansEndAtOnce_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.loansEndAtOnce_stuck
+
+/-- info: 'MiniMilo.Borrows.Example.loansEndAtOnce_rejected_by_real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.loansEndAtOnce_rejected_by_real
+
+/-- info: 'MiniMilo.Borrows.Example.elemIgnored_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.elemIgnored_accepted
+
+/-- info: 'MiniMilo.Borrows.Example.elemIgnored_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.elemIgnored_stuck
+
+/-- info: 'MiniMilo.Borrows.Example.elemIgnored_rejected_by_real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.elemIgnored_rejected_by_real
+
+/-- info: 'MiniMilo.Borrows.Example.pointerByLiveness_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.pointerByLiveness_accepted
+
+/-- info: 'MiniMilo.Borrows.Example.pointerByLiveness_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.pointerByLiveness_stuck
+
+/-- info: 'MiniMilo.Borrows.Example.pointerByLiveness_rejected_by_real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.pointerByLiveness_rejected_by_real
+
+/-- info: 'MiniMilo.Borrows.Example.nll_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.nll_accepted
+
+/-- info: 'MiniMilo.Borrows.Example.nll_never_stuck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms MiniMilo.Borrows.Example.nll_never_stuck

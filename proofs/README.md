@@ -1,8 +1,8 @@
 <!-- doc-meta
 system: verification
 purpose: the machine-checked statement of what a proven contract means, what a build does with an unproven one, and why an accepted program never reads a moved place
-key-files: proofs/MiniMilo/Contracts.lean, proofs/MiniMilo/Example.lean, proofs/MiniMilo/Moves.lean, proofs/MiniMilo/MovesExample.lean, proofs/MiniMilo/Audit.lean
-update-when: a contract rule changes (R-CONTRACT-*), a check level changes, a move-flow rule or mutant changes, or a theorem is added or weakened
+key-files: proofs/MiniMilo/Contracts.lean, proofs/MiniMilo/Example.lean, proofs/MiniMilo/Moves.lean, proofs/MiniMilo/MovesExample.lean, proofs/MiniMilo/Borrows.lean, proofs/MiniMilo/BorrowsExample.lean, proofs/MiniMilo/Audit.lean
+update-when: a contract rule changes (R-CONTRACT-*), a check level changes, a move-flow or borrow-flow rule or mutant changes, or a theorem is added or weakened
 last-verified: 2026-11-19 (lake build green on Lean 4.35.0, no Mathlib)
 -->
 
@@ -128,6 +128,103 @@ when the rule breaks). Each row gives the mutant's counterpart in the model.
   now strict about moves through references (T-NO-MOVE-OUT for strings too), checks `sound`'s
   conclusion on every fixture. `scripts/move-mutants.ts` checks that each rule in the table is
   one the tests notice when it breaks.
+
+## Borrow soundness
+
+`MiniMilo/Borrows.lean` models the borrow analysis in `src/borrow-flow.ts` (the graph is built in `src/place-cfg.ts`).
+The dynamic side is E-BORROW (`docs/semantics/milo.md`): a state maps each place to a generation
+(and an element-write count) and each holder to the place and generations it borrowed; a write
+that can reallocate bumps the generation, and reading a holder whose record is stale is stuck.
+A function body is the graph of events `loan h p kind`, `write p call|assign|elem|move`,
+`read h`, `redef h` and `scopeEnd h`. Branch conditions are left out, so the theorem covers every
+path. The analysis is stated as the constraints its result meets (a liveness solution `live` for
+view and iteration holders, `pend` for pointer holders, a forward set `force` of loans in force,
+and the acceptance rule), so any solution is sound, including borrow-flow's fixpoint.
+
+| Theorem | Statement | Why it matters |
+|---|---|---|
+| `sound` | On every run of an accepted body, no node reads a stale view (E-BORROW). | The property the interpreter checks on the corpus, for every program: a view, an iterator or a pointer is never read after its buffer was reallocated. |
+| `loansEndAtOnce_stuck` | With no holder liveness (a loan ends at once), the analysis accepts `let h = v.view(); v.push(1); use(h)` and the run gets stuck. | The NLL region is needed for the proof, not only for one fixture. |
+| `elemIgnored_stuck` | If an element write is no conflict with an iteration loan, the analysis accepts `for x in v { v[i] = 1 }` and the run gets stuck. | An index write ends an iteration (the loop reads its iterator again), though it keeps a view. |
+| `pointerByLiveness_stuck` | If a pointer loan follows Milo liveness instead of scope, the analysis accepts `let p = v.ptr(); v.push(1)` and the run gets stuck on the external read of `p` at scope end. | A pointer is read by code outside Milo (a worker, C) after its last Milo use. The scope-end read is an explicit `scopeEnd` event, so this is a modelling choice; it is the reason the implementation ends a pointer loan at the block, not at the last use. |
+| `loansEndAtOnce_rejected_by_real`, `elemIgnored_rejected_by_real`, `pointerByLiveness_rejected_by_real` | The real analysis rejects each of those bodies. | The weakened analyses differ from the real one in exactly that rule. |
+| `nll_accepted`, `nll_never_stuck` | `let h = v.view(); use(h); v.push(1)` is accepted, and its runs are never stuck. | The precision gained over a walk that holds a loan to the end of the holder's block, which rejects it. |
+
+`BorrowsExample.lean` holds the example bodies. Each "needed" theorem comes with an accepted
+body for the weakened analysis, the run that gets stuck, and the proof that the real analysis
+rejects the body.
+
+### Borrow rule trace
+
+Each rule of the borrow flow is a mutant in `scripts/borrow-mutants.ts` (the gate that a test
+notices when the rule breaks). Each row gives the mutant's counterpart in the model.
+`tests/proofs.test.ts` fails when a mutant has no row.
+
+| Mutant | Model |
+|---|---|
+| `loan-view-let-off` | graph construction: where the builder emits `Ev.loan` for a view or reference let |
+| `loan-for-in-off` | graph construction: `Ev.loan` of kind `iteration` at a for-in head |
+| `loan-if-let-ref-off` | graph construction: `Ev.loan` of a ref payload of an if-let subject |
+| `loan-match-arm-ref-off` | graph construction: `Ev.loan` of a ref payload of a match subject |
+| `loan-lines-off` | graph construction: `Ev.loan` of the receiver of `lines()` / `splitView()` |
+| `loan-pointer-off` | graph construction: `Ev.loan` of kind `pointer` at a binding of `v.ptr()` |
+| `loan-callback-off` | not modelled: callback loans (`v.each(cb)`), no callback kind |
+| `loan-global-for-in-off` | not modelled: mutable globals are not places |
+| `loan-index-for-in-off` | graph construction: the loan of `vs` for `for x in vs[i]` |
+| `loan-global-slice-off` | not modelled: mutable globals are not places |
+| `holder-dead-at-once` | `live` in `NoConflict.ok`: a view or iteration loan lasts while its holder is live; `loansEndAtOnce_stuck` |
+| `holder-never-dead` | `live` in `NoConflict.ok`: precision, not soundness; `nll_accepted` |
+| `pointer-by-liveness` | `pend` in `NoConflict.ok` (liveness that counts `Ev.scopeEnd`); `pointerByLiveness_stuck` |
+| `holder-redef-keeps-loan` | `Ev.redef` and `Ev.defs`: `Forced.flows` stops at a redefinition (precision: a larger `force` is still sound) |
+| `move-keeps-pointer-loans` | not modelled: a move of a pointer's source is a write that conflicts with every kind |
+| `move-no-carry` | not modelled: loans that follow a moved local into a new binding |
+| `field-move-no-carry` | not modelled: field paths |
+| `move-conflicts-pointer` | not modelled: the model conservatively conflicts a move with a pointer loan |
+| `unsafe-write-conflicts` | not modelled: `unsafe` blocks |
+| `self-call-not-write` | graph construction: a `&mut self` call is `Ev.write p call` |
+| `collection-call-not-write` | graph construction: a mutating collection method is `Ev.write p call` |
+| `assign-not-write` | graph construction: assigning a local is `Ev.write p assign` |
+| `elem-assign-not-write` | graph construction: assigning through a field or index is a write of the base |
+| `mut-arg-not-write` | graph construction: a `&mut` argument is `Ev.write p call` |
+| `swap-not-write` | graph construction: `swap(a, b)` writes both places |
+| `replace-not-write` | graph construction: `replace(a, v)` writes its first place |
+| `closure-call-not-write` | graph construction: calling a closure writes what its body writes |
+| `iteration-elem-write-harmless` | `conflicts .iteration .elem`; `elemIgnored_stuck` |
+| `callback-elem-write-conflicts` | not modelled: callback loans |
+| `elem-write-view-conflicts` | `conflicts .view .elem = false` (a view survives an element write; precision) |
+| `elem-write-deep-view-harmless` | not modelled: deep views (a view into an element) |
+| `overlap-exact` | not modelled: places are whole variables, no prefixes |
+| `overlap-root` | not modelled: places are whole variables, no field siblings |
+| `index-place-exact` | graph construction: `v[i] = x` is a write of the container `v`, kind `elem` |
+| `park-ignored` | not modelled: parks and globals |
+| `global-write-ignored` | not modelled: parks and globals |
+| `effect-node-off` | not modelled: parks and globals |
+| `callee-writes-off` | not modelled: parks and globals |
+| `whole-move-unchecked` | `W.move` in `conflicts`: a move conflicts with every kind |
+| `field-move-unchecked` | not modelled: field paths |
+
+### What the borrow model leaves out
+
+- **Graph construction.** The model takes the graph as given. `sound` holds for any graph that
+  has every loan and write the program can perform, so a builder bug that drops one is outside
+  it. Sixteen of the rows above sit there, and the mutation gate is what checks them.
+- **Field paths and overlaps.** A place is a variable. borrow-flow tracks `v.name` and treats a
+  prefix as overlapping; here two places overlap only when equal. Field-disjoint borrows are
+  therefore not shown accepted.
+- **Closures as values and callbacks.** No `callback` loan kind, no closure-write summaries
+  beyond the write events at their calls.
+- **Parks and globals.** A call that parks while a global's buffer is borrowed, and calls that
+  write a global, are not modelled; nor are mutable globals as places.
+- **Pointers.** A move of a pointer's source is a write that conflicts like any other, where
+  borrow-flow lets the pointer follow the move. The model is stricter there, so `sound` is not
+  weakened. `unsafe` writes are not modelled.
+- **Deep views.** A view into an element is treated like any view, which survives an element write.
+- **Iteration holder.** The loop is modelled as a holder read at each iteration; borrow-flow
+  holds the loan for the whole body (`iterEnd`), which is the same set of nodes for a loop whose
+  head reads the iterator.
+- **The link to `src/borrow-flow.ts` is by test.** The interpreter checks `sound`'s conclusion on
+  the corpus, and `scripts/borrow-mutants.ts` checks that each rule in the table is one the tests
+  notice when it breaks.
 
 ## Extending it
 

@@ -10,6 +10,7 @@ const LEAN_DIR = join(PROOFS, "MiniMilo");
 const read = (f: string) => readFileSync(join(LEAN_DIR, f), "utf-8");
 const HEADLINE = ["frame", "sound", "proven_fn", "level_irrelevant", "checked_call"];
 const MOVES_HEADLINE = ["sound", "strings_never_rejected"];
+const BORROWS_HEADLINE = ["sound"];
 // Lean has exactly these three; a fourth name in the audit means someone added an axiom.
 const LEAN_AXIOMS = new Set(["propext", "Classical.choice", "Quot.sound"]);
 
@@ -27,7 +28,7 @@ test("no Lean file uses sorry, a declared axiom or an unchecked evaluator", () =
   expect(escapeHatches("axiom cheat : False")).toEqual(["axiom"]);
   expect(escapeHatches("/- a sorry in prose -/ theorem ok : True := trivial -- no axiom")).toEqual([]);
   const files = readdirSync(LEAN_DIR).filter(f => f.endsWith(".lean"));
-  expect(files.sort()).toEqual(["Audit.lean", "Contracts.lean", "Example.lean", "Moves.lean", "MovesExample.lean"]);
+  expect(files.sort()).toEqual(["Audit.lean", "Borrows.lean", "BorrowsExample.lean", "Contracts.lean", "Example.lean", "Moves.lean", "MovesExample.lean"]);
   for (const f of files) expect({ f, found: escapeHatches(read(f)) }).toEqual({ f, found: [] });
 });
 
@@ -51,6 +52,12 @@ test("every theorem is under the axiom audit, and the audit names only Lean's ow
   }
   for (const [, name] of read("MovesExample.lean").matchAll(/^theorem (\w+)/gm))
     expect({ name, audited: audited.has(`MiniMilo.Moves.Example.${name}`) }).toEqual({ name: name!, audited: true });
+  for (const [, name] of read("BorrowsExample.lean").matchAll(/^theorem (\w+)/gm))
+    expect({ name, audited: audited.has(`MiniMilo.Borrows.Example.${name}`) }).toEqual({ name: name!, audited: true });
+  for (const t of BORROWS_HEADLINE) {
+    expect(audited.has(`MiniMilo.Borrows.${t}`)).toBe(true);
+    expect(read("Borrows.lean")).toMatch(new RegExp(`^theorem ${t}\\b`, "m"));
+  }
   for (const t of MOVES_HEADLINE) {
     expect(audited.has(`MiniMilo.Moves.${t}`)).toBe(true);
     expect(read("Moves.lean")).toMatch(new RegExp(`^theorem ${t}\\b`, "m"));
@@ -75,6 +82,17 @@ test("every move-flow mutant has a row in the proofs README rule trace", () => {
   expect(mutants.length).toBeGreaterThanOrEqual(18);
   const readme = readFileSync(join(PROOFS, "README.md"), "utf-8");
   const trace = readme.slice(readme.indexOf("### Rule trace"), readme.indexOf("### What the move model leaves out"));
+  const rows = new Set([...trace.matchAll(/^\| `([\w-]+)` \|/gm)].map(m => m[1]!));
+  expect(mutants.filter(m => !rows.has(m))).toEqual([]);
+  expect([...rows].filter(r => !mutants.includes(r))).toEqual([]);
+});
+
+// Same for the borrow flow: each mutant in scripts/borrow-mutants.ts has a row in the borrow rule trace.
+test("every borrow-flow mutant has a row in the proofs README borrow rule trace", () => {
+  const mutants = [...readFileSync(join(import.meta.dir, "..", "scripts", "borrow-mutants.ts"), "utf-8").matchAll(/\bm\("([\w-]+)"/g)].map(m => m[1]!);
+  expect(mutants.length).toBeGreaterThanOrEqual(40);
+  const readme = readFileSync(join(PROOFS, "README.md"), "utf-8");
+  const trace = readme.slice(readme.indexOf("### Borrow rule trace"), readme.indexOf("### What the borrow model leaves out"));
   const rows = new Set([...trace.matchAll(/^\| `([\w-]+)` \|/gm)].map(m => m[1]!));
   expect(mutants.filter(m => !rows.has(m))).toEqual([]);
   expect([...rows].filter(r => !mutants.includes(r))).toEqual([]);
