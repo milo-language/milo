@@ -2,7 +2,6 @@
   "mlir/Milo.td": 1744,
   "mlir/Scalar.cpp": 2009,
   "scripts/ts2milo.ts": 2788,
-  "src/checker.ts": 15623,
   "src/emit-mlir.ts": 5943,
   "src/interp.ts": 1521,
   "src/lsp.ts": 2412,

@@ -47,15 +47,25 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checked-dump.ts` | Graph codec for the checker's output (Program + CheckResult): the seam where a checker that is not this process's (the generated Milo one) hands its facts to the emitter. |
+| `src/checker-borrows-moves.ts` | Move tracking and call-site exclusivity: tryMove, assignment targets, closure capture writes (pairs with checker-borrows.ts). |
+| `src/checker-borrows.ts` | Borrow and place tracking: scopes, borrow windows, pointer borrows, places, freezing, mutability roots. |
+| `src/checker-calls.ts` | Call expressions: argument matching, callbacks, collection intrinsics, static calls, SQL call notes. |
 | `src/checker-closure-env.ts` | A `move` closure that captures anything owns a heap environment. |
 | `src/checker-concurrent-args-host.ts` | The boundary between the checker and the portable `@concurrent` closure-argument pass (src/checker-concurrent-args.ts). |
 | `src/checker-concurrent-args.ts` | The `@concurrent` closure-argument check, in the portable subset: plain data in, findings out. |
+| `src/checker-core.ts` | Whole-program driver: check entry points, the declaration pass (checkCore), pass ordering, result assembly. |
 | `src/checker-derive.ts` | Derive synthesis: the Clone, Eq and Json impls `@derive` (and Eq's auto-derive) generates, and the expansion of user `derive <Trait> { ... |
+| `src/checker-diag.ts` | Error and warning reporting, lints, resource/unsafe/range/contract checks. |
 | `src/checker-escaping-closures-host.ts` | The boundary between the checker and the portable escaping-closure pass (src/checker-escaping-closures.ts). |
 | `src/checker-escaping-closures.ts` | The escaping-closure check, in the portable subset: plain data in, findings out. |
+| `src/checker-expr.ts` | Expression checking: the checkExpr dispatcher and the per-form checkers (ident, field, index, cast, binop, closure, if/is, propagate). |
+| `src/checker-flow.ts` | View provenance, fall-off and reachability analysis, copy-ness queries. |
 | `src/checker-global-borrow-host.ts` | The boundary between the checker and the portable global borrow pass (src/checker-global-borrow.ts). |
 | `src/checker-global-borrow.ts` | The global borrow invalidation check, in the portable subset: plain data in, findings out. |
 | `src/checker-implicit-calls.ts` | The implicit-call model, in the portable subset: plain data in, answers out. |
+| `src/checker-literals.ts` | Struct and enum literal expressions: field checking, defaults, base expressions, prelude variants. |
+| `src/checker-match.ts` | Match and pattern checking: arm typing, exhaustiveness space, lints, payload bindings. |
+| `src/checker-method-call.ts` | Method-call expressions: receiver dispatch over builtin and user methods. |
 | `src/checker-mut-bundle-host.ts` | The boundary between the checker and the portable `&mut` parameter bundle pass (src/checker-mut-bundle.ts). |
 | `src/checker-mut-bundle.ts` | The `&mut` parameter bundle check, in the portable subset: plain data in, findings out. |
 | `src/checker-mutability-host.ts` | The boundary between the checker and the portable mutability pass (src/checker-mutability.ts). |
@@ -68,11 +78,17 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker-purity-host.ts` | The boundary between the checker and the portable @pure body pass (src/checker-purity.ts). |
 | `src/checker-purity.ts` | The @pure body check, in the portable subset: plain data in, findings out. |
+| `src/checker-register.ts` | Declaration registration: impls, derives, builtin traits, attribute validation, extern C signatures, global ordering. |
+| `src/checker-resolve.ts` | Type resolution, aliases, generics, monomorphization and type-argument inference. |
 | `src/checker-sql.ts` | Compile-time checked SQL: every `@sql(param[, args])` call site is prepared against the schema the program's own migrations build, at compile time, with bun:sqlite. |
+| `src/checker-stmt.ts` | Statement and function-body checking: let/assign/for/while forms, let-clause binding, pattern leaves. |
 | `src/checker-task-scopes-host.ts` | The boundary between the checker and the portable Task.scope pass (src/checker-task-scopes.ts). |
 | `src/checker-task-scopes.ts` | The Task.scope check, in the portable subset: plain data in, findings out. |
 | `src/checker-thread-boundary-host.ts` | The boundary between the checker and the portable thread-boundary pass (src/checker-thread-boundary.ts). |
 | `src/checker-thread-boundary.ts` | The thread-boundary check, in the portable subset: plain data in, findings out. |
+| `src/checker-traits.ts` | Method resolution, container impl instantiation, trait/interface satisfaction, Send/Sync. |
+| `src/checker-types.ts` | Type declarations shared by the TypeChecker and its split files (re-exported from checker.ts). |
+| `src/checker-util.ts` | Helpers shared by checker.ts and the checker-*.ts files that hold its methods. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/const-fold.ts` | Compile-time folding of module-global initializers: the one place that decides which globals get a static initializer and what it is. |
