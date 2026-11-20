@@ -253,7 +253,7 @@ export class Interp {
     const slot = this.lookup(name);
     if (!slot) this.stuck("E-STUCK", `unbound variable ${name}`);
     const v = slot.v;
-    if (isRef(v)) return { slot: v.slot, path: [...v.path], ro: v.k === "ref", viaRef: true };
+    if (isRef(v)) return v.env ? { slot: v.slot, path: [...v.path], ro: false, viaRef: false } : { slot: v.slot, path: [...v.path], ro: v.k === "ref", viaRef: true };
     return { slot, path: [], ro: false, viaRef: false };
   }
   isLen(e: Expr): boolean {
@@ -420,15 +420,17 @@ export class Interp {
     if (v === undefined || typeof v !== "object") return v;
     switch (v.k) {
       case "moved": return this.stuck("E-STUCK", `${what} holds a moved part`);
-      case "str": if (v.b.id >= 0) v.b.rc++; return { k: "str", b: v.b };
+      // T-NO-MOVE-OUT: a move of a string through a reference would leave the owner a buffer the
+      // mover frees; the checker marks such a read as a share, so a move here is a checker bug.
+      case "str": if (viaRef) break; if (v.b.id >= 0) v.b.rc++; return { k: "str", b: v.b };
       case "struct": {
         if (this.dropImpls.has(v.name)) break;
         const f: Record<string, Value> = {};
-        for (const n of Object.keys(v.f)) f[n] = this.share(v.f[n]!, what);
+        for (const n of Object.keys(v.f)) f[n] = this.share(v.f[n]!, what, viaRef);
         return { k: "struct", name: v.name, f };
       }
-      case "enum": if (this.dropImpls.has(v.en)) break; return { ...v, a: v.a.map(x => this.share(x, what)) };
-      case "arr": return { k: "arr", e: v.e.map(x => this.share(x, what)) };
+      case "enum": if (this.dropImpls.has(v.en)) break; return { ...v, a: v.a.map(x => this.share(x, what, viaRef)) };
+      case "arr": return { k: "arr", e: v.e.map(x => this.share(x, what, viaRef)) };
       case "vec": if (v.view) return { ...v }; break;
       case "fn": case "ptr": return v;
       case "closure": return v.owning ? { ...v, owning: false } : v;
@@ -1125,7 +1127,10 @@ export class Interp {
         const v = this.readPlace(outer, !shared?.has(c.name), c.name);
         return { name: c.name, slot: { v } as Slot };
       }
-      return { name: c.name, slot: { v: this.refTo(outer, c.mutable) } as Slot };
+      // an outer capture that is itself a `&T` stays a reference; an owned one is the outer binding
+      const r: Ref = this.refTo(outer, c.mutable);
+      if (!outer.viaRef) r.env = true;
+      return { name: c.name, slot: { v: r } as Slot };
     });
     const ft = this.rawT(e);
     const ret = ft?.tag === "fn" ? ft.ret : { tag: "void" as const };

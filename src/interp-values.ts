@@ -51,7 +51,9 @@ export interface MapV { k: "map"; buf: number | null; m: Map<string, MapEntry>; 
 export interface HandleV { k: "handle"; kind: string; o: { release(it: Interp): void }; ghost?: true }
 export interface FnRef { k: "fn"; name: string }
 export interface Slot { v: Value; dead?: boolean; stmt?: boolean; mem?: PtrV; mty?: import("./types").TypeKind } // mem: a slot that is a place in raw memory (src/interp-mem.ts memSlot)
-export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[] }
+// env: the slot a by-reference closure holds for a capture. Through it the closure acts on the
+// outer binding itself (a move out of it moves the binding), unlike a `&T` value.
+export interface Ref { k: "ref" | "mut"; slot: Slot; path: Step[]; env?: true }
 export interface ClosureV {
   k: "closure";
   params: string[];
