@@ -1,9 +1,22 @@
 {
+  "mlir/Milo.td": 1744,
+  "mlir/Scalar.cpp": 2009,
+  "scripts/ts2milo.ts": 2788,
   "src/checker.ts": 15623,
   "src/emit-mlir.ts": 5943,
-  "src/interp.ts": 1513,
+  "src/interp.ts": 1521,
   "src/lsp.ts": 2412,
   "src/main.ts": 2607,
   "src/parser.ts": 2349,
-  "src/verify.ts": 3688
+  "src/verify.ts": 3688,
+  "std/http.milo": 3033,
+  "std/jpeg.milo": 1839,
+  "std/json.milo": 2917,
+  "std/json/json_cleanroom_test.milo": 4155,
+  "std/re.milo": 1544,
+  "std/replay.milo": 1977,
+  "std/runtime.milo": 2620,
+  "std/sync.milo": 1575,
+  "std/zstd.milo": 1901,
+  "tests/ts2milo.test.ts": 1620
 }

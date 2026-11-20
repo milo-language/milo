@@ -55,7 +55,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/emit-seam.ts` | Seam measurement for src/emit-mlir.ts (docs/plans/emit-mlir-split.md, plan A). |
 | `scripts/explicit-mut.ts` | Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter. |
 | `scripts/fetch-assets.sh` | Regenerates the game assets that are deliberately NOT in git: the FLYBY city files (82 MB of terrain, footprints and aerial drape) and the APSIS planet maps. |
-| `scripts/file-size-ratchet.ts` | File-size ratchet for src/*.ts: no file over LIMIT lines may grow past its recorded line count. |
+| `scripts/file-size-ratchet.ts` | File-size ratchet for tracked source (src, scripts, std, mlir, tests/*.ts, proofs): no file over LIMIT lines may grow past its recorded line count. |
 | `scripts/fuzz-arena.ts` | Differential falsifier for the GENERATIONAL ARENA — std/arena's Handle<T>. |
 | `scripts/fuzz-check.ts` | The frontend contract the fuzzer tests, in one place so the Worker and the main-thread confirmation stage run byte-identical logic. |
 | `scripts/fuzz-confirm.ts` | Re-runs one fuzz case on a fresh process's MAIN thread and reports the verdict as JSON on stdout. |
