@@ -183,6 +183,8 @@ export function moveFlow(program: Program, cr: CheckResult, host: MoveFlowHost):
 // over, a share takes another count on it.
 export function applyStringDecisions(cr: CheckResult, flow: MoveFlowResult): void {
   for (const [e, d] of flow.stringDecisions) {
+    // The sort reads an extractor's key and never drops it: a share would leak its count (f418bf59).
+    if (cr.extractorKeyReads.has(e)) continue;
     if (d === "move") { cr.sharedStringExprs.delete(e); cr.movedExprs.add(e); }
     else { cr.movedExprs.delete(e); cr.sharedStringExprs.add(e); }
   }

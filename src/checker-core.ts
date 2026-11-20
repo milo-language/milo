@@ -103,6 +103,7 @@ export function buildResult(c: TypeChecker): CheckResult {
     sharedStringExprs: c.sharedStringExprs,
     sharedStringCaptures: c.sharedStringCaptures,
     keyExtractorClosures: c.keyExtractorClosures,
+    extractorKeyReads: c.extractorKeyReads,
     autoWrappedOption: c.autoWrappedOption,
     arrayToVecCoercions: c.arrayToVecCoercions,
     arrayRepeatClones: c.arrayRepeatClones,

@@ -272,6 +272,8 @@ export interface CheckResult {
   sharedStringExprs: Set<Expr>;
   sharedStringCaptures: Map<Expr, Set<string>>;
   keyExtractorClosures: Set<Expr>;
+  // The key a sortByKey extractor returns: read, never dropped by the sort, so never a share.
+  extractorKeyReads: Set<Expr>;
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
   // `[v; N]` of a type with a Clone impl: the mangled clone fn codegen calls for the N-1
