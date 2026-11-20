@@ -42,6 +42,8 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/ast.ts` | AST node types: what the parser produces and the checker walks. |
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
 | `src/backend-program.ts` | What the backend compiles, read off the merged AST and the checker's result: the module's declarations (struct and enum layouts, function signatures, globals, itables, the C-facing claims) with each… |
+| `src/borrow-diagnostics.ts` | The text of the view-loan and loop-loan conflict diagnostics. |
+| `src/borrow-flow.ts` | Borrow conflicts as dataflow, shadow mode: nothing here feeds the checker. |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
 | `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |

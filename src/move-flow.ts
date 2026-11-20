@@ -21,7 +21,7 @@ export interface MoveFlowResult {
 
 export type MoveFlowHost = PlaceCfgHost;
 
-const NO_TYPE = { name: "", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+export const NO_TYPE = { name: "", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
 
 // Forward maybe-moved: the places some path to a node has moved out of and not reassigned since, each
 // with the move. A use of anything overlapping one is a use after move. A move that reaches a use only
@@ -151,7 +151,7 @@ function analyzeBody(cr: CheckResult, host: MoveFlowHost, params: Param[], body:
 }
 
 // Every closure literal in a body: each is a function of its own, analyzed separately.
-function closuresIn(body: Stmt[]): { params: Param[]; body: Stmt[] }[] {
+export function closuresIn(body: Stmt[]): { params: Param[]; body: Stmt[] }[] {
   const out: { params: Param[]; body: Stmt[] }[] = [];
   const visit = (v: unknown): void => {
     if (Array.isArray(v)) { for (const x of v) visit(x); return; }

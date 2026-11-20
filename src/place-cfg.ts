@@ -3,6 +3,7 @@ import type { Expr, Pattern, Span, Stmt } from "./ast";
 import type { TypeKind } from "./types";
 import { patternLeafNames } from "./ast";
 import type { CheckResult } from "./checker";
+import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
 
 // A place is a local binding plus a static field path: "v#3" or "v#3.name.first".
 export type Place = string;
@@ -24,12 +25,32 @@ export interface Node {
   armTakes?: boolean; // the start of an arm whose pattern binds: the payload is taken from the subject here
   plainTake?: boolean;
   firstUse?: Expr; // a closure literal's capture: where the body first names it (what an error points at)
+  // Borrow events: emitted only when the Builder is made with `borrowEvents`.
+  write?: BorrowWrite; // an operation that may reallocate or overwrite `place`: it conflicts with a loan in force
+  loan?: BorrowLoan; // a borrow of `place` begins here (a view let's binding, or a for-in loop head)
+  iterEnd?: number; // on an iteration loan's head: the loan covers node ids from the head up to this one (exclusive)
   succ: number[];
 }
+
+export interface BorrowWrite { kind: "call" | "assign" | "elem"; place: Place; text: string; method?: string; span?: Span }
+export interface BorrowLoan { kind: "view" | "iteration"; place: Place; holder?: Place; name?: string; span?: Span }
 
 export interface PlaceCfgHost {
   isCopyType(t: TypeKind): boolean;
   show(t: TypeKind): string;
+  // Methods returning a view of only some fields of the receiver (the checker's own table); absent: the whole receiver.
+  viewReturnFields?: ReadonlyMap<string, string[]>;
+}
+
+// How a diagnostic names a written expression: `v`, `h.data`, `v[...]`, `*p`.
+function describe(e: Expr): string {
+  switch (e.kind) {
+    case "Ident": return e.name;
+    case "FieldAccess": return `${describe(e.object)}.${e.field}`;
+    case "IndexAccess": return `${describe(e.object)}[...]`;
+    case "UnaryOp": return e.op === "*" ? `*${describe(e.operand)}` : "<expr>";
+    default: return "<expr>";
+  }
 }
 
 export const overlaps = (a: Place, b: Place) => a === b || a.startsWith(b + ".") || b.startsWith(a + ".");
@@ -55,7 +76,7 @@ export class Builder {
   private exits: number[] = []; // nodes that leave the function (return, `?`)
   private ids = 0;
 
-  constructor(private cr: CheckResult, private host: PlaceCfgHost) {}
+  constructor(private cr: CheckResult, private host: PlaceCfgHost, private borrowEvents = false) {}
 
   private node(n: Omit<Node, "succ">, from: number): number {
     const id = this.nodes.length;
@@ -150,13 +171,17 @@ export class Builder {
         if (s.value.kind === "Closure") this.noteClosure(id, s.value);
         // `let x = v[i]` aliases the element; a reference binding (`let a = s[i..j]`) views another place.
         if (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) this.borrowed.add(id);
-        return this.node({ def: id }, cur);
+        const viewOf = this.borrowEvents && (this.cr.viewLets.has(s) || this.cr.refLets.has(s)) ? this.viewRoot(s.value) : null;
+        return this.node({ def: id, ...(viewOf !== null && { loan: { kind: "view" as const, place: viewOf, holder: id, name: s.name, span: s.span } }) }, cur);
       }
       case "Assign": {
         cur = this.expr(s.value, cur);
         const target = this.placeOf(s.target);
-        if (target !== null) return this.node({ def: target }, cur);
-        return this.expr(s.target, cur); // `v[i] = x`, `*p = x`: the base is read, nothing is redefined
+        const base = this.borrowEvents ? this.writeBase(s.target) : null;
+        if (target !== null) return this.node({ def: target, ...(base !== null && { write: { kind: "assign" as const, place: target, text: describe(s.target), span: s.span } }) }, cur);
+        cur = this.expr(s.target, cur); // `v[i] = x`, `*p = x`: the base is read, nothing is redefined
+        if (base !== null) cur = this.node({ write: { kind: base.indexed ? "elem" as const : "assign" as const, place: base.place, text: describe(s.target), span: s.span } }, cur);
+        return cur;
       }
       case "Return": {
         if (s.value) cur = this.expr(s.value, cur);
@@ -214,6 +239,8 @@ export class Builder {
       case "ForInStmt": {
         cur = this.expr(s.iterable, cur);
         const head = this.join([cur]);
+        const iterated = this.borrowEvents && head >= 0 && !this.cr.consumingForIns.has(s) && !this.cr.iteratorForIns.has(s) ? this.placeOf(s.iterable) : null;
+        if (iterated !== null) this.nodes[head]!.loan = { kind: "iteration", place: iterated, span: s.span };
         this.loops.push({ head, breaks: [] });
         this.loopSpans.set(head, s.span);
         const end = this.scoped(() => {
@@ -225,10 +252,49 @@ export class Builder {
           return this.stmts(s.body, c);
         });
         if (end >= 0) this.backTo(end, head);
+        if (iterated !== null) this.nodes[head]!.iterEnd = this.nodes.length;
         const { breaks } = this.loops.pop()!;
         return this.join([head, ...breaks]);
       }
     }
+  }
+
+  // The local place a view-typed initializer points into: `s.slice(a, b)`, `v[a..b]`, `h.data[0..2]`.
+  private viewRoot(e: Expr): Place | null {
+    for (;;) {
+      const p = this.placeOf(e);
+      if (p !== null) return p;
+      if (e.kind === "MethodCall") {
+        const fields = this.host.viewReturnFields?.get(this.cr.resolvedMethods.get(e) ?? "");
+        const base = fields?.length === 1 ? this.placeOf(e.object) : null;
+        if (base !== null && fields !== undefined) return `${base}.${fields[0]}`;
+        e = e.object;
+      } else if (e.kind === "IndexAccess" || e.kind === "FieldAccess") e = e.object;
+      else if (e.kind === "Unwrap") e = e.operand;
+      else return null;
+    }
+  }
+
+  // The local place a write through `e` lands in, and whether it went through an index (an element write).
+  private writeBase(e: Expr): { place: Place; indexed: boolean } | null {
+    let indexed = false;
+    for (;;) {
+      const p = this.placeOf(e);
+      if (p !== null) return { place: p, indexed };
+      if (e.kind === "IndexAccess") { indexed = true; e = e.object; }
+      else if (e.kind === "FieldAccess") e = e.object;
+      else return null;
+    }
+  }
+
+  // A call that may reallocate or overwrite its receiver: a mutating builtin collection method, or a user method taking `&mut self`.
+  private mutatesReceiver(e: Expr & { kind: "MethodCall" }): boolean {
+    let t = this.cr.exprTypes.get(e.object);
+    if (t?.tag === "ref") t = t.inner;
+    if (t !== undefined && (t.tag === "vec" || t.tag === "hashmap" || t.tag === "string") && MUTATING_COLLECTION_METHODS.has(e.method)) return true;
+    const name = this.cr.resolvedMethods.get(e);
+    const self = name === undefined ? undefined : this.cr.functions.get(name)?.params[0]?.type;
+    return self !== undefined && self.tag === "ref" && self.mutable;
   }
 
   private noteClosure(id: Place, c: Expr & { kind: "Closure" }): void {
@@ -352,6 +418,10 @@ export class Builder {
         cur = this.expr(e.object, cur);
         for (const a of e.args) cur = this.expr(a, cur);
         cur = this.lend([e.object, ...e.args], cur);
+        if (this.borrowEvents) {
+          const base = this.writeBase(e.object);
+          if (base !== null && this.mutatesReceiver(e)) cur = this.node({ write: { kind: "call", place: base.place, text: describe(e.object), method: e.method, span: e.span } }, cur);
+        }
         return this.cr.exprTypes.get(e)?.tag === "never" ? -1 : cur;
       }
       case "StructLit": { for (const f of e.fields) cur = this.expr(f.value, cur); return e.base ? this.expr(e.base, cur) : cur; }
