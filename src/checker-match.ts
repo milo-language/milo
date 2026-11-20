@@ -411,7 +411,7 @@ export function checkMatchLike(c: TypeChecker, subject: Expr, arms: MatchArm[], 
       c.pushScope();
       if (pat.kind === "EnumPattern" && isNestedPattern(pat)) {
         if (enumInfo.variants.has(pat.variant)) {
-          c.declarePatternLeaves(pat, c.patternLeaves(pat, subjType, true), subject, subjBorrows, subjIsMut, false);
+          c.declarePatternLeaves(pat, c.patternLeaves(pat, subjType, true), subject, subjBorrows, subjIsMut);
         }
       } else if (pat.kind === "EnumPattern") {
         const variant = enumInfo.variants.get(pat.variant);
@@ -431,11 +431,10 @@ export function checkMatchLike(c: TypeChecker, subject: Expr, arms: MatchArm[], 
             }
             bindTypes.push(bt);
           }
-          const freezes = c.freezeSubjectFor(subject, bindTypes);
           for (let i = 0; i < bindTypes.length; i++) {
             const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
             c.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
-              copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+              copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)) });
             const bound = c.lookup(pat.bindings[i]);
             if (bound) c.noteRefInto(bound, subject, pat.variant, i);
           }

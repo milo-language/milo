@@ -7,22 +7,8 @@ import { typeName } from "./types";
 import type { TypeKind } from "./types";
 import type { Pattern } from "./ast";
 
-// A binding leaves scope: its borrow of `src` ends. A view binding was the first to freeze `src`
-// (see newlyFrozen in checker-stmt), so everything but pointers goes; a pointer holder owns only its
-// pointer borrow, and dropping the rest would end a loop's iteration borrow or another binding's view.
-function releaseFreeze(c: TypeChecker, src: VarInfo, holder: VarInfo) {
-  let pointerOnly = false;
-  for (const p of holder.pointerFreezes ?? []) if (p === src) pointerOnly = true;
-  if (!pointerOnly) c.unfreeze(src);
-  c.releasePointerBorrows(src, holder);
-}
-
-// `holder` now holds a pointer borrow of `src`. Unless it already froze `src` as a view binding
-// (which owns the view borrows), that is all it owns, see `releaseFreeze`.
+// `holder` now holds a pointer borrow of `src`: it ends when the binding leaves scope or is reassigned.
 function addPointerFreeze(holder: VarInfo, src: VarInfo) {
-  let had = false;
-  for (const f of holder.freezes ?? []) if (f === src) had = true;
-  if (!had) (holder.pointerFreezes ??= []).push(src);
   (holder.freezes ??= []).push(src);
 }
 
@@ -30,7 +16,7 @@ export function popScope(c: TypeChecker) {
   const scope = c.scopes.pop();
   if (scope) {
     for (const [, vi] of scope) {
-      if (vi.freezes) for (const src of vi.freezes) releaseFreeze(c, src, vi);
+      if (vi.freezes) for (const src of vi.freezes) c.releasePointerBorrows(src, vi);
     }
   }
 }
@@ -67,7 +53,7 @@ export function declare(c: TypeChecker, name: string, info: VarInfo, span?: Span
     // Bind the new declaration anyway: later lines were written against it, and
     // resolving them to the first one turned every use into a type error of its own.
     // The first binding leaves scope here, so its freezes go with it as in popScope.
-    if (prior?.freezes) for (const src of prior.freezes) releaseFreeze(c, src, prior);
+    if (prior?.freezes) for (const src of prior.freezes) c.releasePointerBorrows(src, prior);
     if (scope === c.globalScope) c.globalScopeInfos.add(info);
     scope.set(name, info);
     return;
@@ -108,17 +94,6 @@ export function pushBorrow(c: TypeChecker, info: VarInfo, path: string[] | null,
   (info.borrowKinds ??= []).push(kind);
   (info.borrowHolders ??= []).push(holder);
   (info.borrowSites ??= []).push(site);
-}
-
-// A binding now owns the borrows its initializer or pattern took: stamp it on the
-// unattributed view sites of each source so a later conflict can name it.
-export function attributeBorrows(srcs: VarInfo[], name: string, holderInfo: VarInfo | null) {
-  if (!holderInfo) return;
-  for (const src of srcs) {
-    src.borrowSites?.forEach((site, i) => {
-      if (site && !site.holder && !site.via && src.borrowKinds?.[i] === "view") site.holder = { name, info: holderInfo };
-    });
-  }
 }
 
 // The exact field prefix of a borrowed place, stopping at the first step that is not a
@@ -189,18 +164,6 @@ export function retainBorrows(c: TypeChecker, info: VarInfo, keep: (holder: Poin
   info.borrowKinds = idx.map(i => info.borrowKinds![i]);
   info.borrowHolders = idx.map(i => holders[i] ?? null);
   info.borrowSites = idx.map(i => sites[i] ?? null);
-}
-
-export function pointerBorrowAgainstFields(c: TypeChecker, info: VarInfo, mutFields: string[] | null): PointerHolder | null {
-  if (!info.borrowed) return null;
-  const holders = info.borrowHolders;
-  if (!holders) return null;
-  const paths = info.borrowedPaths;
-  for (let i = 0; i < holders.length; i++) {
-    const h = holders[i];
-    if (h && c.borrowCollides(paths?.[i], mutFields)) return h;
-  }
-  return null;
 }
 
 // Whether a borrow of field prefix `p` and a mutation of field prefix `mutFields` can
@@ -627,15 +590,6 @@ export function isPlaceIterable(c: TypeChecker, slot: Expr): boolean {
     (e.kind === "UnaryOp" && e.op === "*");
 }
 
-export function freezeRootOf(c: TypeChecker, place: Expr, kind: BorrowKind = "view", site?: BorrowSite): VarInfo | null {
-  const ap = c.accessPath(place);
-  if (!ap) return null;
-  const info = c.lookup(ap.root);
-  if (!info) return null;
-  c.freeze(info, place, kind, null, site);
-  return info;
-}
-
 // Extend every place the base expression reaches by one step. A step off a
 // fresh value stays fresh (`makeDoc().a` is a field of a temporary, which owns
 // itself); a step off unnamed storage stays unnamed.
@@ -827,13 +781,6 @@ export function rootMutable(c: TypeChecker, slot: Expr): boolean {
   return false;
 }
 
-export function frozenAgainstFields(c: TypeChecker, info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): boolean {
-  if (!info.borrowed) return false;
-  const paths = info.borrowedPaths;
-  if (!paths || paths.length === 0) return true;
-  return paths.some((p, i) => (ignore === undefined || info.borrowKinds?.[i] !== ignore) && c.borrowCollides(p, mutFields));
-}
-
 // The capture borrow of `info` that a write of `mutFields` collides with: a closure literal that captured it and may still run.
 // Every other conflict (views, loops, callbacks, pointers) is src/borrow-flow.ts's.
 export function captureBorrowAgainst(c: TypeChecker, info: VarInfo, mutFields: string[] | null): BorrowSite | null {
@@ -973,19 +920,6 @@ export function unwritableMutTarget(c: TypeChecker, expr: Expr): { shared?: Type
   return null;
 }
 
-// Freeze the receiver while checking a callback that iterates it — the callback
-// mutating its own iteration source (v.each(fn(x){ v.push(x) })) is the same
-// realloc hazard as for-in. Returns the VarInfo to release afterward, or null
-// if an outer borrow already owns the freeze.
-export function borrowDuringCallback(c: TypeChecker, obj: Expr, call: { method: string; span?: Span }): VarInfo | null {
-  const cbRoot = c.rootNameOf(obj);
-  if (cbRoot === null) return null;
-  const info = c.lookup(cbRoot);
-  if (!info || info.borrowed) return null;
-  c.freeze(info, obj, "view", null, { span: call.span, via: "callback", what: call.method });
-  return info;
-}
-
 export function describeExpr(c: TypeChecker, slot: Expr): string {
   const expr = rewritten(c.rewrites, slot);
   // The hidden local a destructuring `let { a } = f()` reads from (parser.ts
@@ -1004,7 +938,7 @@ export function describeExpr(c: TypeChecker, slot: Expr): string {
 
 // Freeze `info` for a borrow of `place`. The path is recorded so a later mutation of a
 // provably different field isn't rejected; pass null when the borrowed place is unknown.
-export function freeze(c: TypeChecker, info: VarInfo, place: Expr | null, kind: BorrowKind = "view", holder: PointerHolder | null = null, site?: BorrowSite) {
+export function freeze(c: TypeChecker, info: VarInfo, place: Expr | null, kind: BorrowKind, holder: PointerHolder | null = null, site?: BorrowSite) {
   c.pushBorrow(info, place ? c.borrowPrefix(place) : null, kind, holder, site ?? { span: place?.span });
 }
 
@@ -1039,21 +973,6 @@ export function frameOwned(c: TypeChecker, info: VarInfo): boolean {
   return info.type.tag !== "ref" && c.scopeIndexOf(info) >= c.fnScopeFloor;
 }
 
-// Returns the frozen root with the exact site the loop took, so the loop can release only its own
-// borrow (`releaseBorrowSite`) and leave every other view of the same Vec alone.
-export function freezeIterable(c: TypeChecker, iterable: Expr, loopSpan?: Span): { info: VarInfo; site: BorrowSite } | null {
-  const site: BorrowSite = { span: loopSpan ?? iterable.span, via: "loop" };
-  const info = c.freezeRootOf(iterable, "iteration", site);
-  return info ? { info, site } : null;
-}
-
-// End the one borrow that was recorded with `site`. Unlike `unfreeze` this keeps every other
-// borrow of `info` (views, pointers, other loops), which are owned by other bindings.
-export function releaseBorrowSite(c: TypeChecker, info: VarInfo, site: BorrowSite) {
-  const sites = info.borrowSites ?? [];
-  c.retainBorrows(info, (_, i) => sites[i] !== site);
-}
-
 // Freeze the root of any borrowed place, resolved through the place walker.
 //
 // This replaces three hand-rolled copies of the same loop — `while (root.kind ===
@@ -1079,16 +998,6 @@ export function rootNameOf(c: TypeChecker, e: Expr): string | null {
 
 export function isPlaceExpr(c: TypeChecker, e: Expr): boolean {
   return c.rootNameOf(e) !== null;
-}
-
-// A ref binding into the subject (a `&`/`&mut` payload view) keeps the subject's root
-// frozen for as long as the binding lives: assigning the subject would drop the
-// payload the view points into (`n = Node.Empty; print(s)` read freed memory). The
-// freeze rides on the binding's `freezes`, which the scope pop releases.
-export function freezeSubjectFor(c: TypeChecker, subject: Expr, bindTypes: TypeKind[]): VarInfo[] {
-  if (!bindTypes.some(t => t.tag === "ref")) return [];
-  const root = c.freezeRootOf(subject);
-  return root ? [root] : [];
 }
 
 // A match/if-let subject that names storage someone else keeps owning, so its non-Copy

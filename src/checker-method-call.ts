@@ -545,8 +545,6 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
       chk.error(`cannot take a slice of a temporary`, sp,
         `the '&[T]' would outlive the value it points into: bind the receiver first ('let r = ...' then slice 'r')`);
     }
-    // freeze the source — mutation could realloc/free the memory this view points into
-    chk.freezeRootOf(expr.object);
     chk.borrowedExprs.add(expr);
     return chk.setType(expr, refSlice);
   }
@@ -631,10 +629,8 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
       // value by thunkByValueFnValue), so every callback the builtin took still works.
       chk.coerceCopyCallback(expr.args[0], cbHint);
       chk.thunkByValueFnValue(expr.args[0]!, objType.element, 1);
-      const cbBorrow = chk.borrowDuringCallback(expr.object, expr);
       const cbType = chk.checkExpr(expr.args[0], cbHint);
       chk.checkCallbackSig(cbType, cbHint, "map", sp);
-      if (cbBorrow) chk.unfreeze(cbBorrow);
       if (cbType.tag !== "fn") { chk.error(`'map' argument must be a function`, sp); return chk.setType(expr, { tag: "unknown" }); }
       const ret: TypeKind = { tag: "vec", element: cbType.ret };
       if (chk.refuseByValueCallback(cbType, elemRef, "map", sp) || cbType.ret.tag === "unknown") return chk.setType(expr, ret);
@@ -761,10 +757,8 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
       // once and bound after, as map is.
       chk.coerceCopyCallback(expr.args[0], cbHint);
       chk.thunkByValueFnValue(expr.args[0]!, objType.element, 2);
-      const cbBorrow = chk.borrowDuringCallback(expr.object, expr);
       const cbType = chk.checkExpr(expr.args[0], cbHint);
       chk.checkCallbackSig(cbType, cbHint, "sortBy", sp);
-      if (cbBorrow) chk.unfreeze(cbBorrow);
       if (cbType.tag !== "fn") { chk.error(`'sortBy' argument must be a comparator function`, sp); }
       else if (cbType.ret.tag !== "unknown" && !(cbType.ret.tag === "int" && cbType.ret.signed)) {
         chk.error(`'sortBy' callback returns ${chk.show(cbType.ret)}, but sortBy expects a signed integer (negative: a first, positive: b first, zero: keep order)`, sp,
@@ -784,7 +778,6 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
       const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
       chk.coerceCopyCallback(expr.args[0], cbHint);
       chk.thunkByValueFnValue(expr.args[0]!, objType.element, 1);
-      const cbBorrow = chk.borrowDuringCallback(expr.object, expr);
       // The one position where a closure may hand back a field of its borrowed
       // parameter: the sort reads the key to compare it and never stores or drops it
       // (std/vec's sortByKey forgets every key it is handed).
@@ -796,7 +789,6 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
       for (const v of ret.values) if (ret.rooted(v)) chk.extractorKeyReads.add(v);
       const cbType = chk.checkExpr(expr.args[0], cbHint);
       chk.checkCallbackSig(cbType, cbHint, "sortByKey", sp);
-      if (cbBorrow) chk.unfreeze(cbBorrow);
       if (cbType.tag !== "fn") { chk.error(`'sortByKey' argument must be a function`, sp); return chk.setType(expr, { tag: "void" }); }
       const keyType = cbType.ret;
       if (keyType.tag !== "int" && keyType.tag !== "float" && keyType.tag !== "string" && keyType.tag !== "bool") {
@@ -1092,10 +1084,6 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
         chk.error(`cannot take a slice of a temporary`, sp,
           `the '&string' would outlive the value it points into: bind the receiver first ('let r = ...' then slice 'r')`);
       }
-      // mark source as borrowed — prevents mutation/move while slice is live.
-      // Walk to the root variable: `buf.data[a..b]` views storage owned by `buf`,
-      // so replacing any part of `buf` can free what this points into.
-      chk.freezeRootOf(expr.object);
       chk.borrowedExprs.add(expr);
       return chk.setType(expr, refStr);
     }
@@ -1325,7 +1313,7 @@ export function checkMethodCallExprInner(chk: TypeChecker, call: MethodCall, exp
     chk.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
     chk.resolvedMethods.set(expr, mangled);
     chk.requireUnsafeMethod(mangled, expr.method, sp);
-    if (chk.isViewReturn(sig.ret)) chk.freezeViewSource(expr.object, sp, chk.viewReturnFields.get(mangled));
+    if (chk.isViewReturn(sig.ret)) chk.freezeViewSource(expr.object, sp);
     return chk.setType(expr, sig.ret);
   }
 

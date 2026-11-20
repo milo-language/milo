@@ -180,15 +180,14 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         chk.error(`'${stmt.name}' cannot have type 'void': 'void' has no runtime representation`, sp,
           `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
       }
-      if (bindingType.tag !== "ref") for (const vi of newlyFrozen) chk.unfreeze(vi);
-      else chk.refLets.add(stmt);
-      chk.declare(stmt.name, { type: bindingType, mutable: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+      for (const vi of newlyFrozen) chk.unfreeze(vi);
+      if (bindingType.tag === "ref") chk.refLets.add(stmt);
+      chk.declare(stmt.name, { type: bindingType, mutable: false, borrowed: false, read: false, span: sp });
       const letInfo = chk.lookup(stmt.name);
       if (letInfo && bindingType.tag === "string") {
         const c = chk.sqlConstOf(value);
         if (c !== null) letInfo.constStr = c;
       }
-      if (bindingType.tag === "ref") chk.attributeBorrows(newlyFrozen, stmt.name, letInfo);
       if (letInfo) chk.bindPointerViews(stmt.name, letInfo, value);
       if (letInfo) chk.noteClosureSources(letInfo, value);
       // An unannotated `let x = <const-int-value>` stays width-adaptable until
@@ -225,11 +224,10 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
           chk.error(`'${stmt.name}' cannot have type 'void': 'void' has no runtime representation`, sp,
             `drop the binding and call the function as a statement, or return 'Unit {}' instead of nothing`);
         }
-        if (bindingType.tag !== "ref") for (const vi of newlyFrozen) chk.unfreeze(vi);
-        else chk.refLets.add(stmt);
-        chk.declare(stmt.name, { type: bindingType, mutable: true, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        for (const vi of newlyFrozen) chk.unfreeze(vi);
+        if (bindingType.tag === "ref") chk.refLets.add(stmt);
+        chk.declare(stmt.name, { type: bindingType, mutable: true, borrowed: false, read: false, span: sp });
         const varInfo = chk.lookup(stmt.name);
-        if (bindingType.tag === "ref") chk.attributeBorrows(newlyFrozen, stmt.name, varInfo);
         if (varInfo) chk.bindPointerViews(stmt.name, varInfo, value);
         if (varInfo) chk.noteClosureSources(varInfo, value);
         if (bindingType.tag === "array") chk.lintStackArray(stmt.name, bindingType, sp);
@@ -477,9 +475,6 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
             }
           }
         }
-        // One freeze for every container shape below (see freezeIterable). A consumed
-        // temporary has no root to freeze.
-        const iterBorrow = consume ? null : chk.freezeIterable(stmt.iterable, sp);
         if (iterType.tag === "vec") {
           const mutElem = !!stmt.mutRef;
           const elemRef: TypeKind = consume ? iterType.element : { tag: "ref", inner: iterType.element, mutable: mutElem };
@@ -624,10 +619,6 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         } else if (iterType.tag !== "unknown") {
           chk.error(`cannot iterate over type '${chk.show(iterType)}'`, sp);
         }
-        // Released once, for whichever arm above ran. Paired with the single
-        // freezeIterable before the dispatch — see that function for why the pairing
-        // is here and not inside each arm.
-        if (iterBorrow) chk.releaseBorrowSite(iterBorrow.info, iterBorrow.site);
       }
       break;
     }
@@ -794,18 +785,16 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
         }
         if (variant && isNestedPattern(pat)) {
           // Bindings escape into the CURRENT scope (the whole point vs if-let).
-          chk.declarePatternLeaves(pat, chk.patternLeaves(pat, subjType, true), stmt.value, subjBorrows, subjIsMut, true);
+          chk.declarePatternLeaves(pat, chk.patternLeaves(pat, subjType, true), stmt.value, subjBorrows, subjIsMut);
         } else if (variant) {
           const bindTypes = variant.fields.slice(0, pat.bindings.length).map(t => chk.payloadBindType(t, subjBorrows, subjIsMut));
           chk.patternBindingTypes.set(pat, bindTypes);
-          const freezes = chk.freezeSubjectFor(stmt.value, bindTypes);
           // Bindings escape into the CURRENT scope (the whole point vs if-let).
           for (let i = 0; i < Math.min(pat.bindings.length, variant.fields.length); i++) {
             const bindSpan = pat.bindingSpans?.[i] ?? pat.span;
             chk.declare(pat.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
-              copyBind: chk.isCopyBind(bindTypes[i], chk.isPlaceExpr(stmt.value)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+              copyBind: chk.isCopyBind(bindTypes[i], chk.isPlaceExpr(stmt.value)) });
             const bound = chk.lookup(pat.bindings[i]);
-            if (i === 0) chk.attributeBorrows(freezes, pat.bindings[0], bound);
             if (bound) chk.noteRefInto(bound, stmt.value, pat.variant, i);
           }
         }
@@ -899,17 +888,15 @@ export function bindLetClause(c: TypeChecker, pattern: Pattern, subject: Expr, s
     c.error(`variant '${pattern.variant}' has ${variant.fields.length} fields, but pattern has ${pattern.bindings.length} bindings`, ps);
   }
   if (variant && isNestedPattern(pattern)) {
-    c.declarePatternLeaves(pattern, c.patternLeaves(pattern, subjType, true), subject, subjBorrows, subjIsMut, true);
+    c.declarePatternLeaves(pattern, c.patternLeaves(pattern, subjType, true), subject, subjBorrows, subjIsMut);
   } else if (variant) {
     const bindTypes = variant.fields.slice(0, pattern.bindings.length).map(t => c.payloadBindType(t, subjBorrows, subjIsMut));
     c.patternBindingTypes.set(pattern, bindTypes);
-    const freezes = c.freezeSubjectFor(subject, bindTypes);
     for (let i = 0; i < Math.min(pattern.bindings.length, variant.fields.length); i++) {
       const bindSpan = pattern.bindingSpans?.[i] ?? pattern.span;
       c.declare(pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, borrowed: false, read: false, span: bindSpan, patternBound: true,
-        copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+        copyBind: c.isCopyBind(bindTypes[i], c.isPlaceExpr(subject)) });
       const bound = c.lookup(pattern.bindings[i]);
-      if (i === 0) c.attributeBorrows(freezes, pattern.bindings[0], bound);
       if (bound) c.noteRefInto(bound, subject, pattern.variant, i);
     }
   }
@@ -1012,15 +999,13 @@ export function patternLeaves(c: TypeChecker, p: Pattern, et: TypeKind, report: 
 // Declares a nested pattern's bindings in the current scope: the flat binding rule
 // (`payloadBindType`) applied to every leaf, so the outer subject alone decides between
 // by-value and by-borrow, however deep the binding sits.
-export function declarePatternLeaves(c: TypeChecker, pattern: Pattern, leaves: PatternLeaf[], subject: Expr, subjBorrows: boolean, subjIsMut: boolean, attribute: boolean): void {
+export function declarePatternLeaves(c: TypeChecker, pattern: Pattern, leaves: PatternLeaf[], subject: Expr, subjBorrows: boolean, subjIsMut: boolean): void {
   const bindTypes = leaves.map(l => c.payloadBindType(l.type, subjBorrows, subjIsMut));
   c.patternBindingTypes.set(pattern, bindTypes);
-  const freezes = c.freezeSubjectFor(subject, bindTypes);
   leaves.forEach((l, i) => {
     c.declare(l.name, { type: bindTypes[i]!, mutable: subjIsMut, borrowed: false, read: false, span: l.span, patternBound: true,
-      copyBind: c.isCopyBind(bindTypes[i]!, c.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+      copyBind: c.isCopyBind(bindTypes[i]!, c.isPlaceExpr(subject)) });
     const bound = c.lookup(l.name);
-    if (attribute && i === 0) c.attributeBorrows(freezes, l.name, bound);
     if (bound) c.noteRefIntoSteps(bound, subject, l.steps);
   });
 }

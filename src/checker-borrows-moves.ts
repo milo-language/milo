@@ -366,16 +366,17 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
         } else if (c.errorIfFieldMovedOutOfElement(expr)) {
           return;
         }
-        // The field's buffer changes hands, so a live view of that field (or of a part of
-        // it, or of the whole root) would dangle, exactly as for a whole-variable move.
-        // A view of a sibling field does not collide (`borrowCollides`). Pointer borrows
-        // are exempt as for a whole move: the header moves, the buffer stays.
+        // A closure literal in this statement that captured the field (or part of it, or the root) would see the
+        // buffer change hands, as for a whole-variable move. Live views and loops are src/borrow-flow.ts's.
+        // Pointer borrows are exempt as for a whole move: the header moves, the buffer stays.
         const ap = c.accessPath(expr);
         const rinfo = ap ? c.lookup(ap.root) : null;
-        if (ap && rinfo && rinfo.borrowed && c.frozenAgainstFields(rinfo, ap.fields, "pointer")) {
+        if (ap && rinfo && rinfo.borrowed) {
           const captured = c.captureBorrowAgainst(rinfo, ap.fields);
-          if (captured) c.reportCaptured(`cannot move '${c.describeExpr(expr)}'`, ap.root, captured, expr.span);
-          return;
+          if (captured) {
+            c.reportCaptured(`cannot move '${c.describeExpr(expr)}'`, ap.root, captured, expr.span);
+            return;
+          }
         }
         // Pointer borrows on the moved field: dead from here unless the move carries them to
         // the new binding (`pointerMoveKeepsHolders`), as for a whole-variable move.

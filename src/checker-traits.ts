@@ -153,14 +153,12 @@ export function dispatchMangledMethod(c: TypeChecker, expr: MethodCall, mangled:
     c.error(`'${expr.method}' expects ${sig.params.length - 1} argument(s), got ${expr.args.length}`, sp);
   }
   c.takeExplicitMutArgs(expr.args, expr.method, i => c.sigParamAt(sig.params[i + 1]));
-  const cbBorrow = borrowsForCallback ? c.borrowDuringCallback(expr.object, expr) : null;
   for (let i = 0; i < expr.args.length; i++) {
     const expected = sig.params[i + 1];
     if (!expected) break;
     c.checkMethodArg(expr, i, expected.type, sp);
     if (!c.argIsBorrowed(expr.args[i]!, expected.type)) c.tryMove(expr.args[i]!);
   }
-  if (cbBorrow) c.unfreeze(cbBorrow);
   if (!borrowsForCallback) c.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
   c.resolvedMethods.set(expr, mangled);
   c.requireUnsafeMethod(mangled, expr.method, sp);
@@ -459,11 +457,9 @@ export function isViewReturn(ret: TypeKind): boolean {
   return (ret.inner.tag === "array" && ret.inner.size === null) || ret.inner.tag === "string";
 }
 
-// `let s = b.view()` borrows b's storage exactly as `let s = b.data[0..n]` does, so the
-// receiver has to be frozen the same way. The let/for-in paths already transfer any
-// freeze taken while checking the RHS onto the binding (VarInfo.freezes), released when
-// its scope pops — this only has to mark the root.
-export function freezeViewSource(c: TypeChecker, obj: Expr, sp?: Span, viewFields?: string[]) {
+// `let s = b.view()` borrows b's storage exactly as `let s = b.data[0..n]` does: it needs a binding to borrow from, and
+// codegen reads the borrowedExprs fact. The conflicts with the view are src/borrow-flow.ts's.
+export function freezeViewSource(c: TypeChecker, obj: Expr, sp?: Span) {
   const rootName = c.rootNameOf(obj);
   if (rootName === null) {
     // No binding to freeze: `makeRing().items()` views storage owned by a temporary.
@@ -472,14 +468,6 @@ export function freezeViewSource(c: TypeChecker, obj: Expr, sp?: Span, viewField
     c.error(`cannot take a slice of a temporary`, sp,
       `the '&[T]' would outlive the value it points into: bind the receiver first ('let r = makeRing()') and take the slice from that`);
     return;
-  }
-  const info = c.lookup(rootName);
-  if (info) {
-    // freeze the receiver path extended by the field the method views, so a view of
-    // `r.items()` that returns `self.data[..]` blocks writes to `r.data` and nothing else
-    const base = c.accessPath(obj);
-    const path = base && base.fields && viewFields ? [...base.fields, ...viewFields] : null;
-    c.pushBorrow(info, path, "view", null, { span: obj.span });
   }
   c.borrowedExprs.add(obj);
 }

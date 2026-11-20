@@ -1,15 +1,12 @@
-// Differential fuzzer for the borrow analyses: the checker's walk (W), the dataflow src/borrow-flow.ts (F)
-// and the reference interpreter (I, the oracle: it gets stuck on E-BORROW when a view is read after its
-// Vec changed length or capacity).
+// Differential fuzzer for the borrow dataflow (src/borrow-flow.ts, F) against the reference interpreter (I, the
+// oracle: it gets stuck on E-BORROW when a view is read after its Vec changed length or capacity, and on
+// R-MEM-UAF when a raw pointer is).
 //   bun scripts/borrow-fuzz.ts --seed N --count N --jobs N [--keep N]
 // Program i of seed s is generated from PRNG(s, i) alone, so any finding reproduces from (seed, index).
-// Classes (a program can carry FLOW-UNSOUND and WALK-UNSOUND together):
-//   FLOW-UNSOUND   F empty, I stuck E-BORROW: the flow accepts a stale view read. Exit 1.
-//   WALK-UNSOUND   W empty, I stuck E-BORROW. Reported only: the walk is what the flow replaces.
-//   DISAGREE-STUCK W != F as (message, line:col) sets, run stuck on E-BORROW (the side that accepted is wrong)
-//   DISAGREE-CLEAN W != F, run clean/other (the side that rejected is conservative)
-//   DISAGREE-TEXT  same line:col sites, different message wording (reported, not a verdict difference)
-//   AGREE          W == F, and not (both empty and stuck)
+// Classes:
+//   FLOW-UNSOUND      F empty, I stuck: the flow accepts a stale read. Exit 1.
+//   FLOW-CONSERVATIVE F non-empty, I runs clean: the flow rejects a program the interpreter finds safe.
+//   AGREE             F non-empty and I stuck, or F empty and I not stuck.
 // Workers run programs in-process and stream one JSON line per program; the parent kills a worker that
 // goes silent (a hang in the checker or interpreter) and counts that program as timeout.
 import { mkdirSync, writeFileSync } from "fs";
@@ -204,7 +201,7 @@ const sourceOf = (ss: S[]): string => {
 
 // ── evaluation ──
 type Outcome = "clean" | "panic" | "timeout" | "unsupported" | `stuck:${string}`;
-interface Eval { status: "ok" | "parse" | "typeerr" | "crash"; W: string[]; F: string[]; I: Outcome; detail?: string }
+interface Eval { status: "ok" | "parse" | "typeerr" | "crash"; F: string[]; I: Outcome; detail?: string }
 
 const at = (s: { line?: number; col?: number } | undefined) => `${s?.line}:${s?.col}`;
 let mods: any;
@@ -216,7 +213,6 @@ async function modules() {
     resolveImports: (await import(join(ROOT, "src/resolver.ts"))).resolveImports,
     TypeChecker: (await import(join(ROOT, "src/checker.ts"))).TypeChecker,
     getHostTarget: (await import(join(ROOT, "src/target.ts"))).getHostTarget,
-    borrowFlow: (await import(join(ROOT, "src/borrow-flow.ts"))).borrowFlow,
     Interp: (await import(join(ROOT, "src/interp.ts"))).Interp,
     InterpStuck: (await import(join(ROOT, "src/interp-values.ts"))).InterpStuck,
   };
@@ -231,49 +227,36 @@ async function evaluate(src: string): Promise<Eval> {
     program = m.resolveImports(new m.Parser(new m.Lexer(src).tokenize(), src, path).parse(), dirname(path), m.getHostTarget(), path);
     tc = new m.TypeChecker();
     cr = tc.check(program);
-  } catch (e) { return { status: "parse", W: [], F: [], I: "clean", detail: (e as Error).message?.slice(0, 80) }; }
+  } catch (e) { return { status: "parse", F: [], I: "clean", detail: (e as Error).message?.slice(0, 80) }; }
+  // The checker's own errors are the flow's (it reports them) plus the walk's local rules; a program with a local-rule
+  // error (same-call exclusivity, structural, capture) is skipped: the interpreter would run it past a rule it does not model.
   const errs = cr.diagnostics.filter((d: any) => d.severity === "error");
   const other = errs.find((d: any) => templateOf(d.message) === null);
-  if (other) return { status: "typeerr", W: [], F: [], I: "clean", detail: other.message };
-  // The checker reports the flow's errors and keeps the walk's in tc.walkFlowErrors (until phase 3b), so W is the walk's own answer.
-  const W = tc.walkFlowErrors.map((d: any) => `${d.message} @${at(d.span)}`).sort();
-  let F: string[];
-  try { F = m.borrowFlow(program, cr, tc).diagnostics.filter((d: any) => templateOf(d.message) !== null).map((d: any) => `${d.message} @${at(d.span)}`).sort(); }
-  catch (e) { return { status: "crash", W, F: [], I: "clean", detail: `borrowFlow: ${(e as Error).message?.slice(0, 80)}` }; }
+  if (other) return { status: "typeerr", F: [], I: "clean", detail: other.message };
+  const F = errs.map((d: any) => `${d.message} @${at(d.span)}`).sort();
   let I: Outcome = "clean";
   try {
     const r = new m.Interp(program, cr).run();
     if (r.code === 134) I = "panic";
     else if (r.code !== 0) I = "panic";
   } catch (e) { I = e instanceof m.InterpStuck ? `stuck:${(e as { rule: string }).rule}` : "unsupported"; }
-  return { status: "ok", W: [...new Set<string>(W)], F: [...new Set<string>(F)], I };
+  return { status: "ok", F: [...new Set<string>(F)], I };
 }
 
 function classify(e: Eval): string[] {
   // A raw pointer read after its Vec changed is R-MEM-UAF in the interpreter, a view read is E-BORROW:
   // both are the stale-view read this fuzzer exists to catch.
   const stuck = e.I === "stuck:E-BORROW" || e.I === "stuck:R-MEM-UAF";
-  const tags: string[] = [];
-  if (stuck && e.F.length === 0) tags.push("FLOW-UNSOUND");
-  if (stuck && e.W.length === 0) tags.push("WALK-UNSOUND");
-  if (e.W.join("\n") !== e.F.join("\n")) {
-    // Same line:col sites, different wording (a loop named as "a loop iterates" vs "v.each borrows"): both
-    // analyses reject the same places, so it is not a verdict difference.
-    const sitesOf = (xs: string[]) => [...new Set(xs.map(m => m.slice(m.lastIndexOf(" @"))))].sort().join();
-    tags.push(sitesOf(e.W) === sitesOf(e.F) ? "DISAGREE-TEXT" : stuck ? "DISAGREE-STUCK" : "DISAGREE-CLEAN");
-  }
-  if (tags.length === 0) tags.push("AGREE");
-  return tags;
+  if (stuck && e.F.length === 0) return ["FLOW-UNSOUND"];
+  if (!stuck && e.F.length > 0 && e.I === "clean") return ["FLOW-CONSERVATIVE"];
+  return ["AGREE"];
 }
 
-// The (side, template) pairs where W and F differ. A DISAGREE example is minimized to keep one of
-// these, so it isolates one difference instead of whatever else the program also trips.
+// The templates of the flow's errors: a CONSERVATIVE example is minimized to keep one of them, so it isolates one rule
+// instead of whatever else the program also trips.
 const msgOf = (m: string) => m.replace(/ @.*$/, "");
 function sigs(e: Eval): string[] {
-  const out = new Set<string>();
-  for (const m of e.W) if (!e.F.includes(m)) out.add(`walk-only ${templateOf(msgOf(m))}`);
-  for (const m of e.F) if (!e.W.includes(m)) out.add(`flow-only ${templateOf(msgOf(m))}`);
-  return [...out].sort();
+  return [...new Set(e.F.map(m => `flow ${templateOf(msgOf(m))}`))].sort();
 }
 
 // ── minimizer: statement deletion and block unwrapping while the class holds ──
@@ -332,7 +315,6 @@ if (opt("--worker") !== undefined) {
 
 if (opt("--show") !== undefined) {
   const e = await evaluate(await Bun.file(opt("--show")!).text());
-  for (const m of e.W) console.log(`W ${m}`);
   for (const m of e.F) console.log(`F ${m}`);
   console.log(`I ${e.I} ${e.status} ${classify(e).join(",")}`);
   process.exit(0);
@@ -382,41 +364,34 @@ const ok = all.filter(r => r.status === "ok");
 const byTag = new Map<string, Row[]>();
 for (const r of ok) for (const t of r.tags) (byTag.get(t) ?? byTag.set(t, []).get(t)!).push(r);
 const frac = (n: number, d: number) => `${n}/${d} (${d ? (100 * n / d).toFixed(1) : "0.0"}%)`;
-const conflict = ok.filter(r => r.W.length > 0 || r.F.length > 0).length;
+const conflict = ok.filter(r => r.F.length > 0).length;
 const stuckN = ok.filter(r => r.I === "stuck:E-BORROW").length;
 console.log(`borrow-fuzz seed=${seed} count=${count}: ${ok.length} judged, ${all.filter(r => r.status === "parse").length} parse failures, ${all.filter(r => r.status === "typeerr").length} non-borrow type errors, ${all.filter(r => r.status === "crash").length} flow crashes, ${timeouts.length} timeouts`);
-console.log(`conflict (W or F non-empty): ${frac(conflict, ok.length)}`);
+console.log(`conflict (F non-empty):         ${frac(conflict, ok.length)}`);
 console.log(`stuck at E-BORROW:           ${frac(stuckN, ok.length)}`);
 const outcomes = new Map<string, number>();
 for (const r of ok) outcomes.set(r.I, (outcomes.get(r.I) ?? 0) + 1);
 console.log(`interpreter outcomes: ${[...outcomes].map(([k, v]) => `${k}=${v}`).join(" ")}`);
-for (const t of ["FLOW-UNSOUND", "WALK-UNSOUND", "DISAGREE-STUCK", "DISAGREE-CLEAN", "DISAGREE-TEXT", "AGREE"]) console.log(`${t.padEnd(15)} ${byTag.get(t)?.length ?? 0}`);
+for (const t of ["FLOW-UNSOUND", "FLOW-CONSERVATIVE", "AGREE"]) console.log(`${t.padEnd(18)} ${byTag.get(t)?.length ?? 0}`);
 { const h = new Map<string, number>(); for (const r of all.filter(r => r.status === "typeerr")) { const k = (r.detail ?? "").replace(/'[^']*'/g, "_"); h.set(k, (h.get(k) ?? 0) + 1); } for (const [k, v] of [...h].sort((a, b) => b[1] - a[1]).slice(0, 6)) console.log(`  skipped x${v}: ${k}`); }
 for (const r of all.filter(r => r.status === "crash")) console.log(`crash #${r.i}: ${r.detail}`);
 
-// Which messages differ, by side and template: the first thing to read when diagnosing a class.
+// Which rules the conservative rejections come from, by template.
 const sideCounts = new Map<string, number>();
-for (const r of byTag.get("DISAGREE-STUCK") ?? []) {
-  for (const m of r.W) if (!r.F.includes(m)) sideCounts.set(`stuck walk-only ${templateOf(m.replace(/ @.*$/, ""))}`, (sideCounts.get(`stuck walk-only ${templateOf(m.replace(/ @.*$/, ""))}`) ?? 0) + 1);
-  for (const m of r.F) if (!r.W.includes(m)) sideCounts.set(`stuck flow-only ${templateOf(m.replace(/ @.*$/, ""))}`, (sideCounts.get(`stuck flow-only ${templateOf(m.replace(/ @.*$/, ""))}`) ?? 0) + 1);
-}
-for (const r of byTag.get("DISAGREE-CLEAN") ?? []) {
-  for (const m of r.W) if (!r.F.includes(m)) sideCounts.set(`clean walk-only ${templateOf(m.replace(/ @.*$/, ""))}`, (sideCounts.get(`clean walk-only ${templateOf(m.replace(/ @.*$/, ""))}`) ?? 0) + 1);
-  for (const m of r.F) if (!r.W.includes(m)) sideCounts.set(`clean flow-only ${templateOf(m.replace(/ @.*$/, ""))}`, (sideCounts.get(`clean flow-only ${templateOf(m.replace(/ @.*$/, ""))}`) ?? 0) + 1);
-}
-for (const [k, v] of [...sideCounts].sort()) console.log(`  ${k}: ${v}`);
+for (const r of byTag.get("FLOW-CONSERVATIVE") ?? []) for (const k of sigs(r)) sideCounts.set(k, (sideCounts.get(k) ?? 0) + 1);
+for (const [k, v] of [...sideCounts].sort()) console.log(`  conservative ${k}: ${v}`);
 
 const seenSig = new Set<string>();
 const outDir = join(process.env.TMPDIR ?? tmpdir(), "borrow-fuzz");
 mkdirSync(outDir, { recursive: true });
-for (const tag of ["FLOW-UNSOUND", "WALK-UNSOUND", "DISAGREE-STUCK", "DISAGREE-CLEAN"]) {
+for (const tag of ["FLOW-UNSOUND", "FLOW-CONSERVATIVE"]) {
   const rs = byTag.get(tag) ?? [];
   const seen = new Set<string>();
   let written = 0;
   for (const r of rs) {
     if (written >= keep) break;
-    // DISAGREE rows are picked so each example shows a difference not yet shown.
-    const isDis = tag.startsWith("DISAGREE");
+    // CONSERVATIVE rows are picked so each example shows a rule not yet shown.
+    const isDis = tag === "FLOW-CONSERVATIVE";
     const sig = isDis ? sigs(r).find(s => !seenSig.has(`${tag} ${s}`)) : "";
     if (sig === undefined) continue;
     seenSig.add(`${tag} ${sig}`);

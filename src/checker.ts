@@ -541,9 +541,8 @@ export class TypeChecker {
   forgetting = false;
   declare(name: string, info: VarInfo, span?: Span) { return borrows.declare(this, name, info, span); }
 
-  freeze(info: VarInfo, place: Expr | null, kind?: BorrowKind, holder?: PointerHolder | null, site?: BorrowSite) { return borrows.freeze(this, info, place, kind, holder, site); }
+  freeze(info: VarInfo, place: Expr | null, kind: BorrowKind, holder?: PointerHolder | null, site?: BorrowSite) { return borrows.freeze(this, info, place, kind, holder, site); }
   pushBorrow(info: VarInfo, path: string[] | null, kind: BorrowKind, holder: PointerHolder | null, site: BorrowSite | null) { return borrows.pushBorrow(this, info, path, kind, holder, site); }
-  attributeBorrows(srcs: VarInfo[], name: string, holderInfo: VarInfo | null) { return borrows.attributeBorrows(srcs, name, holderInfo); }
   borrowPrefix(place: Expr) { return borrows.borrowPrefix(this, place); }
   openBorrowWindow() { return borrows.openBorrowWindow(this); }
   noteBorrowChange() { return borrows.noteBorrowChange(this); }
@@ -555,7 +554,6 @@ export class TypeChecker {
   retainBorrows(info: VarInfo, keep: (holder: PointerHolder | null, i: number) => boolean) { return borrows.retainBorrows(this, info, keep); }
 
   targetFields(target: Expr | null) { return borrows.targetFields(this, target); }
-  pointerBorrowAgainstFields(info: VarInfo, mutFields: string[] | null) { return borrows.pointerBorrowAgainstFields(this, info, mutFields); }
   borrowCollides(p: string[] | null | undefined, mutFields: string[] | null): boolean { return borrows.borrowCollides(p, mutFields); }
   onlyPointerBorrows(info: VarInfo): boolean { return borrows.onlyPointerBorrows(info); }
   pointerViewsIn(slot: Expr, out?: { source: Expr; call: string; line: number }[]) { return borrows.pointerViewsIn(this, slot, out); }
@@ -806,7 +804,7 @@ export class TypeChecker {
   hasSelfReceiver(fn: Function): boolean {
     return fn.params.length > 0 && fn.params[0].name === "self";
   }
-  freezeViewSource(obj: Expr, sp?: Span, viewFields?: string[]) { return traits.freezeViewSource(this, obj, sp, viewFields); }
+  freezeViewSource(obj: Expr, sp?: Span) { return traits.freezeViewSource(this, obj, sp); }
   stringViewIterMode(iterable: Expr) { return flow.stringViewIterMode(this, iterable); }
   peekPathType(e: Expr) { return flow.peekPathType(this, e); }
   checkStringViewForIn(stmt: ForInStmt, mode: "lines" | "split", fnRetType: TypeKind) { return flow.checkStringViewForIn(this, stmt, mode, fnRetType); }
@@ -972,11 +970,7 @@ export class TypeChecker {
   noteForInBind(stmt: ForInStmt) { return borrows.noteForInBind(this, stmt); }
   isPlaceIterable(slot: Expr) { return borrows.isPlaceIterable(this, slot); }
 
-  freezeIterable(iterable: Expr, loopSpan?: Span) { return borrows.freezeIterable(this, iterable, loopSpan); }
-  releaseBorrowSite(info: VarInfo, site: BorrowSite) { return borrows.releaseBorrowSite(this, info, site); }
-
   rootNameOf(e: Expr) { return borrows.rootNameOf(this, e); }
-  freezeRootOf(place: Expr, kind?: BorrowKind, site?: BorrowSite) { return borrows.freezeRootOf(this, place, kind, site); }
   stepInto(base: Expr, step: PlaceStep) { return borrows.stepInto(this, base, step); }
   tailPlaces(bodies: Stmt[][]) { return borrows.tailPlaces(this, bodies); }
   soloPath(e: Expr) { return borrows.soloPath(this, e); }
@@ -995,7 +989,6 @@ export class TypeChecker {
   writtenPlaceMutable(target: Expr & { object: Expr }) { return borrows.writtenPlaceMutable(this, target); }
   rootMutable(slot: Expr) { return borrows.rootMutable(this, slot); }
 
-  frozenAgainstFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind) { return borrows.frozenAgainstFields(this, info, mutFields, ignore); }
   captureBorrowAgainst(info: VarInfo, mutFields: string[] | null) { return borrows.captureBorrowAgainst(this, info, mutFields); }
   reportCaptured(prefix: string, root: string, site: BorrowSite, sp: Span | undefined) { return borrows.reportCaptured(this, prefix, root, site, sp); }
   errorIfFrozen(obj: Expr, action: string, sp?: Span) { return borrows.errorIfFrozen(this, obj, action, sp); }
@@ -1011,7 +1004,6 @@ export class TypeChecker {
   noteImplicitMut(arg: Expr, callee: string, param: string) { return borrows.noteImplicitMut(this, arg, callee, param); }
   setAutoBorrowChecked(arg: Expr, mutable: boolean, sp?: Span) { return borrows.setAutoBorrowChecked(this, arg, mutable, sp); }
   unwritableMutTarget(expr: Expr) { return borrows.unwritableMutTarget(this, expr); }
-  borrowDuringCallback(obj: Expr, call: { method: string; span?: Span }) { return borrows.borrowDuringCallback(this, obj, call); }
   describeExpr(slot: Expr) { return borrows.describeExpr(this, slot); }
 
   // Bare `Some(x)` / `None` / `Ok(v)` / `Err(e)` are aliases for the Option/Result
@@ -1274,8 +1266,6 @@ export class TypeChecker {
 
   payloadBindType(bt: TypeKind, subjBorrows: boolean, subjIsMut?: boolean) { return matches.payloadBindType(this, bt, subjBorrows, subjIsMut); }
 
-  freezeSubjectFor(subject: Expr, bindTypes: TypeKind[]) { return borrows.freezeSubjectFor(this, subject, bindTypes); }
-
   // Shared checking for `match` in both statement and expression position:
   // pattern validation, payload binding (borrow vs by-value), move merging, and
   // exhaustiveness. Returns each arm's block value type in arm order (used by
@@ -1298,7 +1288,7 @@ export class TypeChecker {
 
   patternLeaves(p: Pattern, et: TypeKind, report: boolean, steps?: PatternLeaf["steps"]) { return stmts.patternLeaves(this, p, et, report, steps); }
 
-  declarePatternLeaves(pattern: Pattern, leaves: PatternLeaf[], subject: Expr, subjBorrows: boolean, subjIsMut: boolean, attribute: boolean): void { return stmts.declarePatternLeaves(this, pattern, leaves, subject, subjBorrows, subjIsMut, attribute); }
+  declarePatternLeaves(pattern: Pattern, leaves: PatternLeaf[], subject: Expr, subjBorrows: boolean, subjIsMut: boolean): void { return stmts.declarePatternLeaves(this, pattern, leaves, subject, subjBorrows, subjIsMut); }
 
   patternSpace() { return matches.patternSpace(this); }
 
