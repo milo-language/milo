@@ -1,5 +1,7 @@
-// Shared harness of the mutation gates (scripts/move-mutants.ts, scripts/borrow-mutants.ts): a private copy of src/ and
-// scripts/ per mutant (the tree itself is never touched), the corpus snapshot of that copy, and the diagnostics judge.
+// Shared harness of the move and borrow mutation gates: a private tree copy per mutant, its snapshot, the judge.
+//
+// Used by scripts/move-mutants.ts and scripts/borrow-mutants.ts. Each mutant gets its own copy of src/ and scripts/
+// (the tree itself is never touched), the corpus is snapshotted from that copy, and the diagnostics judge kills it.
 import { cpSync, readdirSync, readFileSync, symlinkSync } from "fs";
 import { join } from "path";
 

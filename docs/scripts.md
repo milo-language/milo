@@ -108,7 +108,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/mlir-same.ts` | Conformance gate for the MLIR backend: every fixture's stdout, exit code and live heap blocks must equal what the reference interpreter (`milo interp`, docs/semantics/milo.md) computes for it. |
 | `scripts/move-mutants.ts` | Mutation gate for src/move-flow.ts and src/place-cfg.ts: does the test corpus pin every rule of the move analysis? |
 | `scripts/mutability-census.ts` | Corpus census for the mutability hard errors (`var-never-reassigned`, `unwritten-mut-param`): hits per rule. |
-| `scripts/mutant-gate.ts` | Shared harness of the mutation gates (scripts/move-mutants.ts, scripts/borrow-mutants.ts): a private copy of src/ and scripts/ per mutant (the tree itself is never touched), the corpus snapshot of th… |
+| `scripts/mutant-gate.ts` | Shared harness of the move and borrow mutation gates: a private tree copy per mutant, its snapshot, the judge. |
 | `scripts/ownership-rules.ts` | The ownership rules of Milo: when a value is moved, cloned, lent or dropped, and in what order. |
 | `scripts/ownership-sites.ts` | Ownership diagnostic-site census: how many ownership-worded checker diagnostics does at least one tests/errors fixture reach? |
 | `scripts/plant.ts` | Planted-bug check: does a gate fail when the code it guards is broken? |
