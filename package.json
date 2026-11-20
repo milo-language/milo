@@ -6,6 +6,7 @@
   "scripts": {
     "verify": "bun scripts/verify-contracts.ts",
     "ir:same": "bun scripts/ir-same.ts",
+    "fuzz:borrow": "bun scripts/borrow-fuzz.ts",
     "fuzz:drops": "bun scripts/fuzz-drops.ts",
     "fuzz:generic-drop": "bun scripts/fuzz-generic-drop.ts",
     "fuzz:tasks": "bun scripts/fuzz-tasks.ts",

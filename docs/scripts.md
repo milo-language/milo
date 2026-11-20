@@ -38,7 +38,9 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/ast-oracle.ts` | Sweeps fixtures with a src/ast-oracle.ts oracle armed and prints every site it noted, most hit first. |
 | `scripts/ast-writes.ts` | Census of writes to AST nodes after the parser, grouped by stage. |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
+| `scripts/borrow-fuzz.ts` | Differential fuzzer for the borrow analyses: the checker's walk (W), the dataflow src/borrow-flow.ts (F) and the reference interpreter (I, the oracle: it gets stuck on E-BORROW when a view is read af… |
 | `scripts/borrow-shadow.ts` | Shadow gate for src/borrow-flow.ts: the checker's borrow walk against the dataflow, per corpus program. |
+| `scripts/borrow-templates.ts` | The in-scope borrow-error message templates, shared by scripts/borrow-shadow.ts (corpus) and scripts/borrow-fuzz.ts (generated programs): one list, so both judge the same set of messages. |
 | `scripts/build-playground.ts` | Builds docs/site/public/playground/milo-playground.js: the frontend plus the reference interpreter for the browser, with std/*.milo embedded. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
 | `scripts/bundle-stdlib.ts` | Generates src/stdlib-bundle.ts, embedding every std/*.milo file as a string. |

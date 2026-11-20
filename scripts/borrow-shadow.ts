@@ -8,6 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { cpus, tmpdir } from "os";
+import { TEMPLATES, templateOf } from "./borrow-templates";
 
 const ROOT = resolve(import.meta.dir, "..");
 const args = process.argv.slice(2);
@@ -16,26 +17,6 @@ const jobs = Number(opt("--jobs") ?? Math.max(1, cpus().length - 2));
 const only = opt("--only");
 const list = args.includes("--list");
 
-// The in-scope message templates, in the order the table prints them.
-const TEMPLATES: [string, RegExp][] = [
-  ["call vs view", /^cannot call '.+' on '.+' while '[^']+' borrows .+$/],
-  ["call vs loop", /^cannot call '.+' on '.+' while a loop iterates over .+$/],
-  ["assign vs view", /^cannot assign to '.+' while '[^']+' borrows .+$/],
-  ["assign vs loop", /^cannot assign to '.+' while a loop iterates over .+$/],
-  ["elem assign vs loop", /^cannot assign to '.+' because '.+' is being iterated$/],
-  ["pass/swap/replace vs view/loop", /^cannot (pass|swap|replace) '[^']+' while ('[^']+' borrows .+|a loop iterates over .+)$/],
-  ["holder-less (it is borrowed)", /^cannot .+ because (it|'[^']+') is borrowed$/],
-  ["park vs global view", /^.+ can park this task while '[^']+' (borrows from|still points into) .+'s buffer.*; another task may push to .+ before it resumes$/],
-  ["global write vs global view", /^.+ writes the global '[^']+' while '[^']+' (borrows from|still points into) .+'s buffer.*$/],
-  ["move vs view", /^cannot move '[^']+' while '[^']+' borrows .+$/],
-  ["move vs loop", /^cannot move '[^']+' while a loop iterates over .+$/],
-  ["call vs pointer", /^'.+' may reallocate here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
-  ["assign vs pointer", /^'.+' is reassigned here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
-  ["closure write vs view/loop", /^cannot write to .[^.]+. by (calling|passing) .[^.]+. while (.[^.]+. borrows .+|a loop iterates over .+)$/],
-  ["closure write vs pointer", /^.+. is written by (calling|passing) .[^.]+. while .[^.]+. still points into its buffer \\(from .+ on line \\d+\\)$/],
-  ["elem write vs pointer", /^'.+' is written here while '[^']+' still points into its buffer \(from '.+' on line \d+\)$/],
-];
-const templateOf = (m: string): string | null => TEMPLATES.find(([, re]) => re.test(m))?.[0] ?? null;
 
 interface Err { at: string; message: string }
 interface Result { walk: Err[]; flow: Err[] }
