@@ -206,3 +206,12 @@ test("a park while a raw pointer into a global is read later names where the poi
     .toEqual(["13: 'schedulerYield' can park this task while 'p' still points into 'b's buffer (from 'b.ptr()' on line 12); another task may push to 'b' before it resumes"]);
   expect(flow(`${PARK_HEAD}pub fn main(): i32 {\n    b.push(0)\n    let p = b.ptr()\n    print(strlen(p))\n    schedulerYield()\n    return 0\n}`)).toEqual([]);
 });
+
+test("a callee that pushes to a global while a pointer or slice of it is read later is a conflict; after the last use it is fine", () => {
+  const head = `from "std/os" import {\n    strlen\n}\nvar g: Vec<u8> = []\n\nfn writer() {\n    g.push(65)\n}\n\npub fn main(): i32 {\n    g.push(0)\n`;
+  expect(flow(`${head}    let p = g.ptr()\n    writer()\n    print(strlen(p))\n    return 0\n}`))
+    .toEqual(["13: 'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 12)"]);
+  expect(flow(`${head}    let s = g[0..1]\n    writer()\n    print(s[0])\n    return 0\n}`))
+    .toEqual(["13: 'writer' writes the global 'g' while 's' borrows from 'g's buffer"]);
+  expect(flow(`${head}    let s = g[0..1]\n    print(s[0])\n    writer()\n    return 0\n}`)).toEqual([]);
+});

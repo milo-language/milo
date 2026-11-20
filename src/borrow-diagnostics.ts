@@ -57,11 +57,23 @@ export function pointerConflict(kind: "call" | "assign" | "elem" | "closure", wr
 // A closure body's write of a captured place, at the call of the closure or where it is handed on.
 export const closureWritePrefix = (name: string, how: "calling" | "passing", fname: string) => `cannot write to '${name}' by ${how} '${fname}'`;
 
+// How a held reference into a global's buffer is named: a slice borrows from it, a raw pointer still points into it.
+const heldView = (global: string, holder: string, call?: string, line?: number) =>
+  call === undefined ? `'${holder}' borrows from '${global}'s buffer` : `'${holder}' still points into '${global}'s buffer (from '${call}' on line ${line})`;
+
 // A call that parks the task while a reference into a global's buffer is held (src/checker-global-borrow.ts parkBlock).
 export function parkWhileHeld(say: string, global: string, holder: string, call?: string, line?: number): BorrowText {
-  const held = call === undefined ? `'${holder}' borrows from '${global}'s buffer` : `'${holder}' still points into '${global}'s buffer (from '${call}' on line ${line})`;
+  const held = heldView(global, holder, call, line);
   return {
     message: `${say} can park this task while ${held}; another task may push to '${global}' before it resumes`,
     hint: `iterate by index ('while i < ${global}.len'), snapshot first ('${global}.clone()'), or take it with 'replace(${global}, ...)' so the task owns it`,
+  };
+}
+
+// A callee that writes a global while a reference into its buffer is held (writeBlock's second loop).
+export function writesGlobalWhileHeld(say: string, global: string, holder: string, call?: string, line?: number): BorrowText {
+  return {
+    message: `${say} writes the global '${global}' while ${heldView(global, holder, call, line)}`,
+    hint: `pushing to, clearing or reassigning '${global}' frees the buffer '${holder}' points into: take '${holder}' after the call, or end its block before it`,
   };
 }

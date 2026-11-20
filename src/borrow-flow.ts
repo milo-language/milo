@@ -155,6 +155,12 @@ function analyzeBody(cr: CheckResult, host: PlaceCfgHost, params: Parameters<Bui
         report(n.effect.span, text.parkWhileHeld(n.effect.say, g, l.loan!.name!, l.loan!.kind === "pointer" ? l.loan!.call : undefined, l.loan!.line));
       }
     }
+    if (n.effect !== undefined && n.effect.writes.length > 0) {
+      for (const l of globalHeld(i)) {
+        const g = rootName(l.loan!.place);
+        if (n.effect.writes.includes(g)) report(n.effect.span, text.writesGlobalWhileHeld(n.effect.say, g, l.loan!.name!, l.loan!.kind === "pointer" ? l.loan!.call : undefined, l.loan!.line));
+      }
+    }
     if (moves(n)) {
       const e = n.expr as Expr & { kind: "Ident" };
       const loan = conflicting(i, n.use!, false, false, false);
