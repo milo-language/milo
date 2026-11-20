@@ -2,7 +2,6 @@
 import type { TypeChecker } from "./checker";
 import type { BorrowKind, BorrowSite, PatternLeaf, Place, PlaceStep, PointerHolder, VarInfo } from "./checker";
 import { DEREF, INDEX, OPAQUE, PAYLOAD, VALUE, rewritten, spanKey, stepKey, stepsEq } from "./checker-util";
-import type { DiagnosticNote } from "./diagnostics";
 import type { Expr, Span, Stmt, ForInStmt } from "./ast";
 import { typeName } from "./types";
 import type { TypeKind } from "./types";
@@ -399,29 +398,6 @@ export function carryPointerBorrows(c: TypeChecker, carried: { from: VarInfo; pa
     c.pushBorrow(to, carried.paths[i], "pointer", h, null);
     addPointerFreeze(h.info, to);
   });
-}
-
-// Whether a mutation of `target` collides with a live borrow of `info`. Two chains off
-// one root can alias only when neither diverges from the other at a named field; an
-// unknown path on either side (an index or deref step) is treated as a collision.
-// Is any live borrow of `info` that collides with `target` an ITERATION borrow?
-// Only iteration cares about an in-place element write, so this is what lets the
-// index exemption below stay true for slice views while closing it for loops.
-export function frozenByIteration(c: TypeChecker, info: VarInfo, target: Expr | null): boolean {
-  if (!c.frozenAgainst(info, target)) return false;
-  const kinds = info.borrowKinds;
-  if (!kinds || kinds.length === 0) return false;
-  const paths = info.borrowedPaths;
-  const mut = target ? c.accessPath(target) : null;
-  const mutFields = mut ? mut.fields : null;
-  return kinds.some((k, i) => k === "iteration" && c.borrowCollides(paths?.[i], mutFields));
-}
-
-export function frozenAgainstFields(c: TypeChecker, info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): boolean {
-  if (!info.borrowed) return false;
-  const paths = info.borrowedPaths;
-  if (!paths || paths.length === 0) return true;
-  return paths.some((p, i) => (ignore === undefined || info.borrowKinds?.[i] !== ignore) && c.borrowCollides(p, mutFields));
 }
 
 export function lookup(c: TypeChecker, name: string): VarInfo | null {
@@ -851,67 +827,29 @@ export function rootMutable(c: TypeChecker, slot: Expr): boolean {
   return false;
 }
 
-export function conflictingBorrowFields(c: TypeChecker, info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): BorrowSite | null {
+export function frozenAgainstFields(c: TypeChecker, info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): boolean {
+  if (!info.borrowed) return false;
+  const paths = info.borrowedPaths;
+  if (!paths || paths.length === 0) return true;
+  return paths.some((p, i) => (ignore === undefined || info.borrowKinds?.[i] !== ignore) && c.borrowCollides(p, mutFields));
+}
+
+// The capture borrow of `info` that a write of `mutFields` collides with: a closure literal that captured it and may still run.
+// Every other conflict (views, loops, callbacks, pointers) is src/borrow-flow.ts's.
+export function captureBorrowAgainst(c: TypeChecker, info: VarInfo, mutFields: string[] | null): BorrowSite | null {
   const paths = info.borrowedPaths ?? [];
   for (let i = 0; i < paths.length; i++) {
-    const kind = info.borrowKinds?.[i];
-    if (kind === "pointer" || (ignore !== undefined && kind === ignore)) continue;
-    const site = info.borrowSites?.[i];
-    if (site && (site.holder || site.via) && c.borrowCollides(paths[i], mutFields)) return site;
+    if (info.borrowKinds?.[i] === "capture" && c.borrowCollides(paths[i], mutFields)) return info.borrowSites?.[i] ?? { span: undefined };
   }
   return null;
 }
 
 // `prefix` is the rejected operation with its place ("cannot call 'push' on 'xs'").
-// With a known origin the message names it and notes where it was taken; otherwise it
-// falls back to the generic `fallback` wording.
-export function reportBorrowed(c: TypeChecker, prefix: string, root: string, site: BorrowSite | null, sp: Span | undefined, fallback: string, fallbackHint: string) {
+export function reportCaptured(c: TypeChecker, prefix: string, root: string, site: BorrowSite, sp: Span | undefined) {
   const it = prefix.endsWith(`'${root}'`) ? "it" : `'${root}'`;
-  const notes: DiagnosticNote[] = [];
-  if (site?.holder) {
-    const h = site.holder.name;
-    notes.push({ message: `'${h}' borrows '${root}' here`, span: site.span });
-    const d = c.errorWithNotes(`${prefix} while '${h}' borrows ${it}`, sp,
-      `'${h}' points into '${root}', and this could move or free that memory: finish using '${h}' first, or copy what it points to with '.clone()'`, notes);
-    const pending = c.pendingUseNotes.get(site.holder.info) ?? [];
-    pending.push({ diag: d, name: h });
-    c.pendingUseNotes.set(site.holder.info, pending);
-    return;
-  }
-  if (site?.via === "loop") {
-    // A `for x in &mut v` body already reported this site as a use of 'v'; this
-    // message names the operation and the loop, so it replaces that one.
-    const dup = sp && c.mutForInUses.get(spanKey(sp));
-    const dupAt = dup ? c.diagnostics.indexOf(dup) : -1;
-    if (dupAt >= 0) c.diagnostics.splice(dupAt, 1);
-    const line = site.span ? ` (line ${site.span.line})` : "";
-    notes.push({ message: `the loop over '${root}'${line} borrows it for its whole body`, span: site.span });
-    c.errorWithNotes(`${prefix} while a loop iterates over ${it}`, sp,
-      `collect the changes inside the loop and apply them after it, or iterate over a copy ('${root}.clone()')`, notes);
-    return;
-  }
-  if (site?.via === "callback") {
-    notes.push({ message: `'${root}.${site.what}' borrows '${root}' until its callback returns`, span: site.span });
-    c.errorWithNotes(`${prefix} while '${root}.${site.what}' borrows ${it}`, sp,
-      `collect the changes inside the callback and apply them after the call`, notes);
-    return;
-  }
-  if (site?.via === "capture") {
-    notes.push({ message: `this closure captures '${root}'`, span: site.span });
-    c.errorWithNotes(`${prefix} while a closure captures ${it}`, sp,
-      `the closure may still run and read '${root}': make the change before the closure is created, or after its last call`, notes);
-    return;
-  }
-  c.error(fallback, sp, fallbackHint);
-}
-
-// The holder of a reported borrow conflict was read again: that read is the use that
-// kept the borrow live, so it becomes the error's "still used here" note.
-export function noteStillUsed(c: TypeChecker, info: VarInfo, sp: Span | undefined) {
-  const pending = c.pendingUseNotes.get(info);
-  if (!pending) return;
-  c.pendingUseNotes.delete(info);
-  for (const p of pending) (p.diag.notes ??= []).push({ message: `'${p.name}' is still used here`, span: sp });
+  c.errorWithNotes(`${prefix} while a closure captures ${it}`, sp,
+    `the closure may still run and read '${root}': make the change before the closure is created, or after its last call`,
+    [{ message: `this closure captures '${root}'`, span: site.span }]);
 }
 
 export function errorIfFrozen(c: TypeChecker, obj: Expr, action: string, sp?: Span) {
@@ -919,17 +857,9 @@ export function errorIfFrozen(c: TypeChecker, obj: Expr, action: string, sp?: Sp
   for (const place of c.placesOf(obj)) {
     if (place.tag !== "path") continue;
     const info = c.lookup(place.root);
-    if (!info) continue;
-    const ph = c.pointerBorrowAgainst(info, obj);
-    if (ph) {
-      c.requireUnsafe(`'${c.describeExpr(obj)}' may reallocate here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
-        c.pointerHint(ph));
-      return;
-    }
-    if (c.frozenAgainst(info, obj)) {
-      c.reportBorrowed(`cannot ${action} '${place.root}'`, place.root, c.conflictingBorrow(info, obj), sp,
-        `cannot ${action} '${place.root}' because it is borrowed`,
-        `a slice or loop iteration over this variable is still live — mutating it could move memory the borrow points into`);
+    const site = info ? c.captureBorrowAgainst(info, c.targetFields(obj)) : null;
+    if (site) {
+      c.reportCaptured(`cannot ${action} '${place.root}'`, place.root, site, sp);
       return;
     }
   }
@@ -1097,25 +1027,10 @@ export function releasePointerBorrows(c: TypeChecker, info: VarInfo, holder: Var
   c.retainBorrows(info, (h) => !(h && h.info === holder));
 }
 
-// The pointer borrow of `info` that a mutation of `target` would invalidate, if any.
-// Same collision test as `frozenAgainst`, restricted to the `pointer` kind, so a
-// mutation site can say WHICH binding still points into the buffer.
-export function pointerBorrowAgainst(c: TypeChecker, info: VarInfo, target: Expr | null): PointerHolder | null {
-  return c.pointerBorrowAgainstFields(info, c.targetFields(target));
-}
-
 // The field chain a mutation of `target` writes under its root; null (the whole
 // variable, conservatively) when there is no target or a step is not a field.
 export function targetFields(c: TypeChecker, target: Expr | null): string[] | null {
   return target ? c.accessPath(target)?.fields ?? null : null;
-}
-
-export function pointerHint(_c: TypeChecker, h: PointerHolder): string {
-  return `take the pointer after the last mutation, or pass '${h.call}' inline to the call`;
-}
-
-export function frozenAgainst(c: TypeChecker, info: VarInfo, target: Expr | null, ignore?: BorrowKind): boolean {
-  return c.frozenAgainstFields(info, c.targetFields(target), ignore);
 }
 
 // Storage this frame owns and frees on exit: a local or by-value param. A `&T` param
@@ -1137,20 +1052,6 @@ export function freezeIterable(c: TypeChecker, iterable: Expr, loopSpan?: Span):
 export function releaseBorrowSite(c: TypeChecker, info: VarInfo, site: BorrowSite) {
   const sites = info.borrowSites ?? [];
   c.retainBorrows(info, (_, i) => sites[i] !== site);
-}
-
-// Phase 2 (use-after-invalidate): mutating a collection while a borrow into it is
-// live (string slice binding, for-in iteration) can realloc or free the memory the
-// borrow points into. Assignment freezing is handled in the Assign case; this guards
-// mutating method calls. In-place element assignment (v[i] = x) stays legal — it
-// never reallocs, and rewriting elements mid-iteration is a common safe pattern.
-// Every binding this expression could be mutating must be unfrozen — a fork like
-// `(if c { a } else { b }).push(x)` reaches two of them, and checking only the
-// first would let the other's live borrow dangle.
-// The live non-pointer borrow of `info` that a mutation of `target` collides with,
-// preferring one whose origin is known so the diagnostic can name it.
-export function conflictingBorrow(c: TypeChecker, info: VarInfo, target: Expr | null, ignore?: BorrowKind): BorrowSite | null {
-  return c.conflictingBorrowFields(info, c.targetFields(target), ignore);
 }
 
 // Freeze the root of any borrowed place, resolved through the place walker.

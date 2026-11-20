@@ -8,6 +8,7 @@ import type { CheckResult } from "./checker";
 import type { Diagnostic, DiagnosticNote } from "./diagnostics";
 import * as text from "./borrow-diagnostics";
 import { NO_TYPE } from "./move-flow";
+import { spanKey } from "./checker-util";
 import { callEffects, type AnalysisHost } from "./borrow-flow-park";
 import { Builder, liveness, overlaps, type InheritedLoan, type Node, type Place, type PlaceCfgHost } from "./place-cfg";
 
@@ -234,13 +235,14 @@ export function borrowFlow(program: Program, cr: CheckResult, host: PlaceCfgHost
   return out;
 }
 
-// The checker's borrow conflicts: the flow's errors replace the walk's. The walk still raises the same errors while it runs;
-// those matching a flow-class template (src/borrow-diagnostics.ts) are taken out of `diagnostics` here and kept in
-// `walkFlowErrors` for scripts/borrow-shadow.ts. Temporary: phase 3b deletes the walk's machinery and this filter with it.
-// Local-rule errors (same-call exclusivity, structural, Task.scope) match no template and stay.
-export function reportBorrowFlow(program: Program, cr: CheckResult, tc: PlaceCfgHost & AnalysisHost & { diagnostics: Diagnostic[]; walkFlowErrors: Diagnostic[]; errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic }): void {
-  const kept: Diagnostic[] = [];
-  for (const d of tc.diagnostics) (d.severity === "error" && text.templateOf(d.message) !== null ? tc.walkFlowErrors : kept).push(d);
-  tc.diagnostics.splice(0, tc.diagnostics.length, ...kept);
-  for (const d of borrowFlow(program, cr, tc).diagnostics) tc.errorWithNotes(d.message, d.span, d.hint, d.notes ?? []);
+// The checker's borrow conflicts: the flow's errors, added to the walk's local-rule errors (same-call exclusivity,
+// structural rules, closure captures, Task.scope). A loop conflict replaces the walk's "cannot use 'v' inside 'for x in &mut v'"
+// at the same place: that message names the operation and the loop, so it is the better one.
+export function reportBorrowFlow(program: Program, cr: CheckResult, tc: PlaceCfgHost & AnalysisHost & { diagnostics: Diagnostic[]; mutForInUses: Map<string, Diagnostic>; errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic }): void {
+  for (const d of borrowFlow(program, cr, tc).diagnostics) {
+    const dup = d.span && /while a loop iterates over/.test(d.message) ? tc.mutForInUses.get(spanKey(d.span)) : undefined;
+    const at = dup ? tc.diagnostics.indexOf(dup) : -1;
+    if (at >= 0) tc.diagnostics.splice(at, 1);
+    tc.errorWithNotes(d.message, d.span, d.hint, d.notes ?? []);
+  }
 }

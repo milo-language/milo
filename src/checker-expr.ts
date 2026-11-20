@@ -363,8 +363,6 @@ export function checkIdentExpr(c: TypeChecker, expr: Ident): TypeKind {
   }
   info.read = true;
   c.identBinding.set(expr, info);
-  if (info.closureSources && info.type.tag === "fn") c.checkClosureValueWrites(expr.name, info, sp);
-  if (c.pendingUseNotes.size > 0) c.noteStillUsed(info, sp);
   // `unsafe` admits the read: the new owner is then the programmer's claim to make
   // (giflib's CStore keeps every buffer alive until the C caller is done with it).
   if (info.pointerSourceMoved) {

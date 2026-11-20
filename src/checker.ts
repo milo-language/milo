@@ -44,7 +44,6 @@ export class TypeChecker {
   // The finished-program view and the global write/park summary of checkPasses, kept for src/borrow-flow.ts.
   callFacts: { host: ProgramPassHost; view: ProgramView; summary: { writes: Map<string, Set<string>>; parks: Set<string> } | undefined } | undefined;
   // The walk's flow-class borrow errors, dropped from `diagnostics` at the end of check (see checker-core check).
-  walkFlowErrors: Diagnostic[] = [];
   pendingUseNotes = new Map<VarInfo, { diag: Diagnostic; name: string }[]>();
   // Deferred Vec element inference: `var v = Vec.new()` with no annotation gets a
   // placeholder element object, resolved in-place from the first `v.push(x)`.
@@ -555,8 +554,6 @@ export class TypeChecker {
   releasePointerBorrows(info: VarInfo, holder: VarInfo) { return borrows.releasePointerBorrows(this, info, holder); }
   retainBorrows(info: VarInfo, keep: (holder: PointerHolder | null, i: number) => boolean) { return borrows.retainBorrows(this, info, keep); }
 
-  pointerBorrowAgainst(info: VarInfo, target: Expr | null) { return borrows.pointerBorrowAgainst(this, info, target); }
-
   targetFields(target: Expr | null) { return borrows.targetFields(this, target); }
   pointerBorrowAgainstFields(info: VarInfo, mutFields: string[] | null) { return borrows.pointerBorrowAgainstFields(this, info, mutFields); }
   borrowCollides(p: string[] | null | undefined, mutFields: string[] | null): boolean { return borrows.borrowCollides(p, mutFields); }
@@ -570,13 +567,9 @@ export class TypeChecker {
   errorIfPointerOutlivesSource(name: string, holder: VarInfo, value: Expr, sp?: Span): void { return borrows.errorIfPointerOutlivesSource(this, name, holder, value, sp); }
   errorIfReturnedPointerDangles(value: Expr, sp?: Span): void { return borrows.errorIfReturnedPointerDangles(this, value, sp); }
 
-  pointerHint(h: PointerHolder) { return borrows.pointerHint(this, h); }
   pointerBorrowsCarriedBy(value: Expr) { return borrows.pointerBorrowsCarriedBy(this, value); }
   carryPointerBorrows(carried: { from: VarInfo; paths: (string[] | null)[]; holders: PointerHolder[] }, toName: string): void { return borrows.carryPointerBorrows(this, carried, toName); }
-  frozenByIteration(info: VarInfo, target: Expr | null) { return borrows.frozenByIteration(this, info, target); }
 
-  frozenAgainst(info: VarInfo, target: Expr | null, ignore?: BorrowKind) { return borrows.frozenAgainst(this, info, target, ignore); }
-  frozenAgainstFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind) { return borrows.frozenAgainstFields(this, info, mutFields, ignore); }
   lookup(name: string) { return borrows.lookup(this, name); }
 
   flushSqlErrors(): void { return core.flushSqlErrors(this); }
@@ -968,9 +961,7 @@ export class TypeChecker {
   closureArgCaptures(slot: Expr) { return borrowMoves.closureArgCaptures(this, slot); }
   capturesOfClosures(sources: Expr[]) { return borrowMoves.capturesOfClosures(this, sources); }
   nestedWrites(arg: Expr) { return borrowMoves.nestedWrites(this, arg); }
-  checkClosureCallCaptures(call: Expr, fname: string, info: VarInfo, sp: Span | undefined) { return borrowMoves.checkClosureCallCaptures(this, call, fname, info, sp); }
-  checkClosureValueWrites(name: string, info: VarInfo, sp: Span | undefined) { return borrowMoves.checkClosureValueWrites(this, name, info, sp); }
-  reportClosureWrite(info: VarInfo, name: string, fields: string[] | null, fname: string, sp: Span | undefined, how = "calling") { return borrowMoves.reportClosureWrite(this, info, name, fields, fname, sp, how); }
+  recordClosureCallWrites(call: Expr, info: VarInfo) { return borrowMoves.recordClosureCallWrites(this, call, info); }
   noteClosureSources(info: VarInfo, value: Expr | undefined) { return borrowMoves.noteClosureSources(this, info, value); }
   capturePlace(cap: CaptureInfo): { root: unknown; name: string; fields: string[] | null; steps: string[] } { return borrowMoves.capturePlace(cap); }
   constSliceRange(e: Expr): { lo: bigint; hi: bigint } | null { return borrowMoves.constSliceRange(e); }
@@ -1004,10 +995,9 @@ export class TypeChecker {
   writtenPlaceMutable(target: Expr & { object: Expr }) { return borrows.writtenPlaceMutable(this, target); }
   rootMutable(slot: Expr) { return borrows.rootMutable(this, slot); }
 
-  conflictingBorrow(info: VarInfo, target: Expr | null, ignore?: BorrowKind) { return borrows.conflictingBorrow(this, info, target, ignore); }
-  conflictingBorrowFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind) { return borrows.conflictingBorrowFields(this, info, mutFields, ignore); }
-  reportBorrowed(prefix: string, root: string, site: BorrowSite | null, sp: Span | undefined, fallback: string, fallbackHint: string) { return borrows.reportBorrowed(this, prefix, root, site, sp, fallback, fallbackHint); }
-  noteStillUsed(info: VarInfo, sp: Span | undefined) { return borrows.noteStillUsed(this, info, sp); }
+  frozenAgainstFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind) { return borrows.frozenAgainstFields(this, info, mutFields, ignore); }
+  captureBorrowAgainst(info: VarInfo, mutFields: string[] | null) { return borrows.captureBorrowAgainst(this, info, mutFields); }
+  reportCaptured(prefix: string, root: string, site: BorrowSite, sp: Span | undefined) { return borrows.reportCaptured(this, prefix, root, site, sp); }
   errorIfFrozen(obj: Expr, action: string, sp?: Span) { return borrows.errorIfFrozen(this, obj, action, sp); }
   checkPlaceArgWrite(place: Expr, action: string, sp?: Span) { return borrows.checkPlaceArgWrite(this, place, action, sp); }
   takeExplicitMutArgs(args: Expr[], callee: string, paramAt: (i: number) => { name: string; mut: boolean; show: () => string } | undefined) { return borrows.takeExplicitMutArgs(this, args, callee, paramAt); }

@@ -6,7 +6,6 @@ import { declaredType, isNestedPattern, patternLeafNames } from "./ast";
 import type { TypeKind } from "./types";
 import { rewritten, rewrittenPattern } from "./checker-util";
 import { typeEq } from "./types";
-import type { DiagnosticNote } from "./diagnostics";
 import { must } from "./must";
 import type { PatternLeaf } from "./checker";
 
@@ -278,47 +277,13 @@ export function checkStmtBody(chk: TypeChecker, stmt: Stmt, fnRetType: TypeKind,
       // `v.push(x)` was rejected inside the loop and `v[0] = x` was not.
       const indexQualified = assignPath ? assignPath.steps.some((s) => s === "[]" || s === "*") : false;
       const assignInfo = assignPath ? chk.lookup(assignPath.root) : null;
-      // An element write never moves the buffer, so a slice view survives it; a bound
-      // pointer does not get that exemption. The pointer's user may be another thread
-      // (tests/fixtures/bandParallelBuffer.milo writes through it from workers), and a
-      // write through the owner at the same time is the race the view rule exists to stop.
-      const indexPh = assignPath && indexQualified && assignInfo ? chk.pointerBorrowAgainst(assignInfo, target) : null;
-      if (indexPh) {
-        // The three pointer-freeze sites (index write, reassignment, reallocating
-        // call) all go through requireUnsafe: `unsafe { }` is the one spelling that
-        // says the writer owns this pointer's validity, and it is what tests/sanitize
-        // and the fuzzers' self-check probes use to build a real use-after-free.
-        chk.requireUnsafe(`'${assignPath!.root}' is written here while '${indexPh.name}' still points into its buffer (from '${indexPh.call}' on line ${indexPh.line})`, sp,
-          `write through '${indexPh.name}' instead, or take the pointer after the last write`);
-        break;
-      }
-      if (assignPath && indexQualified && assignInfo && chk.frozenByIteration(assignInfo, target)) {
-        const loop = chk.conflictingBorrow(assignInfo, target);
-        const loopNotes: DiagnosticNote[] = loop?.via === "loop" && loop.span
-          ? [{ message: `the loop over '${assignPath.root}' (line ${loop.span.line}) borrows it for its whole body`, span: loop.span }] : [];
-        chk.errorWithNotes(`cannot assign to '${chk.describeExpr(target)}' because '${assignPath.root}' is being iterated`, sp,
-          `the loop hands out this element — finish the loop, or collect the writes and apply them after it`, loopNotes);
-        break;
-      }
       if (assignPath && !indexQualified) {
-        const info = chk.lookup(assignPath.root);
+        // A closure assigning to its own capture is exempt from the capture borrows.
         const isCapturedMutation = chk.closureScopeDepth !== null && (chk.currentClosureCaptures !== null && chk.currentClosureCaptures.has(assignPath.root));
-        const ph = info && !isCapturedMutation ? chk.pointerBorrowAgainst(info, target) : null;
-        if (ph) {
-          chk.requireUnsafe(`'${chk.describeExpr(target)}' is reassigned here while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
-            chk.pointerHint(ph));
-          break;
-        }
-        // A closure assigning to its own capture is exempt only from the capture
-        // borrows; any other borrow (a match binding or view into it, now that a
-        // by-reference closure can capture those) still forbids the write.
-        if (info && chk.frozenAgainst(info, target, isCapturedMutation ? "capture" : undefined)) {
-          const place = chk.describeExpr(target);
-          const why = place === assignPath.root ? "it is borrowed" : `'${assignPath.root}' is borrowed`;
-          chk.reportBorrowed(`cannot assign to '${place}'`, assignPath.root,
-            chk.conflictingBorrow(info, target, isCapturedMutation ? "capture" : undefined), sp,
-            `cannot assign to '${place}' because ${why}`,
-            `a reference or slice into this variable is still live — the assignment would invalidate it`);
+        const info = chk.lookup(assignPath.root);
+        const site = info && !isCapturedMutation ? chk.captureBorrowAgainst(info, chk.targetFields(target)) : null;
+        if (site) {
+          chk.reportCaptured(`cannot assign to '${chk.describeExpr(target)}'`, assignPath.root, site, sp);
           break;
         }
       }

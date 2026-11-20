@@ -764,7 +764,7 @@ export function checkCallExpr(chk: TypeChecker, expr: Call, expected: TypeKind |
         chk.tryMove(expr.args[i]);
       }
       chk.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
-      if (fnType.tag === "fn") chk.checkClosureCallCaptures(expr, expr.func, varInfo, sp);
+      if (fnType.tag === "fn") chk.recordClosureCallWrites(expr, varInfo);
       if (fnType.tag === "cfn") {
         // Same rule as a C fn-pointer struct field: the pointer may be null, a dlsym
         // result cast to the wrong signature, or a freed function's address.

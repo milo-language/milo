@@ -251,12 +251,6 @@ export class GlobalBorrowScan {
     return "";
   }
 
-  describeView(i: number): string {
-    const via = this.vVia[i];
-    if (via !== "") { return `'${this.vName[i]}' still points into '${this.nm(this.vGlobal[i])}'s buffer (from '${via})`; }
-    return `'${this.vName[i]}' borrows from '${this.nm(this.vGlobal[i])}'s buffer`;
-  }
-
   pushIter(g: string): void {
     const at = this.nIter;
     if (at < this.iter.length) { this.iter[at] = g; } else { this.iter.push(g); }
@@ -430,18 +424,6 @@ export class GlobalBorrowScan {
       );
       i++;
     }
-    let v = 0;
-    while (v < this.nv) {
-      const g = this.vGlobal[v];
-      if (!this.iterHas(g)) {
-        this.report(
-          `${say} can park this task while ${this.describeView(v)}; ${this.rival(g)} may push to '${this.nm(g)}' before it resumes`,
-          span,
-          this.hintFor(t, g),
-        );
-      }
-      v++;
-    }
     // `use(g[0])` / `sum(g)` into a `&[T]`: the argument is a view into g's buffer for as long as
     // the callee runs, and the callee parks. A method's receiver is its params[0] and borrows the
     // same way: `g[0].show()` is `show(g[0])`.
@@ -522,25 +504,6 @@ export class GlobalBorrowScan {
         );
       }
       i++;
-    }
-    // `let p = g.ptr(); writer()` (or a slice binding) where `writer` pushes to g: the callee
-    // frees the buffer the binding points into (h4-global-callee-push). The main pass cannot see
-    // a write made inside another function, and this walk is the one place that knows both the
-    // live views and the write summary.
-    let v = 0;
-    while (v < this.nv) {
-      const g = this.vGlobal[v];
-      if (this.calleeWrites[t].has(g) && !this.iterHas(g)) {
-        let verb = "writes";
-        if (this.captureName.has(g)) { verb = "may run this closure again, which writes"; }
-        this.report(
-          `${say} ${verb} ${this.theG(g)} while ${this.describeView(v)}`,
-          span,
-          `pushing to, clearing or reassigning '${this.nm(g)}' frees the buffer '${this.vName[v]}' points into: ` +
-          `take '${this.vName[v]}' after the call, or end its block before it`,
-        );
-      }
-      v++;
     }
     let a = 0;
     while (a < argsLen) {

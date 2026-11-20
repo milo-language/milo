@@ -253,11 +253,10 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
         c.retainBorrows(info, () => false);
       }
       if (info.borrowed) {
-        // `borrowed` covers closure capture *and* a live slice/view/iteration borrow —
-        // naming only closures misdiagnosed `let s = b.view(); consume(b)`.
-        c.reportBorrowed(`cannot move '${expr.name}'`, expr.name, c.conflictingBorrow(info, null), expr.span,
-          `cannot move '${expr.name}' because it is borrowed`,
-          `a closure capture, or a live slice, reference or loop over this variable, still points into it: moving it would leave that borrow dangling`);
+        // A live view, loop or capture: moving would leave it dangling. Views and loops are reported by
+        // src/borrow-flow.ts, a capture here; either way the move is not recorded.
+        const captured = c.captureBorrowAgainst(info, null);
+        if (captured) c.reportCaptured(`cannot move '${expr.name}'`, expr.name, captured, expr.span);
         return;
       }
       info.everMoved = true;
@@ -374,10 +373,8 @@ export function tryMoveLeaf(c: TypeChecker, expr: Expr) {
         const ap = c.accessPath(expr);
         const rinfo = ap ? c.lookup(ap.root) : null;
         if (ap && rinfo && rinfo.borrowed && c.frozenAgainstFields(rinfo, ap.fields, "pointer")) {
-          const site = c.conflictingBorrowFields(rinfo, ap.fields, "pointer");
-          c.reportBorrowed(`cannot move '${c.describeExpr(expr)}'`, ap.root, site, expr.span,
-            `cannot move '${c.describeExpr(expr)}' because it is borrowed`,
-            `a closure capture, or a live slice, reference or loop over this variable, still points into it: moving it would leave that borrow dangling`);
+          const captured = c.captureBorrowAgainst(rinfo, ap.fields);
+          if (captured) c.reportCaptured(`cannot move '${c.describeExpr(expr)}'`, ap.root, captured, expr.span);
           return;
         }
         // Pointer borrows on the moved field: dead from here unless the move carries them to
@@ -919,56 +916,16 @@ export function nestedWrites(c: TypeChecker, arg: Expr): NestedWrite[] {
   return out;
 }
 
-// Calling a by-reference closure reads and writes its captures through the caller's own
-// slots, so the call is a use of each captured binding at this point in the caller. A
-// capture moved since the closure was built would be read zeroed, and a capture the
-// body writes is written here, which a live loop, view or pointer over that binding
-// forbids exactly as a direct write would. Closures reached through its own captures
-// run too, so their captures count (capturesOfClosures walks them). A `move` closure
-// owns copies taken when it was built, so none of this applies to it.
-export function checkClosureCallCaptures(c: TypeChecker, call: Expr, fname: string, info: VarInfo, sp: Span | undefined) {
+// Calling a by-reference closure writes its captures through the caller's own slots: record which, for codegen
+// (closureCallWrites). Closures reached through its own captures run too, so their captures count
+// (capturesOfClosures walks them). A `move` closure owns copies taken when it was built.
+export function recordClosureCallWrites(c: TypeChecker, call: Expr, info: VarInfo) {
   const writes: CaptureInfo[] = [];
   for (const { cap, isMove } of c.capturesOfClosures(info.closureSources ?? [])) {
-    if (isMove || !cap.info) continue;
-    if (!cap.mutatedInClosure) continue;
+    if (isMove || !cap.info || !cap.mutatedInClosure) continue;
     writes.push(cap);
-    for (const fields of cap.mutatedFields ?? [null]) {
-      if (c.reportClosureWrite(cap.info, cap.name, fields, fname, sp)) break;
-    }
   }
   if (writes.length > 0) c.closureCallWrites.set(call, writes);
-}
-
-// A by-reference closure named as a value (`run(clr)`, `show(s, clr)`, `v.each(clr)`,
-// `let g = clr`) may be run by whatever receives it, before this statement ends or
-// through the alias later. So naming it counts as running it here: each capture it
-// writes, through the closures it captures as well, is checked against the borrows
-// open at this point like a direct call. Fail-closed by design: whether the callee
-// really calls it is not known here. A call of the alias is checked again at the call.
-export function checkClosureValueWrites(c: TypeChecker, name: string, info: VarInfo, sp: Span | undefined) {
-  for (const { cap, isMove } of c.capturesOfClosures(info.closureSources ?? [])) {
-    if (isMove || !cap.info || !cap.mutatedInClosure) continue;
-    for (const fields of cap.mutatedFields ?? [null]) {
-      if (c.reportClosureWrite(cap.info, cap.name, fields, name, sp, "passing")) break;
-    }
-  }
-}
-
-// A closure call's write of `fields` under capture `name`, checked like a direct write.
-// Capture borrows are skipped: one still open in this statement belongs to a closure
-// literal passed as a call argument, and checkCallSiteExclusivity judges those.
-export function reportClosureWrite(c: TypeChecker, info: VarInfo, name: string, fields: string[] | null, fname: string, sp: Span | undefined, how = "calling"): boolean {
-  const ph = c.pointerBorrowAgainstFields(info, fields);
-  if (ph) {
-    c.requireUnsafe(`'${name}' is written by ${how} '${fname}' while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
-      c.pointerHint(ph));
-    return true;
-  }
-  if (!c.frozenAgainstFields(info, fields, "capture")) return false;
-  c.reportBorrowed(`cannot write to '${name}' by ${how} '${fname}'`, name, c.conflictingBorrowFields(info, fields, "capture"), sp,
-    `cannot write to '${name}' by ${how} '${fname}' because '${name}' is borrowed`,
-    `a slice or loop iteration over '${name}' is still live, and the closure's write could move memory it points into`);
-  return true;
 }
 
 // Record the closure literals `value` may evaluate to as sources of `info`. Assignment
